@@ -28,6 +28,21 @@ Open **http://localhost:9123/** in any browser.
 
 Or double-click `start.bat` from the folder.
 
+### System Tray App (Recommended)
+
+For a persistent icon by the clock with start/stop/dashboard/emergency controls:
+
+**Double-click `start_tray.bat`** or `start_tray_hidden.vbs`
+
+The tray icon shows:
+- 🟢 Green **C** — server running
+- 🔴 Red **!** — server error  
+- ⚫ Gray **C** — server stopped
+
+Right-click for: Start/Stop Server, Open Dashboard, Emergency Stop/Resume, Settings, Exit.
+
+You can also create a shortcut to `start_tray_hidden.vbs` in your Windows Startup folder (`shell:startup`) so it launches automatically on boot.
+
 ## API Endpoints
 
 ### Core
@@ -149,6 +164,7 @@ python hermes_coagent.py 9123
 - Windows 10/11
 - Python 3.8+
 - Tesseract OCR *(optional — for OCR feature)*
+- PySide6 *(for system tray app — optional)*: `pip install PySide6`
 
 ## Security
 
