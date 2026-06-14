@@ -22,10 +22,15 @@ COAGENT_DIR = Path(__file__).parent.resolve()
 MACROS_DIR = COAGENT_DIR / "macros"
 SCREENSHOTS_DIR = COAGENT_DIR / "screenshots"
 TUNNEL_LOG = COAGENT_DIR / "tunnel.log"
+SERVER_PORT = 9123
 MACROS_DIR.mkdir(exist_ok=True)
 SCREENSHOTS_DIR.mkdir(exist_ok=True)
 
 PYTHON = sys.executable
+
+def _console(msg=""):
+    sys.stderr.write(str(msg) + "\n")
+    sys.stderr.flush()
 
 # === STATE ===
 @dataclass
@@ -111,7 +116,7 @@ def _queue_worker():
         try:
             _execute_action(action)
         except Exception as e:
-            print(f"[Queue] Failed: {e}")
+            _console(f"[Queue] Failed: {e}")
         time.sleep(max(0, state.min_action_gap - 0.05))
     state.queue_worker_running = False
 
@@ -306,20 +311,20 @@ def visual_find_image(template_path, confidence=0.8):
 # === TTS ENGINE ===
 def tts_speak_api(text):
     try:
-        import edge_tts
-        import asyncio
-        out_file = str(SCREENSHOTS_DIR / f"tts_{int(time.time())}.mp3")
-        async def _speak():
-            communicate = edge_tts.Communicate(text, voice="en-US-AriaNeural")
-            await communicate.save(out_file)
-        asyncio.run(_speak())
-        # Play the file
-        subprocess.Popen(["powershell.exe", "-Command",
-            f'(New-Object Media.SoundPlayer "{out_file}").PlaySync()'],
-            shell=True)
-        return {"status": "speaking", "text": text[:100], "file": out_file}
-    except ImportError:
-        return {"error": "edge-tts not installed. pip install edge-tts"}
+        script = "$speaker = New-Object -ComObject SAPI.SpVoice; $speaker.Speak([Console]::In.ReadToEnd()) | Out-Null"
+        proc = subprocess.Popen(
+            ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            text=True
+        )
+        try:
+            proc.communicate(input=str(text), timeout=60)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            return {"error": "TTS timed out"}
+        return {"status": "speaking", "text": str(text)[:100]}
     except Exception as e:
         return {"error": str(e)}
 
@@ -337,7 +342,7 @@ def _keyboard_watchdog():
             if key == keyboard.Key.shift or key == keyboard.Key.shift_r: shift = True
             if ctrl and alt and shift:
                 state.emergency_stop = True
-                print("[Watchdog] EMERGENCY STOP triggered via Ctrl+Alt+Shift")
+                _console("[Watchdog] EMERGENCY STOP triggered via Ctrl+Alt+Shift")
                 ctrl, alt, shift = False, False, False
         def on_release(key):
             nonlocal ctrl, alt, shift
@@ -347,7 +352,7 @@ def _keyboard_watchdog():
         with keyboard.Listener(on_press=on_press, on_release=on_release) as listener:
             listener.join()
     except Exception as e:
-        print(f"[Watchdog] Failed: {e}")
+        _console(f"[Watchdog] Failed: {e}")
     state.watchdog_running = False
 
 # === MACROS ENGINE ===
@@ -560,7 +565,7 @@ def tunnel_start_action():
     try:
         _log = open(str(TUNNEL_LOG), "w")
         _p = subprocess.Popen(
-            ["cloudflared", "tunnel", "--url", "http://localhost:9123"],
+            ["cloudflared", "tunnel", "--url", f"http://localhost:{SERVER_PORT}"],
             stdout=_log, stderr=subprocess.STDOUT,
             creationflags=subprocess.CREATE_NEW_PROCESS_GROUP
         )
@@ -623,7 +628,7 @@ def sse_events():
                     yield msg
                 except queue.Empty:
                     yield ": keepalive\n\n"
-        except GeneratorExit:
+        finally:
             with _sse_lock:
                 if q in _sse_clients:
                     _sse_clients.remove(q)
@@ -641,11 +646,19 @@ def _log(msg):
         if len(_log_buffer) > _MAX_LOG:
             _log_buffer[:1000] = []
 
+def _limit_arg(name, default, maximum):
+    try:
+        value = int(request.args.get(name, default))
+    except (TypeError, ValueError):
+        value = default
+    return max(0, min(value, maximum))
+
 @app.route("/logs")
 def route_logs():
-    limit = min(int(request.args.get("limit", 200)), 1000)
+    limit = _limit_arg("limit", 200, 1000)
     with _log_lock:
-        return jsonify({"logs": _log_buffer[-limit:]})
+        logs = [] if limit == 0 else _log_buffer[-limit:]
+        return jsonify({"logs": logs})
 
 # === STATS ===
 _start_time = time.time()
@@ -658,8 +671,10 @@ except:
 
 @app.route("/stats")
 def route_stats():
+    with state.input_lock:
+        actions_today = len(state.action_history)
     info = {
-        "actions_today": len(state.action_history),
+        "actions_today": actions_today,
         "queue_size": state.pending_queue.qsize(),
         "emergency_stop": state.emergency_stop,
         "watchdog": state.watchdog_running,
@@ -852,8 +867,11 @@ def route_emergency_status():
 # === HISTORY ===
 @app.route("/history")
 def route_history():
-    limit = min(int(request.args.get("limit", 50)), 500)
-    return jsonify({"actions": state.action_history[-limit:]})
+    limit = _limit_arg("limit", 50, 500)
+    with state.input_lock:
+        total = len(state.action_history)
+        actions = [] if limit == 0 else list(state.action_history[-limit:])
+    return jsonify({"actions": actions, "total": total})
 
 @app.route("/replay", methods=["POST"])
 def route_replay():
@@ -1008,6 +1026,7 @@ def _handle_mcp():
 # =========== MAIN ===========
 if __name__ == "__main__":
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 9123
+    SERVER_PORT = port
 
     # Start queue worker
     t = threading.Thread(target=_queue_worker, daemon=True)

@@ -2,6 +2,7 @@
 # Icon by the clock with start/stop/dashboard/emergency/settings/pairing/notifications/clipboard/logs/quick-actions/auto-update
 
 import sys, os, json, subprocess, threading, time, webbrowser, queue, urllib.request
+from copy import deepcopy
 from pathlib import Path
 from datetime import datetime
 
@@ -15,7 +16,8 @@ from PySide6.QtGui import QIcon, QAction, QFont, QPixmap, QPainter, QColor, QPen
 from PySide6.QtCore import QTimer, Signal, QObject, Qt
 
 COAGENT_DIR = Path(__file__).parent.resolve()
-PYTHON = r"C:\Users\Admin\AppData\Local\Programs\Python\Python313\python.exe"
+DEFAULT_PYTHON = Path(r"C:\Users\Admin\AppData\Local\Programs\Python\Python313\python.exe")
+PYTHON = str(DEFAULT_PYTHON if DEFAULT_PYTHON.exists() else Path(sys.executable))
 CONFIG_FILE = COAGENT_DIR / "tray_config.json"
 SERVER_SCRIPT = COAGENT_DIR / "hermes_coagent.py"
 VERSION = "v3.1"
@@ -28,14 +30,19 @@ DEFAULT_CONFIG = {
 
 class Config:
     def __init__(self):
-        self.data = DEFAULT_CONFIG.copy()
+        self.data = deepcopy(DEFAULT_CONFIG)
         self.load()
     def load(self):
         if CONFIG_FILE.exists():
-            try: self.data.update(json.loads(CONFIG_FILE.read_text()))
+            try:
+                loaded = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+                if isinstance(loaded, dict):
+                    self.data.update(loaded)
             except: pass
     def save(self):
-        CONFIG_FILE.write_text(json.dumps(self.data, indent=2))
+        tmp = CONFIG_FILE.with_name(CONFIG_FILE.name + ".tmp")
+        tmp.write_text(json.dumps(self.data, indent=2), encoding="utf-8")
+        tmp.replace(CONFIG_FILE)
     def __getitem__(self, key): return self.data.get(key, DEFAULT_CONFIG.get(key))
     def __setitem__(self, key, value):
         self.data[key] = value; self.save()
@@ -312,14 +319,14 @@ class CoAgentTray:
         self._update_icon("stopped")
         self.tray.activated.connect(self._on_click)
 
+        # Clipboard history (initialize before building menu)
+        self._clip_history = []
+        self._last_clip = ""
+
         self.menu = QMenu()
         self._build_menu()
         self.tray.setContextMenu(self.menu)
         self._status = "stopped"
-
-        # Clipboard history
-        self._clip_history = []
-        self._last_clip = ""
 
         # Stats refresh
         self._stats_timer = QTimer()
@@ -330,8 +337,8 @@ class CoAgentTray:
         self._sse_active = False
         self._notif_timer = QTimer()
         self._notif_timer.timeout.connect(self._poll_notifications)
+        self._last_notif_count = None
         self._notif_timer.start(3000)
-        self._last_notif_count = 0
 
         self.tray.show()
         if config["autostart_server"]:
@@ -345,7 +352,7 @@ class CoAgentTray:
         if pixmap_data:
             thumb = QPixmap()
             if thumb.loadFromData(pixmap_data) and not thumb.isNull():
-                painter.drawPixmap(0, 0, pm.scaled(32, 32, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+                painter.drawPixmap(0, 0, thumb.scaled(32, 32, Qt.KeepAspectRatio, Qt.SmoothTransformation))
                 painter.end()
                 self.tray.setIcon(QIcon(pm))
                 return
@@ -491,13 +498,19 @@ class CoAgentTray:
         r = _api("GET", "/history?limit=1")
         if "_error" in r: return
         actions = r.get("actions", [])
-        if len(actions) > self._last_notif_count:
-            new_count = len(actions) - self._last_notif_count
-            if new_count > 0 and actions:
+        total = r.get("total")
+        if not isinstance(total, int):
+            total = len(actions)
+        if self._last_notif_count is None:
+            self._last_notif_count = total
+        elif total > self._last_notif_count:
+            if actions:
                 last = actions[-1]
                 msg = f"{last.get('type','?')}: {json.dumps(last.get('data',{}))[:60]}"
                 self.tray.showMessage("CoAgent Action", msg, QSystemTrayIcon.Information, 3000)
-            self._last_notif_count = len(actions)
+            self._last_notif_count = total
+        elif total < self._last_notif_count:
+            self._last_notif_count = total
 
         # Clipboard history polling
         if config["clipboard_history"]:
@@ -533,24 +546,12 @@ class CoAgentTray:
         self._build_qa_menu()
 
     def _check_updates(self):
-        try:
-            req = urllib.request.Request(
-                "https://api.github.com/repos/Predator04/Hermes-CoAgent/releases/latest",
-                headers={"Accept": "application/json", "User-Agent": "HermesCoAgent"}
-            )
-            with urllib.request.urlopen(req, timeout=10) as r:
-                data = json.loads(r.read().decode())
-                tag = data.get("tag_name", "")
-                if tag and tag != VERSION:
-                    self.tray.showMessage("Update Available",
-                        f"New version: {tag}\nView at github.com/Predator04/Hermes-CoAgent",
-                        QSystemTrayIcon.Information, 5000)
-                else:
-                    self.tray.showMessage("Up to Date", f"You're running {VERSION}",
-                        QSystemTrayIcon.Information, 3000)
-        except Exception as e:
-            self.tray.showMessage("Update Check", f"Could not check: {e}",
-                QSystemTrayIcon.Warning, 3000)
+        self.tray.showMessage(
+            "Update Check",
+            f"Network update checks are disabled. Current version: {VERSION}",
+            QSystemTrayIcon.Information,
+            3000
+        )
 
     def _on_click(self, reason):
         if reason == QSystemTrayIcon.DoubleClick:
