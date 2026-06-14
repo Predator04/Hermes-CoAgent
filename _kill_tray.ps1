@@ -1,10 +1,3 @@
-# Kill tray processes
-$procs = Get-Process python* -ErrorAction SilentlyContinue
-foreach ($p in $procs) {
-    try {
-        if ($p.CommandLine -match 'coagent_tray') {
-            $p.Kill()
-            Write-Output "Killed tray PID $($p.Id)"
-        }
-    } catch {}
-}
+# Kill old trays
+Get-Process python* -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -match 'coagent_tray' } | ForEach-Object { $_.Kill(); Write-Output "Killed PID $($_.Id)" }
+Write-Output "Ready for Codex"

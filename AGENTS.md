@@ -1,109 +1,114 @@
-# Hermes CoAgent — Codex Audit & Fix Instructions
+# Hermes CoAgent — Codex: Optimize Tray Menu + Full Settings Overhaul
 
-## Project Overview
+## File: `C:\Users\Admin\Desktop\Hermes CoAgent\coagent_tray.py`
 
-Two Python files in `C:\Users\Admin\Desktop\Hermes CoAgent\`:
+## Mission
 
-1. **`hermes_coagent.py`** (1,077 lines) — Flask server on port 9123. Desktop control web dashboard + MCP mode + OCR + visual search + TTS + macros + file explorer + Cloudflare tunnel.
-2. **`coagent_tray.py`** (571 lines) — PySide6 system tray app (icon by the clock). Server control, stats, notifications, clipboard history, pairing QR, quick actions, auto-update, log viewer.
+### 1. Fix Right-Click Slowness (CRITICAL)
 
-## What Codex Must Do
+Right-clicking the tray icon takes 2-5 seconds to show the menu. Fix all of these:
 
-Audit both files for bugs, crashes, and improvements. Fix every issue found. Then verify the tray app starts without crashing and the server responds to all key endpoints.
+**A) `_build_menu()` rebuilds EVERYTHING from scratch on every right-click** 
+- PySide6's `setContextMenu()` re-evaluates the menu lazily — but the code calls `self.menu.clear()` then rebuilds all actions, submenus, and clipboard items.
+- **FIX**: Build the static menu ONCE in `__init__()`. Only update dynamic parts (status text, stats, QA items, clipboard items) when they actually change — not on every menu open.
+- Solution: Set `contextMenuPolicy = Qt.CustomContextMenu` on the tray icon, or better: use `QMenu`'s `aboutToShow` signal to only refresh dynamic items instead of rebuilding the whole tree. OR the simplest approach: build the full menu once in `__init__`, hold references to dynamic QActions, and only call `.setText()` or `_build_qa_menu()` / `_build_clip_menu()` on timer ticks / status changes.
 
-## Known Issues to Fix
+**B) Clipboard polling on every notification tick (3s) blocks UI**
+- The 3-second timer calls `QApplication.clipboard().text()` which is a cross-process COM call on Windows — SLOW.
+- **FIX**: Only poll clipboard every 30 seconds instead of every 3. Or use the `QClipboard.changed` signal instead of polling.
 
-### 1. Tray crash on startup (FIXED) — `coagent_tray.py`
-- **ROOT CAUSE**: `_clip_history` initialized at line 321 but `_build_menu()` called at line 316 before it exists → `AttributeError: 'CoAgentTray' object has no attribute '_clip_history'`.
-- **FIX APPLIED**: Moved `self._clip_history = []` and `self._last_clip = ""` before `self._build_menu()`. ✔️
-- **VERIFY**: Run the tray from command line: `python coagent_tray.py` — it should stay running, not crash.
+**C) `_api()` calls block the UI thread**
+- Both `_refresh_stats()` and `_poll_notifications()` call `urllib.request.urlopen()` synchronously on the Qt main thread. If the server is slow or unreachable, it locks the UI.
+- **FIX**: Use `QThread` or `QTimer.singleShot(0, lambda: ...)` with a background thread for API calls. Easiest: wrap the API polling in a `threading.Thread` that emits signals back.
 
-### 2. `_poll_notifications` endpoint mismatch — `coagent_tray.py`
-- **ISSUE**: `_poll_notifications()` calls `GET /history?limit=1` and checks `len(r.get("actions", []))` against `_last_notif_count`. But the `/history` endpoint might not return an `actions` key with the correct structure.
-- **VERIFY**: Check the actual `/history` route in `hermes_coagent.py` — confirm what key and shape it returns. If it returns something other than `{"actions": [...]}`, fix the tray to match.
+**D) Menu has too many separators and nested submenus**
+- 10+ permanent items + 2 dynamic submenus (QA, clipboard). On every right-click, all of this is re-evaluated.
+- **FIX**: Build menu structure ONCE. Keep references to status_action, stats_action, start_stop_action. Update their text with `.setText()` directly. For QA and clipboard submenus, only rebuild them when config changes or clipboard is updated — NOT on every menu show.
 
-### 3. `_build_clip_menu` lambda late-binding bug — `coagent_tray.py` lines 453-457
-- **ISSUE**: The clipboard menu uses `lambda checked, t=entry` which captures `entry` by value (correct). But this is a `for entry in self._clip_history[-20:]` loop — the default arg pattern is correct for capturing by value in a loop. No bug here, but verify the entire method.
+### 2. Full Settings Page (REQUIRED)
 
-### 4. Server `/history` route — `hermes_coagent.py`
-- **ISSUE**: The tray calls `GET /history?limit=1` — need to confirm this route exists and returns `{"actions": [...]}`. Search the server file for `@app.route("/history"` — if it doesn't exist, the tray notification polling will silently fail.
+The current Settings dialog has 3 tabs (General, Quick Actions, About). Build a **proper** settings page with ALL the following tabs:
 
-### 5. `_execute_action_wrapper` recursion risk — `hermes_coagent.py` lines 678-685
-- **ISSUE**: `_execute_action_orig = _execute_action` at line 679, then `_execute_action = _execute_action_wrapper` at line 685. The wrapper calls `_execute_action_orig(action)`. But what happens if any route handler imports or references `_execute_action` **after** this wrapper is assigned? The module-level name now points to the wrapper. If any function defined **above** line 678 calls `_execute_action`, the original is safe (Python captured the original at def time). But if the MCP handler lambdas at lines 202-230 capture `_execute_action` from the module scope, they'll get the WRAPPER → double-send to SSE/logs + action_history appended twice.
-- **FIX**: Change the wrapper to NOT call `state.action_history.append` (the original already does at line 98). The wrapper should only _sse_broadcast + _log. The wrapper as written correctly does NOT call append — it's safe. Verify this.
+**Tab 1: General**
+- Port (SpinBox) — already exists
+- Auto-start server on launch (CheckBox) — exists
+- Show desktop notifications (CheckBox) — exists
+- Track clipboard history (CheckBox) — exists
+- Start minimized to tray (CheckBox) — exists
+- **NEW: Screenshot interval** (SpinBox, 0.5-10 sec, default 1.0)
+- **NEW: Action cooldown** (DoubleSpinBox, 0.05-1.0 sec, default 0.12)
+- **NEW: Max action history** (SpinBox, 100-10000, default 1000)
+- **NEW: Emergency hotkey combo** (QLineEdit, default "Ctrl+Alt+Shift")
+- **NEW: Theme** (ComboBox: Dark, Light, System — dark for now)
+- Save button (exists) — update to save ALL new fields
 
-### 6. `_execute_action` thread safety — `hermes_coagent.py` line 98
-- **ISSUE**: `state.action_history.append(...)` happens AFTER the lock is released (the `finally` block at line 96-97 only handles `state.last_action_time`). The `action_history.append` is technically outside the `with state.input_lock:` block. In theory, two concurrent API calls could interleave the append. This is unlikely to cause visible problems but it's a minor race.
-- **FIX (optional)**: Move the append inside the `try` block before `finally`.
+**Tab 2: Notifications**
+- **Enable notifications** (CheckBox) — exists
+- **Notify on all actions** (CheckBox, default true)
+- **Notify on errors only** (CheckBox, default false)
+- **Notification duration** (SpinBox, 1-10 seconds, default 3)
+- **Show clipboard change notifications** (CheckBox, default false)
+- **Show server status changes** (CheckBox, default true)
+- **Notification position** (ComboBox: Bottom-right, Bottom-left, Top-right, Top-left — default Bottom-right)
 
-### 7. `/events` SSE may hang on disconnect — `hermes_coagent.py` lines 612-630
-- **ISSUE**: The SSE generator uses `GeneratorExit` to clean up. Flask's dev server handles this, but in production (Waitress/Gunicorn) it might not. Verify the dead client removal works correctly.
-- **FIX (optional)**: Add `@app.after_request` to clean up on connection close. Or wrap the generator in a context manager.
+**Tab 3: Quick Actions** — EXISTS, keep it. The Add/Remove flow is fine.
 
-### 8. Missing `if __name__ == "__main__"` guard — `coagent_tray.py`
-- **ISSUE**: Line 569-570 runs `CoAgentTray()` at module level inside `if __name__ == "__main__"`. ✔️ This is correct. But if someone imports the file accidentally, it won't crash. Verify.
+**Tab 4: Macros & Recording**
+- **Default macro name prefix** (LineEdit, default "macro_")
+- **Record mouse moves** (CheckBox, default true)
+- **Record clicks only** (CheckBox, default false)
+- **Max recording duration** (SpinBox, 10-600 seconds, default 120)
+- **Stop recording hotkey** (LineEdit, default "F9")
 
-### 9. File explorer `.gitignore` — not a bug but verify
-- **CHECK**: The `.gitignore` should exclude `screenshots/`, `macros/`, `tunnel.log`, `tray_config.json`, `__pycache__/`, `*.pyc`. Verify the existing `.gitignore` covers these.
+**Tab 5: Tunnel & Remote**
+- **Auto-start tunnel on server start** (CheckBox, default false)
+- **Tunnel log lines** (SpinBox, 100-5000, default 2000)
+- **Show QR on tunnel start** (CheckBox, default true)
+- **Restart tunnel on disconnect** (CheckBox, default false)
 
-### 10. Tray config persistence — `tray_config.json`
-- **ISSUE**: The `Config` class catches ALL exceptions silently (`except: pass`) during load. If the JSON is corrupted, settings silently reset to defaults. This is acceptable but the save operation writes atomically — verify.
+**Tab 6: Home Automation / AI**
+- **Show keepalive actions in log** (CheckBox, default true)
+- **Auto-reconnect to Home Assistant** (CheckBox, default true)
+- **Max TTS message length** (SpinBox, 100-5000 chars, default 500)
 
-## Verification Steps
+**Tab 7: About** — EXISTS, keep it. Show version, GitHub link, build date.
 
-After fixing all issues:
+**MUST: All settings persist to `tray_config.json`** with the existing atomic-save pattern (write .tmp, then replace).
+
+**MUST: Add new DEFAULT_CONFIG keys** for all the new fields.
+
+### 3. Performance Fixes Summary
+
+| Issue | Fix |
+|---|---|
+| Right-click menu rebuilds entire tree | Build once, update only dynamic items |
+| Clipboard poll every 3s (COM call) | Use QClipboard.changed signal OR poll every 30s |
+| API calls on Qt main thread | Move stats/notification polling to background thread |
+| Stats timer fires even when menu not open | Only fire stats timer when `_stats_timer.isActive()` during right-click. OR keep it running but make the API call non-blocking |
+| Config read on every menu build | Config is already in memory via singleton |
+
+### 4. Verification
+
+After all changes:
 
 ```powershell
-# 1. Syntax check
-python -c "import py_compile; py_compile.compile(r'C:\Users\Admin\Desktop\Hermes CoAgent\hermes_coagent.py', doraise=True); print('server OK')"
-python -c "import py_compile; py_compile.compile(r'C:\Users\Admin\Desktop\Hermes CoAgent\coagent_tray.py', doraise=True); print('tray OK')"
+# Syntax
+python -c "import py_compile; py_compile.compile(r'C:\Users\Admin\Desktop\Hermes CoAgent\coagent_tray.py', doraise=True); print('OK')"
 
-# 2. Start server on port 9123
-cd "C:\Users\Admin\Desktop\Hermes CoAgent"
-start /B python hermes_coagent.py 9123 > server.log 2>&1
+# Launch tray, right-click instantly
+start /B python coagent_tray.py
 timeout /t 3
+# Manually verify right-click latency < 500ms on next desktop session
 
-# 3. Test endpoints
-curl -s http://localhost:9123/ping
-curl -s http://localhost:9123/stats
-curl -s http://localhost:9123/logs
-curl -s http://localhost:9123/history
-
-# 4. Kill test server
+# Close tray
 taskkill /f /im python.exe
-
-# 5. Launch tray and verify it stays alive for 5 seconds
-start /B python coagent_tray.py > tray.log 2>&1
-timeout /t 3
-tasklist /fi "imagename eq python.exe"
 ```
 
-## Code Style Rules
-
-- **No Chinese or Unicode artifacts** in any file — Windows console can't display them.
-- **No async/await** — everything is synchronous thread-pool.
-- **No external network calls** except: `/tunnel/start` (Cloudflare) and `/app/run` (user commands).
-- **All path strings**: use raw strings or escaped backslashes for Windows compatibility.
-- All error handling: use bare `except:` (not `except Exception:`) ONLY at the outermost catch for user-facing APIs. Internal functions should catch specific exceptions.
-- **No `print()` to stdout** in the server (it conflicts with MCP mode). Use `_log()` instead.
-- **Tray app**: must launch from VBS wrapper, no cmd window visible.
-
-## Quick Actions Format (config example)
-
-```json
-{
-  "quick_actions": [
-    {"name": "Open Chrome", "command": "start chrome"},
-    {"name": "Take Screenshot", "command": "python screenshot.py"}
-  ]
-}
-```
-
-## Commit After Fixes
+### 5. Git Commit
 
 ```powershell
 cd "C:\Users\Admin\Desktop\Hermes CoAgent"
 git add -A
-git commit -m "v3.1.1 — Codex audit fixes: tray init ordering, notification polling, thread safety"
+git commit -m "v3.2 - Full settings overhaul + right-click speed optimization"
 git push
 ```

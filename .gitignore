@@ -5,4 +5,6 @@ macros/
 screenshots/
 *.log
 tunnel.log
+tray_config.json
+tray_config.json.tmp
 *.apk

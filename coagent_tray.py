@@ -1,4 +1,4 @@
-# Hermes CoAgent Tray v2 — Full Feature System Tray App
+# Hermes CoAgent Tray v2 - Full Feature System Tray App
 # Icon by the clock with start/stop/dashboard/emergency/settings/pairing/notifications/clipboard/logs/quick-actions/auto-update
 
 import sys, os, json, subprocess, threading, time, webbrowser, queue, urllib.request
@@ -10,7 +10,8 @@ from PySide6.QtWidgets import (
     QApplication, QSystemTrayIcon, QMenu, QMessageBox, QDialog, QVBoxLayout,
     QHBoxLayout, QLabel, QPushButton, QLineEdit, QCheckBox, QGroupBox,
     QTabWidget, QWidget, QSpinBox, QTextEdit, QListWidget, QListWidgetItem,
-    QInputDialog, QDialogButtonBox, QScrollArea
+    QInputDialog, QDialogButtonBox, QScrollArea, QDoubleSpinBox, QComboBox,
+    QFormLayout
 )
 from PySide6.QtGui import QIcon, QAction, QFont, QPixmap, QPainter, QColor, QPen, QBrush, QClipboard
 from PySide6.QtCore import QTimer, Signal, QObject, Qt
@@ -20,12 +21,41 @@ DEFAULT_PYTHON = Path(r"C:\Users\Admin\AppData\Local\Programs\Python\Python313\p
 PYTHON = str(DEFAULT_PYTHON if DEFAULT_PYTHON.exists() else Path(sys.executable))
 CONFIG_FILE = COAGENT_DIR / "tray_config.json"
 SERVER_SCRIPT = COAGENT_DIR / "hermes_coagent.py"
-VERSION = "v3.1"
+VERSION = "v3.2"
+BUILD_DATE = "2026-06-14"
+GITHUB_URL = "https://github.com/Predator04/Hermes-CoAgent"
 
 DEFAULT_CONFIG = {
-    "port": 9123, "autostart_server": True, "minimize_to_tray": True,
-    "start_minimized": True, "quick_actions": [],
-    "show_notifications": True, "clipboard_history": True
+    "port": 9123,
+    "autostart_server": True,
+    "minimize_to_tray": True,
+    "start_minimized": True,
+    "quick_actions": [],
+    "show_notifications": True,
+    "clipboard_history": True,
+    "screenshot_interval": 1.0,
+    "action_cooldown": 0.12,
+    "max_action_history": 1000,
+    "emergency_hotkey_combo": "Ctrl+Alt+Shift",
+    "theme": "Dark",
+    "notify_all_actions": True,
+    "notify_errors_only": False,
+    "notification_duration": 3,
+    "notify_clipboard_changes": False,
+    "notify_server_status_changes": True,
+    "notification_position": "Bottom-right",
+    "macro_name_prefix": "macro_",
+    "record_mouse_moves": True,
+    "record_clicks_only": False,
+    "max_recording_duration": 120,
+    "stop_recording_hotkey": "F9",
+    "auto_start_tunnel_on_server_start": False,
+    "tunnel_log_lines": 2000,
+    "show_qr_on_tunnel_start": True,
+    "restart_tunnel_on_disconnect": False,
+    "show_keepalive_actions": True,
+    "home_assistant_auto_reconnect": True,
+    "max_tts_message_length": 500,
 }
 
 class Config:
@@ -100,50 +130,236 @@ def _api(method, path, body=None, timeout=5):
     except Exception as e:
         return {"_error": str(e)}
 
+class ApiResultBridge(QObject):
+    result = Signal(str, object)
+
 # === SETTINGS ===
 class SettingsDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Hermes CoAgent Settings")
-        self.setMinimumSize(500, 450)
+        self.setMinimumSize(640, 560)
         layout = QVBoxLayout()
         tabs = QTabWidget()
         tabs.addTab(self._general_tab(), "General")
+        tabs.addTab(self._notifications_tab(), "Notifications")
         tabs.addTab(self._quick_actions_tab(), "Quick Actions")
+        tabs.addTab(self._macros_tab(), "Macros & Recording")
+        tabs.addTab(self._tunnel_tab(), "Tunnel & Remote")
+        tabs.addTab(self._home_ai_tab(), "Home Automation / AI")
         tabs.addTab(self._about_tab(), "About")
         layout.addWidget(tabs)
+
+        self.notif_cb.toggled.connect(self.enable_notifications_cb.setChecked)
+        self.enable_notifications_cb.toggled.connect(self.notif_cb.setChecked)
+
+        btn_row = QHBoxLayout()
+        save_btn = QPushButton("Save Settings")
+        save_btn.clicked.connect(self._save_all)
         close_btn = QPushButton("Close")
         close_btn.clicked.connect(self.accept)
-        layout.addWidget(close_btn)
+        btn_row.addWidget(save_btn)
+        btn_row.addStretch()
+        btn_row.addWidget(close_btn)
+        layout.addLayout(btn_row)
         self.setLayout(layout)
 
+    def _scroll_tab(self, layout):
+        layout.addStretch()
+        inner = QWidget()
+        inner.setLayout(layout)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(inner)
+        return scroll
+
+    def _combo(self, key, options):
+        box = QComboBox()
+        box.addItems(options)
+        value = config[key] or DEFAULT_CONFIG[key]
+        box.setCurrentText(value if value in options else DEFAULT_CONFIG[key])
+        return box
+
     def _general_tab(self):
-        tab = QWidget(); layout = QVBoxLayout()
+        layout = QVBoxLayout()
         pg = QGroupBox("Server Port")
         pl = QHBoxLayout()
         pl.addWidget(QLabel("Port:"))
         self.port_input = QSpinBox(); self.port_input.setRange(1024, 65535); self.port_input.setValue(config["port"])
         pl.addWidget(self.port_input); pg.setLayout(pl); layout.addWidget(pg)
+
         self.autostart_cb = QCheckBox("Auto-start server on launch")
         self.autostart_cb.setChecked(config["autostart_server"]); layout.addWidget(self.autostart_cb)
-        self.notif_cb = QCheckBox("Show desktop notifications for AI actions")
+        self.notif_cb = QCheckBox("Show desktop notifications")
         self.notif_cb.setChecked(config["show_notifications"]); layout.addWidget(self.notif_cb)
         self.clip_cb = QCheckBox("Track clipboard history")
         self.clip_cb.setChecked(config["clipboard_history"]); layout.addWidget(self.clip_cb)
         self.min_cb = QCheckBox("Start minimized to tray")
         self.min_cb.setChecked(config["start_minimized"]); layout.addWidget(self.min_cb)
-        save_btn = QPushButton("Save Settings")
-        save_btn.clicked.connect(lambda: self._save_general())
-        layout.addWidget(save_btn); layout.addStretch()
-        tab.setLayout(layout); return tab
 
-    def _save_general(self):
+        form = QFormLayout()
+        self.screenshot_interval_input = QDoubleSpinBox()
+        self.screenshot_interval_input.setRange(0.5, 10.0)
+        self.screenshot_interval_input.setSingleStep(0.5)
+        self.screenshot_interval_input.setDecimals(2)
+        self.screenshot_interval_input.setSuffix(" sec")
+        self.screenshot_interval_input.setValue(float(config["screenshot_interval"]))
+        form.addRow("Screenshot interval:", self.screenshot_interval_input)
+
+        self.action_cooldown_input = QDoubleSpinBox()
+        self.action_cooldown_input.setRange(0.05, 1.0)
+        self.action_cooldown_input.setSingleStep(0.01)
+        self.action_cooldown_input.setDecimals(2)
+        self.action_cooldown_input.setSuffix(" sec")
+        self.action_cooldown_input.setValue(float(config["action_cooldown"]))
+        form.addRow("Action cooldown:", self.action_cooldown_input)
+
+        self.max_action_history_input = QSpinBox()
+        self.max_action_history_input.setRange(100, 10000)
+        self.max_action_history_input.setSingleStep(100)
+        self.max_action_history_input.setValue(int(config["max_action_history"]))
+        form.addRow("Max action history:", self.max_action_history_input)
+
+        self.emergency_hotkey_input = QLineEdit(str(config["emergency_hotkey_combo"]))
+        form.addRow("Emergency hotkey combo:", self.emergency_hotkey_input)
+
+        self.theme_combo = self._combo("theme", ["Dark", "Light", "System"])
+        form.addRow("Theme:", self.theme_combo)
+
+        layout.addLayout(form)
+        return self._scroll_tab(layout)
+
+    def _notifications_tab(self):
+        layout = QVBoxLayout()
+        self.enable_notifications_cb = QCheckBox("Enable notifications")
+        self.enable_notifications_cb.setChecked(config["show_notifications"]); layout.addWidget(self.enable_notifications_cb)
+        self.notify_all_actions_cb = QCheckBox("Notify on all actions")
+        self.notify_all_actions_cb.setChecked(config["notify_all_actions"]); layout.addWidget(self.notify_all_actions_cb)
+        self.notify_errors_only_cb = QCheckBox("Notify on errors only")
+        self.notify_errors_only_cb.setChecked(config["notify_errors_only"]); layout.addWidget(self.notify_errors_only_cb)
+
+        form = QFormLayout()
+        self.notification_duration_input = QSpinBox()
+        self.notification_duration_input.setRange(1, 10)
+        self.notification_duration_input.setSuffix(" sec")
+        self.notification_duration_input.setValue(int(config["notification_duration"]))
+        form.addRow("Notification duration:", self.notification_duration_input)
+
+        self.notify_clipboard_changes_cb = QCheckBox("Show clipboard change notifications")
+        self.notify_clipboard_changes_cb.setChecked(config["notify_clipboard_changes"])
+        form.addRow("", self.notify_clipboard_changes_cb)
+
+        self.notify_server_status_changes_cb = QCheckBox("Show server status changes")
+        self.notify_server_status_changes_cb.setChecked(config["notify_server_status_changes"])
+        form.addRow("", self.notify_server_status_changes_cb)
+
+        self.notification_position_combo = self._combo(
+            "notification_position",
+            ["Bottom-right", "Bottom-left", "Top-right", "Top-left"]
+        )
+        form.addRow("Notification position:", self.notification_position_combo)
+        layout.addLayout(form)
+        return self._scroll_tab(layout)
+
+    def _macros_tab(self):
+        layout = QVBoxLayout()
+        form = QFormLayout()
+        self.macro_name_prefix_input = QLineEdit(str(config["macro_name_prefix"]))
+        form.addRow("Default macro name prefix:", self.macro_name_prefix_input)
+
+        self.record_mouse_moves_cb = QCheckBox("Record mouse moves")
+        self.record_mouse_moves_cb.setChecked(config["record_mouse_moves"])
+        form.addRow("", self.record_mouse_moves_cb)
+
+        self.record_clicks_only_cb = QCheckBox("Record clicks only")
+        self.record_clicks_only_cb.setChecked(config["record_clicks_only"])
+        form.addRow("", self.record_clicks_only_cb)
+
+        self.max_recording_duration_input = QSpinBox()
+        self.max_recording_duration_input.setRange(10, 600)
+        self.max_recording_duration_input.setSuffix(" sec")
+        self.max_recording_duration_input.setValue(int(config["max_recording_duration"]))
+        form.addRow("Max recording duration:", self.max_recording_duration_input)
+
+        self.stop_recording_hotkey_input = QLineEdit(str(config["stop_recording_hotkey"]))
+        form.addRow("Stop recording hotkey:", self.stop_recording_hotkey_input)
+        layout.addLayout(form)
+        return self._scroll_tab(layout)
+
+    def _tunnel_tab(self):
+        layout = QVBoxLayout()
+        form = QFormLayout()
+        self.auto_start_tunnel_cb = QCheckBox("Auto-start tunnel on server start")
+        self.auto_start_tunnel_cb.setChecked(config["auto_start_tunnel_on_server_start"])
+        form.addRow("", self.auto_start_tunnel_cb)
+
+        self.tunnel_log_lines_input = QSpinBox()
+        self.tunnel_log_lines_input.setRange(100, 5000)
+        self.tunnel_log_lines_input.setSingleStep(100)
+        self.tunnel_log_lines_input.setValue(int(config["tunnel_log_lines"]))
+        form.addRow("Tunnel log lines:", self.tunnel_log_lines_input)
+
+        self.show_qr_on_tunnel_start_cb = QCheckBox("Show QR on tunnel start")
+        self.show_qr_on_tunnel_start_cb.setChecked(config["show_qr_on_tunnel_start"])
+        form.addRow("", self.show_qr_on_tunnel_start_cb)
+
+        self.restart_tunnel_on_disconnect_cb = QCheckBox("Restart tunnel on disconnect")
+        self.restart_tunnel_on_disconnect_cb.setChecked(config["restart_tunnel_on_disconnect"])
+        form.addRow("", self.restart_tunnel_on_disconnect_cb)
+        layout.addLayout(form)
+        return self._scroll_tab(layout)
+
+    def _home_ai_tab(self):
+        layout = QVBoxLayout()
+        form = QFormLayout()
+        self.show_keepalive_actions_cb = QCheckBox("Show keepalive actions in log")
+        self.show_keepalive_actions_cb.setChecked(config["show_keepalive_actions"])
+        form.addRow("", self.show_keepalive_actions_cb)
+
+        self.home_assistant_auto_reconnect_cb = QCheckBox("Auto-reconnect to Home Assistant")
+        self.home_assistant_auto_reconnect_cb.setChecked(config["home_assistant_auto_reconnect"])
+        form.addRow("", self.home_assistant_auto_reconnect_cb)
+
+        self.max_tts_message_length_input = QSpinBox()
+        self.max_tts_message_length_input.setRange(100, 5000)
+        self.max_tts_message_length_input.setSuffix(" chars")
+        self.max_tts_message_length_input.setValue(int(config["max_tts_message_length"]))
+        form.addRow("Max TTS message length:", self.max_tts_message_length_input)
+        layout.addLayout(form)
+        return self._scroll_tab(layout)
+
+    def _save_all(self):
         old_port = config["port"]
-        config["port"] = self.port_input.value()
-        config["autostart_server"] = self.autostart_cb.isChecked()
-        config["show_notifications"] = self.notif_cb.isChecked()
-        config["clipboard_history"] = self.clip_cb.isChecked()
-        config["start_minimized"] = self.min_cb.isChecked()
+        config.data.update({
+            "port": self.port_input.value(),
+            "autostart_server": self.autostart_cb.isChecked(),
+            "show_notifications": self.enable_notifications_cb.isChecked(),
+            "clipboard_history": self.clip_cb.isChecked(),
+            "start_minimized": self.min_cb.isChecked(),
+            "screenshot_interval": self.screenshot_interval_input.value(),
+            "action_cooldown": self.action_cooldown_input.value(),
+            "max_action_history": self.max_action_history_input.value(),
+            "emergency_hotkey_combo": self.emergency_hotkey_input.text().strip() or DEFAULT_CONFIG["emergency_hotkey_combo"],
+            "theme": self.theme_combo.currentText(),
+            "notify_all_actions": self.notify_all_actions_cb.isChecked(),
+            "notify_errors_only": self.notify_errors_only_cb.isChecked(),
+            "notification_duration": self.notification_duration_input.value(),
+            "notify_clipboard_changes": self.notify_clipboard_changes_cb.isChecked(),
+            "notify_server_status_changes": self.notify_server_status_changes_cb.isChecked(),
+            "notification_position": self.notification_position_combo.currentText(),
+            "macro_name_prefix": self.macro_name_prefix_input.text().strip() or DEFAULT_CONFIG["macro_name_prefix"],
+            "record_mouse_moves": self.record_mouse_moves_cb.isChecked(),
+            "record_clicks_only": self.record_clicks_only_cb.isChecked(),
+            "max_recording_duration": self.max_recording_duration_input.value(),
+            "stop_recording_hotkey": self.stop_recording_hotkey_input.text().strip() or DEFAULT_CONFIG["stop_recording_hotkey"],
+            "auto_start_tunnel_on_server_start": self.auto_start_tunnel_cb.isChecked(),
+            "tunnel_log_lines": self.tunnel_log_lines_input.value(),
+            "show_qr_on_tunnel_start": self.show_qr_on_tunnel_start_cb.isChecked(),
+            "restart_tunnel_on_disconnect": self.restart_tunnel_on_disconnect_cb.isChecked(),
+            "show_keepalive_actions": self.show_keepalive_actions_cb.isChecked(),
+            "home_assistant_auto_reconnect": self.home_assistant_auto_reconnect_cb.isChecked(),
+            "max_tts_message_length": self.max_tts_message_length_input.value(),
+        })
         config.save()
         QMessageBox.information(self, "Settings", "Settings saved!")
         if config["port"] != old_port:
@@ -164,7 +380,7 @@ class SettingsDialog(QDialog):
     def _refresh_qa_list(self):
         self.qa_list.clear()
         for i, qa in enumerate(config["quick_actions"]):
-            item = QListWidgetItem(f"{qa.get('name','?')} → {qa.get('command','?')}")
+            item = QListWidgetItem(f"{qa.get('name','?')} -> {qa.get('command','?')}")
             item.setData(Qt.UserRole, i)
             self.qa_list.addItem(item)
 
@@ -190,13 +406,16 @@ class SettingsDialog(QDialog):
 
     def _about_tab(self):
         tab = QWidget(); layout = QVBoxLayout()
+        dashboard_url = f"http://localhost:{config['port']}/"
         about = QLabel(
             f"<h2>Hermes CoAgent {VERSION}</h2>"
             "<p><b>Ultimate Desktop Co-Pilot</b></p>"
             "<p>Control your PC from any browser, chat app, or AI agent.</p>"
             "<p>Runs alongside you with 150ms burst-mode input.</p><hr>"
-            "<p>Dashboard: <a href='http://localhost:9123/'>http://localhost:9123/</a></p>"
-            "<p>Emergency: Ctrl+Alt+Shift</p><hr>"
+            f"<p>Build date: {BUILD_DATE}</p>"
+            f"<p>GitHub: <a href='{GITHUB_URL}'>{GITHUB_URL}</a></p>"
+            f"<p>Dashboard: <a href='{dashboard_url}'>{dashboard_url}</a></p>"
+            f"<p>Emergency: {config['emergency_hotkey_combo']}</p><hr>"
             "<p>Edge Foundry</p>"
         )
         about.setWordWrap(True); about.setOpenExternalLinks(True)
@@ -288,6 +507,9 @@ class PairingDialog(QDialog):
         self._url = url
         self.status_label.setText("Your desktop is now accessible from anywhere:")
         self.url_label.setText(url)
+        if not config["show_qr_on_tunnel_start"]:
+            self.qr_label.setText("")
+            return
         try:
             import qrcode
             from io import BytesIO
@@ -311,22 +533,29 @@ class CoAgentTray:
         self.app.setApplicationName("Hermes CoAgent")
         self.app.setQuitOnLastWindowClosed(False)
 
+        self._status = "stopped"
+        self._api_bridge = ApiResultBridge()
+        self._api_bridge.result.connect(self._handle_api_result)
+        self._api_inflight = set()
+
         self.server = ServerManager()
         self.server.status_changed.connect(self._on_status)
 
         self.tray = QSystemTrayIcon()
-        self.tray.setToolTip("Hermes CoAgent — Starting...")
+        self.tray.setToolTip("Hermes CoAgent - Starting...")
         self._update_icon("stopped")
         self.tray.activated.connect(self._on_click)
 
         # Clipboard history (initialize before building menu)
         self._clip_history = []
         self._last_clip = ""
+        self._clipboard = QApplication.clipboard()
+        self._clipboard.dataChanged.connect(self._on_clipboard_changed)
 
         self.menu = QMenu()
         self._build_menu()
+        self.menu.aboutToShow.connect(self._refresh_menu_dynamic)
         self.tray.setContextMenu(self.menu)
-        self._status = "stopped"
 
         # Stats refresh
         self._stats_timer = QTimer()
@@ -370,7 +599,9 @@ class CoAgentTray:
         self.tray.setIcon(QIcon(pm))
 
     def _build_menu(self):
-        self.menu.clear()
+        if getattr(self, "_menu_built", False):
+            return
+        self._menu_built = True
         self.status_action = QAction(f"Status: Connecting...")
         self.status_action.setEnabled(False)
         self.menu.addAction(self.status_action)
@@ -448,10 +679,10 @@ class CoAgentTray:
         for qa in config["quick_actions"]:
             a = QAction(qa.get("name", "?"))
             cmd = qa.get("command", "")
-            a.triggered.connect(lambda checked, c=cmd: _api("POST", "/app/run", {"cmd": c, "timeout": 10}))
+            a.triggered.connect(lambda checked, c=cmd: self._run_quick_action(c))
             self._qa_menu.addAction(a)
         if not config["quick_actions"]:
-            a = QAction("(No quick actions — add in Settings)")
+            a = QAction("(No quick actions - add in Settings)")
             a.setEnabled(False)
             self._qa_menu.addAction(a)
 
@@ -467,13 +698,25 @@ class CoAgentTray:
             a.setEnabled(False)
             self._clip_menu.addAction(a)
 
+    def _refresh_menu_dynamic(self):
+        t = self._status.title() if "error" not in self._status else self._status
+        self.status_action.setText(f"Status: {t}")
+        self.start_stop_action.setText("Stop Server" if self.server.is_running() else "Start Server")
+        self._refresh_stats()
+
     def _on_status(self, status):
+        previous = self._status
         self._status = status
         t = status.title() if "error" not in status else status
-        self.tray.setToolTip(f"Hermes CoAgent — {t}")
+        self.tray.setToolTip(f"Hermes CoAgent - {t}")
         self.status_action.setText(f"Status: {t}")
         self.start_stop_action.setText("Stop Server" if status == "running" else "Start Server")
         self._update_icon(status)
+        if previous != status and config["notify_server_status_changes"]:
+            icon = QSystemTrayIcon.Warning if "error" in status else QSystemTrayIcon.Information
+            self._show_message("Hermes CoAgent", f"Server {t}", icon)
+        if previous != status and status == "running" and config["auto_start_tunnel_on_server_start"]:
+            QTimer.singleShot(1500, self._auto_start_tunnel)
 
     def _toggle(self):
         if self.server.is_running(): self.server.stop()
@@ -483,36 +726,15 @@ class CoAgentTray:
         if not self.server.is_running():
             self.stats_action.setText("")
             return
-        r = _api("GET", "/stats")
-        if "_error" not in r:
-            mem = r.get("memory_mb", "?")
-            acts = r.get("actions_today", 0)
-            uptime = r.get("uptime_seconds", 0)
-            h = uptime // 3600; m = (uptime % 3600) // 60
-            self.stats_action.setText(f"Actions: {acts}  |  Mem: {mem} MB  |  Up: {h}h {m}m")
+        self._api_async("stats", "GET", "/stats", timeout=2)
 
     def _poll_notifications(self):
         """Poll /events style: check history count for new actions."""
         if not config["show_notifications"] or not self.server.is_running():
             return
-        r = _api("GET", "/history?limit=1")
-        if "_error" in r: return
-        actions = r.get("actions", [])
-        total = r.get("total")
-        if not isinstance(total, int):
-            total = len(actions)
-        if self._last_notif_count is None:
-            self._last_notif_count = total
-        elif total > self._last_notif_count:
-            if actions:
-                last = actions[-1]
-                msg = f"{last.get('type','?')}: {json.dumps(last.get('data',{}))[:60]}"
-                self.tray.showMessage("CoAgent Action", msg, QSystemTrayIcon.Information, 3000)
-            self._last_notif_count = total
-        elif total < self._last_notif_count:
-            self._last_notif_count = total
+        self._api_async("notifications", "GET", "/history?limit=1", timeout=2)
 
-        # Clipboard history polling
+    def _on_clipboard_changed(self):
         if config["clipboard_history"]:
             try:
                 current = QApplication.clipboard().text()
@@ -522,15 +744,95 @@ class CoAgentTray:
                         self._clip_history = self._clip_history[-50:]
                     self._last_clip = current
                     self._build_clip_menu()
+                    if config["notify_clipboard_changes"]:
+                        preview = current[:60] + ("..." if len(current) > 60 else "")
+                        self._show_message("Clipboard Updated", preview, QSystemTrayIcon.Information)
             except: pass
 
     def _emergency(self, action):
-        r = _api("POST", f"/emergency/{action}")
-        if "_error" not in r:
-            msg = "Emergency Stop activated!" if action == "stop" else "Input re-enabled"
-            self.tray.showMessage("Hermes CoAgent", msg, QSystemTrayIcon.Information, 3000)
-        else:
-            self.tray.showMessage("Hermes CoAgent", f"Error: {r['_error']}", QSystemTrayIcon.Warning, 3000)
+        self._api_async(f"emergency:{action}", "POST", f"/emergency/{action}")
+
+    def _run_quick_action(self, cmd):
+        key = f"quick-action:{time.monotonic_ns()}"
+        self._api_async(key, "POST", "/app/run", {"cmd": cmd, "timeout": 10}, timeout=12)
+
+    def _auto_start_tunnel(self):
+        if self.server.is_running():
+            self._api_async("tunnel-autostart", "POST", "/tunnel/start", timeout=15)
+
+    def _api_async(self, key, method, path, body=None, timeout=5):
+        if key in self._api_inflight:
+            return
+        self._api_inflight.add(key)
+
+        def worker():
+            result = _api(method, path, body, timeout)
+            self._api_bridge.result.emit(key, result)
+
+        threading.Thread(target=worker, name=f"CoAgentAPI-{key}", daemon=True).start()
+
+    def _handle_api_result(self, key, result):
+        self._api_inflight.discard(key)
+        if key == "stats":
+            self._handle_stats_result(result)
+        elif key == "notifications":
+            self._handle_notifications_result(result)
+        elif key.startswith("emergency:"):
+            action = key.split(":", 1)[1]
+            if "_error" not in result:
+                msg = "Emergency Stop activated!" if action == "stop" else "Input re-enabled"
+                self._show_message("Hermes CoAgent", msg, QSystemTrayIcon.Information)
+            else:
+                self._show_message("Hermes CoAgent", f"Error: {result['_error']}", QSystemTrayIcon.Warning)
+        elif key == "tunnel-autostart" and "_error" in result:
+            self._show_message("Tunnel", f"Auto-start failed: {result['_error']}", QSystemTrayIcon.Warning)
+
+    def _handle_stats_result(self, result):
+        if "_error" in result:
+            return
+        mem = result.get("memory_mb", "?")
+        acts = result.get("actions_today", 0)
+        uptime = result.get("uptime_seconds", 0)
+        h = uptime // 3600
+        m = (uptime % 3600) // 60
+        self.stats_action.setText(f"Actions: {acts}  |  Mem: {mem} MB  |  Up: {h}h {m}m")
+
+    def _handle_notifications_result(self, result):
+        if "_error" in result:
+            return
+        actions = result.get("actions", [])
+        total = result.get("total")
+        if not isinstance(total, int):
+            total = len(actions)
+        if self._last_notif_count is None:
+            self._last_notif_count = total
+            return
+        if total < self._last_notif_count:
+            self._last_notif_count = total
+            return
+        if total <= self._last_notif_count:
+            return
+
+        if actions:
+            last = actions[-1]
+            is_error = self._action_is_error(last)
+            should_notify = config["notify_errors_only"] and is_error
+            should_notify = should_notify or (config["notify_all_actions"] and not config["notify_errors_only"])
+            if should_notify:
+                msg = f"{last.get('type','?')}: {json.dumps(last.get('data',{}))[:60]}"
+                icon = QSystemTrayIcon.Warning if is_error else QSystemTrayIcon.Information
+                self._show_message("CoAgent Action", msg, icon)
+        self._last_notif_count = total
+
+    def _action_is_error(self, action):
+        text = f"{action.get('type', '')} {json.dumps(action.get('data', {}))}".lower()
+        return any(token in text for token in ("error", "failed", "exception", "traceback"))
+
+    def _show_message(self, title, message, icon=QSystemTrayIcon.Information):
+        if not config["show_notifications"]:
+            return
+        duration_ms = int(config["notification_duration"]) * 1000
+        self.tray.showMessage(title, message, icon, duration_ms)
 
     def _show_pairing(self):
         dlg = PairingDialog()
@@ -544,6 +846,8 @@ class CoAgentTray:
         dlg = SettingsDialog()
         dlg.exec()
         self._build_qa_menu()
+        self._build_clip_menu()
+        self._refresh_menu_dynamic()
 
     def _check_updates(self):
         self.tray.showMessage(
