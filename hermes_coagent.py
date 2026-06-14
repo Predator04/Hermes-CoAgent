@@ -7,6 +7,7 @@ from pathlib import Path
 from datetime import datetime
 from dataclasses import dataclass, field
 from typing import List
+import ctypes
 
 os.environ["PYAUTOGUI_FAILSAFE"] = "false"
 import pyautogui
@@ -15,9 +16,6 @@ pyautogui.MINIMUM_DURATION = 0
 pyautogui.MINIMUM_SLEEP = 0
 pyautogui.PAUSE = 0.01
 
-from flask import Flask, request, jsonify, send_file, Response
-app = Flask(__name__, static_folder=None)
-
 COAGENT_DIR = Path(__file__).parent.resolve()
 MACROS_DIR = COAGENT_DIR / "macros"
 SCREENSHOTS_DIR = COAGENT_DIR / "screenshots"
@@ -25,6 +23,40 @@ TUNNEL_LOG = COAGENT_DIR / "tunnel.log"
 PULSE_SCRIPT = COAGENT_DIR / "pulse_overlay.py"
 PULSE_LOG = COAGENT_DIR / "pulse_debug.log"
 SERVER_PORT = 9123
+
+# === SESSION CHECK — detect desktop access ===
+def _ensure_interactive_session():
+    """Detect if we can access the user desktop. If not, create a VBS launcher and exit."""
+    try:
+        pos = pyautogui.position()
+        if pos.x == 0 and pos.y == 0:
+            raise ValueError("Cursor at (0,0) — no desktop access")
+        return True
+    except Exception:
+        pass
+    # Create a VBS that launches us from the user's interactive desktop
+    import subprocess
+    pythonw = Path(sys.executable).with_name("pythonw.exe")
+    if not pythonw.exists():
+        pythonw = Path(sys.executable)
+    script = os.path.abspath(sys.argv[0])
+    port = sys.argv[1] if len(sys.argv) > 1 else str(SERVER_PORT)
+    vbs = COAGENT_DIR / "_relaunch.vbs"
+    vbs.write_text(
+        'CreateObject("WScript.Shell").Run "' + str(pythonw) + ' "' + script + '" ' + port + '", 0, False\n'
+        'Set fso = CreateObject("Scripting.FileSystemObject")\n'
+        'fso.DeleteFile "' + str(vbs) + '"\n'
+    )
+    subprocess.Popen(["cscript.exe", "//Nologo", str(vbs)],
+                     creationflags=subprocess.CREATE_NO_WINDOW)
+    sys.exit(0)
+
+# Relaunch if needed — skip if HERMES_RELAUNCHED is set to avoid loops
+if os.environ.get("HERMES_RELAUNCHED") != "1":
+    _ensure_interactive_session()
+
+from flask import Flask, request, jsonify, send_file, Response
+app = Flask(__name__, static_folder=None)
 MACROS_DIR.mkdir(exist_ok=True)
 SCREENSHOTS_DIR.mkdir(exist_ok=True)
 
