@@ -9,7 +9,7 @@ CreateObject("Wscript.Shell").Run "cmd /c cd /d `"$coagentDir`" && python hermes
 Set-Content -Path $scriptPath -Value $vbsContent -Force
 
 $trayVbsContent = @"
-CreateObject("Wscript.Shell").Run """C:\Users\Admin\AppData\Local\Programs\Python\Python313\python.exe"" ""$coagentDir\coagent_tray.py""", 0, False
+CreateObject("Wscript.Shell").Run """$coagentDir\start_tray.bat""", 0, False
 "@
 
 Set-Content -Path $trayScriptPath -Value $trayVbsContent -Force
@@ -31,8 +31,8 @@ $trayShortcut.WindowStyle = 7
 $trayShortcut.Description = "Hermes CoAgent Tray - System Tray Controls"
 $trayShortcut.Save()
 
-Write-Host "✅ Hermes CoAgent autostart installed"
-Write-Host "  → Server starts minimized on Windows boot"
-Write-Host "  → Tray icon appears by the clock"
-Write-Host "  → Dashboard at http://localhost:9123"
-Write-Host "  → Ctrl+Alt+Shift = emergency stop"
+Write-Host "[OK] Hermes CoAgent autostart installed"
+Write-Host "  -> Server starts minimized on Windows boot"
+Write-Host "  -> Tray icon appears by the clock"
+Write-Host "  -> Dashboard at http://localhost:9123"
+Write-Host "  -> Ctrl+Alt+Shift = emergency stop"

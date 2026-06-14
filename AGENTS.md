@@ -1,114 +1,68 @@
-# Hermes CoAgent — Codex: Optimize Tray Menu + Full Settings Overhaul
+# Hermes CoAgent — Debug Why Tray Icon Doesn't Appear
 
 ## File: `C:\Users\Admin\Desktop\Hermes CoAgent\coagent_tray.py`
 
-## Mission
+## The Problem
 
-### 1. Fix Right-Click Slowness (CRITICAL)
+When the tray app (`coagent_tray.py`) is launched via VBS or directly from WSL, the `pythonw.exe` process shows up in `Get-Process` but with **SessionId = blank** (Session 0), meaning it's running in the services session — not the user's interactive desktop session (Session 1). Therefore the `QSystemTrayIcon` never appears by the clock.
 
-Right-clicking the tray icon takes 2-5 seconds to show the menu. Fix all of these:
+- When user double-clicks `start_tray.bat` from their **Windows desktop**, it works because the batch file runs in the user's interactive session.
+- When launched from WSL or the VBS wrapper, it runs in Session 0 and no icon appears.
 
-**A) `_build_menu()` rebuilds EVERYTHING from scratch on every right-click** 
-- PySide6's `setContextMenu()` re-evaluates the menu lazily — but the code calls `self.menu.clear()` then rebuilds all actions, submenus, and clipboard items.
-- **FIX**: Build the static menu ONCE in `__init__()`. Only update dynamic parts (status text, stats, QA items, clipboard items) when they actually change — not on every menu open.
-- Solution: Set `contextMenuPolicy = Qt.CustomContextMenu` on the tray icon, or better: use `QMenu`'s `aboutToShow` signal to only refresh dynamic items instead of rebuilding the whole tree. OR the simplest approach: build the full menu once in `__init__`, hold references to dynamic QActions, and only call `.setText()` or `_build_qa_menu()` / `_build_clip_menu()` on timer ticks / status changes.
+## Your Task
 
-**B) Clipboard polling on every notification tick (3s) blocks UI**
-- The 3-second timer calls `QApplication.clipboard().text()` which is a cross-process COM call on Windows — SLOW.
-- **FIX**: Only poll clipboard every 30 seconds instead of every 3. Or use the `QClipboard.changed` signal instead of polling.
+Read `coagent_tray.py` and find EVERYTHING that could prevent the tray icon from appearing or functioning correctly. Fix ALL of them.
 
-**C) `_api()` calls block the UI thread**
-- Both `_refresh_stats()` and `_poll_notifications()` call `urllib.request.urlopen()` synchronously on the Qt main thread. If the server is slow or unreachable, it locks the UI.
-- **FIX**: Use `QThread` or `QTimer.singleShot(0, lambda: ...)` with a background thread for API calls. Easiest: wrap the API polling in a `threading.Thread` that emits signals back.
+### Known Issues to Investigate & Fix
 
-**D) Menu has too many separators and nested submenus**
-- 10+ permanent items + 2 dynamic submenus (QA, clipboard). On every right-click, all of this is re-evaluated.
-- **FIX**: Build menu structure ONCE. Keep references to status_action, stats_action, start_stop_action. Update their text with `.setText()` directly. For QA and clipboard submenus, only rebuild them when config changes or clipboard is updated — NOT on every menu show.
+1. **Session 0 isolation** — The `QApplication` needs to be aware of the desktop session. Can we force it to use the interactive session? Options:
+   - Use `pywin32` to enumerate sessions and launch a subprocess in Session 1
+   - OR: detect if we're in Session 0 and show a message (not great)
+   - OR: the simplest fix — just ensure the launch method correctly inherits the user session. The `.bat` file works. So maybe update the VBS to launch the `.bat` instead of directly calling pythonw?
 
-### 2. Full Settings Page (REQUIRED)
+2. **`QSystemTrayIcon.isSystemTrayAvailable()`** — Call this after creating the tray. If it returns False, show a message box or log why.
 
-The current Settings dialog has 3 tabs (General, Quick Actions, About). Build a **proper** settings page with ALL the following tabs:
+3. **`QApplication.setQuitOnLastWindowClosed(False)`** — Already set at line 313. But verify it's actually being called before `self.tray.show()`.
 
-**Tab 1: General**
-- Port (SpinBox) — already exists
-- Auto-start server on launch (CheckBox) — exists
-- Show desktop notifications (CheckBox) — exists
-- Track clipboard history (CheckBox) — exists
-- Start minimized to tray (CheckBox) — exists
-- **NEW: Screenshot interval** (SpinBox, 0.5-10 sec, default 1.0)
-- **NEW: Action cooldown** (DoubleSpinBox, 0.05-1.0 sec, default 0.12)
-- **NEW: Max action history** (SpinBox, 100-10000, default 1000)
-- **NEW: Emergency hotkey combo** (QLineEdit, default "Ctrl+Alt+Shift")
-- **NEW: Theme** (ComboBox: Dark, Light, System — dark for now)
-- Save button (exists) — update to save ALL new fields
+4. **Missing `app.setApplicationName("Hermes CoAgent")`** — Already set. But some Windows tray implementations need `app.setOrganizationName("Edge Foundry")` too.
 
-**Tab 2: Notifications**
-- **Enable notifications** (CheckBox) — exists
-- **Notify on all actions** (CheckBox, default true)
-- **Notify on errors only** (CheckBox, default false)
-- **Notification duration** (SpinBox, 1-10 seconds, default 3)
-- **Show clipboard change notifications** (CheckBox, default false)
-- **Show server status changes** (CheckBox, default true)
-- **Notification position** (ComboBox: Bottom-right, Bottom-left, Top-right, Top-left — default Bottom-right)
+5. **Icon not setting correctly** — The `_update_icon()` method draws a colored circle programmatically. But `QSystemTrayIcon.setIcon()` requires a valid `QIcon` with a non-null `QPixmap`. Check if the 32x32 pixmap is actually being rendered. Add a fallback to use a built-in system icon (`QIcon.fromTheme`) or a stock icon.
 
-**Tab 3: Quick Actions** — EXISTS, keep it. The Add/Remove flow is fine.
+6. **`QMenu` never gets shown because `aboutToShow` is miswired** — Line 557: `self.menu.aboutToShow.connect(self._refresh_menu_dynamic)`. But `_refresh_menu_dynamic` calls `self._refresh_stats()` which calls `self._api_async()`. If the server isn't running yet (first launch, autostart takes 1 second), this might cause an error that silently breaks the menu. Wrap in try/except.
 
-**Tab 4: Macros & Recording**
-- **Default macro name prefix** (LineEdit, default "macro_")
-- **Record mouse moves** (CheckBox, default true)
-- **Record clicks only** (CheckBox, default false)
-- **Max recording duration** (SpinBox, 10-600 seconds, default 120)
-- **Stop recording hotkey** (LineEdit, default "F9")
+7. **Clipboard signal in __init__** — Line 553: `self._clipboard.dataChanged.connect(self._on_clipboard_changed)` — this connects to the clipboard `dataChanged` signal ONCE in `__init__`. On Windows, this signal fires when the application gains focus. If it fires before the menu is built, it calls `self._build_clip_menu()` which references `self._clip_menu` — ensure `self._clip_menu` is initialized before the clipboard signal connects.
 
-**Tab 5: Tunnel & Remote**
-- **Auto-start tunnel on server start** (CheckBox, default false)
-- **Tunnel log lines** (SpinBox, 100-5000, default 2000)
-- **Show QR on tunnel start** (CheckBox, default true)
-- **Restart tunnel on disconnect** (CheckBox, default false)
+8. **Timers starting before tray.show()** — Lines 561-570: `_stats_timer` and `_notif_timer` start BEFORE `self.tray.show()` (line 572). The timers fire API calls which might hang or slow down the startup. Reorder so timers start AFTER `self.tray.show()`.
 
-**Tab 6: Home Automation / AI**
-- **Show keepalive actions in log** (CheckBox, default true)
-- **Auto-reconnect to Home Assistant** (CheckBox, default true)
-- **Max TTS message length** (SpinBox, 100-5000 chars, default 500)
+9. **`sys.exit(self.app.exec())` needs to be the last thing** — Line 872: `sys.exit(self.app.exec())`. If anything raises an exception before this line, the whole app crashes silently (no console since pythonw.exe). Add a top-level try/except in `if __name__ == "__main__"` that writes to a log file on crash.
 
-**Tab 7: About** — EXISTS, keep it. Show version, GitHub link, build date.
+10. **Missing `app.setStyle("Fusion")`** — On Windows, PySide6 might pick a style that doesn't support system tray icons properly. Set `app.setStyle("Fusion")` after creating the QApplication.
 
-**MUST: All settings persist to `tray_config.json`** with the existing atomic-save pattern (write .tmp, then replace).
+11. **The `QApplication` might not have a display** — On Windows, `QApplication(sys.argv)` needs a valid display. Since pythonw.exe has no console, ensure the app is properly initialized as a GUI application. Check if `QApplication.instance()` returns None.
 
-**MUST: Add new DEFAULT_CONFIG keys** for all the new fields.
+12. **Session ID detection** — Add session detection at startup. If SessionId != 1, log a warning and try to re-launch in the user's session using `ps` / `subprocess` with session escalation.
 
-### 3. Performance Fixes Summary
+## What to Fix
 
-| Issue | Fix |
-|---|---|
-| Right-click menu rebuilds entire tree | Build once, update only dynamic items |
-| Clipboard poll every 3s (COM call) | Use QClipboard.changed signal OR poll every 30s |
-| API calls on Qt main thread | Move stats/notification polling to background thread |
-| Stats timer fires even when menu not open | Only fire stats timer when `_stats_timer.isActive()` during right-click. OR keep it running but make the API call non-blocking |
-| Config read on every menu build | Config is already in memory via singleton |
+Fix EVERY issue above. Then:
 
-### 4. Verification
+1. Add a startup log file at `COAGENT_DIR / "tray_debug.log"` that logs every initialization step with timestamps so we can see where it fails.
+2. Add robust error handling — any exception in `__init__` should be caught and written to the debug log.
+3. Add `QSystemTrayIcon.isSystemTrayAvailable()` check after creation. If False, write to log.
+4. Add Session ID detection at the very start. If SessionId == 0 (or blank), write "WARNING: Running in session 0 — tray icon will not appear!" to the debug log.
+5. Ensure ALL QActions are created with a parent (the QMenu) so they get cleaned up properly.
+6. Test that the tray icon shows by checking `QSystemTrayIcon.supportsMessages()`.
 
-After all changes:
+## Verification
 
 ```powershell
-# Syntax
+# Syntax check
 python -c "import py_compile; py_compile.compile(r'C:\Users\Admin\Desktop\Hermes CoAgent\coagent_tray.py', doraise=True); print('OK')"
 
-# Launch tray, right-click instantly
-start /B python coagent_tray.py
-timeout /t 3
-# Manually verify right-click latency < 500ms on next desktop session
-
-# Close tray
-taskkill /f /im python.exe
+# Lint
+python -m py_compile "C:\Users\Admin\Desktop\Hermes CoAgent\coagent_tray.py"
 ```
 
-### 5. Git Commit
+## Git Commit
 
-```powershell
-cd "C:\Users\Admin\Desktop\Hermes CoAgent"
-git add -A
-git commit -m "v3.2 - Full settings overhaul + right-click speed optimization"
-git push
-```
+DO NOT commit or push. Just read, fix, and report what you changed. The user will test manually.

@@ -1,12 +1,12 @@
 # Hermes CoAgent v3 - Ultimate Desktop Co-Pilot
 # All features: Dashboard, MCP, OCR, Visual Search, TTS, Watchdog, Macros, Tunnel, Recorder, File API
-import sys, os, json, base64, subprocess, tempfile, threading, time, glob, shutil
-import hashlib, re, pickle, platform, ctypes, queue
+import sys, os, json, base64, subprocess, threading, time, shutil
+import re, queue
 from io import BytesIO
 from pathlib import Path
 from datetime import datetime
 from dataclasses import dataclass, field
-from typing import Optional, List, Dict
+from typing import List
 
 os.environ["PYAUTOGUI_FAILSAFE"] = "false"
 import pyautogui
@@ -15,13 +15,15 @@ pyautogui.MINIMUM_DURATION = 0
 pyautogui.MINIMUM_SLEEP = 0
 pyautogui.PAUSE = 0.01
 
-from flask import Flask, request, jsonify, send_file, send_from_directory, Response
+from flask import Flask, request, jsonify, send_file, Response
 app = Flask(__name__, static_folder=None)
 
 COAGENT_DIR = Path(__file__).parent.resolve()
 MACROS_DIR = COAGENT_DIR / "macros"
 SCREENSHOTS_DIR = COAGENT_DIR / "screenshots"
 TUNNEL_LOG = COAGENT_DIR / "tunnel.log"
+PULSE_SCRIPT = COAGENT_DIR / "pulse_overlay.py"
+PULSE_LOG = COAGENT_DIR / "pulse_debug.log"
 SERVER_PORT = 9123
 MACROS_DIR.mkdir(exist_ok=True)
 SCREENSHOTS_DIR.mkdir(exist_ok=True)
@@ -31,6 +33,36 @@ PYTHON = sys.executable
 def _console(msg=""):
     sys.stderr.write(str(msg) + "\n")
     sys.stderr.flush()
+
+def _pulse_log(msg):
+    try:
+        stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        with PULSE_LOG.open("a", encoding="utf-8") as f:
+            f.write(f"[{stamp}] {msg}\n")
+    except Exception:
+        _console(f"[Pulse] {msg}")
+
+def _pythonw_for_pulse():
+    exe = Path(sys.executable)
+    if os.name == "nt" and exe.name.lower() == "python.exe":
+        pythonw = exe.with_name("pythonw.exe")
+        if pythonw.exists():
+            return str(pythonw)
+    return str(exe)
+
+def _pulse_popen_kwargs():
+    kwargs = {
+        "cwd": str(COAGENT_DIR),
+        "stdout": subprocess.DEVNULL,
+        "stderr": subprocess.DEVNULL,
+    }
+    if os.name == "nt":
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        startupinfo.wShowWindow = 0
+        kwargs["startupinfo"] = startupinfo
+        kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    return kwargs
 
 # === STATE ===
 @dataclass
@@ -67,64 +99,64 @@ def ps(cmd, timeout=30):
     except Exception as e:
         return -1, "", str(e)
 
-# === CURSOR PULSE — visual ring before every AI action ===
+# === CURSOR PULSE - visual ring before every AI action ===
 def _cursor_pulse(x, y, color=None):
-    """Flash a colored ring at (x, y) to indicate AI action about to happen."""
+    """Flash a colored ring at (x, y) in a short-lived tkinter helper process."""
     if color is None:
         color = 0x00FF00  # green
     r = (color >> 16) & 0xFF
     g = (color >> 8) & 0xFF
     b = color & 0xFF
     try:
-        ps(f'''
-Add-Type @"
-using System;
-using System.Drawing;
-using System.Runtime.InteropServices;
-using System.Windows.Forms;
-public class Overlay {{
-    public static void Pulse(int x, int y, int r, int g, int b, int rad) {{
-        var f = new Form();
-        f.FormBorderStyle = FormBorderStyle.None;
-        f.BackColor = Color.FromArgb(100, r, g, b);
-        f.TopLevel = true;
-        f.TopMost = true;
-        f.ShowInTaskbar = false;
-        f.StartPosition = FormStartPosition.Manual;
-        f.Location = new Point(x - rad, y - rad);
-        f.Size = new Size(rad * 2, rad * 2);
-        f.Opacity = 0.7;
-        f.Show();
-        System.Threading.Thread.Sleep(100);
-        for (int i = 0; i < 6; i++) {{
-            f.Opacity -= 0.12;
-            System.Threading.Thread.Sleep(15);
-        }}
-        f.Close();
-    }}
-}}
-"@
-[Overlay]::Pulse({x}, {y}, {r}, {g}, {b}, 18)
-''', timeout=4)
-    except:
-        pass  # cosmetic only
+        if not PULSE_SCRIPT.exists():
+            _pulse_log(f"Pulse helper missing: {PULSE_SCRIPT}")
+            return
+        subprocess.Popen(
+            [
+                _pythonw_for_pulse(),
+                str(PULSE_SCRIPT),
+                str(int(x)),
+                str(int(y)),
+                str(int(r)),
+                str(int(g)),
+                str(int(b)),
+            ],
+            **_pulse_popen_kwargs(),
+        )
+    except Exception as e:
+        _pulse_log(f"Failed to launch pulse helper: {e}")
+
+def _current_cursor_pos(default=(960, 540)):
+    try:
+        pos = pyautogui.position()
+        return int(pos[0]), int(pos[1])
+    except Exception as e:
+        _pulse_log(f"Could not read cursor position: {e}")
+        return default
 
 def _pulse_before_action(action: dict):
     """Show a colored pulse based on action type before executing."""
-    act_type = action.get("type", "")
-    data = action.get("data", {})
-    color = 0x00FF00  # green default
-    if act_type in ("click", "doubleclick", "rightclick", "tripleclick"):
-        color = 0xFF4400  # orange for clicks
-    elif act_type == "type":
-        color = 0x4488FF  # blue for typing
-    elif act_type == "hotkey":
-        color = 0xFF00FF  # magenta for hotkeys
-    elif act_type == "scroll":
-        color = 0xFFFF00  # yellow for scroll
-    x = data.get("x", pyautogui.position()[0] if hasattr(pyautogui, 'position') else 960)
-    y = data.get("y", pyautogui.position()[1] if hasattr(pyautogui, 'position') else 540)
-    _cursor_pulse(x, y, color)
+    try:
+        act_type = action.get("type", "")
+        data = action.get("data", {})
+        color = 0x00FF00  # green default
+        if act_type in ("click", "doubleclick", "rightclick", "tripleclick"):
+            color = 0xFF4400  # orange for clicks
+        elif act_type == "type":
+            color = 0x4488FF  # blue for typing
+        elif act_type == "hotkey":
+            color = 0xFF00FF  # magenta for hotkeys
+        elif act_type == "scroll":
+            color = 0xFFFF00  # yellow for scroll
+        elif act_type == "drag":
+            color = 0xFFAA00
+
+        fallback_x, fallback_y = _current_cursor_pos()
+        x = data.get("x", data.get("x2", data.get("x1", fallback_x)))
+        y = data.get("y", data.get("y2", data.get("y1", fallback_y)))
+        _cursor_pulse(x, y, color)
+    except Exception as e:
+        _pulse_log(f"Pulse setup failed: {e}")
 
 # === INPUT ENGINE ===
 def _execute_action(action: dict):
