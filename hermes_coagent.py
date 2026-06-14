@@ -67,10 +67,70 @@ def ps(cmd, timeout=30):
     except Exception as e:
         return -1, "", str(e)
 
+# === CURSOR PULSE — visual ring before every AI action ===
+def _cursor_pulse(x, y, color=None):
+    """Flash a colored ring at (x, y) to indicate AI action about to happen."""
+    if color is None:
+        color = 0x00FF00  # green
+    r = (color >> 16) & 0xFF
+    g = (color >> 8) & 0xFF
+    b = color & 0xFF
+    try:
+        ps(f'''
+Add-Type @"
+using System;
+using System.Drawing;
+using System.Runtime.InteropServices;
+using System.Windows.Forms;
+public class Overlay {{
+    public static void Pulse(int x, int y, int r, int g, int b, int rad) {{
+        var f = new Form();
+        f.FormBorderStyle = FormBorderStyle.None;
+        f.BackColor = Color.FromArgb(100, r, g, b);
+        f.TopLevel = true;
+        f.TopMost = true;
+        f.ShowInTaskbar = false;
+        f.StartPosition = FormStartPosition.Manual;
+        f.Location = new Point(x - rad, y - rad);
+        f.Size = new Size(rad * 2, rad * 2);
+        f.Opacity = 0.7;
+        f.Show();
+        System.Threading.Thread.Sleep(100);
+        for (int i = 0; i < 6; i++) {{
+            f.Opacity -= 0.12;
+            System.Threading.Thread.Sleep(15);
+        }}
+        f.Close();
+    }}
+}}
+"@
+[Overlay]::Pulse({x}, {y}, {r}, {g}, {b}, 18)
+''', timeout=4)
+    except:
+        pass  # cosmetic only
+
+def _pulse_before_action(action: dict):
+    """Show a colored pulse based on action type before executing."""
+    act_type = action.get("type", "")
+    data = action.get("data", {})
+    color = 0x00FF00  # green default
+    if act_type in ("click", "doubleclick", "rightclick", "tripleclick"):
+        color = 0xFF4400  # orange for clicks
+    elif act_type == "type":
+        color = 0x4488FF  # blue for typing
+    elif act_type == "hotkey":
+        color = 0xFF00FF  # magenta for hotkeys
+    elif act_type == "scroll":
+        color = 0xFFFF00  # yellow for scroll
+    x = data.get("x", pyautogui.position()[0] if hasattr(pyautogui, 'position') else 960)
+    y = data.get("y", pyautogui.position()[1] if hasattr(pyautogui, 'position') else 540)
+    _cursor_pulse(x, y, color)
+
 # === INPUT ENGINE ===
 def _execute_action(action: dict):
     act_type = action.get("type")
     data = action.get("data", {})
+    _pulse_before_action(action)
     with state.input_lock:
         if state.emergency_stop:
             raise Exception("Emergency stop active")
