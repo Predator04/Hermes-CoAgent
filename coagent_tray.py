@@ -17,8 +17,10 @@ from PySide6.QtGui import QIcon, QAction, QFont, QPixmap, QPainter, QColor, QPen
 from PySide6.QtCore import QTimer, Signal, QObject, Qt
 
 COAGENT_DIR = Path(__file__).parent.resolve()
-DEFAULT_PYTHON = Path(r"C:\Users\Admin\AppData\Local\Programs\Python\Python313\python.exe")
-PYTHON = str(DEFAULT_PYTHON if DEFAULT_PYTHON.exists() else Path(sys.executable))
+python_exe = Path(r"C:\Users\Admin\AppData\Local\Programs\Python\Python313\pythonw.exe")
+if not python_exe.exists():
+    python_exe = Path(r"C:\Users\Admin\AppData\Local\Programs\Python\Python313\python.exe")
+PYTHON = str(python_exe if python_exe.exists() else Path(sys.executable))
 CONFIG_FILE = COAGENT_DIR / "tray_config.json"
 SERVER_SCRIPT = COAGENT_DIR / "hermes_coagent.py"
 VERSION = "v3.2"
