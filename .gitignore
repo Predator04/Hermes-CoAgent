@@ -5,3 +5,4 @@ macros/
 screenshots/
 *.log
 tunnel.log
+*.apk
