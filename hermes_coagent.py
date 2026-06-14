@@ -15,7 +15,7 @@ pyautogui.MINIMUM_DURATION = 0
 pyautogui.MINIMUM_SLEEP = 0
 pyautogui.PAUSE = 0.01
 
-from flask import Flask, request, jsonify, send_file, send_from_directory
+from flask import Flask, request, jsonify, send_file, send_from_directory, Response
 app = Flask(__name__, static_folder=None)
 
 COAGENT_DIR = Path(__file__).parent.resolve()
@@ -590,6 +590,99 @@ def tunnel_status_action():
         _url = _m.group(0) if _m else "connecting..."
         return {"running": True, "url": _url, "pid": state.tunnel_process.pid}
     return {"running": False}
+
+
+# === SSE EVENTS (real-time action broadcasting) ===
+import threading as _sse_threading
+_sse_clients = []
+_sse_lock = _sse_threading.Lock()
+
+def _sse_broadcast(event_type, data):
+    msg = f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
+    with _sse_lock:
+        dead = []
+        for q in _sse_clients:
+            try:
+                q.put_nowait(msg)
+            except:
+                dead.append(q)
+        for q in dead:
+            _sse_clients.remove(q)
+
+@app.route("/events")
+def sse_events():
+    def gen():
+        q = queue.Queue()
+        with _sse_lock:
+            _sse_clients.append(q)
+        try:
+            yield f"event: status\ndata: {json.dumps({'running': True, 'emergency': state.emergency_stop})}\n\n"
+            while True:
+                try:
+                    msg = q.get(timeout=30)
+                    yield msg
+                except queue.Empty:
+                    yield ": keepalive\n\n"
+        except GeneratorExit:
+            with _sse_lock:
+                if q in _sse_clients:
+                    _sse_clients.remove(q)
+    return Response(gen(), mimetype="text/event-stream")
+
+# === LOGS ===
+_log_buffer = []
+_log_lock = _sse_threading.Lock()
+_MAX_LOG = 5000
+
+def _log(msg):
+    entry = {"time": datetime.now().isoformat(), "msg": str(msg)}
+    with _log_lock:
+        _log_buffer.append(entry)
+        if len(_log_buffer) > _MAX_LOG:
+            _log_buffer[:1000] = []
+
+@app.route("/logs")
+def route_logs():
+    limit = min(int(request.args.get("limit", 200)), 1000)
+    with _log_lock:
+        return jsonify({"logs": _log_buffer[-limit:]})
+
+# === STATS ===
+_start_time = time.time()
+_psutil_avail = False
+try:
+    import psutil
+    _psutil_avail = True
+except:
+    pass
+
+@app.route("/stats")
+def route_stats():
+    info = {
+        "actions_today": len(state.action_history),
+        "queue_size": state.pending_queue.qsize(),
+        "emergency_stop": state.emergency_stop,
+        "watchdog": state.watchdog_running,
+        "uptime_seconds": round(time.time() - _start_time),
+        "screenshot_cache_age": round(time.time() - state.last_screenshot_time, 1) if state.last_screenshot_time else None
+    }
+    if _psutil_avail:
+        try:
+            proc = psutil.Process(os.getpid())
+            info["memory_mb"] = round(proc.memory_info().rss / 1024 / 1024, 1)
+            info["cpu_percent"] = proc.cpu_percent(interval=0.1)
+        except:
+            pass
+    return jsonify(info)
+
+# Patch _execute_action to broadcast and log
+_execute_action_orig = _execute_action
+def _execute_action_wrapper(action):
+    _execute_action_orig(action)
+    _log(f"{action.get('type')}: {json.dumps(action.get('data', {}))[:100]}")
+    _sse_broadcast("action", {"type": action.get("type"), "data": action.get("data", {}),
+                               "time": datetime.now().isoformat()})
+_execute_action = _execute_action_wrapper
 
 
 DASHBOARD_HTML = '<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="UTF-8">\n<meta name="viewport" content="width=device-width, initial-scale=1.0">\n<title>Hermes CoAgent v3</title>\n<style>\n*{margin:0;padding:0;box-sizing:border-box}\nbody{font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',sans-serif;background:#0a0a0f;color:#e0e0e0;overflow:hidden;height:100vh}\n.app{display:grid;grid-template-columns:320px 1fr 300px;height:100vh;gap:1px;background:#1a1a2e}\n.panel{background:#111122;padding:12px;overflow-y:auto}\n.panel h2{font-size:13px;text-transform:uppercase;color:#666;margin-bottom:10px;letter-spacing:1px}\n.btn{background:#1a1a3e;border:1px solid #333;color:#ccc;padding:6px 12px;border-radius:6px;cursor:pointer;font-size:12px;transition:all .15s}\n.btn:hover{background:#2a2a5e;border-color:#555}\n.btn.danger{background:#3a1111;border-color:#633}\n.btn.danger:hover{background:#5a1515;border-color:#a33}\n.btn.success{background:#113a11;border-color:#363}\n.btn.success:hover{background:#155a15;border-color:#3a3}\n.btn-row{display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap}\n#screenshot-container{position:relative;display:flex;align-items:center;justify-content:center;height:100%;overflow:hidden;background:#0a0a0f}\n#screen-img{max-width:100%;max-height:100%;object-fit:contain;image-rendering:auto;cursor:crosshair;border-radius:4px}\n.coord-overlay{position:absolute;top:0;left:0;pointer-events:none;color:#fff;background:rgba(0,0,0,0.7);padding:2px 6px;border-radius:4px;font-size:11px;font-family:monospace;z-index:10}\n.status-dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:6px}\n.dot-green{background:#0f0}\n.dot-red{background:#f00}\n.dot-yellow{background:#ff0}\n#action-log{font-family:monospace;font-size:11px;line-height:1.6}\n.action-entry{padding:2px 0;border-bottom:1px solid #1a1a2e;display:flex;justify-content:space-between}\n.action-time{color:#555;font-size:10px}\n.logo{font-size:20px;font-weight:bold;background:linear-gradient(135deg,#667eea,#764ba2);-webkit-background-clip:text;-webkit-text-fill-color:transparent;margin-bottom:4px}\n.subtitle{font-size:11px;color:#666;margin-bottom:12px}\ninput[type=text],input[type=number]{background:#1a1a2e;border:1px solid #333;color:#ccc;padding:5px 8px;border-radius:4px;font-size:12px;width:100%;margin-bottom:6px}\nlabel{font-size:11px;color:#888;display:block;margin-bottom:2px}\n.grid{display:grid;grid-template-columns:1fr 1fr;gap:4px}\n.tool-group{margin-bottom:12px;padding:8px;background:#0e0e1a;border-radius:6px}\n.tool-group h3{font-size:12px;color:#888;margin-bottom:6px}\n#toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#1a1a3e;border:1px solid #444;padding:8px 16px;border-radius:8px;font-size:12px;z-index:999;display:none}\n</style>\n</head>\n<body>\n<div id="toast"></div>\n<div class="app">\n  <div class="panel" id="left-panel">\n    <div class="logo">⟁ Hermes CoAgent</div>\n    <div class="subtitle">v3 — Desktop Co-Pilot</div>\n    <div id="status-bar" style="margin-bottom:10px"><span class="status-dot dot-green"></span><span id="status-text">Connected</span></div>\n\n    <div class="tool-group">\n      <h3>🖱 Mouse</h3>\n      <div class="grid">\n        <div><label>X</label><input type="number" id="mx" value="960"></div>\n        <div><label>Y</label><input type="number" id="my" value="540"></div>\n      </div>\n      <div class="btn-row">\n        <button class="btn" onclick="mouseMove()">Move</button>\n        <button class="btn" onclick="mouseClick(\'left\')">Left</button>\n        <button class="btn" onclick="mouseClick(\'right\')">Right</button>\n        <button class="btn" onclick="mouseClick(\'middle\')">Mid</button>\n        <button class="btn" onclick="mouseDClick()">Dbl</button>\n      </div>\n    </div>\n\n    <div class="tool-group">\n      <h3>⌨ Keyboard</h3>\n      <input type="text" id="type-text" placeholder="Type something..." onkeydown="if(event.key===\'Enter\')keyType()">\n      <div class="btn-row">\n        <button class="btn" onclick="keyType()">Type</button>\n        <button class="btn" onclick="keyPress([\'ctrl\',\'c\'])">Ctrl+C</button>\n        <button class="btn" onclick="keyPress([\'ctrl\',\'v\'])">Ctrl+V</button>\n        <button class="btn" onclick="keyPress([\'enter\'])">Enter</button>\n        <button class="btn" onclick="keyPress([\'tab\'])">Tab</button>\n        <button class="btn" onclick="keyPress([\'escape\'])">Esc</button>\n      </div>\n    </div>\n\n    <div class="tool-group">\n      <h3>🔍 Find</h3>\n      <input type="text" id="find-text" placeholder="Text on screen...">\n      <div class="btn-row">\n        <button class="btn" onclick="ocrFind()">Find Text</button>\n        <button class="btn" onclick="cursorPos()">Cursor</button>\n        <button class="btn" onclick="monitors()">Monitors</button>\n      </div>\n    </div>\n\n    <div class="tool-group">\n      <h3>📁 Files</h3>\n      <input type="text" id="file-path" placeholder="C:\\Users\\Admin\\Desktop" value="C:\\Users\\Admin\\Desktop">\n      <div class="btn-row">\n        <button class="btn" onclick="fileList()">List</button>\n        <button class="btn" onclick="appOpen()">Open</button>\n      </div>\n    </div>\n\n    <div class="tool-group">\n      <h3>🎯 Macros</h3>\n      <input type="text" id="macro-name" placeholder="macro name">\n      <div class="btn-row">\n        <button class="btn" onclick="macroList()">List</button>\n        <button class="btn success" onclick="macroRecord()">Record</button>\n        <button class="btn" onclick="macroRun()">Run</button>\n      </div>\n    </div>\n\n    <div class="tool-group">\n      <h3>🔐 Emergency</h3>\n      <div class="btn-row">\n        <button class="btn danger" onclick="emergency(\'stop\')">🛑 STOP</button>\n        <button class="btn success" onclick="emergency(\'resume\')">▶ Resume</button>\n      </div>\n    </div>\n\n    <div class="tool-group">\n      <h3>🌐 Tunnel</h3>\n      <div class="btn-row">\n        <button class="btn" onclick="tunnel(\'start\')">Start</button>\n        <button class="btn danger" onclick="tunnel(\'stop\')">Stop</button>\n        <button class="btn" onclick="tunnel(\'status\')">Status</button>\n      </div>\n      <div id="tunnel-info" style="font-size:11px;color:#666"></div>\n    </div>\n  </div>\n\n  <div id="screenshot-container">\n    <img id="screen-img" src="/screen" alt="Screen">\n    <div class="coord-overlay" id="coord-overlay">Click to get coords</div>\n  </div>\n\n  <div class="panel" id="right-panel">\n    <h2>Action Log</h2>\n    <div id="action-log">\n      <div class="action-entry"><span>Ready</span><span class="action-time">now</span></div>\n    </div>\n    <div style="margin-top:8px">\n      <button class="btn" onclick="clearLog()" style="width:100%">Clear</button>\n    </div>\n  </div>\n</div>\n\n<script>\nconst BASE = \'\';\nlet logCount = 0;\nfunction toast(msg){const t=document.getElementById(\'toast\');t.textContent=msg;t.style.display=\'block\';setTimeout(()=>t.style.display=\'none\',2000)}\nfunction api(method,path,body,cb){\n  const opts={method,headers:{\'Content-Type\':\'application/json\'}};\n  if(body)opts.body=JSON.stringify(body);\n  fetch(BASE+path,opts).then(r=>r.json()).then(d=>{if(cb)cb(d)}).catch(e=>toast(\'Error: \'+e.message));\n}\nfunction addLog(text){\n  logCount++;\n  const el=document.getElementById(\'action-log\');\n  const d=new Date();\n  el.innerHTML=`<div class="action-entry"><span>${text}</span><span class="action-time">${d.getHours().toString().padStart(2,\'0\')}:${d.getMinutes().toString().padStart(2,\'0\')}:${d.getSeconds().toString().padStart(2,\'0\')}</span></div>`+el.innerHTML;\n  if(logCount>100){el.lastChild.remove();logCount--}\n}\nfunction clearLog(){document.getElementById(\'action-log\').innerHTML=\'\';logCount=0;addLog(\'Cleared\')}\n\n// Mouse\nfunction mouseMove(){const x=document.getElementById(\'mx\').value,y=document.getElementById(\'my\').value;api(\'POST\',\'/mouse/move\',{x:parseInt(x),y:parseInt(y)},d=>addLog(\'Moved to \'+x+\',\'+y))}\nfunction mouseClick(b){api(\'POST\',\'/mouse/click\',{button:b},d=>addLog(\'Clicked \'+b))}\nfunction mouseDClick(){api(\'POST\',\'/mouse/doubleclick\',{},d=>addLog(\'Double clicked\'))}\n\n// Keyboard\nfunction keyType(){const t=document.getElementById(\'type-text\').value;api(\'POST\',\'/key/type\',{text:t},d=>addLog(\'Typed: \'+t.substring(0,30)+(t.length>30?\'...\':\'\')))}\nfunction keyPress(keys){api(\'POST\',\'/key/press\',{keys},d=>addLog(\'Pressed: \'+keys.join(\'+\'))})}\n\n// Emergency\nfunction emergency(a){api(\'POST\',\'/emergency/\'+a,{},d=>{addLog(\'Emergency: \'+a);document.getElementById(\'status-text\').textContent=a===\'stop\'?\'STOPPED\':\'Connected\';document.getElementById(\'status-bar\').innerHTML=(a===\'stop\'?\'<span class="status-dot dot-red"></span>\':\'<span class="status-dot dot-green"></span>\')+document.getElementById(\'status-text\').textContent})}\n\n// Find\nfunction ocrFind(){const t=document.getElementById(\'find-text\').value;if(!t)return;api(\'POST\',\'/ocr/find\',{text:t},d=>{if(d.found){addLog(\'Found: \'+t+\' at \'+JSON.stringify(d.matches[0].center));toast(\'Found at \'+d.matches[0].center)}else{addLog(\'Not found: \'+t);toast(\'Not found\')}})}\nfunction cursorPos(){api(\'GET\',\'/cursor/pos\',null,d=>{document.getElementById(\'mx\').value=d.x;document.getElementById(\'my\').value=d.y;addLog(\'Cursor: \'+d.x+\',\'+d.y)})}\nfunction monitors(){api(\'GET\',\'/monitors\',null,d=>addLog(\'Monitors: \'+JSON.stringify(d.monitors)))}\n\n// Files\nfunction fileList(){const p=document.getElementById(\'file-path\').value;api(\'POST\',\'/file/list\',{path:p},d=>{if(d.items){addLog(\'Files in \'+d.path+\': \'+d.count+\' items\');toast(d.count+\' items\')}})}\nfunction appOpen(){const p=document.getElementById(\'file-path\').value;api(\'POST\',\'/app/open\',{path:p},d=>addLog(\'Opened: \'+p))}\n\n// Macros\nfunction macroList(){api(\'GET\',\'/macro/list\',null,d=>{if(d.macros){addLog(\'Macros: \'+d.macros.map(m=>m.name).join(\', \')||\'none\');toast(d.macros.length+\' macros\')}})}\nfunction macroRecord(){const n=document.getElementById(\'macro-name\').value;if(!n)return;api(\'POST\',\'/macro/record\',{name:n},d=>{addLog(\'Recording: \'+n+\'. Press F9 to stop.\');toast(\'Recording \'+n)})}\nfunction macroRun(){const n=document.getElementById(\'macro-name\').value;if(!n)return;api(\'POST\',\'/macro/run\',{name:n},d=>addLog(\'Ran macro: \'+n+\' (\'+d.executed+\'/\'+d.total+\')\'))}\n\n// Tunnel\nfunction tunnel(a){api(\'POST\',\'/tunnel/\'+a,{},d=>{addLog(\'Tunnel: \'+a+\' - \'+(d.url||d.status||d.message||\'ok\'));document.getElementById(\'tunnel-info\').textContent=d.url?\'URL: \'+d.url:\'\'})}\n\n// Screenshot click → get coords\ndocument.getElementById(\'screen-img\').addEventListener(\'click\', function(e){\n  const rect = this.getBoundingClientRect();\n  const x = Math.round(e.clientX - rect.left);\n  const y = Math.round(e.clientY - rect.top);\n  const nw = this.naturalWidth||1920, nh = this.naturalHeight||1080;\n  const sx = this.width, sy = this.height;\n  const realX = Math.round(x * nw / sx);\n  const realY = Math.round(y * nh / sy);\n  document.getElementById(\'mx\').value = realX;\n  document.getElementById(\'my\').value = realY;\n  document.getElementById(\'coord-overlay\').textContent = realX+\',\'+realY;\n  toast(\'Screen coords: \'+realX+\',\'+realY);\n});\n\n// Auto-refresh screenshot every 2s\nsetInterval(()=>{\n  const img = document.getElementById(\'screen-img\');\n  img.src = \'/screenshot/fresh?\'+Date.now();\n}, 2000);\n\n// Auto-refresh action history every 3s\nsetInterval(()=>{\n  fetch(BASE+\'/history?limit=20\').then(r=>r.json()).then(d=>{\n    if(!d.actions||!d.actions.length)return;\n    const el=document.getElementById(\'action-log\');\n    let html=\'\';\n    for(let i=d.actions.length-1;i>=Math.max(0,d.actions.length-20);i--){\n      const a=d.actions[i];\n      const t=a.time?new Date(a.time).getHours().toString().padStart(2,\'0\')+\':\'+new Date(a.time).getMinutes().toString().padStart(2,\'0\')+\':\'+new Date(a.time).getSeconds().toString().padStart(2,\'0\'):\'\';\n      html+=`<div class="action-entry"><span>${a.type} ${JSON.stringify(a.data).substring(0,40)}</span><span class="action-time">${t}</span></div>`;\n    }\n    el.innerHTML=html;\n  }).catch(()=>{});\n}, 3000);\n</script>\n</body>\n</html>'
