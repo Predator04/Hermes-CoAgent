@@ -821,6 +821,142 @@ _execute_action = _execute_action_wrapper
 
 DASHBOARD_HTML = '<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="UTF-8">\n<meta name="viewport" content="width=device-width, initial-scale=1.0">\n<title>Hermes CoAgent v3</title>\n<style>\n*{margin:0;padding:0;box-sizing:border-box}\nbody{font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',sans-serif;background:#0a0a0f;color:#e0e0e0;overflow:hidden;height:100vh}\n.app{display:grid;grid-template-columns:320px 1fr 300px;height:100vh;gap:1px;background:#1a1a2e}\n.panel{background:#111122;padding:12px;overflow-y:auto}\n.panel h2{font-size:13px;text-transform:uppercase;color:#666;margin-bottom:10px;letter-spacing:1px}\n.btn{background:#1a1a3e;border:1px solid #333;color:#ccc;padding:6px 12px;border-radius:6px;cursor:pointer;font-size:12px;transition:all .15s}\n.btn:hover{background:#2a2a5e;border-color:#555}\n.btn.danger{background:#3a1111;border-color:#633}\n.btn.danger:hover{background:#5a1515;border-color:#a33}\n.btn.success{background:#113a11;border-color:#363}\n.btn.success:hover{background:#155a15;border-color:#3a3}\n.btn-row{display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap}\n#screenshot-container{position:relative;display:flex;align-items:center;justify-content:center;height:100%;overflow:hidden;background:#0a0a0f}\n#screen-img{max-width:100%;max-height:100%;object-fit:contain;image-rendering:auto;cursor:crosshair;border-radius:4px}\n.coord-overlay{position:absolute;top:0;left:0;pointer-events:none;color:#fff;background:rgba(0,0,0,0.7);padding:2px 6px;border-radius:4px;font-size:11px;font-family:monospace;z-index:10}\n.status-dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:6px}\n.dot-green{background:#0f0}\n.dot-red{background:#f00}\n.dot-yellow{background:#ff0}\n#action-log{font-family:monospace;font-size:11px;line-height:1.6}\n.action-entry{padding:2px 0;border-bottom:1px solid #1a1a2e;display:flex;justify-content:space-between}\n.action-time{color:#555;font-size:10px}\n.logo{font-size:20px;font-weight:bold;background:linear-gradient(135deg,#667eea,#764ba2);-webkit-background-clip:text;-webkit-text-fill-color:transparent;margin-bottom:4px}\n.subtitle{font-size:11px;color:#666;margin-bottom:12px}\ninput[type=text],input[type=number]{background:#1a1a2e;border:1px solid #333;color:#ccc;padding:5px 8px;border-radius:4px;font-size:12px;width:100%;margin-bottom:6px}\nlabel{font-size:11px;color:#888;display:block;margin-bottom:2px}\n.grid{display:grid;grid-template-columns:1fr 1fr;gap:4px}\n.tool-group{margin-bottom:12px;padding:8px;background:#0e0e1a;border-radius:6px}\n.tool-group h3{font-size:12px;color:#888;margin-bottom:6px}\n#toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#1a1a3e;border:1px solid #444;padding:8px 16px;border-radius:8px;font-size:12px;z-index:999;display:none}\n</style>\n</head>\n<body>\n<div id="toast"></div>\n<div class="app">\n  <div class="panel" id="left-panel">\n    <div class="logo"> Hermes CoAgent</div>\n    <div class="subtitle">v3 - Desktop Co-Pilot</div>\n    <div id="status-bar" style="margin-bottom:10px"><span class="status-dot dot-green"></span><span id="status-text">Connected</span></div>\n\n    <div class="tool-group">\n      <h3> Mouse</h3>\n      <div class="grid">\n        <div><label>X</label><input type="number" id="mx" value="960"></div>\n        <div><label>Y</label><input type="number" id="my" value="540"></div>\n      </div>\n      <div class="btn-row">\n        <button class="btn" onclick="mouseMove()">Move</button>\n        <button class="btn" onclick="mouseClick(\'left\')">Left</button>\n        <button class="btn" onclick="mouseClick(\'right\')">Right</button>\n        <button class="btn" onclick="mouseClick(\'middle\')">Mid</button>\n        <button class="btn" onclick="mouseDClick()">Dbl</button>\n      </div>\n    </div>\n\n    <div class="tool-group">\n      <h3> Keyboard</h3>\n      <input type="text" id="type-text" placeholder="Type something..." onkeydown="if(event.key===\'Enter\')keyType()">\n      <div class="btn-row">\n        <button class="btn" onclick="keyType()">Type</button>\n        <button class="btn" onclick="keyPress([\'ctrl\',\'c\'])">Ctrl+C</button>\n        <button class="btn" onclick="keyPress([\'ctrl\',\'v\'])">Ctrl+V</button>\n        <button class="btn" onclick="keyPress([\'enter\'])">Enter</button>\n        <button class="btn" onclick="keyPress([\'tab\'])">Tab</button>\n        <button class="btn" onclick="keyPress([\'escape\'])">Esc</button>\n      </div>\n    </div>\n\n    <div class="tool-group">\n      <h3> Find</h3>\n      <input type="text" id="find-text" placeholder="Text on screen...">\n      <div class="btn-row">\n        <button class="btn" onclick="ocrFind()">Find Text</button>\n        <button class="btn" onclick="cursorPos()">Cursor</button>\n        <button class="btn" onclick="monitors()">Monitors</button>\n      </div>\n    </div>\n\n    <div class="tool-group">\n      <h3> Files</h3>\n      <input type="text" id="file-path" placeholder="C:\\Users\\Admin\\Desktop" value="C:\\Users\\Admin\\Desktop">\n      <div class="btn-row">\n        <button class="btn" onclick="fileList()">List</button>\n        <button class="btn" onclick="appOpen()">Open</button>\n      </div>\n    </div>\n\n    <div class="tool-group">\n      <h3> Macros</h3>\n      <input type="text" id="macro-name" placeholder="macro name">\n      <div class="btn-row">\n        <button class="btn" onclick="macroList()">List</button>\n        <button class="btn success" onclick="macroRecord()">Record</button>\n        <button class="btn" onclick="macroRun()">Run</button>\n      </div>\n    </div>\n\n    <div class="tool-group">\n      <h3> Emergency</h3>\n      <div class="btn-row">\n        <button class="btn danger" onclick="emergency(\'stop\')"> STOP</button>\n        <button class="btn success" onclick="emergency(\'resume\')"> Resume</button>\n      </div>\n    </div>\n\n    <div class="tool-group">\n      <h3> Tunnel</h3>\n      <div class="btn-row">\n        <button class="btn" onclick="tunnel(\'start\')">Start</button>\n        <button class="btn danger" onclick="tunnel(\'stop\')">Stop</button>\n        <button class="btn" onclick="tunnel(\'status\')">Status</button>\n      </div>\n      <div id="tunnel-info" style="font-size:11px;color:#666"></div>\n    </div>\n  </div>\n\n  <div id="screenshot-container">\n    <img id="screen-img" src="/screen" alt="Screen">\n    <div class="coord-overlay" id="coord-overlay">Click to get coords</div>\n  </div>\n\n  <div class="panel" id="right-panel">\n    <h2>Action Log</h2>\n    <div id="action-log">\n      <div class="action-entry"><span>Ready</span><span class="action-time">now</span></div>\n    </div>\n    <div style="margin-top:8px">\n      <button class="btn" onclick="clearLog()" style="width:100%">Clear</button>\n    </div>\n  </div>\n</div>\n\n<script>\nconst BASE = \'\';\nlet logCount = 0;\nfunction toast(msg){const t=document.getElementById(\'toast\');t.textContent=msg;t.style.display=\'block\';setTimeout(()=>t.style.display=\'none\',2000)}\nfunction api(method,path,body,cb){\n  const opts={method,headers:{\'Content-Type\':\'application/json\'}};\n  if(body)opts.body=JSON.stringify(body);\n  fetch(BASE+path,opts).then(r=>r.json()).then(d=>{if(cb)cb(d)}).catch(e=>toast(\'Error: \'+e.message));\n}\nfunction addLog(text){\n  logCount++;\n  const el=document.getElementById(\'action-log\');\n  const d=new Date();\n  el.innerHTML=`<div class="action-entry"><span>${text}</span><span class="action-time">${d.getHours().toString().padStart(2,\'0\')}:${d.getMinutes().toString().padStart(2,\'0\')}:${d.getSeconds().toString().padStart(2,\'0\')}</span></div>`+el.innerHTML;\n  if(logCount>100){el.lastChild.remove();logCount--}\n}\nfunction clearLog(){document.getElementById(\'action-log\').innerHTML=\'\';logCount=0;addLog(\'Cleared\')}\n\n// Mouse\nfunction mouseMove(){const x=document.getElementById(\'mx\').value,y=document.getElementById(\'my\').value;api(\'POST\',\'/mouse/move\',{x:parseInt(x),y:parseInt(y)},d=>addLog(\'Moved to \'+x+\',\'+y))}\nfunction mouseClick(b){api(\'POST\',\'/mouse/click\',{button:b},d=>addLog(\'Clicked \'+b))}\nfunction mouseDClick(){api(\'POST\',\'/mouse/doubleclick\',{},d=>addLog(\'Double clicked\'))}\n\n// Keyboard\nfunction keyType(){const t=document.getElementById(\'type-text\').value;api(\'POST\',\'/key/type\',{text:t},d=>addLog(\'Typed: \'+t.substring(0,30)+(t.length>30?\'...\':\'\')))}\nfunction keyPress(keys){api(\'POST\',\'/key/press\',{keys},d=>addLog(\'Pressed: \'+keys.join(\'+\'))})}\n\n// Emergency\nfunction emergency(a){api(\'POST\',\'/emergency/\'+a,{},d=>{addLog(\'Emergency: \'+a);document.getElementById(\'status-text\').textContent=a===\'stop\'?\'STOPPED\':\'Connected\';document.getElementById(\'status-bar\').innerHTML=(a===\'stop\'?\'<span class="status-dot dot-red"></span>\':\'<span class="status-dot dot-green"></span>\')+document.getElementById(\'status-text\').textContent})}\n\n// Find\nfunction ocrFind(){const t=document.getElementById(\'find-text\').value;if(!t)return;api(\'POST\',\'/ocr/find\',{text:t},d=>{if(d.found){addLog(\'Found: \'+t+\' at \'+JSON.stringify(d.matches[0].center));toast(\'Found at \'+d.matches[0].center)}else{addLog(\'Not found: \'+t);toast(\'Not found\')}})}\nfunction cursorPos(){api(\'GET\',\'/cursor/pos\',null,d=>{document.getElementById(\'mx\').value=d.x;document.getElementById(\'my\').value=d.y;addLog(\'Cursor: \'+d.x+\',\'+d.y)})}\nfunction monitors(){api(\'GET\',\'/monitors\',null,d=>addLog(\'Monitors: \'+JSON.stringify(d.monitors)))}\n\n// Files\nfunction fileList(){const p=document.getElementById(\'file-path\').value;api(\'POST\',\'/file/list\',{path:p},d=>{if(d.items){addLog(\'Files in \'+d.path+\': \'+d.count+\' items\');toast(d.count+\' items\')}})}\nfunction appOpen(){const p=document.getElementById(\'file-path\').value;api(\'POST\',\'/app/open\',{path:p},d=>addLog(\'Opened: \'+p))}\n\n// Macros\nfunction macroList(){api(\'GET\',\'/macro/list\',null,d=>{if(d.macros){addLog(\'Macros: \'+d.macros.map(m=>m.name).join(\', \')||\'none\');toast(d.macros.length+\' macros\')}})}\nfunction macroRecord(){const n=document.getElementById(\'macro-name\').value;if(!n)return;api(\'POST\',\'/macro/record\',{name:n},d=>{addLog(\'Recording: \'+n+\'. Press F9 to stop.\');toast(\'Recording \'+n)})}\nfunction macroRun(){const n=document.getElementById(\'macro-name\').value;if(!n)return;api(\'POST\',\'/macro/run\',{name:n},d=>addLog(\'Ran macro: \'+n+\' (\'+d.executed+\'/\'+d.total+\')\'))}\n\n// Tunnel\nfunction tunnel(a){api(\'POST\',\'/tunnel/\'+a,{},d=>{addLog(\'Tunnel: \'+a+\' - \'+(d.url||d.status||d.message||\'ok\'));document.getElementById(\'tunnel-info\').textContent=d.url?\'URL: \'+d.url:\'\'})}\n\n// Screenshot click -> get coords\ndocument.getElementById(\'screen-img\').addEventListener(\'click\', function(e){\n  const rect = this.getBoundingClientRect();\n  const x = Math.round(e.clientX - rect.left);\n  const y = Math.round(e.clientY - rect.top);\n  const nw = this.naturalWidth||1920, nh = this.naturalHeight||1080;\n  const sx = this.width, sy = this.height;\n  const realX = Math.round(x * nw / sx);\n  const realY = Math.round(y * nh / sy);\n  document.getElementById(\'mx\').value = realX;\n  document.getElementById(\'my\').value = realY;\n  document.getElementById(\'coord-overlay\').textContent = realX+\',\'+realY;\n  toast(\'Screen coords: \'+realX+\',\'+realY);\n});\n\n// Auto-refresh screenshot every 2s\nsetInterval(()=>{\n  const img = document.getElementById(\'screen-img\');\n  img.src = \'/screenshot/fresh?\'+Date.now();\n}, 2000);\n\n// Auto-refresh action history every 3s\nsetInterval(()=>{\n  fetch(BASE+\'/history?limit=20\').then(r=>r.json()).then(d=>{\n    if(!d.actions||!d.actions.length)return;\n    const el=document.getElementById(\'action-log\');\n    let html=\'\';\n    for(let i=d.actions.length-1;i>=Math.max(0,d.actions.length-20);i--){\n      const a=d.actions[i];\n      const t=a.time?new Date(a.time).getHours().toString().padStart(2,\'0\')+\':\'+new Date(a.time).getMinutes().toString().padStart(2,\'0\')+\':\'+new Date(a.time).getSeconds().toString().padStart(2,\'0\'):\'\';\n      html+=`<div class="action-entry"><span>${a.type} ${JSON.stringify(a.data).substring(0,40)}</span><span class="action-time">${t}</span></div>`;\n    }\n    el.innerHTML=html;\n  }).catch(()=>{});\n}, 3000);\n</script>\n</body>\n</html>'
 
+DASHBOARD2_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hermes CoAgent Dashboard 2</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#0a0a0f;color:#ccc;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+.wrap{max-width:1200px;margin:0 auto;padding:18px}
+.top{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:14px}
+h1{font-size:22px;margin:0;color:#eee;font-weight:600}
+.tabs{display:flex;gap:8px;border-bottom:1px solid #333;margin-bottom:16px}
+.tab{background:#1a1a3e;border:1px solid #333;border-bottom:0;color:#ccc;padding:10px 14px;cursor:pointer}
+.tab:hover,.btn:hover{background:#2a2a5e}
+.tab.active{border-bottom:3px solid #444;color:#fff}
+.tab-panel{display:none;background:#111122;border:1px solid #333;padding:14px}
+.tab-panel.active{display:block}
+.row{display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap}
+.btn,button{background:#1a1a3e;border:1px solid #333;color:#ccc;padding:8px 12px;cursor:pointer;border-radius:4px}
+input[type=text]{background:#1a1a2e;border:1px solid #333;color:#ccc;padding:9px 10px;min-width:320px}
+textarea{border-radius:4px;padding:10px}
+table{width:100%;border-collapse:collapse;margin-top:10px}
+th,td{border:1px solid #333;padding:8px;text-align:left;vertical-align:top}
+th{background:#0e0e1a;color:#eee}
+tr{background:#111122}
+.status{color:#888;margin-top:8px;min-height:22px}
+.image-panel{background:#0a0a0f;border:1px solid #333;padding:10px;text-align:center;margin-bottom:12px}
+#som-img{display:block;margin:0 auto;max-height:680px;object-fit:contain}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <h1>Hermes CoAgent</h1>
+    <div class="status" id="global-status">Ready</div>
+  </div>
+  <div class="tabs">
+    <button class="tab active" data-tab="som">SOM View</button>
+    <button class="tab" data-tab="uia">UIA Tree</button>
+    <button class="tab" data-tab="find">Find and Click</button>
+  </div>
+  <section id="tab-som" class="tab-panel active">
+    <div class="row"><button class="btn" onclick="refreshSom()">Refresh</button><span id="som-status" class="status"></span></div>
+    <div class="image-panel"><img id="som-img" src="/som/screenshot" style="max-width:100%" alt="SOM screenshot"></div>
+    <div id="som-elements" class="status">Loading SOM elements...</div>
+  </section>
+  <section id="tab-uia" class="tab-panel">
+    <div class="row"><button class="btn" onclick="refreshUia()">Refresh</button><span id="uia-status" class="status"></span></div>
+    <textarea id="uia-tree" style="width:100%;height:600px;font-family:monospace;background:#1a1a2e;color:#ccc;border:1px solid #333"></textarea>
+  </section>
+  <section id="tab-find" class="tab-panel">
+    <div class="row">
+      <input id="find-name" type="text" placeholder="Element name">
+      <button class="btn" onclick="findElements()">Find</button>
+      <span id="find-status" class="status"></span>
+    </div>
+    <div id="find-results"></div>
+  </section>
+</div>
+<script>
+function hideAllTabs(){document.querySelectorAll('.tab-panel').forEach(p=>p.classList.remove('active'))}
+function showTab(name){hideAllTabs();document.getElementById('tab-'+name).classList.add('active');document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('active',t.dataset.tab===name))}
+document.querySelectorAll('.tab').forEach(t=>t.addEventListener('click',()=>showTab(t.dataset.tab)))
+function status(id,msg){document.getElementById(id).textContent=msg;document.getElementById('global-status').textContent=msg}
+function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+function centerOf(e){if(Array.isArray(e.center))return e.center.join(', ');const r=e.rect;if(r)return (r.left+Math.round(r.width/2))+', '+(r.top+Math.round(r.height/2));return ''}
+async function fetchJson(url,opts){
+  const res=await fetch(url,opts)
+  const text=await res.text()
+  let data={}
+  try{data=text?JSON.parse(text):{}}catch(e){throw new Error('Invalid JSON from '+url)}
+  if(!res.ok)throw new Error(data.error||res.statusText)
+  return data
+}
+async function postJson(url,body){return fetchJson(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})}
+function renderSomElements(elements){
+  const host=document.getElementById('som-elements')
+  if(!elements.length){host.innerHTML='<div class="status">No elements found</div>';return}
+  host.innerHTML='<table><thead><tr><th>Index</th><th>Name</th><th>Control Type</th><th>Center coords</th><th>Action</th></tr></thead><tbody>'+
+    elements.map(e=>`<tr><td>${esc(e.index)}</td><td>${esc(e.name)}</td><td>${esc(e.control_type)}</td><td>${esc(centerOf(e))}</td><td><button class="som-click" data-index="${esc(e.index)}">Click #${esc(e.index)}</button></td></tr>`).join('')+
+    '</tbody></table>'
+  host.querySelectorAll('.som-click').forEach(b=>b.addEventListener('click',()=>clickSom(Number(b.dataset.index))))
+}
+async function refreshSom(){
+  try{
+    status('som-status','Loading SOM...')
+    const data=await fetchJson('/som/screenshot?cache='+Math.random())
+    if(!data.success)throw new Error(data.error||'SOM failed')
+    if(data.labeled_screenshot)document.getElementById('som-img').src='data:image/png;base64,'+data.labeled_screenshot
+    renderSomElements(data.elements||[])
+    status('som-status','Loaded '+(data.elements||[]).length+' elements')
+  }catch(e){status('som-status','Error: '+e.message);document.getElementById('som-elements').innerHTML='<div class="status">'+esc(e.message)+'</div>'}
+}
+async function refreshUia(){
+  try{
+    status('uia-status','Loading UIA snapshot...')
+    const data=await fetchJson('/uia/snapshot?cache='+Date.now())
+    document.getElementById('uia-tree').value=JSON.stringify(data,null,2)
+    status('uia-status','UIA snapshot loaded')
+  }catch(e){status('uia-status','Error: '+e.message);document.getElementById('uia-tree').value=e.stack||e.message}
+}
+function renderFindResults(results){
+  const host=document.getElementById('find-results')
+  if(!results.length){host.innerHTML='';return}
+  host.innerHTML='<table><thead><tr><th>Index</th><th>Name</th><th>Control Type</th><th>Center</th><th>Action</th></tr></thead><tbody>'+
+    results.map((r,i)=>`<tr><td>${i+1}</td><td>${esc(r.name)}</td><td>${esc(r.control_type)}</td><td>${esc(centerOf(r))}</td><td><button class="name-click" data-name="${esc(r.name)}">Click</button></td></tr>`).join('')+
+    '</tbody></table>'
+  host.querySelectorAll('.name-click').forEach(b=>b.addEventListener('click',()=>clickName(b.dataset.name)))
+}
+async function findElements(){
+  const term=document.getElementById('find-name').value.trim()
+  if(!term){status('find-status','Enter an element name');return}
+  try{
+    status('find-status','Searching...')
+    const data=await fetchJson('/uia/find/'+encodeURIComponent(term))
+    const results=data.results||[]
+    renderFindResults(results)
+    status('find-status',results.length?'Found '+results.length+' elements':'Not found')
+  }catch(e){status('find-status','Error: '+e.message);document.getElementById('find-results').innerHTML=''}
+}
+async function clickSom(index){
+  try{status('som-status','Clicking #'+index+'...');await postJson('/uia/click',{index:index});status('som-status','Clicked #'+index)}
+  catch(e){status('som-status','Click failed: '+e.message)}
+}
+async function clickName(name){
+  try{status('find-status','Clicking '+name+'...');await postJson('/uia/click',{name:name});status('find-status','Clicked '+name)}
+  catch(e){status('find-status','Click failed: '+e.message)}
+}
+document.getElementById('find-name').addEventListener('keydown',e=>{if(e.key==='Enter')findElements()})
+refreshSom()
+refreshUia()
+</script>
+</body>
+</html>"""
+
 # =========== WEB DASHBOARD ===========
 @app.route("/")
 def dashboard():
@@ -828,115 +964,7 @@ def dashboard():
 
 @app.route("/dashboard2")
 def dashboard2():
-    """UIA / SOM / Find dashboard (v4)."""
-    ue = _get_uia_engine()
-    uia_ok = ue.UIA_READY if hasattr(ue, 'UIA_READY') else False
-    html = '''<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>CoAgent v4 - UIA</title>
-<style>
-*{margin:0;padding:0;box-sizing:border-box}
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0a0a0f;color:#e0e0e0;min-height:100vh}
-.wrap{max-width:1200px;margin:0 auto;padding:16px}
-h1{font-size:18px;margin-bottom:8px;background:linear-gradient(135deg,#667eea,#764ba2);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
-.tabbar{display:flex;gap:0;margin:12px 0;border-bottom:1px solid #333}
-.tab{padding:8px 20px;cursor:pointer;font-size:13px;color:#888;border-bottom:2px solid transparent}
-.tab:hover{color:#ccc}.tab.active{color:#fff;border-bottom-color:#667eea}
-.tabpane{display:none;padding:12px 0}.tabpane.active{display:block}
-.som-img{max-width:100%;border-radius:6px;border:1px solid #333}
-table{width:100%;border-collapse:collapse;font-size:12px;margin:8px 0}
-th,td{padding:6px 8px;border:1px solid #333;text-align:left}
-th{background:#1a1a2e;color:#888;font-size:11px;text-transform:uppercase}
-td{background:#111122}
-.btn{background:#1a1a3e;border:1px solid #333;color:#ccc;padding:5px 12px;border-radius:4px;cursor:pointer;font-size:11px}
-.btn:hover{background:#2a2a5e;border-color:#555}
-.btn.sm{padding:2px 8px;font-size:10px}
-textarea{width:100%;height:500px;font-family:monospace;font-size:11px;background:#1a1a2e;color:#ccc;border:1px solid #333;border-radius:4px;padding:8px}
-input{background:#1a1a2e;border:1px solid #333;color:#ccc;padding:5px 8px;border-radius:4px;font-size:12px;width:300px}
-.row{display:flex;gap:8px;align-items:center;margin:8px 0;flex-wrap:wrap}
-.st{font-size:11px;color:#888;padding:4px 0}
-.badge{display:inline-block;padding:2px 6px;border-radius:3px;font-size:10px;margin-left:8px}
-.badge-ok{background:#131;color:#3a3;border:1px solid #363}
-.badge-no{background:#311;color:#a33;border:1px solid #633}
-</style>
-</head>
-<body>
-<div class="wrap">
-<h1> Hermes CoAgent v4 &mdash; UIA Dashboard</h1>
-<div style="margin:8px 0;font-size:12px;color:#888">
-UIA Status: <span class="badge ''' + ("badge-ok" if uia_ok else "badge-no") + '''">''' + ("ACTIVE" if uia_ok else "UNAVAILABLE") + '''</span>
-<span style="margin-left:16px">Also visit <a href="/" style="color:#667eea">Main Dashboard</a></span>
-</div>
-<div class="tabbar">
-<div class="tab active" onclick="st('som',this)"> SOM View</div>
-<div class="tab" onclick="st('tree',this)"> UIA Tree</div>
-<div class="tab" onclick="st('find',this)"> Find &amp; Click</div>
-</div>
-<div id="p-som" class="tabpane active">
-<div class="row"><button class="btn" onclick="rs()"> Refresh</button></div>
-<img id="si" class="som-img" src="/som/screenshot" alt="SOM">
-<div id="se" class="st">Loading elements...</div>
-</div>
-<div id="p-tree" class="tabpane">
-<div class="row"><button class="btn" onclick="rt()"> Refresh</button></div>
-<textarea id="ut" readonly>Loading...</textarea>
-</div>
-<div id="p-find" class="tabpane">
-<div class="row">
-<input id="fi" placeholder="Element name..." onkeydown="if(event.key==='Enter')df()">
-<button class="btn" onclick="df()">Find</button>
-</div>
-<div id="fs" class="st">Enter a name and click Find</div>
-<div id="fr"></div>
-</div>
-</div>
-<script>
-function st(n,el){
- document.querySelectorAll('.tabpane').forEach(p=>p.classList.remove('active'));
- document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
- document.getElementById('p-'+n).classList.add('active');
- if(el)el.classList.add('active');
-}
-function rs(){
- document.getElementById('si').src='/som/screenshot?'+Date.now();
- fetch('/som/screenshot?'+Date.now()).then(r=>r.json()).then(d=>{
-  const el=document.getElementById('se');
-  if(!d.success||!d.elements||!d.elements.length){el.innerHTML='<span class="st">No elements found</span>';return}
-  let h='<table><tr><th>#</th><th>Name</th><th>Type</th><th>Center</th><th></th></tr>';
-  d.elements.forEach(e=>{h+='<tr><td>'+e.index+'</td><td>'+(e.name||'-')+'</td><td>'+e.control_type+'</td><td>'+e.center.join(',')+'</td><td><button class="btn sm" onclick="ce('+e.index+')">Click</button></td></tr>'});
-  h+='</table>';el.innerHTML=h;
- }).catch(e=>document.getElementById('se').textContent='Error: '+e);
-}
-rs();
-function rt(){
- document.getElementById('ut').value='Loading...';
- fetch('/uia/snapshot?'+Date.now()).then(r=>r.json()).then(d=>{document.getElementById('ut').value=JSON.stringify(d,null,2)}).catch(e=>document.getElementById('ut').value='Error: '+e);
-}
-rt();
-function df(){
- const q=document.getElementById('fi').value.trim();if(!q)return;
- const st=document.getElementById('fs');st.textContent='Searching...';
- fetch('/uia/find/'+encodeURIComponent(q)).then(r=>r.json()).then(d=>{
-  const items=d.results||[];
-  if(!items.length){st.textContent='Not found';document.getElementById('fr').innerHTML='';return}
-  st.textContent='Found '+items.length+' element(s)';
-  let h='<table><tr><th>#</th><th>Name</th><th>Type</th><th>Rect</th><th></th></tr>';
-  items.forEach((r,i)=>{
-   const rc=r.rect?[r.rect.left,r.rect.top,r.rect.width,r.rect.height].join(','):'-';
-   h+='<tr><td>'+(i+1)+'</td><td>'+(r.name||'-')+'</td><td>'+r.control_type+'</td><td>'+rc+'</td><td><button class="btn sm" onclick="cen(\\''+(r.name||'').replace(/'/g,"\\\\'")+'\\')">Click</button></td></tr>';
-  });
-  h+='</table>';document.getElementById('fr').innerHTML=h;
- }).catch(e=>{st.textContent='Error';document.getElementById('fr').innerHTML='<span class="st">'+e+'</span>'});
-}
-function ce(i){fetch('/uia/click',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({index:i})}).then(r=>r.json()).then(d=>{if(!d.success)console.warn(d.error)}).catch(e=>console.warn(e))}
-function cen(n){fetch('/uia/click',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:n})}).then(r=>r.json()).then(d=>{if(!d.success)console.warn(d.error)}).catch(e=>console.warn(e))}
-</script>
-</body>
-</html>'''
-    return html, 200, {"Content-Type": "text/html; charset=utf-8"}
+    return DASHBOARD2_HTML, 200, {"Content-Type": "text/html; charset=utf-8"}
 
 # =========== REST API ROUTES ===========
 @app.route("/ping")
@@ -1266,10 +1294,15 @@ def route_som_screenshot():
     ue = _get_uia_engine()
     try:
         screen_bytes = _grab_screen_bytes(force=True)
-        result = ue.som_overlay(screen_bytes)
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor() as ex:
+            fut = ex.submit(ue.som_overlay, screen_bytes)
+            result = fut.result(timeout=10)
         if result.get("success"):
             return jsonify(result)
         return jsonify({"success": False, "error": result.get("error", "SOM failed")})
+    except concurrent.futures.TimeoutError:
+        return jsonify({"success": False, "error": "SOM timed out (UIA may not be available from this session)"})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
