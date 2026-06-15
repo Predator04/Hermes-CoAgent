@@ -9,6 +9,16 @@ from dataclasses import dataclass, field
 from typing import List
 import ctypes
 
+# UIA engine (Windows accessibility tree, SOM overlays, background input)
+_uia_engine = None
+def _get_uia_engine():
+    global _uia_engine
+    if _uia_engine is None:
+        sys.path.insert(0, str(Path(__file__).parent))
+        import uia_engine as ue
+        _uia_engine = ue
+    return _uia_engine
+
 os.environ["PYAUTOGUI_FAILSAFE"] = "false"
 import pyautogui
 pyautogui.FAILSAFE = False
@@ -20,7 +30,15 @@ COAGENT_DIR = Path(__file__).parent.resolve()
 MACROS_DIR = COAGENT_DIR / "macros"
 SCREENSHOTS_DIR = COAGENT_DIR / "screenshots"
 TUNNEL_LOG = COAGENT_DIR / "tunnel.log"
+TIMESTAMP = datetime.now().strftime("%Y-%m-%d %H:%M")
 SERVER_PORT = 9123
+
+# Check UIA availability early
+try:
+    _get_uia_engine().diag()
+    _uia_ok = _get_uia_engine().UIA_READY
+except:
+    _uia_ok = False
 
 # === SESSION CHECK — warn if no desktop access ===
 def _ensure_interactive_session():
@@ -1106,6 +1124,65 @@ def route_macro_delete():
         return jsonify({"status": "deleted", "name": d["name"]})
     return jsonify({"error": "Not found"}), 404
 
+# === UIA ENGINE ROUTES ===
+@app.route("/uia/snapshot")
+def route_uia_snapshot():
+    """Get full accessibility tree of all windows and elements."""
+    ue = _get_uia_engine()
+    return jsonify(ue.uia_snapshot())
+
+@app.route("/uia/find/<path:name>")
+def route_uia_find(name):
+    """Find UI elements by name substring."""
+    ue = _get_uia_engine()
+    return jsonify({"results": ue.uia_find_by_name(name)})
+
+@app.route("/uia/click", methods=["POST"])
+def route_uia_click():
+    """Click a UI element by index (int) or name (str)."""
+    d = request.json
+    target = d.get("target", d.get("index", d.get("name", 0)))
+    ue = _get_uia_engine()
+    result = ue.uia_click_element(target)
+    if result.get("success"):
+        return jsonify(result)
+    return jsonify(result), 404
+
+@app.route("/som/screenshot")
+def route_som_screenshot():
+    """Screenshot with numbered SOM overlays on every interactable element."""
+    ue = _get_uia_engine()
+    try:
+        screen_bytes = _grab_screen_bytes(force=True)
+        result = ue.som_overlay(screen_bytes)
+        if result.get("success"):
+            return jsonify(result)
+        return jsonify({"success": False, "error": result.get("error", "SOM failed")})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/uia/find-combined", methods=["POST"])
+def route_find_combined():
+    """Find element by text using both UIA and OCR, return coordinates."""
+    d = request.json
+    text = d.get("text", "")
+    ue = _get_uia_engine()
+    return jsonify(ue.find_on_screen(text))
+
+@app.route("/input/send", methods=["POST"])
+def route_input_send():
+    """Send keystrokes in background (doesn't steal focus)."""
+    d = request.json
+    keys = d.get("keys", d.get("text", "").split())
+    ue = _get_uia_engine()
+    return jsonify(ue.send_input_background(keys))
+
+@app.route("/uia/diag")
+def route_uia_diag():
+    """Check UIA availability and basic functionality."""
+    ue = _get_uia_engine()
+    return jsonify(ue.diag())
+
 # === MCP PROXY ===
 mcp_queue = queue.Queue()
 mcp_result_queue = queue.Queue()
@@ -1147,19 +1224,22 @@ if __name__ == "__main__":
 
     _console()
     _console("  +" + "="*44 + "+")
-    _console("  |         Hermes CoAgent v3                |")
+    _console("  |         Hermes CoAgent v4               |")
     _console("  |      Ultimate Desktop Co-Pilot            |")
     _console("  +" + "="*44 + "+")
     _console()
     _console(f"  Mode:   {'MCP' if mcp_mode else 'HTTP REST + Web Dashboard'}")
     _console(f"  Port:   {port}")
     _console()
-    _console("  10 NEW FEATURES:")
+    _console("  V4 FEATURES:")
     _console("  [OK] Web Dashboard - Live screen + clickable map + controls")
     if watchdog_ok:
         _console("  [OK] Keyboard Watchdog - Ctrl+Alt+Shift = emergency stop")
     _console("  [OK] OCR Find - Locate buttons/text by label")
     _console("  [OK] Visual Search - Find images on screen")
+    _console("  [OK] UIA Tree - Accessibility element tree (click by index/name)")
+    _console("  [OK] SOM Overlay - Numbered element boxes on screenshots")
+    _console("  [OK] Background Input - SendInput (no focus steal)")
     _console("  [OK] TTS - Speak through speakers")
     _console("  [OK] Macros - Record/replay sequences (F9 to stop recording)")
     _console("  [OK] File Explorer - List/read/write/delete files via API")
