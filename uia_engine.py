@@ -126,7 +126,11 @@ try:
             return info
         except:
             return None
-    def _uia_snapshot_inner():
+    def uia_snapshot(timeout=12) -> dict:
+        """Get full accessibility tree with timeout. Sets UIA_READY on failure."""
+        global UIA_READY
+        if not UIA_READY:
+            return {"success": False, "error": "UIA not available"}
         try:
             desktop = PyWinDesktop(backend="uia")
             info = {
@@ -151,25 +155,9 @@ try:
                     pass
             return {"success": True, "tree": info}
         except Exception as e:
+            UIA_READY = False
             return {"success": False, "error": str(e), "traceback": traceback.format_exc()}
     
-    def uia_snapshot(timeout=15) -> dict:
-        """Get full accessibility tree with timeout. Sets UIA_READY=False on timeout."""
-        global UIA_READY
-        result = {"success": False, "error": "timeout"}
-        def _run():
-            nonlocal result
-            try:
-                result = _uia_snapshot_inner()
-            except Exception as e:
-                result = {"success": False, "error": str(e)}
-        t = threading.Thread(target=_run, daemon=True)
-        t.start()
-        t.join(timeout=timeout)
-        if t.is_alive():
-            UIA_READY = False  # mark UIA unavailable for subsequent calls
-        return result
-
     def uia_find_deep(name: str) -> list:
         """Find windows and descendants whose UIA name contains the search text."""
         try:
