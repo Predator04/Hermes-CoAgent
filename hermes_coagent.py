@@ -1306,6 +1306,29 @@ def route_som_screenshot():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+@app.route("/som/image")
+def route_som_image():
+    """SOM labeled screenshot as a raw PNG image."""
+    ue = _get_uia_engine()
+    try:
+        from io import BytesIO
+        import base64, concurrent.futures
+        screen_bytes = _grab_screen_bytes(force=True)
+        with concurrent.futures.ThreadPoolExecutor() as ex:
+            fut = ex.submit(ue.som_overlay, screen_bytes)
+            result = fut.result(timeout=10)
+        if result.get("success"):
+            from PIL import Image
+            img_data = base64.b64decode(result["labeled_screenshot"])
+            return send_file(BytesIO(img_data), mimetype="image/png")
+        # Fallback: return raw screenshot if SOM failed
+        return send_file(BytesIO(screen_bytes), mimetype="image/png")
+    except concurrent.futures.TimeoutError:
+        # Return raw screenshot
+        return send_file(BytesIO(_grab_screen_bytes(force=True)), mimetype="image/png")
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 @app.route("/uia/find-combined", methods=["POST"])
 def route_find_combined():
     """Find element by text using both UIA and OCR, return coordinates."""
