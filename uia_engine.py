@@ -42,6 +42,64 @@ try:
             return {"left": r.left, "top": r.top, "width": r.width(), "height": r.height()}
         except:
             return None
+
+    def _uia_element_state(elem, method_name: str, default: bool = True) -> bool:
+        """Read a pywinauto boolean state method without failing snapshot collection."""
+        try:
+            method = getattr(elem, method_name)
+            return bool(method())
+        except:
+            return default
+
+    def _uia_child_info(elem):
+        """Extract the fields used for child records in uia_snapshot()."""
+        try:
+            control_type = elem.element_info.control_type or ""
+            name = elem.element_info.name or ""
+            if not name and not control_type:
+                return None
+            return {
+                "control_type": control_type,
+                "automation_id": elem.element_info.automation_id or "",
+                "class_name": elem.element_info.class_name or "",
+                "name": name,
+                "rect": _uia_element_rect(elem),
+                "enabled": _uia_element_state(elem, "is_enabled"),
+                "visible": _uia_element_state(elem, "is_visible"),
+            }
+        except:
+            return None
+
+    def _uia_find_info(elem):
+        """Extract the compact fields returned by uia_find_deep()."""
+        try:
+            return {
+                "control_type": elem.element_info.control_type or "",
+                "automation_id": elem.element_info.automation_id or "",
+                "class_name": elem.element_info.class_name or "",
+                "name": elem.element_info.name or "",
+                "rect": _uia_element_rect(elem),
+            }
+        except:
+            return None
+
+    def _get_children(element, depth=0, max_depth=3) -> list:
+        """Return interactable descendant records for a UIA element."""
+        results = []
+        if depth >= max_depth:
+            return results
+        try:
+            try:
+                descendants = element.descendants(depth=max_depth - depth)
+            except TypeError:
+                descendants = element.descendants()
+        except:
+            return results
+        for descendant in descendants:
+            child_info = _uia_child_info(descendant)
+            if child_info:
+                results.append(child_info)
+        return results
     
     def _uia_element_info(elem, depth=0):
         """Extract info dict from a UI element."""
@@ -86,7 +144,7 @@ try:
                         "rect": _uia_element_rect(win),
                         "enabled": True,
                         "visible": True,
-                        "children": []
+                        "children": _get_children(win, max_depth=3)
                     }
                     info["children"].append(win_info)
                 except:
@@ -94,6 +152,46 @@ try:
             return {"success": True, "tree": info}
         except Exception as e:
             return {"success": False, "error": str(e), "traceback": traceback.format_exc()}
+
+    def uia_find_deep(name: str) -> list:
+        """Find windows and descendants whose UIA name contains the search text."""
+        try:
+            needle = (name or "").lower()
+            if not needle:
+                return []
+            desktop = PyWinDesktop(backend="uia")
+            results = []
+            for win in desktop.windows():
+                try:
+                    win_name = win.element_info.name or ""
+                    if needle in win_name.lower():
+                        win_info = _uia_find_info(win)
+                        if win_info:
+                            results.append(win_info)
+                except:
+                    pass
+                if len(results) >= 50:
+                    break
+                try:
+                    descendants = win.descendants()
+                except:
+                    descendants = []
+                for child in descendants:
+                    try:
+                        child_name = child.element_info.name or ""
+                        if needle in child_name.lower():
+                            child_info = _uia_find_info(child)
+                            if child_info:
+                                results.append(child_info)
+                                if len(results) >= 50:
+                                    break
+                    except:
+                        pass
+                if len(results) >= 50:
+                    break
+            return results[:50]
+        except Exception as e:
+            return [{"error": str(e)}]
     
     def uia_find_by_name(name: str) -> list:
         """Find elements by name substring."""
@@ -174,6 +272,10 @@ try:
 except Exception as e:
     UIA_READY = False
     _uia_error = str(e)
+
+if "uia_find_deep" not in globals():
+    def uia_find_deep(name: str) -> list:
+        return [{"error": _uia_error or "UIA not available"}]
 
 # ── SOM Overlay (Set of Mark) ──────────────────────────────────────────────
 def som_overlay(screenshot_bytes: bytes) -> dict:

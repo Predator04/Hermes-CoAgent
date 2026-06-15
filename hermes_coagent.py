@@ -826,6 +826,118 @@ DASHBOARD_HTML = '<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="UTF-
 def dashboard():
     return DASHBOARD_HTML, 200, {"Content-Type": "text/html; charset=utf-8"}
 
+@app.route("/dashboard2")
+def dashboard2():
+    """UIA / SOM / Find dashboard (v4)."""
+    ue = _get_uia_engine()
+    uia_ok = ue.UIA_READY if hasattr(ue, 'UIA_READY') else False
+    html = '''<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CoAgent v4 - UIA</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0a0a0f;color:#e0e0e0;min-height:100vh}
+.wrap{max-width:1200px;margin:0 auto;padding:16px}
+h1{font-size:18px;margin-bottom:8px;background:linear-gradient(135deg,#667eea,#764ba2);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.tabbar{display:flex;gap:0;margin:12px 0;border-bottom:1px solid #333}
+.tab{padding:8px 20px;cursor:pointer;font-size:13px;color:#888;border-bottom:2px solid transparent}
+.tab:hover{color:#ccc}.tab.active{color:#fff;border-bottom-color:#667eea}
+.tabpane{display:none;padding:12px 0}.tabpane.active{display:block}
+.som-img{max-width:100%;border-radius:6px;border:1px solid #333}
+table{width:100%;border-collapse:collapse;font-size:12px;margin:8px 0}
+th,td{padding:6px 8px;border:1px solid #333;text-align:left}
+th{background:#1a1a2e;color:#888;font-size:11px;text-transform:uppercase}
+td{background:#111122}
+.btn{background:#1a1a3e;border:1px solid #333;color:#ccc;padding:5px 12px;border-radius:4px;cursor:pointer;font-size:11px}
+.btn:hover{background:#2a2a5e;border-color:#555}
+.btn.sm{padding:2px 8px;font-size:10px}
+textarea{width:100%;height:500px;font-family:monospace;font-size:11px;background:#1a1a2e;color:#ccc;border:1px solid #333;border-radius:4px;padding:8px}
+input{background:#1a1a2e;border:1px solid #333;color:#ccc;padding:5px 8px;border-radius:4px;font-size:12px;width:300px}
+.row{display:flex;gap:8px;align-items:center;margin:8px 0;flex-wrap:wrap}
+.st{font-size:11px;color:#888;padding:4px 0}
+.badge{display:inline-block;padding:2px 6px;border-radius:3px;font-size:10px;margin-left:8px}
+.badge-ok{background:#131;color:#3a3;border:1px solid #363}
+.badge-no{background:#311;color:#a33;border:1px solid #633}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1> Hermes CoAgent v4 &mdash; UIA Dashboard</h1>
+<div style="margin:8px 0;font-size:12px;color:#888">
+UIA Status: <span class="badge ''' + ("badge-ok" if uia_ok else "badge-no") + '''">''' + ("ACTIVE" if uia_ok else "UNAVAILABLE") + '''</span>
+<span style="margin-left:16px">Also visit <a href="/" style="color:#667eea">Main Dashboard</a></span>
+</div>
+<div class="tabbar">
+<div class="tab active" onclick="st('som',this)"> SOM View</div>
+<div class="tab" onclick="st('tree',this)"> UIA Tree</div>
+<div class="tab" onclick="st('find',this)"> Find &amp; Click</div>
+</div>
+<div id="p-som" class="tabpane active">
+<div class="row"><button class="btn" onclick="rs()"> Refresh</button></div>
+<img id="si" class="som-img" src="/som/screenshot" alt="SOM">
+<div id="se" class="st">Loading elements...</div>
+</div>
+<div id="p-tree" class="tabpane">
+<div class="row"><button class="btn" onclick="rt()"> Refresh</button></div>
+<textarea id="ut" readonly>Loading...</textarea>
+</div>
+<div id="p-find" class="tabpane">
+<div class="row">
+<input id="fi" placeholder="Element name..." onkeydown="if(event.key==='Enter')df()">
+<button class="btn" onclick="df()">Find</button>
+</div>
+<div id="fs" class="st">Enter a name and click Find</div>
+<div id="fr"></div>
+</div>
+</div>
+<script>
+function st(n,el){
+ document.querySelectorAll('.tabpane').forEach(p=>p.classList.remove('active'));
+ document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+ document.getElementById('p-'+n).classList.add('active');
+ if(el)el.classList.add('active');
+}
+function rs(){
+ document.getElementById('si').src='/som/screenshot?'+Date.now();
+ fetch('/som/screenshot?'+Date.now()).then(r=>r.json()).then(d=>{
+  const el=document.getElementById('se');
+  if(!d.success||!d.elements||!d.elements.length){el.innerHTML='<span class="st">No elements found</span>';return}
+  let h='<table><tr><th>#</th><th>Name</th><th>Type</th><th>Center</th><th></th></tr>';
+  d.elements.forEach(e=>{h+='<tr><td>'+e.index+'</td><td>'+(e.name||'-')+'</td><td>'+e.control_type+'</td><td>'+e.center.join(',')+'</td><td><button class="btn sm" onclick="ce('+e.index+')">Click</button></td></tr>'});
+  h+='</table>';el.innerHTML=h;
+ }).catch(e=>document.getElementById('se').textContent='Error: '+e);
+}
+rs();
+function rt(){
+ document.getElementById('ut').value='Loading...';
+ fetch('/uia/snapshot?'+Date.now()).then(r=>r.json()).then(d=>{document.getElementById('ut').value=JSON.stringify(d,null,2)}).catch(e=>document.getElementById('ut').value='Error: '+e);
+}
+rt();
+function df(){
+ const q=document.getElementById('fi').value.trim();if(!q)return;
+ const st=document.getElementById('fs');st.textContent='Searching...';
+ fetch('/uia/find/'+encodeURIComponent(q)).then(r=>r.json()).then(d=>{
+  const items=d.results||[];
+  if(!items.length){st.textContent='Not found';document.getElementById('fr').innerHTML='';return}
+  st.textContent='Found '+items.length+' element(s)';
+  let h='<table><tr><th>#</th><th>Name</th><th>Type</th><th>Rect</th><th></th></tr>';
+  items.forEach((r,i)=>{
+   const rc=r.rect?[r.rect.left,r.rect.top,r.rect.width,r.rect.height].join(','):'-';
+   h+='<tr><td>'+(i+1)+'</td><td>'+(r.name||'-')+'</td><td>'+r.control_type+'</td><td>'+rc+'</td><td><button class="btn sm" onclick="cen(\\''+(r.name||'').replace(/'/g,"\\\\'")+'\\')">Click</button></td></tr>';
+  });
+  h+='</table>';document.getElementById('fr').innerHTML=h;
+ }).catch(e=>{st.textContent='Error';document.getElementById('fr').innerHTML='<span class="st">'+e+'</span>'});
+}
+function ce(i){fetch('/uia/click',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({index:i})}).then(r=>r.json()).then(d=>{if(!d.success)console.warn(d.error)}).catch(e=>console.warn(e))}
+function cen(n){fetch('/uia/click',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:n})}).then(r=>r.json()).then(d=>{if(!d.success)console.warn(d.error)}).catch(e=>console.warn(e))}
+</script>
+</body>
+</html>'''
+    return html, 200, {"Content-Type": "text/html; charset=utf-8"}
+
 # =========== REST API ROUTES ===========
 @app.route("/ping")
 def route_ping():
@@ -1133,9 +1245,9 @@ def route_uia_snapshot():
 
 @app.route("/uia/find/<path:name>")
 def route_uia_find(name):
-    """Find UI elements by name substring."""
+    """Find UI elements by name substring (deep search)."""
     ue = _get_uia_engine()
-    return jsonify({"results": ue.uia_find_by_name(name)})
+    return jsonify({"results": ue.uia_find_deep(name)})
 
 @app.route("/uia/click", methods=["POST"])
 def route_uia_click():
