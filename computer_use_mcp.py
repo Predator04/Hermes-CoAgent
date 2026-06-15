@@ -24,6 +24,12 @@ from io import BytesIO
 
 FAST_MODE = os.environ.get("MCP_FAST", "") or "--fast" in sys.argv
 
+# ── Platform check ──────────────────────────────────────────────────────────
+import platform as _platform
+if _platform.system() != "Windows":
+    print("[MCP] WARNING: Windows Computer Use MCP Server is designed for Windows.")
+    print(f"[MCP] Detected: {_platform.system()} — most features will be stubs.")
+
 # ── MCP SDK ──────────────────────────────────────────────────────────────
 from mcp.server.fastmcp import FastMCP, Context as MCPContext
 

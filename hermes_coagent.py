@@ -30,8 +30,58 @@ def _get_uia_engine():
         _uia_engine = ue
     return _uia_engine
 
+# Platform check — graceful fallback on non-Windows
+import platform as _platform
+if _platform.system() != "Windows":
+    print(f"[WARN] Hermes CoAgent is designed for Windows (detected: {_platform.system()})")
+    print("[WARN] Most features will not work. Running in stub mode.")
+    # Stub pyautogui so import doesn't crash
+    import types as _types
+    _stub = _types.ModuleType('pyautogui')
+    _stub.FAILSAFE = False
+    _stub.MINIMUM_DURATION = 0
+    _stub.MINIMUM_SLEEP = 0
+    _stub.PAUSE = 0.01
+    def _stub_pos(): return (0, 0)
+    def _stub_noop(*a, **kw): pass
+    _stub.position = _stub_pos
+    _stub.moveTo = _stub_noop
+    _stub.click = _stub_noop
+    _stub.doubleClick = _stub_noop
+    _stub.rightClick = _stub_noop
+    _stub.typewrite = _stub_noop
+    _stub.hotkey = _stub_noop
+    _stub.scroll = _stub_noop
+    _stub.drag = _stub_noop
+    _stub.pixel = lambda x,y: (0,0,0)
+    _stub.pixelMatchesColor = lambda *a,**kw: False
+    sys.modules['pyautogui'] = _stub
+
 os.environ["PYAUTOGUI_FAILSAFE"] = "false"
-import pyautogui
+
+try:
+    import pyautogui
+except ImportError:
+    print("[WARN] pyautogui not installed — input features disabled")
+    pyautogui = _stub if '_stub' in dir() else None
+    # Create stub if we haven't already
+    if not pyautogui:
+        import types as _types
+        pyautogui = _types.ModuleType('pyautogui')
+        pyautogui.FAILSAFE = False
+        pyautogui.MINIMUM_DURATION = 0
+        pyautogui.MINIMUM_SLEEP = 0
+        pyautogui.PAUSE = 0.01
+        def _s_noop(*a,**kw): pass
+        pyautogui.position = lambda: (0,0)
+        pyautogui.moveTo = _s_noop
+        pyautogui.click = _s_noop
+        pyautogui.doubleClick = _s_noop
+        pyautogui.rightClick = _s_noop
+        pyautogui.typewrite = _s_noop
+        pyautogui.hotkey = _s_noop
+        pyautogui.scroll = _s_noop
+        pyautogui.drag = _s_noop
 pyautogui.FAILSAFE = False
 pyautogui.MINIMUM_DURATION = 0
 pyautogui.MINIMUM_SLEEP = 0
@@ -968,6 +1018,18 @@ async function clickName(name){
 document.getElementById('find-name').addEventListener('keydown',e=>{if(e.key==='Enter')findElements()})
 refreshSom()
 refreshUia()
+// Auth status check
+fetch('/ping').then(r=>r.json()).then(d=>{
+  const badge=document.getElementById('auth-badge');
+  if(badge)badge.textContent='';
+}).catch(()=>{})
+// Version info
+fetch('/').then(()=>{
+  const el=document.createElement('div');
+  el.style.cssText='position:fixed;bottom:4px;right:8px;font-size:10px;color:#444;z-index:999';
+  el.textContent='Hermes CoAgent v3.0 — MIT License';
+  document.body.appendChild(el);
+}).catch(()=>{})
 </script>
 </body>
 </html>"""
