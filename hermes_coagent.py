@@ -117,30 +117,46 @@ def ps(cmd, timeout=30):
 
 # === CURSOR PULSE - visual ring before every AI action ===
 def _cursor_pulse(x, y, color=None):
-    """Flash a colored ring at (x, y) in a short-lived tkinter helper process."""
+    """Flash a colored ring at (x, y) using in-process win32gui overlay."""
     if color is None:
         color = 0x00FF00  # green
     r = (color >> 16) & 0xFF
     g = (color >> 8) & 0xFF
     b = color & 0xFF
     try:
-        if not PULSE_SCRIPT.exists():
-            _pulse_log(f"Pulse helper missing: {PULSE_SCRIPT}")
-            return
-        subprocess.Popen(
-            [
-                _pythonw_for_pulse(),
-                str(PULSE_SCRIPT),
-                str(int(x)),
-                str(int(y)),
-                str(int(r)),
-                str(int(g)),
-                str(int(b)),
-            ],
-            **_pulse_popen_kwargs(),
+        import win32gui, win32con, win32api, time
+        from ctypes import windll
+
+        hwnd = win32gui.CreateWindowEx(
+            win32con.WS_EX_LAYERED | win32con.WS_EX_TRANSPARENT | win32con.WS_EX_TOPMOST | win32con.WS_EX_TOOLWINDOW,
+            "Static", "", win32con.WS_POPUP,
+            x - 22, y - 22, 44, 44,
+            0, 0, 0, None
         )
-    except Exception as e:
-        _pulse_log(f"Failed to launch pulse helper: {e}")
+        windll.user32.SetLayeredWindowAttributes(hwnd, 0, 200, 2)
+
+        dc = win32gui.GetDC(hwnd)
+        brush = win32gui.CreateSolidBrush(win32api.RGB(r, g, b))
+        win32gui.SelectObject(dc, brush)
+        pen = win32gui.CreatePen(win32con.PS_NULL, 0, 0)
+        win32gui.SelectObject(dc, pen)
+        win32gui.Ellipse(dc, 0, 0, 44, 44)
+        win32gui.SelectObject(dc, brush); win32gui.DeleteObject(brush)
+        win32gui.SelectObject(dc, pen); win32gui.DeleteObject(pen)
+        win32gui.ReleaseDC(hwnd, dc)
+
+        win32gui.ShowWindow(hwnd, win32con.SW_SHOW)
+        win32gui.UpdateWindow(hwnd)
+        time.sleep(0.12)
+
+        for i in range(6):
+            alpha = max(0, 200 - i * 33)
+            windll.user32.SetLayeredWindowAttributes(hwnd, 0, alpha, 2)
+            time.sleep(0.03)
+
+        win32gui.DestroyWindow(hwnd)
+    except Exception:
+        pass  # cosmetic only
 
 def _current_cursor_pos(default=(960, 540)):
     try:
@@ -151,7 +167,7 @@ def _current_cursor_pos(default=(960, 540)):
         return default
 
 def _pulse_before_action(action: dict):
-    """Show a colored pulse based on action type before executing."""
+    """Show a colored pulse based on action type before executing (fire-and-forget)."""
     try:
         act_type = action.get("type", "")
         data = action.get("data", {})
@@ -170,9 +186,10 @@ def _pulse_before_action(action: dict):
         fallback_x, fallback_y = _current_cursor_pos()
         x = data.get("x", data.get("x2", data.get("x1", fallback_x)))
         y = data.get("y", data.get("y2", data.get("y1", fallback_y)))
-        _cursor_pulse(x, y, color)
-    except Exception as e:
-        _pulse_log(f"Pulse setup failed: {e}")
+        # Fire pulse in background thread so it doesn't block HTTP response
+        threading.Thread(target=_cursor_pulse, args=(x, y, color), daemon=True).start()
+    except Exception:
+        pass
 
 # === INPUT ENGINE ===
 def _execute_action(action: dict):
