@@ -68,9 +68,10 @@ class CoPilotState:
     emergency_stop: bool = False
     input_lock: threading.Lock = field(default_factory=threading.Lock)
     last_action_time: float = 0.0
-    min_action_gap: float = 0.12
+    min_action_gap: float = 0.05  # FASTER: 120ms → 50ms between actions
     last_screenshot_time: float = 0.0
-    last_screenshot_data: bytes = b""
+    last_screenshot_data: dict = field(default_factory=dict)  # Cached multiple sizes
+    last_screenshot_raw: bytes = b""
     screenshot_lock: threading.Lock = field(default_factory=threading.Lock)
     action_history: List[dict] = field(default_factory=list)
     max_history: int = 1000
@@ -243,18 +244,27 @@ def _queue_worker():
 # === SCREENSHOT ENGINE ===
 def _grab_screen_bytes(force=False) -> bytes:
     now = time.time()
-    if not force and state.last_screenshot_data and (now - state.last_screenshot_time) < 1.0:
-        return state.last_screenshot_data
+    if not force and state.last_screenshot_raw and (now - state.last_screenshot_time) < 0.5:
+        return state.last_screenshot_raw
     with state.screenshot_lock:
-        if not force and state.last_screenshot_data and (time.time() - state.last_screenshot_time) < 1.0:
-            return state.last_screenshot_data
+        if not force and state.last_screenshot_raw and (time.time() - state.last_screenshot_time) < 0.5:
+            return state.last_screenshot_raw
         img_bytes = _capture_raw()
-        state.last_screenshot_data = img_bytes
+        state.last_screenshot_raw = img_bytes
         state.last_screenshot_time = time.time()
         return img_bytes
 
 def _capture_raw() -> bytes:
-    # Method 1: PowerShell System.Drawing (most reliable from any session)
+    # Method 1: PIL ImageGrab (fastest when available - <100ms)
+    try:
+        from PIL import ImageGrab
+        img = ImageGrab.grab()
+        buf = BytesIO()
+        img.save(buf, format="PNG")
+        return buf.getvalue()
+    except:
+        pass
+    # Method 2: PowerShell System.Drawing (fallback, ~1s)
     try:
         rc, out, err = ps('''
 Add-Type -AssemblyName System.Drawing; Add-Type -AssemblyName System.Windows.Forms
@@ -270,15 +280,7 @@ $g.Dispose(); $bmp.Dispose()
         if rc == 0 and len(out) > 500:
             return base64.b64decode(out)
     except: pass
-    # Method 2: PIL ImageGrab
-    try:
-        from PIL import ImageGrab
-        img = ImageGrab.grab()
-        buf = BytesIO()
-        img.save(buf, format="PNG")
-        return buf.getvalue()
-    except: pass
-    # Method 3: mss
+    # Method 3: mss (alternative fast method)
     try:
         import mss
         with mss.mss() as sct:
@@ -1443,5 +1445,53 @@ if __name__ == "__main__":
         _console()
         _console("  WARNING: No auth. Local/trusted network only.")
         _console()
+
+        # === SHORT ALIAS ROUTES for MCP server compatibility ===
+        # These let the MCP server call /screenshot, /click, /move, /type, /hotkey, /scroll, /drag, /activate, /cursor
+        @app.route("/screenshot")
+        def route_short_screenshot():
+            return route_screen_b64()
+
+        @app.route("/click", methods=["POST"])
+        def route_short_click():
+            return route_mouse_click()
+
+        @app.route("/move", methods=["POST"])
+        def route_short_move():
+            return route_mouse_move()
+
+        @app.route("/type", methods=["POST"])
+        def route_short_type():
+            return route_key_type()
+
+        @app.route("/hotkey", methods=["POST"])
+        def route_short_hotkey():
+            return route_key_press()
+
+        @app.route("/scroll", methods=["POST"])
+        def route_short_scroll():
+            return route_mouse_scroll()
+
+        @app.route("/drag", methods=["POST"])
+        def route_short_drag():
+            return route_mouse_drag()
+
+        @app.route("/activate", methods=["POST"])
+        def route_short_activate():
+            from flask import request as _r
+            d = _r.json
+            return jsonify(activate_window_api(d["title"]))
+
+        @app.route("/cursor")
+        def route_short_cursor():
+            return route_cursor()
+
+        @app.route("/screensize")
+        def route_short_screensize():
+            return monitors_api()
+
+        @app.route("/uia/tree")
+        def route_short_uia_tree():
+            return route_uia_snapshot()
 
         app.run(host="0.0.0.0", port=port, debug=False, threaded=True)

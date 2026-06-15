@@ -6,3 +6,5 @@ macros/
 *.apk
 screen_temp*.png
 test_mcp*.py
+*.log
+.codex_path
