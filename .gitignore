@@ -1,10 +1,8 @@
-__pycache__/
+# Hermes CoAgent
 *.pyc
-*.pyo
-macros/
+__pycache__/
 screenshots/
-*.log
-tunnel.log
-tray_config.json
-tray_config.json.tmp
+macros/
 *.apk
+screen_temp*.png
+test_mcp*.py
