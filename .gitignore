@@ -1,4 +1,3 @@
-# Hermes CoAgent
 *.pyc
 __pycache__/
 screenshots/
@@ -8,3 +7,5 @@ screen_temp*.png
 test_mcp*.py
 *.log
 .codex_path
+*.bat
+*.vbs

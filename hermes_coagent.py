@@ -9,6 +9,17 @@ from dataclasses import dataclass, field
 from typing import List
 import ctypes
 
+# Auth module (optional - provides --secure and --token support)
+try:
+    from auth import require_auth as _require_auth, init_auth as _init_auth, AUTH_ENABLED as _AUTH_ENABLED
+    # Make them available at module level for route decorators
+    require_auth = _require_auth
+    AUTH_AVAILABLE = True
+except ImportError:
+    # Fallback no-op decorator
+    def require_auth(f): return f
+    AUTH_AVAILABLE = False
+
 # UIA engine (Windows accessibility tree, SOM overlays, background input)
 _uia_engine = None
 def _get_uia_engine():
@@ -1443,7 +1454,20 @@ if __name__ == "__main__":
         _console(f"  [Macros]      POST /macro/record + /macro/run")
         _console(f"  [Tunnel]      POST /tunnel/start")
         _console()
-        _console("  WARNING: No auth. Local/trusted network only.")
+        # Show auth status
+        try:
+            from auth import init_auth, require_auth, AUTH_ENABLED
+            init_auth(port)
+            if AUTH_ENABLED:
+                _console("  [SECURITY]   Auth enabled — all endpoints require Bearer token")
+            else:
+                _console("  [WARNING]    No auth — desktop controllable by anyone on network")
+        except Exception as e:
+            _console(f"  [AUTH]       Auth module not loaded: {e}")
+        _console()
+
+        bind_host = "127.0.0.1" if "--allow-external" not in sys.argv else "0.0.0.0"
+        _console(f"  [LISTEN]     http://{bind_host}:{port}/")
         _console()
 
         # === SHORT ALIAS ROUTES for MCP server compatibility ===
@@ -1494,4 +1518,4 @@ if __name__ == "__main__":
         def route_short_uia_tree():
             return route_uia_snapshot()
 
-        app.run(host="0.0.0.0", port=port, debug=False, threaded=True)
+        app.run(host=bind_host, port=port, debug=False, threaded=True)
