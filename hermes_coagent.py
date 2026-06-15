@@ -20,8 +20,6 @@ COAGENT_DIR = Path(__file__).parent.resolve()
 MACROS_DIR = COAGENT_DIR / "macros"
 SCREENSHOTS_DIR = COAGENT_DIR / "screenshots"
 TUNNEL_LOG = COAGENT_DIR / "tunnel.log"
-PULSE_SCRIPT = COAGENT_DIR / "pulse_overlay.py"
-PULSE_LOG = COAGENT_DIR / "pulse_debug.log"
 SERVER_PORT = 9123
 
 # === SESSION CHECK — warn if no desktop access ===
@@ -49,36 +47,6 @@ PYTHON = sys.executable
 def _console(msg=""):
     sys.stderr.write(str(msg) + "\n")
     sys.stderr.flush()
-
-def _pulse_log(msg):
-    try:
-        stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-        with PULSE_LOG.open("a", encoding="utf-8") as f:
-            f.write(f"[{stamp}] {msg}\n")
-    except Exception:
-        _console(f"[Pulse] {msg}")
-
-def _pythonw_for_pulse():
-    exe = Path(sys.executable)
-    if os.name == "nt" and exe.name.lower() == "python.exe":
-        pythonw = exe.with_name("pythonw.exe")
-        if pythonw.exists():
-            return str(pythonw)
-    return str(exe)
-
-def _pulse_popen_kwargs():
-    kwargs = {
-        "cwd": str(COAGENT_DIR),
-        "stdout": subprocess.DEVNULL,
-        "stderr": subprocess.DEVNULL,
-    }
-    if os.name == "nt":
-        startupinfo = subprocess.STARTUPINFO()
-        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-        startupinfo.wShowWindow = 0
-        kwargs["startupinfo"] = startupinfo
-        kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-    return kwargs
 
 # === STATE ===
 @dataclass
@@ -115,141 +83,68 @@ def ps(cmd, timeout=30):
     except Exception as e:
         return -1, "", str(e)
 
-# === CURSOR PULSE - persistent overlay with native message pump ===
-# Uses a fullscreen transparent layered window + GDI drawing.
-# The window lives for the entire server lifetime for instant draw-on-command.
+# === CURSOR PULSE - temporary topmost popup ===
+# Each pulse owns a small topmost window, then fades and destroys it.
 
-_PULSE_HWND = None
-_PULSE_THREAD = None
-_PULSE_LOCK = threading.Lock()
-_PULSE_DC = None
-
-def _pulse_window_thread():
-    """Message-pump thread that owns the persistent overlay window."""
-    global _PULSE_HWND, _PULSE_DC
-    import win32gui, win32con, win32api
-    from ctypes import windll
-
+def _register_pulse_popup_class(win32gui):
     wc = win32gui.WNDCLASS()
-    wc.lpfnWndProc = _pulse_wndproc
+    wc.lpfnWndProc = win32gui.DefWindowProc
     wc.hInstance = win32gui.GetModuleHandle(None)
-    wc.lpszClassName = "HermesPulseOverlay"
+    wc.lpszClassName = "HermesPulsePopup"
     try:
         win32gui.RegisterClass(wc)
-    except:
-        pass  # already registered
-
-    # Fullscreen borderless layered window
-    sw = win32api.GetSystemMetrics(0)
-    sh = win32api.GetSystemMetrics(1)
-    hwnd = win32gui.CreateWindowEx(
-        win32con.WS_EX_LAYERED | win32con.WS_EX_TRANSPARENT | win32con.WS_EX_TOPMOST | win32con.WS_EX_TOOLWINDOW,
-        "HermesPulseOverlay", "", win32con.WS_POPUP,
-        0, 0, sw, sh,
-        0, 0, win32gui.GetModuleHandle(None), None
-    )
-    windll.user32.SetLayeredWindowAttributes(hwnd, 0, 1, 2)  # nearly invisible by default
-    win32gui.ShowWindow(hwnd, win32con.SW_SHOW)
-    win32gui.UpdateWindow(hwnd)
-
-    dc = win32gui.GetDC(hwnd)
-
-    _PULSE_HWND = hwnd
-    _PULSE_DC = dc
-
-    # message pump — runs forever
-    import pythoncom
-    pythoncom.CoInitializeEx(0)
-    msg = win32gui.GetMessage(None, 0, 0)
-    while msg:
-        if msg.message == win32con.WM_QUIT:
-            break
-        win32gui.TranslateMessage(msg)
-        win32gui.DispatchMessage(msg)
-        msg = win32gui.GetMessage(None, 0, 0)
-    win32gui.ReleaseDC(hwnd, dc)
-    win32gui.DestroyWindow(hwnd)
-
-def _pulse_wndproc(hwnd, msg, wParam, lParam):
-    import win32con
-    if msg == win32con.WM_ERASEBKGND:
-        return 1
-    if msg == win32con.WM_PAINT:
-        return 0
-    return win32gui.DefWindowProc(hwnd, msg, wParam, lParam)
-
-def _init_pulse_overlay():
-    """Start the persistent overlay thread (idempotent)."""
-    global _PULSE_THREAD
-    if _PULSE_THREAD is not None and _PULSE_THREAD.is_alive():
-        return
-    _PULSE_THREAD = threading.Thread(target=_pulse_window_thread, daemon=True)
-    _PULSE_THREAD.start()
-    import time
-    time.sleep(0.3)  # let window create
+    except Exception:
+        pass
+    return wc.lpszClassName
 
 def _cursor_pulse(x, y, color=None):
-    """Flash a colored ring at (x, y) on the persistent overlay."""
-    global _PULSE_HWND, _PULSE_DC, _PULSE_LOCK
-    if color is None:
-        color = 0x00FF00
-    if _PULSE_HWND is None:
-        _init_pulse_overlay()
-        import time
-        time.sleep(0.3)
-    if _PULSE_HWND is None:
-        return
     import win32gui, win32con, win32api, time
     from ctypes import windll
-
-    r = (color >> 16) & 0xFF
-    g = (color >> 8) & 0xFF
-    b = color & 0xFF
-
-    with _PULSE_LOCK:
-        try:
-            dc = _PULSE_DC
-            # Draw filled circle at (x, y)
-            radius = 30
-            brush = win32gui.CreateSolidBrush(win32api.RGB(r, g, b))
-            old_brush = win32gui.SelectObject(dc, brush)
-            pen = win32gui.CreatePen(win32con.PS_NULL, 0, 0)
-            old_pen = win32gui.SelectObject(dc, pen)
-            win32gui.Ellipse(dc, x - radius, y - radius, x + radius, y + radius)
-            win32gui.SelectObject(dc, old_pen); win32gui.DeleteObject(pen)
-            win32gui.SelectObject(dc, old_brush); win32gui.DeleteObject(brush)
-
-            # Show at full opacity
-            windll.user32.SetLayeredWindowAttributes(_PULSE_HWND, 0, 180, 2)
-            win32gui.InvalidateRect(_PULSE_HWND, None, True)
-            win32gui.UpdateWindow(_PULSE_HWND)
-            time.sleep(0.15)
-
-            # Fade out
-            for i in range(6):
-                alpha = max(0, 180 - i * 30)
-                windll.user32.SetLayeredWindowAttributes(_PULSE_HWND, 0, alpha, 2)
-                win32gui.InvalidateRect(_PULSE_HWND, None, True)
-                win32gui.UpdateWindow(_PULSE_HWND)
-                time.sleep(0.03)
-
-            # Clear the drawn circle by invalidating and making window nearly invisible
-            windll.user32.SetLayeredWindowAttributes(_PULSE_HWND, 0, 1, 2)
-            win32gui.InvalidateRect(_PULSE_HWND, None, True)
-            win32gui.UpdateWindow(_PULSE_HWND)
-        except Exception:
-            pass  # cosmetic only
+    try:
+        if color is None:
+            color = 0x00FF00
+        r = (color >> 16) & 0xFF
+        g = (color >> 8) & 0xFF
+        b = color & 0xFF
+        hwnd = win32gui.CreateWindowEx(
+            win32con.WS_EX_LAYERED | win32con.WS_EX_TOPMOST | win32con.WS_EX_TOOLWINDOW,
+            "Static", "", win32con.WS_POPUP,
+            x - 22, y - 22, 44, 44,
+            0, 0, 0, None
+        )
+        windll.user32.SetLayeredWindowAttributes(hwnd, 0, 180, 2)
+        dc = win32gui.GetDC(hwnd)
+        brush = win32gui.CreateSolidBrush(win32api.RGB(r, g, b))
+        win32gui.SelectObject(dc, brush)
+        pen = win32gui.CreatePen(win32con.PS_SOLID, 2, win32api.RGB(255, 255, 255))
+        win32gui.SelectObject(dc, pen)
+        win32gui.Ellipse(dc, 2, 2, 42, 42)
+        win32gui.SelectObject(dc, win32gui.GetStockObject(5))
+        win32gui.DeleteObject(brush)
+        win32gui.SelectObject(dc, win32gui.GetStockObject(5))
+        win32gui.DeleteObject(pen)
+        win32gui.ReleaseDC(hwnd, dc)
+        win32gui.ShowWindow(hwnd, win32con.SW_SHOW)
+        win32gui.UpdateWindow(hwnd)
+        time.sleep(0.15)
+        for i in range(6):
+            alpha = max(0, 180 - i * 30)
+            windll.user32.SetLayeredWindowAttributes(hwnd, 0, alpha, 2)
+            time.sleep(0.03)
+        win32gui.DestroyWindow(hwnd)
+    except Exception:
+        pass
 
 def _current_cursor_pos(default=(960, 540)):
     try:
         pos = pyautogui.position()
         return int(pos[0]), int(pos[1])
     except Exception as e:
-        _pulse_log(f"Could not read cursor position: {e}")
+        _console(f"[Pulse] Could not read cursor position: {e}")
         return default
 
 def _pulse_before_action(action: dict):
-    """Show a colored pulse based on action type before executing (fire-and-forget)."""
+    """Show a colored pulse based on action type before executing."""
     try:
         act_type = action.get("type", "")
         data = action.get("data", {})
@@ -268,8 +163,7 @@ def _pulse_before_action(action: dict):
         fallback_x, fallback_y = _current_cursor_pos()
         x = data.get("x", data.get("x2", data.get("x1", fallback_x)))
         y = data.get("y", data.get("y2", data.get("y1", fallback_y)))
-        # Fire pulse in background thread so it doesn't block HTTP response
-        threading.Thread(target=_cursor_pulse, args=(x, y, color), daemon=True).start()
+        _cursor_pulse(x, y, color)
     except Exception:
         pass
 
