@@ -24,36 +24,20 @@ PULSE_SCRIPT = COAGENT_DIR / "pulse_overlay.py"
 PULSE_LOG = COAGENT_DIR / "pulse_debug.log"
 SERVER_PORT = 9123
 
-# === SESSION CHECK — detect desktop access ===
+# === SESSION CHECK — warn if no desktop access ===
 def _ensure_interactive_session():
-    """Detect if we can access the user desktop. If not, create a VBS launcher and exit."""
+    """Check if we have desktop access. Warn if not, but don't try to fix it."""
     try:
-        pos = pyautogui.position()
-        if pos.x == 0 and pos.y == 0:
-            raise ValueError("Cursor at (0,0) — no desktop access")
+        from ctypes import wintypes
+        import ctypes
+        point = wintypes.POINT()
+        ctypes.windll.user32.GetCursorPos(ctypes.byref(point))
         return True
     except Exception:
-        pass
-    # Create a VBS that launches us from the user's interactive desktop
-    import subprocess
-    pythonw = Path(sys.executable).with_name("pythonw.exe")
-    if not pythonw.exists():
-        pythonw = Path(sys.executable)
-    script = os.path.abspath(sys.argv[0])
-    port = sys.argv[1] if len(sys.argv) > 1 else str(SERVER_PORT)
-    vbs = COAGENT_DIR / "_relaunch.vbs"
-    vbs.write_text(
-        'CreateObject("WScript.Shell").Run "' + str(pythonw) + ' "' + script + '" ' + port + '", 0, False\n'
-        'Set fso = CreateObject("Scripting.FileSystemObject")\n'
-        'fso.DeleteFile "' + str(vbs) + '"\n'
-    )
-    subprocess.Popen(["cscript.exe", "//Nologo", str(vbs)],
-                     creationflags=subprocess.CREATE_NO_WINDOW)
-    sys.exit(0)
+        _console("WARNING: No desktop access (cursor=(0,0)). Launch from Windows desktop.")
+        return False
 
-# Relaunch if needed — skip if HERMES_RELAUNCHED is set to avoid loops
-if os.environ.get("HERMES_RELAUNCHED") != "1":
-    _ensure_interactive_session()
+_ensure_interactive_session()
 
 from flask import Flask, request, jsonify, send_file, Response
 app = Flask(__name__, static_folder=None)
