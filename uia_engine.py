@@ -17,6 +17,7 @@ from dataclasses import dataclass, field, asdict
 import ctypes
 from ctypes import wintypes, windll
 import traceback
+import threading
 
 # ── UIA via pywinauto ─────────────────────────────────────────────────────
 # Initialize COM in STA mode BEFORE importing pywinauto
@@ -33,7 +34,7 @@ try:
     from pywinauto import Desktop as PyWinDesktop
     from pywinauto import Application
     from pywinauto.timings import Timings
-    Timings.slow()
+    # Don't call Timings.slow() globally — it can hang on some desktops
 
     def _uia_element_rect(elem):
         """Get bounding rect of a UI element."""
@@ -125,8 +126,7 @@ try:
             return info
         except:
             return None
-    def uia_snapshot() -> dict:
-        """Get full accessibility tree of the desktop."""
+    def _uia_snapshot_inner():
         try:
             desktop = PyWinDesktop(backend="uia")
             info = {
@@ -152,6 +152,20 @@ try:
             return {"success": True, "tree": info}
         except Exception as e:
             return {"success": False, "error": str(e), "traceback": traceback.format_exc()}
+    
+    def uia_snapshot(timeout=15) -> dict:
+        """Get full accessibility tree with timeout."""
+        result = {"success": False, "error": "timeout"}
+        def _run():
+            nonlocal result
+            try:
+                result = _uia_snapshot_inner()
+            except Exception as e:
+                result = {"success": False, "error": str(e)}
+        t = threading.Thread(target=_run, daemon=True)
+        t.start()
+        t.join(timeout=timeout)
+        return result
 
     def uia_find_deep(name: str) -> list:
         """Find windows and descendants whose UIA name contains the search text."""
@@ -292,7 +306,7 @@ def som_overlay(screenshot_bytes: bytes) -> dict:
         # Get UIA elements
         elements = []
         if UIA_READY:
-            snap = uia_snapshot()
+            snap = uia_snapshot(timeout=10)
             if snap.get("success"):
                 def flatten(node, depth=0):
                     if depth > 4 or not node:
@@ -483,7 +497,7 @@ def diag():
         result["error"] = _uia_error
     else:
         try:
-            snap = uia_snapshot()
+            snap = uia_snapshot(timeout=10)
             result["snapshot_ok"] = snap.get("success", False)
             if result["snapshot_ok"]:
                 def count_nodes(node):
@@ -505,5 +519,5 @@ if __name__ == "__main__":
     
     if UIA_READY and result.get("snapshot_ok"):
         print("\n--- UIA Snapshot ---")
-        snap = uia_snapshot()
+        snap = uia_snapshot(timeout=10)
         print(json.dumps(snap, indent=2)[:5000])
