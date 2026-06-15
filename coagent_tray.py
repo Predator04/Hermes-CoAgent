@@ -328,6 +328,12 @@ class ServerManager(QObject):
     def __init__(self):
         super().__init__()
         debug_log("Initializing ServerManager")
+        # Kill any old stray pythonw processes that might be holding the port
+        try:
+            import subprocess
+            subprocess.run(["taskkill", "/f", "/im", "pythonw.exe"], capture_output=True, timeout=3)
+        except Exception:
+            pass
         self.process = None
         self._external_running = False
         self._timer = QTimer()
