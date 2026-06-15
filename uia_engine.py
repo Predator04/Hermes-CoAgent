@@ -131,32 +131,43 @@ try:
         global UIA_READY
         if not UIA_READY:
             return {"success": False, "error": "UIA not available"}
-        try:
-            desktop = PyWinDesktop(backend="uia")
-            info = {
-                "control_type": "Desktop",
-                "name": "Desktop",
-                "children": []
-            }
-            for win in desktop.windows():
+        result = {"success": False, "error": "timeout"}
+        def _run():
+            try:
+                nonlocal result
                 try:
-                    win_info = {
-                        "control_type": win.element_info.control_type or "",
-                        "automation_id": win.element_info.automation_id or "",
-                        "class_name": win.element_info.class_name or "",
-                        "name": win.element_info.name or "",
-                        "rect": _uia_element_rect(win),
-                        "enabled": True,
-                        "visible": True,
-                        "children": _get_children(win, max_depth=3)
+                    desktop = PyWinDesktop(backend="uia")
+                    info = {
+                        "control_type": "Desktop",
+                        "name": "Desktop",
+                        "children": []
                     }
-                    info["children"].append(win_info)
-                except:
-                    pass
-            return {"success": True, "tree": info}
-        except Exception as e:
+                    for win in desktop.windows():
+                        try:
+                            win_info = {
+                                "control_type": win.element_info.control_type or "",
+                                "automation_id": win.element_info.automation_id or "",
+                                "class_name": win.element_info.class_name or "",
+                                "name": win.element_info.name or "",
+                                "rect": _uia_element_rect(win),
+                                "enabled": True,
+                                "visible": True,
+                                "children": _get_children(win, max_depth=3)
+                            }
+                            info["children"].append(win_info)
+                        except:
+                            pass
+                    result = {"success": True, "tree": info}
+                except Exception as e:
+                    result = {"success": False, "error": str(e), "traceback": traceback.format_exc()}
+            except:
+                pass
+        t = threading.Thread(target=_run, daemon=True)
+        t.start()
+        t.join(timeout=timeout)
+        if not result.get("success"):
             UIA_READY = False
-            return {"success": False, "error": str(e), "traceback": traceback.format_exc()}
+        return result
     
     def uia_find_deep(name: str) -> list:
         """Find windows and descendants whose UIA name contains the search text."""

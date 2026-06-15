@@ -33,12 +33,8 @@ TUNNEL_LOG = COAGENT_DIR / "tunnel.log"
 TIMESTAMP = datetime.now().strftime("%Y-%m-%d %H:%M")
 SERVER_PORT = 9123
 
-# Check UIA availability early
-try:
-    _get_uia_engine().diag()
-    _uia_ok = _get_uia_engine().UIA_READY
-except:
-    _uia_ok = False
+# Check UIA availability early (but don't block startup — deferred)
+_uia_ok = False
 
 # === SESSION CHECK — warn if no desktop access ===
 def _ensure_interactive_session():
