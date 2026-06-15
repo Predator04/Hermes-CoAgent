@@ -134,86 +134,102 @@ def _uia_element_rect(elem):
     except:
         return None
 
-def _uia_snapshot_local(timeout: int = 8) -> dict:
-    """Get UIA tree locally (no CoAgent dependency)."""
-    if not HAS_UIA:
-        return {"success": False, "error": "UIA not available"}
-    result = {"success": False, "error": "timeout"}
-    
-    def _run():
-        nonlocal result
-        try:
-            desktop = PyWinDesktop(backend="uia")
-            elements = []
-            for win in desktop.windows():
-                try:
-                    name = win.element_info.name or ""
-                    ctrl_type = win.element_info.control_type or ""
-                    rect = _uia_element_rect(win)
-                    if name or ctrl_type:
-                        elements.append({
-                            "name": name,
-                            "control_type": ctrl_type,
-                            "automation_id": win.element_info.automation_id or "",
-                            "class_name": win.element_info.class_name or "",
-                            "rect": rect,
-                            "center": [rect["left"] + rect["width"]//2, rect["top"] + rect["height"]//2] if rect else None
-                        })
-                except:
-                    pass
-            result = {"success": True, "elements": elements, "total": len(elements)}
-        except Exception as e:
-            result = {"success": False, "error": str(e)}
-    
-    t = threading.Thread(target=_run, daemon=True)
-    t.start()
-    t.join(timeout=timeout)
-    return result
-
-def _uia_find_local(text: str) -> list:
-    """Find elements by name substring locally."""
-    if not HAS_UIA:
-        return []
-    results = []
+def _uia_element_info(elem):
+    """Extract info dict from a UIA element."""
     try:
+        name = elem.element_info.name or ""
+        ctrl_type = elem.element_info.control_type or ""
+        rect = _uia_element_rect(elem)
+        if not name and not ctrl_type:
+            return None
+        return {
+            "name": name,
+            "control_type": ctrl_type,
+            "automation_id": elem.element_info.automation_id or "",
+            "class_name": elem.element_info.class_name or "",
+            "rect": rect,
+            "center": [rect["left"] + rect["width"]//2, rect["top"] + rect["height"]//2] if rect else None
+        }
+    except:
+        return None
+
+UIA_CACHE = {"ready": False, "elements": [], "error": ""}
+
+def _uia_refresh_cache(timeout: int = 10) -> bool:
+    """Refresh the UIA cache by running the snapshot synchronously on this thread.
+    Must be called from a STA thread (the MCP thread is STA by default in pywinauto)."""
+    global UIA_CACHE
+    if not HAS_UIA:
+        UIA_CACHE = {"ready": False, "elements": [], "error": "UIA not available"}
+        return False
+    
+    try:
+        # COM must be initialized on THIS thread
+        import pythoncom
+        try:
+            pythoncom.CoInitialize()
+        except:
+            pass
+        
         desktop = PyWinDesktop(backend="uia")
-        needle = text.lower()
+        elements = []
         for win in desktop.windows():
-            try:
-                name = win.element_info.name or ""
-                if needle in name.lower():
-                    rect = _uia_element_rect(win)
-                    results.append({
-                        "name": name,
-                        "control_type": win.element_info.control_type or "",
-                        "automation_id": win.element_info.automation_id or "",
-                        "rect": rect,
-                        "center": [rect["left"] + rect["width"]//2, rect["top"] + rect["height"]//2] if rect else None,
-                        "confidence": 1.0
-                    })
-            except:
-                pass
+            info = _uia_element_info(win)
+            if info:
+                elements.append(info)
             try:
                 for child in win.descendants():
-                    try:
-                        cname = child.element_info.name or ""
-                        if needle in cname.lower():
-                            rect = _uia_element_rect(child)
-                            results.append({
-                                "name": cname,
-                                "control_type": child.element_info.control_type or "",
-                                "automation_id": child.element_info.automation_id or "",
-                                "rect": rect,
-                                "center": [rect["left"] + rect["width"]//2, rect["top"] + rect["height"]//2] if rect else None,
-                                "confidence": 0.9
-                            })
-                    except:
-                        pass
+                    cinfo = _uia_element_info(child)
+                    if cinfo:
+                        elements.append(cinfo)
             except:
                 pass
-    except:
-        pass
-    return results[:25]
+        
+        UIA_CACHE = {"ready": True, "elements": elements, "total": len(elements)}
+        return True
+    except Exception as e:
+        UIA_CACHE = {"ready": False, "elements": [], "error": str(e)}
+        return False
+
+def _uia_snapshot_local(timeout: int = 8) -> dict:
+    """Get UIA tree locally. Uses cached data for speed, refreshes at most every 5s."""
+    global UIA_CACHE
+    
+    if not HAS_UIA:
+        return {"success": False, "error": "UIA not available"}
+    
+    # Refresh if stale or never loaded
+    now = time.time()
+    if not UIA_CACHE.get("ready") or (now - UIA_CACHE.get("_ts", 0)) > 5:
+        _uia_refresh_cache(timeout)
+        UIA_CACHE["_ts"] = now
+    
+    if UIA_CACHE.get("ready"):
+        return {"success": True, "elements": UIA_CACHE["elements"], "total": UIA_CACHE.get("total", 0)}
+    return {"success": False, "error": UIA_CACHE.get("error", "UIA timeout")}
+
+def _uia_find_local(text: str) -> list:
+    """Find elements by name substring locally (uses cache)."""
+    snap = _uia_snapshot_local(timeout=6)
+    if not snap.get("success"):
+        return []
+    
+    needle = text.lower()
+    results = []
+    for e in snap.get("elements", []):
+        name = e.get("name", "")
+        if needle in name.lower():
+            results.append({
+                "name": name,
+                "control_type": e.get("control_type", ""),
+                "automation_id": e.get("automation_id", ""),
+                "rect": e.get("rect"),
+                "center": e.get("center"),
+                "confidence": 1.0
+            })
+            if len(results) >= 25:
+                break
+    return results
 
 # ── OCR helpers (local, free) ────────────────────────────────────────────
 def _ocr_find_local(screenshot_bytes: bytes, text: str) -> list:
@@ -240,7 +256,7 @@ def _ocr_find_local(screenshot_bytes: bytes, text: str) -> list:
 
 # ── SOM overlay (local, no CoAgent needed) ───────────────────────────────
 def _som_overlay_local(screenshot_bytes: bytes) -> dict:
-    """Create numbered SOM overlay on screenshot using UIA elements."""
+    """Create numbered SOM overlay on screenshot using CoAgent UIA + local drawing."""
     if not HAS_PIL:
         return {"success": False, "error": "PIL not available"}
     try:
@@ -254,17 +270,40 @@ def _som_overlay_local(screenshot_bytes: bytes) -> dict:
         except:
             font = ImageFont.load_default()
         
-        # Get elements from UIA
+        # Get elements from CoAgent UIA (preferred - it runs on the actual desktop)
         elements = []
-        snap = _uia_snapshot_local(timeout=6)
-        if snap.get("success"):
-            for e in snap.get("elements", []):
-                rect = e.get("rect")
+        uia_result = _coagent_get("/uia/snapshot")
+        if uia_result and uia_result.get("success"):
+            def flatten(node, depth=0):
+                if depth > 4 or not node:
+                    return
+                rect = node.get("rect")
                 if rect and rect.get("width", 0) > 20 and rect.get("height", 0) > 20:
                     if rect["width"] < sw // 2 and rect["height"] < sh // 2:
-                        elements.append(e)
-        
-        elements = elements[:50]
+                        elements.append({
+                            "name": node.get("name", ""),
+                            "control_type": node.get("control_type", ""),
+                            "automation_id": node.get("automation_id", ""),
+                            "bbox": [rect["left"], rect["top"], rect["width"], rect["height"]],
+                            "center": [rect["left"] + rect["width"]//2, rect["top"] + rect["height"]//2]
+                        })
+                for child in node.get("children", []):
+                    flatten(child, depth + 1)
+            flatten(uia_result.get("tree"))
+        else:
+            # Fallback: try local UIA
+            snap = _uia_snapshot_local(timeout=4)
+            if snap.get("success"):
+                for e in snap.get("elements", []):
+                    rect = e.get("rect")
+                    if rect and rect.get("width", 0) > 20 and rect.get("height", 0) > 20:
+                        if rect["width"] < sw // 2 and rect["height"] < sh // 2:
+                            elements.append({
+                                "name": e.get("name", ""),
+                                "control_type": e.get("control_type", ""),
+                                "bbox": [rect["left"], rect["top"], rect["width"], rect["height"]],
+                                "center": [rect["left"] + rect["width"]//2, rect["top"] + rect["height"]//2]
+                            })
         labeled = []
         
         for i, elem in enumerate(elements):
