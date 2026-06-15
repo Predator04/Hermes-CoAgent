@@ -1302,7 +1302,7 @@ def route_som_screenshot():
             return jsonify(result)
         return jsonify({"success": False, "error": result.get("error", "SOM failed")})
     except concurrent.futures.TimeoutError:
-        return jsonify({"success": False, "error": "SOM timed out (UIA may not be available from this session)"})
+        return jsonify({"success": False, "error": "SOM timed out (UIA unavailable for this session)"})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 

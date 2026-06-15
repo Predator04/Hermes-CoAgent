@@ -154,7 +154,8 @@ try:
             return {"success": False, "error": str(e), "traceback": traceback.format_exc()}
     
     def uia_snapshot(timeout=15) -> dict:
-        """Get full accessibility tree with timeout."""
+        """Get full accessibility tree with timeout. Sets UIA_READY=False on timeout."""
+        global UIA_READY
         result = {"success": False, "error": "timeout"}
         def _run():
             nonlocal result
@@ -165,6 +166,8 @@ try:
         t = threading.Thread(target=_run, daemon=True)
         t.start()
         t.join(timeout=timeout)
+        if t.is_alive():
+            UIA_READY = False  # mark UIA unavailable for subsequent calls
         return result
 
     def uia_find_deep(name: str) -> list:
@@ -497,7 +500,7 @@ def diag():
         result["error"] = _uia_error
     else:
         try:
-            snap = uia_snapshot(timeout=10)
+            snap = uia_snapshot(timeout=8)
             result["snapshot_ok"] = snap.get("success", False)
             if result["snapshot_ok"]:
                 def count_nodes(node):
