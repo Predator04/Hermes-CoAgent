@@ -328,10 +328,23 @@ class ServerManager(QObject):
     def __init__(self):
         super().__init__()
         debug_log("Initializing ServerManager")
-        # Kill any old stray pythonw processes that might be holding the port
+        # Kill any old stray server processes (not other pythonw like the tray itself)
         try:
-            import subprocess
-            subprocess.run(["taskkill", "/f", "/im", "pythonw.exe"], capture_output=True, timeout=3)
+            import subprocess, time
+            # Use WMI-like approach: find pythonw processes running hermes_coagent
+            script_path = str(SERVER_SCRIPT)
+            result = subprocess.run(
+                ['wmic', 'process', 'where', f"name='pythonw.exe' and commandline like '%{SERVER_SCRIPT.name}%'",
+                 'get', 'processid', '/format:csv'],
+                capture_output=True, text=True, timeout=5
+            )
+            for line in result.stdout.strip().split('\n')[1:]:
+                parts = line.strip().split(',')
+                if len(parts) >= 2 and parts[-1].strip().isdigit():
+                    try:
+                        subprocess.run(['taskkill', '/f', '/pid', parts[-1].strip()], capture_output=True, timeout=3)
+                    except Exception:
+                        pass
         except Exception:
             pass
         self.process = None
