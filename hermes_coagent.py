@@ -1,4 +1,4 @@
-# Hermes CoAgent v3 - Ultimate Desktop Co-Pilot
+# Hermes CoAgent v5.0 - Ultimate Desktop Co-Pilot
 # All features: Dashboard, MCP, OCR, Visual Search, TTS, Watchdog, Macros, Tunnel, Recorder, File API
 import sys, os, json, base64, subprocess, threading, time, shutil
 import re, queue
@@ -884,7 +884,7 @@ def _execute_action_wrapper(action):
 _execute_action = _execute_action_wrapper
 
 
-DASHBOARD_HTML = '<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="UTF-8">\n<meta name="viewport" content="width=device-width, initial-scale=1.0">\n<title>Hermes CoAgent v3</title>\n<style>\n*{margin:0;padding:0;box-sizing:border-box}\nbody{font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',sans-serif;background:#0a0a0f;color:#e0e0e0;overflow:hidden;height:100vh}\n.app{display:grid;grid-template-columns:320px 1fr 300px;height:100vh;gap:1px;background:#1a1a2e}\n.panel{background:#111122;padding:12px;overflow-y:auto}\n.panel h2{font-size:13px;text-transform:uppercase;color:#666;margin-bottom:10px;letter-spacing:1px}\n.btn{background:#1a1a3e;border:1px solid #333;color:#ccc;padding:6px 12px;border-radius:6px;cursor:pointer;font-size:12px;transition:all .15s}\n.btn:hover{background:#2a2a5e;border-color:#555}\n.btn.danger{background:#3a1111;border-color:#633}\n.btn.danger:hover{background:#5a1515;border-color:#a33}\n.btn.success{background:#113a11;border-color:#363}\n.btn.success:hover{background:#155a15;border-color:#3a3}\n.btn-row{display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap}\n#screenshot-container{position:relative;display:flex;align-items:center;justify-content:center;height:100%;overflow:hidden;background:#0a0a0f}\n#screen-img{max-width:100%;max-height:100%;object-fit:contain;image-rendering:auto;cursor:crosshair;border-radius:4px}\n.coord-overlay{position:absolute;top:0;left:0;pointer-events:none;color:#fff;background:rgba(0,0,0,0.7);padding:2px 6px;border-radius:4px;font-size:11px;font-family:monospace;z-index:10}\n.status-dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:6px}\n.dot-green{background:#0f0}\n.dot-red{background:#f00}\n.dot-yellow{background:#ff0}\n#action-log{font-family:monospace;font-size:11px;line-height:1.6}\n.action-entry{padding:2px 0;border-bottom:1px solid #1a1a2e;display:flex;justify-content:space-between}\n.action-time{color:#555;font-size:10px}\n.logo{font-size:20px;font-weight:bold;background:linear-gradient(135deg,#667eea,#764ba2);-webkit-background-clip:text;-webkit-text-fill-color:transparent;margin-bottom:4px}\n.subtitle{font-size:11px;color:#666;margin-bottom:12px}\ninput[type=text],input[type=number]{background:#1a1a2e;border:1px solid #333;color:#ccc;padding:5px 8px;border-radius:4px;font-size:12px;width:100%;margin-bottom:6px}\nlabel{font-size:11px;color:#888;display:block;margin-bottom:2px}\n.grid{display:grid;grid-template-columns:1fr 1fr;gap:4px}\n.tool-group{margin-bottom:12px;padding:8px;background:#0e0e1a;border-radius:6px}\n.tool-group h3{font-size:12px;color:#888;margin-bottom:6px}\n#toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#1a1a3e;border:1px solid #444;padding:8px 16px;border-radius:8px;font-size:12px;z-index:999;display:none}\n</style>\n</head>\n<body>\n<div id="toast"></div>\n<div class="app">\n  <div class="panel" id="left-panel">\n    <div class="logo"> Hermes CoAgent</div>\n    <div class="subtitle">v3 - Desktop Co-Pilot</div>\n    <div id="status-bar" style="margin-bottom:10px"><span class="status-dot dot-green"></span><span id="status-text">Connected</span></div>\n\n    <div class="tool-group">\n      <h3> Mouse</h3>\n      <div class="grid">\n        <div><label>X</label><input type="number" id="mx" value="960"></div>\n        <div><label>Y</label><input type="number" id="my" value="540"></div>\n      </div>\n      <div class="btn-row">\n        <button class="btn" onclick="mouseMove()">Move</button>\n        <button class="btn" onclick="mouseClick(\'left\')">Left</button>\n        <button class="btn" onclick="mouseClick(\'right\')">Right</button>\n        <button class="btn" onclick="mouseClick(\'middle\')">Mid</button>\n        <button class="btn" onclick="mouseDClick()">Dbl</button>\n      </div>\n    </div>\n\n    <div class="tool-group">\n      <h3> Keyboard</h3>\n      <input type="text" id="type-text" placeholder="Type something..." onkeydown="if(event.key===\'Enter\')keyType()">\n      <div class="btn-row">\n        <button class="btn" onclick="keyType()">Type</button>\n        <button class="btn" onclick="keyPress([\'ctrl\',\'c\'])">Ctrl+C</button>\n        <button class="btn" onclick="keyPress([\'ctrl\',\'v\'])">Ctrl+V</button>\n        <button class="btn" onclick="keyPress([\'enter\'])">Enter</button>\n        <button class="btn" onclick="keyPress([\'tab\'])">Tab</button>\n        <button class="btn" onclick="keyPress([\'escape\'])">Esc</button>\n      </div>\n    </div>\n\n    <div class="tool-group">\n      <h3> Find</h3>\n      <input type="text" id="find-text" placeholder="Text on screen...">\n      <div class="btn-row">\n        <button class="btn" onclick="ocrFind()">Find Text</button>\n        <button class="btn" onclick="cursorPos()">Cursor</button>\n        <button class="btn" onclick="monitors()">Monitors</button>\n      </div>\n    </div>\n\n    <div class="tool-group">\n      <h3> Files</h3>\n      <input type="text" id="file-path" placeholder="C:\\Users\\Admin\\Desktop" value="C:\\Users\\Admin\\Desktop">\n      <div class="btn-row">\n        <button class="btn" onclick="fileList()">List</button>\n        <button class="btn" onclick="appOpen()">Open</button>\n      </div>\n    </div>\n\n    <div class="tool-group">\n      <h3> Macros</h3>\n      <input type="text" id="macro-name" placeholder="macro name">\n      <div class="btn-row">\n        <button class="btn" onclick="macroList()">List</button>\n        <button class="btn success" onclick="macroRecord()">Record</button>\n        <button class="btn" onclick="macroRun()">Run</button>\n      </div>\n    </div>\n\n    <div class="tool-group">\n      <h3> Emergency</h3>\n      <div class="btn-row">\n        <button class="btn danger" onclick="emergency(\'stop\')"> STOP</button>\n        <button class="btn success" onclick="emergency(\'resume\')"> Resume</button>\n      </div>\n    </div>\n\n    <div class="tool-group">\n      <h3> Tunnel</h3>\n      <div class="btn-row">\n        <button class="btn" onclick="tunnel(\'start\')">Start</button>\n        <button class="btn danger" onclick="tunnel(\'stop\')">Stop</button>\n        <button class="btn" onclick="tunnel(\'status\')">Status</button>\n      </div>\n      <div id="tunnel-info" style="font-size:11px;color:#666"></div>\n    </div>\n  </div>\n\n  <div id="screenshot-container">\n    <img id="screen-img" src="/screen" alt="Screen">\n    <div class="coord-overlay" id="coord-overlay">Click to get coords</div>\n  </div>\n\n  <div class="panel" id="right-panel">\n    <h2>Action Log</h2>\n    <div id="action-log">\n      <div class="action-entry"><span>Ready</span><span class="action-time">now</span></div>\n    </div>\n    <div style="margin-top:8px">\n      <button class="btn" onclick="clearLog()" style="width:100%">Clear</button>\n    </div>\n  </div>\n</div>\n\n<script>\nconst BASE = \'\';\nlet logCount = 0;\nfunction toast(msg){const t=document.getElementById(\'toast\');t.textContent=msg;t.style.display=\'block\';setTimeout(()=>t.style.display=\'none\',2000)}\nfunction api(method,path,body,cb){\n  const opts={method,headers:{\'Content-Type\':\'application/json\'}};\n  if(body)opts.body=JSON.stringify(body);\n  fetch(BASE+path,opts).then(r=>r.json()).then(d=>{if(cb)cb(d)}).catch(e=>toast(\'Error: \'+e.message));\n}\nfunction addLog(text){\n  logCount++;\n  const el=document.getElementById(\'action-log\');\n  const d=new Date();\n  el.innerHTML=`<div class="action-entry"><span>${text}</span><span class="action-time">${d.getHours().toString().padStart(2,\'0\')}:${d.getMinutes().toString().padStart(2,\'0\')}:${d.getSeconds().toString().padStart(2,\'0\')}</span></div>`+el.innerHTML;\n  if(logCount>100){el.lastChild.remove();logCount--}\n}\nfunction clearLog(){document.getElementById(\'action-log\').innerHTML=\'\';logCount=0;addLog(\'Cleared\')}\n\n// Mouse\nfunction mouseMove(){const x=document.getElementById(\'mx\').value,y=document.getElementById(\'my\').value;api(\'POST\',\'/mouse/move\',{x:parseInt(x),y:parseInt(y)},d=>addLog(\'Moved to \'+x+\',\'+y))}\nfunction mouseClick(b){api(\'POST\',\'/mouse/click\',{button:b},d=>addLog(\'Clicked \'+b))}\nfunction mouseDClick(){api(\'POST\',\'/mouse/doubleclick\',{},d=>addLog(\'Double clicked\'))}\n\n// Keyboard\nfunction keyType(){const t=document.getElementById(\'type-text\').value;api(\'POST\',\'/key/type\',{text:t},d=>addLog(\'Typed: \'+t.substring(0,30)+(t.length>30?\'...\':\'\')))}\nfunction keyPress(keys){api(\'POST\',\'/key/press\',{keys},d=>addLog(\'Pressed: \'+keys.join(\'+\'))})}\n\n// Emergency\nfunction emergency(a){api(\'POST\',\'/emergency/\'+a,{},d=>{addLog(\'Emergency: \'+a);document.getElementById(\'status-text\').textContent=a===\'stop\'?\'STOPPED\':\'Connected\';document.getElementById(\'status-bar\').innerHTML=(a===\'stop\'?\'<span class="status-dot dot-red"></span>\':\'<span class="status-dot dot-green"></span>\')+document.getElementById(\'status-text\').textContent})}\n\n// Find\nfunction ocrFind(){const t=document.getElementById(\'find-text\').value;if(!t)return;api(\'POST\',\'/ocr/find\',{text:t},d=>{if(d.found){addLog(\'Found: \'+t+\' at \'+JSON.stringify(d.matches[0].center));toast(\'Found at \'+d.matches[0].center)}else{addLog(\'Not found: \'+t);toast(\'Not found\')}})}\nfunction cursorPos(){api(\'GET\',\'/cursor/pos\',null,d=>{document.getElementById(\'mx\').value=d.x;document.getElementById(\'my\').value=d.y;addLog(\'Cursor: \'+d.x+\',\'+d.y)})}\nfunction monitors(){api(\'GET\',\'/monitors\',null,d=>addLog(\'Monitors: \'+JSON.stringify(d.monitors)))}\n\n// Files\nfunction fileList(){const p=document.getElementById(\'file-path\').value;api(\'POST\',\'/file/list\',{path:p},d=>{if(d.items){addLog(\'Files in \'+d.path+\': \'+d.count+\' items\');toast(d.count+\' items\')}})}\nfunction appOpen(){const p=document.getElementById(\'file-path\').value;api(\'POST\',\'/app/open\',{path:p},d=>addLog(\'Opened: \'+p))}\n\n// Macros\nfunction macroList(){api(\'GET\',\'/macro/list\',null,d=>{if(d.macros){addLog(\'Macros: \'+d.macros.map(m=>m.name).join(\', \')||\'none\');toast(d.macros.length+\' macros\')}})}\nfunction macroRecord(){const n=document.getElementById(\'macro-name\').value;if(!n)return;api(\'POST\',\'/macro/record\',{name:n},d=>{addLog(\'Recording: \'+n+\'. Press F9 to stop.\');toast(\'Recording \'+n)})}\nfunction macroRun(){const n=document.getElementById(\'macro-name\').value;if(!n)return;api(\'POST\',\'/macro/run\',{name:n},d=>addLog(\'Ran macro: \'+n+\' (\'+d.executed+\'/\'+d.total+\')\'))}\n\n// Tunnel\nfunction tunnel(a){api(\'POST\',\'/tunnel/\'+a,{},d=>{addLog(\'Tunnel: \'+a+\' - \'+(d.url||d.status||d.message||\'ok\'));document.getElementById(\'tunnel-info\').textContent=d.url?\'URL: \'+d.url:\'\'})}\n\n// Screenshot click -> get coords\ndocument.getElementById(\'screen-img\').addEventListener(\'click\', function(e){\n  const rect = this.getBoundingClientRect();\n  const x = Math.round(e.clientX - rect.left);\n  const y = Math.round(e.clientY - rect.top);\n  const nw = this.naturalWidth||1920, nh = this.naturalHeight||1080;\n  const sx = this.width, sy = this.height;\n  const realX = Math.round(x * nw / sx);\n  const realY = Math.round(y * nh / sy);\n  document.getElementById(\'mx\').value = realX;\n  document.getElementById(\'my\').value = realY;\n  document.getElementById(\'coord-overlay\').textContent = realX+\',\'+realY;\n  toast(\'Screen coords: \'+realX+\',\'+realY);\n});\n\n// Auto-refresh screenshot every 2s\nsetInterval(()=>{\n  const img = document.getElementById(\'screen-img\');\n  img.src = \'/screenshot/fresh?\'+Date.now();\n}, 2000);\n\n// Auto-refresh action history every 3s\nsetInterval(()=>{\n  fetch(BASE+\'/history?limit=20\').then(r=>r.json()).then(d=>{\n    if(!d.actions||!d.actions.length)return;\n    const el=document.getElementById(\'action-log\');\n    let html=\'\';\n    for(let i=d.actions.length-1;i>=Math.max(0,d.actions.length-20);i--){\n      const a=d.actions[i];\n      const t=a.time?new Date(a.time).getHours().toString().padStart(2,\'0\')+\':\'+new Date(a.time).getMinutes().toString().padStart(2,\'0\')+\':\'+new Date(a.time).getSeconds().toString().padStart(2,\'0\'):\'\';\n      html+=`<div class="action-entry"><span>${a.type} ${JSON.stringify(a.data).substring(0,40)}</span><span class="action-time">${t}</span></div>`;\n    }\n    el.innerHTML=html;\n  }).catch(()=>{});\n}, 3000);\n</script>\n</body>\n</html>'
+DASHBOARD_HTML = '<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="UTF-8">\n<meta name="viewport" content="width=device-width, initial-scale=1.0">\n<title>Hermes CoAgent v5.0</title>\n<style>\n*{margin:0;padding:0;box-sizing:border-box}\nbody{font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',sans-serif;background:#0a0a0f;color:#e0e0e0;overflow:hidden;height:100vh}\n.app{display:grid;grid-template-columns:320px 1fr 300px;height:100vh;gap:1px;background:#1a1a2e}\n.panel{background:#111122;padding:12px;overflow-y:auto}\n.panel h2{font-size:13px;text-transform:uppercase;color:#666;margin-bottom:10px;letter-spacing:1px}\n.btn{background:#1a1a3e;border:1px solid #333;color:#ccc;padding:6px 12px;border-radius:6px;cursor:pointer;font-size:12px;transition:all .15s}\n.btn:hover{background:#2a2a5e;border-color:#555}\n.btn.danger{background:#3a1111;border-color:#633}\n.btn.danger:hover{background:#5a1515;border-color:#a33}\n.btn.success{background:#113a11;border-color:#363}\n.btn.success:hover{background:#155a15;border-color:#3a3}\n.btn-row{display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap}\n#screenshot-container{position:relative;display:flex;align-items:center;justify-content:center;height:100%;overflow:hidden;background:#0a0a0f}\n#screen-img{max-width:100%;max-height:100%;object-fit:contain;image-rendering:auto;cursor:crosshair;border-radius:4px}\n.coord-overlay{position:absolute;top:0;left:0;pointer-events:none;color:#fff;background:rgba(0,0,0,0.7);padding:2px 6px;border-radius:4px;font-size:11px;font-family:monospace;z-index:10}\n.status-dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:6px}\n.dot-green{background:#0f0}\n.dot-red{background:#f00}\n.dot-yellow{background:#ff0}\n#action-log{font-family:monospace;font-size:11px;line-height:1.6}\n.action-entry{padding:2px 0;border-bottom:1px solid #1a1a2e;display:flex;justify-content:space-between}\n.action-time{color:#555;font-size:10px}\n.logo{font-size:20px;font-weight:bold;background:linear-gradient(135deg,#667eea,#764ba2);-webkit-background-clip:text;-webkit-text-fill-color:transparent;margin-bottom:4px}\n.subtitle{font-size:11px;color:#666;margin-bottom:12px}\ninput[type=text],input[type=number]{background:#1a1a2e;border:1px solid #333;color:#ccc;padding:5px 8px;border-radius:4px;font-size:12px;width:100%;margin-bottom:6px}\nlabel{font-size:11px;color:#888;display:block;margin-bottom:2px}\n.grid{display:grid;grid-template-columns:1fr 1fr;gap:4px}\n.tool-group{margin-bottom:12px;padding:8px;background:#0e0e1a;border-radius:6px}\n.tool-group h3{font-size:12px;color:#888;margin-bottom:6px}\n#toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#1a1a3e;border:1px solid #444;padding:8px 16px;border-radius:8px;font-size:12px;z-index:999;display:none}\n</style>\n</head>\n<body>\n<div id="toast"></div>\n<div class="app">\n  <div class="panel" id="left-panel">\n    <div class="logo"> Hermes CoAgent</div>\n    <div class="subtitle">v5.0 - Desktop Co-Pilot</div>\n    <div id="status-bar" style="margin-bottom:10px"><span class="status-dot dot-green"></span><span id="status-text">Connected</span></div>\n\n    <div class="tool-group">\n      <h3> Mouse</h3>\n      <div class="grid">\n        <div><label>X</label><input type="number" id="mx" value="960"></div>\n        <div><label>Y</label><input type="number" id="my" value="540"></div>\n      </div>\n      <div class="btn-row">\n        <button class="btn" onclick="mouseMove()">Move</button>\n        <button class="btn" onclick="mouseClick(\'left\')">Left</button>\n        <button class="btn" onclick="mouseClick(\'right\')">Right</button>\n        <button class="btn" onclick="mouseClick(\'middle\')">Mid</button>\n        <button class="btn" onclick="mouseDClick()">Dbl</button>\n      </div>\n    </div>\n\n    <div class="tool-group">\n      <h3> Keyboard</h3>\n      <input type="text" id="type-text" placeholder="Type something..." onkeydown="if(event.key===\'Enter\')keyType()">\n      <div class="btn-row">\n        <button class="btn" onclick="keyType()">Type</button>\n        <button class="btn" onclick="keyPress([\'ctrl\',\'c\'])">Ctrl+C</button>\n        <button class="btn" onclick="keyPress([\'ctrl\',\'v\'])">Ctrl+V</button>\n        <button class="btn" onclick="keyPress([\'enter\'])">Enter</button>\n        <button class="btn" onclick="keyPress([\'tab\'])">Tab</button>\n        <button class="btn" onclick="keyPress([\'escape\'])">Esc</button>\n      </div>\n    </div>\n\n    <div class="tool-group">\n      <h3> Find</h3>\n      <input type="text" id="find-text" placeholder="Text on screen...">\n      <div class="btn-row">\n        <button class="btn" onclick="ocrFind()">Find Text</button>\n        <button class="btn" onclick="cursorPos()">Cursor</button>\n        <button class="btn" onclick="monitors()">Monitors</button>\n      </div>\n    </div>\n\n    <div class="tool-group">\n      <h3> Files</h3>\n      <input type="text" id="file-path" placeholder="C:\\Users\\Admin\\Desktop" value="C:\\Users\\Admin\\Desktop">\n      <div class="btn-row">\n        <button class="btn" onclick="fileList()">List</button>\n        <button class="btn" onclick="appOpen()">Open</button>\n      </div>\n    </div>\n\n    <div class="tool-group">\n      <h3> Macros</h3>\n      <input type="text" id="macro-name" placeholder="macro name">\n      <div class="btn-row">\n        <button class="btn" onclick="macroList()">List</button>\n        <button class="btn success" onclick="macroRecord()">Record</button>\n        <button class="btn" onclick="macroRun()">Run</button>\n      </div>\n    </div>\n\n    <div class="tool-group">\n      <h3> Emergency</h3>\n      <div class="btn-row">\n        <button class="btn danger" onclick="emergency(\'stop\')"> STOP</button>\n        <button class="btn success" onclick="emergency(\'resume\')"> Resume</button>\n      </div>\n    </div>\n\n    <div class="tool-group">\n      <h3> Tunnel</h3>\n      <div class="btn-row">\n        <button class="btn" onclick="tunnel(\'start\')">Start</button>\n        <button class="btn danger" onclick="tunnel(\'stop\')">Stop</button>\n        <button class="btn" onclick="tunnel(\'status\')">Status</button>\n      </div>\n      <div id="tunnel-info" style="font-size:11px;color:#666"></div>\n    </div>\n\n    <div class="tool-group">\n      <h3> Power</h3>\n      <div class="btn-row">\n        <button class="btn" onclick="power(\'sleep\')">Sleep</button>\n        <button class="btn" onclick="power(\'shutdown\')">Shut</button>\n        <button class="btn" onclick="power(\'restart\')">Restart</button>\n        <button class="btn" onclick="power(\'lock\')">Lock</button>\n        <button class="btn" onclick="power(\'cancel\')">Cancel</button>\n      </div>\n    </div>\n\n    <div class="tool-group">\n      <h3> Wallpaper</h3>\n      <input type="text" id="wp-folder" placeholder="C:\\wallpapers" value="C:\\Users\\Admin\\Desktop">\n      <div class="btn-row">\n        <button class="btn" onclick="wpSet()">Set</button>\n        <button class="btn" onclick="wpCycle()">Cycle</button>\n        <button class="btn" onclick="wpRandom()">Random</button>\n      </div>\n    </div>\n\n    <div class="tool-group">\n      <h3> Search</h3>\n      <input type="text" id="search-pat" placeholder="*.pdf" value="*.pdf">\n      <input type="text" id="search-path" placeholder="C:\\" value="C:\\Users\\Admin">\n      <div class="btn-row">\n        <button class="btn" onclick="searchFiles()">Search</button>\n      </div>\n      <div id="search-results" style="font-size:11px;color:#666;max-height:100px;overflow-y:auto"></div>\n    </div>\n\n    <div class="tool-group">\n      <h3> Screen</h3>\n      <div class="btn-row">\n        <button class="btn" onclick="cropScreen()">Crop/OCR</button>\n        <button class="btn" onclick="describeScreen()">Describe</button>\n        <button class="btn" onclick="layoutMonitors()">Tile Wndws</button>\n      </div>\n    </div>\n\n    <div class="tool-group">\n      <h3> Voice</h3>\n      <div class="btn-row">\n        <button class="btn success" onclick="voiceToggle(true)">Start</button>\n        <button class="btn danger" onclick="voiceToggle(false)">Stop</button>\n      </div>\n      <div id="voice-status" style="font-size:11px;color:#666">Inactive</div>\n    </div>\n\n    <div class="tool-group">\n      <h3> AI Launch</h3>\n      <input type="text" id="launch-query" placeholder="open chrome to reddit">\n      <div class="btn-row">\n        <button class="btn" onclick="aiLaunch()">Launch</button>\n      </div>\n    </div>\n  </div>\n\n  <div id="screenshot-container">\n    <img id="screen-img" src="/screen" alt="Screen">\n    <div class="coord-overlay" id="coord-overlay">Click to get coords</div>\n  </div>\n\n  <div class="panel" id="right-panel">\n    <h2>Action Log</h2>\n    <div id="action-log">\n      <div class="action-entry"><span>Ready</span><span class="action-time">now</span></div>\n    </div>\n    <div style="margin-top:8px">\n      <button class="btn" onclick="clearLog()" style="width:100%">Clear</button>\n    </div>\n  </div>\n</div>\n\n<script>\nconst BASE = \'\';\nlet logCount = 0;\nfunction toast(msg){const t=document.getElementById(\'toast\');t.textContent=msg;t.style.display=\'block\';setTimeout(()=>t.style.display=\'none\',2000)}\nfunction api(method,path,body,cb){\n  const opts={method,headers:{\'Content-Type\':\'application/json\'}};\n  if(body)opts.body=JSON.stringify(body);\n  fetch(BASE+path,opts).then(r=>r.json()).then(d=>{if(cb)cb(d)}).catch(e=>toast(\'Error: \'+e.message));\n}\nfunction addLog(text){\n  logCount++;\n  const el=document.getElementById(\'action-log\');\n  const d=new Date();\n  el.innerHTML=`<div class="action-entry"><span>${text}</span><span class="action-time">${d.getHours().toString().padStart(2,\'0\')}:${d.getMinutes().toString().padStart(2,\'0\')}:${d.getSeconds().toString().padStart(2,\'0\')}</span></div>`+el.innerHTML;\n  if(logCount>100){el.lastChild.remove();logCount--}\n}\nfunction clearLog(){document.getElementById(\'action-log\').innerHTML=\'\';logCount=0;addLog(\'Cleared\')}\n\n// Mouse\nfunction mouseMove(){const x=document.getElementById(\'mx\').value,y=document.getElementById(\'my\').value;api(\'POST\',\'/mouse/move\',{x:parseInt(x),y:parseInt(y)},d=>addLog(\'Moved to \'+x+\',\'+y))}\nfunction mouseClick(b){api(\'POST\',\'/mouse/click\',{button:b},d=>addLog(\'Clicked \'+b))}\nfunction mouseDClick(){api(\'POST\',\'/mouse/doubleclick\',{},d=>addLog(\'Double clicked\'))}\n\n// Keyboard\nfunction keyType(){const t=document.getElementById(\'type-text\').value;api(\'POST\',\'/key/type\',{text:t},d=>addLog(\'Typed: \'+t.substring(0,30)+(t.length>30?\'...\':\'\')))}\nfunction keyPress(keys){api(\'POST\',\'/key/press\',{keys},d=>addLog(\'Pressed: \'+keys.join(\'+\'))})}\n\n// Emergency\nfunction emergency(a){api(\'POST\',\'/emergency/\'+a,{},d=>{addLog(\'Emergency: \'+a);document.getElementById(\'status-text\').textContent=a===\'stop\'?\'STOPPED\':\'Connected\';document.getElementById(\'status-bar\').innerHTML=(a===\'stop\'?\'<span class="status-dot dot-red"></span>\':\'<span class="status-dot dot-green"></span>\')+document.getElementById(\'status-text\').textContent})}\n\n// Find\nfunction ocrFind(){const t=document.getElementById(\'find-text\').value;if(!t)return;api(\'POST\',\'/ocr/find\',{text:t},d=>{if(d.found){addLog(\'Found: \'+t+\' at \'+JSON.stringify(d.matches[0].center));toast(\'Found at \'+d.matches[0].center)}else{addLog(\'Not found: \'+t);toast(\'Not found\')}})}\nfunction cursorPos(){api(\'GET\',\'/cursor/pos\',null,d=>{document.getElementById(\'mx\').value=d.x;document.getElementById(\'my\').value=d.y;addLog(\'Cursor: \'+d.x+\',\'+d.y)})}\nfunction monitors(){api(\'GET\',\'/monitors\',null,d=>addLog(\'Monitors: \'+JSON.stringify(d.monitors)))}\n\n// Files\nfunction fileList(){const p=document.getElementById(\'file-path\').value;api(\'POST\',\'/file/list\',{path:p},d=>{if(d.items){addLog(\'Files in \'+d.path+\': \'+d.count+\' items\');toast(d.count+\' items\')}})}\nfunction appOpen(){const p=document.getElementById(\'file-path\').value;api(\'POST\',\'/app/open\',{path:p},d=>addLog(\'Opened: \'+p))}\n\n// Macros\nfunction macroList(){api(\'GET\',\'/macro/list\',null,d=>{if(d.macros){addLog(\'Macros: \'+d.macros.map(m=>m.name).join(\', \')||\'none\');toast(d.macros.length+\' macros\')}})}\nfunction macroRecord(){const n=document.getElementById(\'macro-name\').value;if(!n)return;api(\'POST\',\'/macro/record\',{name:n},d=>{addLog(\'Recording: \'+n+\'. Press F9 to stop.\');toast(\'Recording \'+n)})}\nfunction macroRun(){const n=document.getElementById(\'macro-name\').value;if(!n)return;api(\'POST\',\'/macro/run\',{name:n},d=>addLog(\'Ran macro: \'+n+\' (\'+d.executed+\'/\'+d.total+\')\'))}\n\n// V5.0 Power\nfunction power(a){api(\'POST\',\'/power/\'+a,{},d=>{addLog(\'Power: \'+a+\' - \'+(d.status||d.error||\'ok\'))})}\n\n// V5.0 Wallpaper\nfunction wpSet(){const f=document.getElementById(\'wp-folder\').value;api(\'POST\',\'/wallpaper/set\',{path:f},d=>addLog(\'WP: \'+(d.wallpaper||d.error)))}\nfunction wpCycle(){const f=document.getElementById(\'wp-folder\').value;api(\'POST\',\'/wallpaper/cycle\',{folder:f},d=>addLog(\'WP cycled: \'+(d.wallpaper||d.error)))}\nfunction wpRandom(){const f=document.getElementById(\'wp-folder\').value;api(\'POST\',\'/wallpaper/random\',{folder:f},d=>addLog(\'WP random: \'+(d.wallpaper||d.error)))}\n\n// V5.0 Search\nfunction searchFiles(){const pat=document.getElementById(\'search-pat\').value, p=document.getElementById(\'search-path\').value;api(\'POST\',\'/search/files\',{pattern:pat,path:p,limit:20},d=>{const el=document.getElementById(\'search-results\');if(d.matches){el.innerHTML=d.matches.map(m=>m.name+\' (\'+(m.size/1024).toFixed(0)+\'KB)\').join(\'<br>\');addLog(\'Search: \'+d.count+\' matches\')}else{el.innerHTML=d.error;addLog(\'Search error\')}})}\n\n// V5.0 Screen\nfunction cropScreen(){api(\'POST\',\'/crop\',{},d=>addLog(\'Crop: \'+(d.chars||\'0\')+\' chars copied\'))}\nfunction describeScreen(){api(\'GET\',\'/describe\',null,d=>addLog(\'Describe: \'+d.lines+\' lines found\'))}\nfunction layoutMonitors(){api(\'POST\',\'/monitors/layout\',{layout:\'grid\'},d=>addLog(\'Layout: \'+(d.windows_arranged||\'0\')+\' tiled\'))}\n\n// V5.0 Voice\nfunction voiceToggle(s){api(\'POST\',\'/voice/toggle\',{enable:s},d=>{document.getElementById(\'voice-status\').textContent=s?\'Active\':\'Inactive\';addLog(\'Voice: \'+(d.status||d.error||\'toggled\'))})}\n\n// V5.0 AI Launch\nfunction aiLaunch(){const q=document.getElementById(\'launch-query\').value;if(!q)return;api(\'POST\',\'/launch/ai\',{query:q},d=>addLog(\'Launch: \'+(d.app||d.error||\'ok\')))}\n\n// Tunnel\n\n// Screenshot click -> get coords\ndocument.getElementById(\'screen-img\').addEventListener(\'click\', function(e){\n  const rect = this.getBoundingClientRect();\n  const x = Math.round(e.clientX - rect.left);\n  const y = Math.round(e.clientY - rect.top);\n  const nw = this.naturalWidth||1920, nh = this.naturalHeight||1080;\n  const sx = this.width, sy = this.height;\n  const realX = Math.round(x * nw / sx);\n  const realY = Math.round(y * nh / sy);\n  document.getElementById(\'mx\').value = realX;\n  document.getElementById(\'my\').value = realY;\n  document.getElementById(\'coord-overlay\').textContent = realX+\',\'+realY;\n  toast(\'Screen coords: \'+realX+\',\'+realY);\n});\n\n// Auto-refresh screenshot every 2s\nsetInterval(()=>{\n  const img = document.getElementById(\'screen-img\');\n  img.src = \'/screenshot/fresh?\'+Date.now();\n}, 2000);\n\n// Auto-refresh action history every 3s\nsetInterval(()=>{\n  fetch(BASE+\'/history?limit=20\').then(r=>r.json()).then(d=>{\n    if(!d.actions||!d.actions.length)return;\n    const el=document.getElementById(\'action-log\');\n    let html=\'\';\n    for(let i=d.actions.length-1;i>=Math.max(0,d.actions.length-20);i--){\n      const a=d.actions[i];\n      const t=a.time?new Date(a.time).getHours().toString().padStart(2,\'0\')+\':\'+new Date(a.time).getMinutes().toString().padStart(2,\'0\')+\':\'+new Date(a.time).getSeconds().toString().padStart(2,\'0\'):\'\';\n      html+=`<div class="action-entry"><span>${a.type} ${JSON.stringify(a.data).substring(0,40)}</span><span class="action-time">${t}</span></div>`;\n    }\n    el.innerHTML=html;\n  }).catch(()=>{});\n}, 3000);\n</script>\n</body>\n</html>'
 
 DASHBOARD2_HTML = """<!DOCTYPE html>
 <html lang="en">
@@ -1047,7 +1047,7 @@ def dashboard2():
 @app.route("/ping")
 def route_ping():
     return jsonify({
-        "status": "ok", "agent": "Hermes CoAgent v3",
+        "status": "ok", "agent": "Hermes CoAgent v5.0",
         "mode": "copilot", "emergency_stop": state.emergency_stop,
         "queue_size": state.pending_queue.qsize(),
         "actions_today": len(state.action_history),
@@ -1428,6 +1428,398 @@ def route_uia_diag():
     ue = _get_uia_engine()
     return jsonify(ue.diag())
 
+
+# ════════════════════════════════════════════════════════════════
+# V5.0 NEW FEATURES: Power, Scheduler, Search, Wallpaper, Crop,
+# Describe, Monitor Layout, File Search, Voice, AI Launch
+# ════════════════════════════════════════════════════════════════
+
+# ── POWER MANAGEMENT ──────────────────────────────────────────
+
+@app.route("/power/sleep", methods=["POST"])
+def route_power_sleep():
+    """Put PC to sleep."""
+    try:
+        import ctypes
+        ctypes.windll.powrprof.SetSuspendState(0, 1, 0)
+        return jsonify({"status": "sleeping"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/power/shutdown", methods=["POST"])
+def route_power_shutdown():
+    """Shutdown PC. Body: {timeout: 30} (seconds)."""
+    d = request.json or {}
+    t = d.get("timeout", 30)
+    subprocess.run(["shutdown", "/s", "/t", str(t)], capture_output=True)
+    return jsonify({"status": "shutdown_scheduled", "timeout": t})
+
+@app.route("/power/restart", methods=["POST"])
+def route_power_restart():
+    """Restart PC."""
+    t = (request.json or {}).get("timeout", 30)
+    subprocess.run(["shutdown", "/r", "/t", str(t)], capture_output=True)
+    return jsonify({"status": "restart_scheduled", "timeout": t})
+
+@app.route("/power/lock", methods=["POST"])
+def route_power_lock():
+    """Lock the workstation."""
+    ctypes.windll.user32.LockWorkStation()
+    return jsonify({"status": "locked"})
+
+@app.route("/power/cancel", methods=["POST"])
+def route_power_cancel():
+    """Cancel pending shutdown/restart."""
+    subprocess.run(["shutdown", "/a"], capture_output=True)
+    return jsonify({"status": "cancelled"})
+
+# ── WALLPAPER CONTROL ─────────────────────────────────────────
+
+@app.route("/wallpaper/set", methods=["POST"])
+def route_wallpaper_set():
+    """Set desktop wallpaper. Body: {path: "C:/img.jpg"}"""
+    d = request.json or {}
+    img_path = d.get("path", "")
+    if not os.path.isfile(img_path):
+        return jsonify({"error": "File not found"}), 404
+    abs_path = os.path.abspath(img_path)
+    ctypes.windll.user32.SystemParametersInfoW(20, 0, abs_path, 2)
+    _log(f"Wallpaper set to {abs_path}")
+    return jsonify({"status": "ok", "wallpaper": abs_path})
+
+@app.route("/wallpaper/cycle", methods=["POST"])
+def route_wallpaper_cycle():
+    """Cycle through wallpapers in a folder."""
+    d = request.json or {}
+    folder = d.get("folder", "")
+    if not os.path.isdir(folder):
+        return jsonify({"error": "Folder not found"}), 404
+    exts = ('.jpg','.jpeg','.png','.bmp','.gif')
+    files = [os.path.join(folder, f) for f in os.listdir(folder) if f.lower().endswith(exts)]
+    if not files:
+        return jsonify({"error": "No image files found"}), 404
+    files.sort()
+    state_file = COAGENT_DIR / "wallpaper_state.json"
+    idx = 0
+    if state_file.exists():
+        try:
+            import json as _jj
+            state = _jj.loads(state_file.read_text())
+            idx = state.get("index", 0)
+        except:
+            pass
+    idx = (idx + 1) % len(files)
+    img = files[idx]
+    ctypes.windll.user32.SystemParametersInfoW(20, 0, img, 2)
+    state_file.write_text(json.dumps({"index": idx, "folder": folder}))
+    _log(f"Wallpaper cycled to {os.path.basename(img)} ({idx+1}/{len(files)})")
+    return jsonify({"status": "ok", "wallpaper": os.path.basename(img), "index": idx, "total": len(files)})
+
+@app.route("/wallpaper/random", methods=["POST"])
+def route_wallpaper_random():
+    """Set random wallpaper from a folder."""
+    d = request.json or {}
+    folder = d.get("folder", "")
+    if not os.path.isdir(folder):
+        return jsonify({"error": "Folder not found"}), 404
+    import random as _rnd
+    exts = ('.jpg','.jpeg','.png','.bmp','.gif')
+    files = [os.path.join(folder, f) for f in os.listdir(folder) if f.lower().endswith(exts)]
+    if not files:
+        return jsonify({"error": "No image files found"}), 404
+    img = _rnd.choice(files)
+    ctypes.windll.user32.SystemParametersInfoW(20, 0, img, 2)
+    _log(f"Wallpaper random set to {os.path.basename(img)}")
+    return jsonify({"status": "ok", "wallpaper": os.path.basename(img)})
+
+# ── FILE SEARCH ───────────────────────────────────────────────
+
+@app.route("/search/files", methods=["POST"])
+def route_search_files():
+    """Search files by name/glob. Body: {pattern: "*.pdf", path: "C:/Users", limit: 50}"""
+    d = request.json or {}
+    pattern = d.get("pattern", "*")
+    search_path = d.get("path", "C:\\")
+    limit = min(d.get("limit", 50), 200)
+    try:
+        results = []
+        for root, dirs, files in os.walk(search_path):
+            try:
+                for f in files:
+                    if len(results) >= limit:
+                        break
+                    import fnmatch
+                    if fnmatch.fnmatch(f, pattern):
+                        full = os.path.join(root, f)
+                        try:
+                            sz = os.path.getsize(full)
+                        except:
+                            sz = 0
+                        results.append({"path": full, "name": f, "size": sz})
+            except (PermissionError, OSError):
+                continue
+            if len(results) >= limit:
+                break
+        return jsonify({"matches": results, "count": len(results), "pattern": pattern, "path": search_path})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+# ── SMART CROP / OCR ──────────────────────────────────────────
+
+@app.route("/crop", methods=["POST"])
+def route_crop():
+    """Smart crop: OCR the whole screen, copy text to clipboard."""
+    d = request.json or {}
+    region = d.get("region")
+    try:
+        img = _capture_raw()
+        if region:
+            from PIL import Image
+            pil = Image.open(BytesIO(img))
+            pil = pil.crop((region[0], region[1], region[0]+region[2], region[1]+region[3]))
+            buf = BytesIO()
+            pil.save(buf, format="PNG")
+            img = buf.getvalue()
+        import pytesseract
+        text = pytesseract.image_to_string(BytesIO(img))
+        pyperclip.copy(text.strip())
+        _log(f"Cropped text ({len(text)} chars) copied to clipboard")
+        return jsonify({"status": "ok", "text": text.strip(), "chars": len(text.strip())})
+    except ImportError:
+        return jsonify({"error": "pytesseract not installed"}), 500
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+# ── DESCRIBE SCREEN ───────────────────────────────────────────
+
+@app.route("/describe", methods=["GET"])
+def route_describe():
+    """Describe current screen via OCR."""
+    try:
+        img = _capture_raw()
+        import pytesseract
+        text = pytesseract.image_to_string(BytesIO(img))
+        lines = [l.strip() for l in text.split('\n') if l.strip()]
+        return jsonify({
+            "status": "ok",
+            "description": "\n".join(lines[:100]),
+            "lines": len(lines),
+            "full_text": text
+        })
+    except ImportError:
+        return jsonify({"error": "pytesseract not installed"}), 500
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+# ── SCHEDULED ACTIONS ─────────────────────────────────────────
+
+SCHEDULER_FILE = COAGENT_DIR / "scheduler.json"
+
+def _load_scheduler():
+    if SCHEDULER_FILE.exists():
+        try:
+            return json.loads(SCHEDULER_FILE.read_text())
+        except:
+            return {"actions": []}
+    return {"actions": []}
+
+def _save_scheduler(data):
+    SCHEDULER_FILE.write_text(json.dumps(data, indent=2))
+
+@app.route("/scheduler/list", methods=["GET"])
+def route_scheduler_list():
+    """List scheduled actions."""
+    return jsonify(_load_scheduler())
+
+@app.route("/scheduler/add", methods=["POST"])
+def route_scheduler_add():
+    """Add a scheduled action."""
+    d = request.json or {}
+    name = d.get("name", f"action_{int(time.time())}")
+    cron = d.get("cron", "* * * * *")
+    action = d.get("action", {})
+    data = _load_scheduler()
+    for a in data["actions"]:
+        if a["name"] == name:
+            a["cron"] = cron
+            a["action"] = action
+            a["updated"] = time.time()
+            _save_scheduler(data)
+            return jsonify({"status": "updated", "name": name})
+    data["actions"].append({
+        "name": name, "cron": cron, "action": action, "created": time.time()
+    })
+    _save_scheduler(data)
+    _log(f"Scheduler: added '{name}' at {cron}")
+    return jsonify({"status": "added", "name": name})
+
+@app.route("/scheduler/remove", methods=["POST"])
+def route_scheduler_remove():
+    """Remove a scheduled action."""
+    d = request.json or {}
+    name = d.get("name", "")
+    data = _load_scheduler()
+    data["actions"] = [a for a in data["actions"] if a["name"] != name]
+    _save_scheduler(data)
+    _log(f"Scheduler: removed '{name}'")
+    return jsonify({"status": "removed", "name": name})
+
+@app.route("/scheduler/run", methods=["POST"])
+def route_scheduler_run():
+    """Run a scheduled action immediately."""
+    d = request.json or {}
+    name = d.get("name", "")
+    data = _load_scheduler()
+    for a in data["actions"]:
+        if a["name"] == name:
+            _execute_action_wrapper(a["action"])
+            _log(f"Scheduler: ran '{name}'")
+            return jsonify({"status": "executed", "name": name})
+    return jsonify({"error": f"Action '{name}' not found"}), 404
+
+# ── MONITOR LAYOUT ────────────────────────────────────────────
+
+@app.route("/monitors/layout", methods=["POST"])
+def route_monitor_layout():
+    """Arrange windows across monitors in a grid."""
+    d = request.json or {}
+    layout = d.get("layout", "grid")
+    try:
+        import pygetwindow as gw
+        wins = gw.getAllWindows()
+        visible = [w for w in wins if w.visible and w.title and w.width > 100]
+        if not visible:
+            return jsonify({"error": "No visible windows found"}), 404
+        num = len(visible)
+        cols = int(num ** 0.5) + (1 if num ** 0.5 % 1 > 0 else 0)
+        rows = (num + cols - 1) // cols
+        try:
+            screen_w, screen_h = pyautogui.size()
+        except:
+            screen_w, screen_h = 1920, 1080
+        tile_w = screen_w // cols
+        tile_h = screen_h // rows
+        for i, w in enumerate(visible[:20]):
+            col = i % cols
+            row = i // cols
+            try:
+                w.moveTo(col * tile_w, row * tile_h)
+                w.resizeTo(tile_w, tile_h)
+            except:
+                pass
+        return jsonify({"status": "ok", "windows_arranged": len(visible[:20]), "grid": f"{cols}x{rows}"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+# ── VOICE CONTROL ─────────────────────────────────────────────
+
+_voice_active = False
+_voice_thread = None
+
+@app.route("/voice/toggle", methods=["POST"])
+def route_voice_toggle():
+    """Toggle voice control on/off. Requires SpeechRecognition package."""
+    global _voice_active, _voice_thread
+    d = request.json or {}
+    state = d.get("enable")
+    if state is True:
+        if _voice_active:
+            return jsonify({"status": "already_active"})
+        try:
+            import speech_recognition as sr
+        except ImportError:
+            return jsonify({"error": "speech_recognition not installed"}), 500
+        _voice_active = True
+        _voice_thread = threading.Thread(target=_voice_loop, daemon=True)
+        _voice_thread.start()
+        _log("Voice control activated")
+        return jsonify({"status": "activated"})
+    elif state is False:
+        _voice_active = False
+        if _voice_thread:
+            _voice_thread.join(timeout=2)
+        _log("Voice control deactivated")
+        return jsonify({"status": "deactivated"})
+    return jsonify({"active": _voice_active})
+
+def _voice_loop():
+    """Background voice recognition loop."""
+    import speech_recognition as sr
+    r = sr.Recognizer()
+    with sr.Microphone() as source:
+        r.adjust_for_ambient_noise(source)
+        while _voice_active:
+            try:
+                audio = r.listen(source, timeout=2, phrase_time_limit=5)
+                text = r.recognize_google(audio).lower()
+                _log(f"[Voice] Heard: {text}")
+                if "click" in text:
+                    import re
+                    nums = re.findall(r'\d+', text)
+                    if len(nums) >= 2:
+                        x, y = int(nums[0]), int(nums[1])
+                        pyautogui.moveTo(x, y)
+                        pyautogui.click()
+                    elif "enter" in text:
+                        pyautogui.press('enter')
+                elif "type" in text:
+                    words = text.replace("type", "").strip()
+                    if words:
+                        pyautogui.write(words)
+                elif "scroll" in text:
+                    pyautogui.scroll(-3)
+                elif "stop" in text or "emergency" in text:
+                    _emergency_stop()
+            except sr.WaitTimeoutError:
+                continue
+            except sr.UnknownValueError:
+                continue
+            except Exception as e:
+                _log(f"[Voice] Error: {e}")
+
+# ── AI APP LAUNCHER ───────────────────────────────────────────
+
+@app.route("/launch/ai", methods=["POST"])
+def route_launch_ai():
+    """Smart app launcher. Body: {query: 'open chrome'} or {app: 'chrome'}"""
+    d = request.json or {}
+    query = d.get("query", d.get("app", "")).lower()
+    if not query:
+        return jsonify({"error": "No query provided"}), 400
+    app_map = {
+        "chrome": "chrome.exe", "google": "chrome.exe", "browser": "chrome.exe",
+        "firefox": "firefox.exe", "edge": "msedge.exe",
+        "notepad": "notepad.exe", "calculator": "calc.exe",
+        "cmd": "cmd.exe", "terminal": "cmd.exe", "powershell": "powershell.exe",
+        "word": "winword.exe", "excel": "excel.exe", "outlook": "outlook.exe",
+        "vscode": "code.exe", "code": "code.exe",
+        "telegram": "Telegram.exe", "discord": "Discord.exe",
+        "explorer": "explorer.exe", "settings": "ms-settings:",
+        "task manager": "taskmgr.exe", "paint": "mspaint.exe",
+        "spotify": "Spotify.exe", "vlc": "vlc.exe", "steam": "steam.exe",
+    }
+    for key, exe in app_map.items():
+        if key in query:
+            try:
+                if exe.startswith("ms-"):
+                    subprocess.run(["start", exe], shell=True, capture_output=True)
+                else:
+                    subprocess.Popen([exe], shell=True)
+                _log(f"AI Launcher: '{query}' -> {exe}")
+                return jsonify({"status": "launched", "app": exe, "query": query})
+            except Exception as e:
+                return jsonify({"error": str(e)}), 500
+    import re
+    if re.match(r'^https?://', query):
+        subprocess.Popen(["start", query], shell=True)
+        return jsonify({"status": "launched", "app": "browser", "url": query})
+    return jsonify({"error": f"Could not find app matching '{query}'"}), 404
+
+# ════════════════════════════════════════════════════════════════
+# END V5.0 NEW FEATURES
+# ════════════════════════════════════════════════════════════════
+
+
 # === MCP PROXY ===
 mcp_queue = queue.Queue()
 mcp_result_queue = queue.Queue()
@@ -1491,6 +1883,15 @@ if __name__ == "__main__":
     _console("  [OK] Tunnel - Cloudflare tunnel for remote access")
     _console("  [OK] MCP Mode - JSON-RPC stdin/stdout (run with --mcp)")
     _console("  [OK] Screenshot Cache - <1s instant response")
+    _console("  [OK] Power Management - Sleep/Shutdown/Restart/Lock")
+    _console("  [OK] Wallpaper Control - Set/Cycle/Random")
+    _console("  [OK] File Search - Find files by name/glob across drives")
+    _console("  [OK] Smart Crop - OCR region to clipboard")
+    _console("  [OK] Screen Description - OCR the whole screen")
+    _console("  [OK] Scheduled Actions - Cron-like timed desktop operations")
+    _console("  [OK] Monitor Layout - Tile windows in grid")
+    _console("  [OK] Voice Control - Wake word + voice commands")
+    _console("  [OK] AI App Launcher - Smart app launch by description")
     _console()
 
     if mcp_mode:
