@@ -1926,9 +1926,9 @@ def _handle_mcp():
 _tray_running = threading.Event()
 
 def _start_tray():
-    """Start system tray icon in a SEPARATE subprocess.
-    Launches tray_icon.py as a hidden process so the Windows message pump
-    doesn't conflict with Flask's threading model.
+    """Start system tray icon using pythonw.exe in a SEPARATE process.
+    pythonw.exe has no console window but has a proper Windows message pump
+    so the tray icon can register with the shell notification area.
     Falls back silently if pystray not installed."""
     import subprocess
     try:
@@ -1936,10 +1936,10 @@ def _start_tray():
         if not tray_script.exists():
             _console("  [INFO] tray_icon.py not found, skip tray icon")
             return
-        py = sys.executable
+        # Use pythonw.exe - no console window, proper Windows GUI context
+        pyw = r"C:\Users\Admin\AppData\Local\Programs\Python\Python313\pythonw.exe"
         proc = subprocess.Popen(
-            [py, str(tray_script), str(SERVER_PORT)],
-            creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0,
+            [pyw, str(tray_script), str(SERVER_PORT)],
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL
