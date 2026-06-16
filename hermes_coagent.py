@@ -1927,84 +1927,18 @@ _tray_running = threading.Event()
 
 def _start_tray():
     """Start system tray icon in a SEPARATE subprocess.
-    Uses pystray run as an independent process so the message pump
+    Launches tray_icon.py as a hidden process so the Windows message pump
     doesn't conflict with Flask's threading model.
     Falls back silently if pystray not installed."""
-    script = r'''
-import sys, os, json, urllib.request, threading
-PORT = {port}
-SERVER = "http://127.0.0.1:" + str(PORT)
-
-def main():
-    try:
-        import pystray
-        from PIL import Image, ImageDraw
-
-        icon_size = 64
-        img = Image.new("RGBA", (icon_size, icon_size), (17, 17, 34, 255))
-        draw = ImageDraw.Draw(img)
-        draw.ellipse([4, 4, icon_size - 4, icon_size - 4], fill=(102, 126, 234, 255))
-        draw.text((18, 14), "C", fill="white", font=None)
-
-        def _api(path, method="POST", body=None):
-            try:
-                data = json.dumps(body).encode() if body else None
-                req = urllib.request.Request(SERVER + path,
-                    data=data, headers={"Content-Type": "application/json"} if body else {},
-                    method=method)
-                urllib.request.urlopen(req, timeout=3)
-            except: pass
-
-        def on_open(icon, item):
-            import webbrowser; webbrowser.open(SERVER + "/")
-
-        def on_voice_toggle(icon, item):
-            _api("/voice/toggle", body={"enable": True})
-            import threading
-            def auto_off():
-                import time; time.sleep(2)
-                _api("/voice/toggle", body={"enable": False})
-            threading.Thread(target=auto_off, daemon=True).start()
-
-        def on_som_refresh(icon, item):
-            _api("/som/cache/clear")
-
-        def on_restart(icon, item):
-            icon.stop()
-            os.execl(sys.executable, sys.executable, *sys.argv)
-
-        def on_quit(icon, item):
-            _api("/emergency/stop")
-            icon.stop()
-            os._exit(0)
-
-        menu = pystray.Menu(
-            pystray.MenuItem("Open Dashboard", on_open, default=True),
-            pystray.Menu.SEPARATOR,
-            pystray.MenuItem("Toggle Voice", on_voice_toggle),
-            pystray.MenuItem("Refresh SOM Cache", on_som_refresh),
-            pystray.Menu.SEPARATOR,
-            pystray.MenuItem("Restart CoAgent", on_restart),
-            pystray.MenuItem("Quit", on_quit),
-        )
-
-        icon = pystray.Icon("HermesCoAgent", img, "Hermes CoAgent v5.1", menu)
-        icon.run()
-    except ImportError:
-        pass
-    except Exception as e:
-        pass
-
-if __name__ == "__main__":
-    main()
-'''
     import subprocess
     try:
-        code = script.format(port=SERVER_PORT)
+        tray_script = Path(__file__).parent / "tray_icon.py"
+        if not tray_script.exists():
+            _console("  [INFO] tray_icon.py not found, skip tray icon")
+            return
         py = sys.executable
-        # Launch pystray as a hidden subprocess
         proc = subprocess.Popen(
-            [py, "-c", code],
+            [py, str(tray_script), str(SERVER_PORT)],
             creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
