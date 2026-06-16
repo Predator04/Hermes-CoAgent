@@ -9,7 +9,7 @@ Provides:
 - send_input_background(keys): send keystrokes WITHOUT stealing focus
 """
 
-import sys, os, json, base64, time, threading, struct
+import sys, os, json, base64, time, threading, struct, hashlib
 from io import BytesIO
 from pathlib import Path
 from typing import List, Optional, Tuple
@@ -18,6 +18,75 @@ import ctypes
 from ctypes import wintypes, windll
 import traceback
 import threading
+
+# v5.1: UIA element tracking — stable IDs across frames
+_ELEMENT_TRACKER = {}  # key_hash -> {id, first_seen, last_seen}
+_NEXT_ELEMENT_ID = 1
+
+def _get_element_key(elem) -> str:
+    """Generate a stable key for a UIA element across frames.
+    Uses runtime_id, or fallback to (automation_id, control_type, name, class_name).
+    """
+    try:
+        rid = elem.element_info.runtime_id
+        if rid:
+            return "rid:" + hashlib.md5(str(rid).encode()).hexdigest()
+    except:
+        pass
+    try:
+        aid = elem.element_info.automation_id or ""
+        ct = elem.element_info.control_type or ""
+        nm = elem.element_info.name or ""
+        cn = elem.element_info.class_name or ""
+        raw = f"{aid}|{ct}|{nm}|{cn}"
+        if raw != "|||":
+            return "fallback:" + hashlib.md5(raw.encode()).hexdigest()
+    except:
+        pass
+    return None
+
+def _get_stable_id(elem) -> int:
+    """Get or create a stable numeric ID for a UIA element."""
+    global _NEXT_ELEMENT_ID
+    key = _get_element_key(elem)
+    if key and key in _ELEMENT_TRACKER:
+        _ELEMENT_TRACKER[key]["last_seen"] = time.time()
+        return _ELEMENT_TRACKER[key]["id"]
+    # New element
+    eid = _NEXT_ELEMENT_ID
+    _NEXT_ELEMENT_ID += 1
+    if key:
+        _ELEMENT_TRACKER[key] = {"id": eid, "first_seen": time.time(), "last_seen": time.time()}
+    # Prune stale entries every 100 new IDs
+    if _NEXT_ELEMENT_ID % 100 == 0:
+        now = time.time()
+        stale = [k for k, v in _ELEMENT_TRACKER.items() if now - v["last_seen"] > 60]
+        for k in stale:
+            del _ELEMENT_TRACKER[k]
+    return eid
+
+# v5.1: Accelerated regions — track which screen areas change most often
+_ACCEL_REGIONS = {}  # region_key -> {change_count, stable_count, priority}
+def _mark_region_changed(region_key: str):
+    """Mark a screen region as having changed."""
+    if region_key not in _ACCEL_REGIONS:
+        _ACCEL_REGIONS[region_key] = {"change_count": 0, "stable_count": 0, "priority": 0}
+    _ACCEL_REGIONS[region_key]["change_count"] += 1
+    _ACCEL_REGIONS[region_key]["stable_count"] = 0
+    _ACCEL_REGIONS[region_key]["priority"] = min(100, _ACCEL_REGIONS[region_key]["change_count"] * 2)
+
+def _mark_region_stable(region_key: str):
+    """Mark a screen region as unchanged."""
+    if region_key not in _ACCEL_REGIONS:
+        _ACCEL_REGIONS[region_key] = {"change_count": 0, "stable_count": 0, "priority": 0}
+    _ACCEL_REGIONS[region_key]["stable_count"] += 1
+    _ACCEL_REGIONS[region_key]["change_count"] = max(0, _ACCEL_REGIONS[region_key]["change_count"] - 1)
+
+def _get_cold_regions():
+    """Return region keys that have been stable for >5 consecutive checks.
+    These are safe to skip in accelerated capture.
+    """
+    return [k for k, v in _ACCEL_REGIONS.items() if v["stable_count"] > 5]
 
 # ── UIA via pywinauto ─────────────────────────────────────────────────────
 # Initialize COM in STA mode BEFORE importing pywinauto
@@ -60,6 +129,7 @@ try:
             if not name and not control_type:
                 return None
             return {
+                "id": _get_stable_id(elem),  # v5.1: stable element ID
                 "control_type": control_type,
                 "automation_id": elem.element_info.automation_id or "",
                 "class_name": elem.element_info.class_name or "",
@@ -75,6 +145,7 @@ try:
         """Extract the compact fields returned by uia_find_deep()."""
         try:
             return {
+                "id": _get_stable_id(elem),  # v5.1: stable element ID
                 "control_type": elem.element_info.control_type or "",
                 "automation_id": elem.element_info.automation_id or "",
                 "class_name": elem.element_info.class_name or "",
@@ -369,6 +440,246 @@ def som_overlay(screenshot_bytes: bytes) -> dict:
             "labeled_screenshot": base64.b64encode(buf.getvalue()).decode(),
             "elements": labeled,
             "total": len(labeled)
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e), "traceback": traceback.format_exc()}
+
+# v5.1: UIA→SOM bridging — cross-reference UIA elements with SOM overlay coordinates
+def uia_som_bridge(screenshot_bytes: bytes) -> dict:
+    """Run SOM overlay, then annotate each element with its UIA automation_id.
+    Returns SOM result with 'elements' containing additional 'automation_id' and 'uia_name' fields.
+    Also returns a 'uia_lookup' dict mapping automation_id -> element index.
+    """
+    som = som_overlay(screenshot_bytes)
+    if not som.get("success"):
+        return som
+
+    # Build lookup: for each SOM element, find its UIA element by bbox center overlap
+    uia_lookup = {}
+    for elem in som.get("elements", []):
+        bbox = elem.get("bbox")
+        if not bbox:
+            continue
+        ex, ey, ew, eh = bbox
+        e_center_x = ex + ew // 2
+        e_center_y = ey + eh // 2
+
+        # Scan UIA tree for element containing this center point
+        if UIA_READY:
+            snap = uia_snapshot(timeout=5)
+            if snap.get("success"):
+                def find_by_point(node, px, py, depth=0):
+                    if depth > 3 or not node:
+                        return None
+                    rect = node.get("rect")
+                    if rect:
+                        rx, ry, rw, rh = rect["left"], rect["top"], rect["width"], rect["height"]
+                        if rx <= px <= rx + rw and ry <= py <= ry + rh:
+                            for child in node.get("children", []):
+                                found = find_by_point(child, px, py, depth+1)
+                                if found:
+                                    return found
+                            return {
+                                "name": node.get("name", ""),
+                                "automation_id": node.get("automation_id", ""),
+                                "control_type": node.get("control_type", ""),
+                                "class_name": node.get("class_name", ""),
+                            }
+                    return None
+                match = find_by_point(snap.get("tree", {}), e_center_x, e_center_y)
+                if match:
+                    elem["automation_id"] = match.get("automation_id", "")
+                    elem["uia_name"] = match.get("name", "")
+                    elem["uia_control_type"] = match.get("control_type", "")
+                    aid = match.get("automation_id", "")
+                    if aid:
+                        uia_lookup[aid] = elem["index"]
+
+    som["uia_lookup"] = uia_lookup
+    return som
+
+def find_element_by_center(px: int, py: int) -> dict:
+    """Find the UIA element at pixel coordinates (x, y).
+    Returns element info dict with name, control_type, automation_id, rect, or empty dict.
+    """
+    if not UIA_READY:
+        return {}
+    snap = uia_snapshot(timeout=5)
+    if not snap.get("success"):
+        return {}
+
+    def search(node, depth=0):
+        if depth > 4 or not node:
+            return None
+        rect = node.get("rect")
+        if rect:
+            rx, ry, rw, rh = rect["left"], rect["top"], rect["width"], rect["height"]
+            if rx <= px <= rx + rw and ry <= py <= ry + rh:
+                # Search children first (innermost element wins)
+                for child in node.get("children", []):
+                    found = search(child, depth+1)
+                    if found:
+                        return found
+                return {
+                    "name": node.get("name", ""),
+                    "automation_id": node.get("automation_id", ""),
+                    "control_type": node.get("control_type", ""),
+                    "class_name": node.get("class_name", ""),
+                    "rect": rect
+                }
+        return None
+
+    found = search(snap.get("tree", {}))
+    return found or {}
+
+# v5.1: Per-window SOM — generate SOMs for individual windows instead of full screen
+def per_window_som(window_title: str = None) -> dict:
+    """Generate SOM overlay for a single window.
+    If window_title is given, snap that window. Otherwise return all per-window SOMs.
+    Returns dict with per-window results and combined overlay.
+    """
+    try:
+        from pywinauto import Desktop as PyWinDesktop
+        if not UIA_READY:
+            return {"success": False, "error": "UIA not available"}
+
+        desktop = PyWinDesktop(backend="uia")
+        windows = []
+        for win in desktop.windows():
+            try:
+                title = win.element_info.name or ""
+                rect = _uia_element_rect(win)
+                if title and rect and rect["width"] > 100 and rect["height"] > 100:
+                    windows.append({"handle": win, "title": title, "rect": rect})
+            except:
+                pass
+
+        if not windows:
+            return {"success": False, "error": "No suitable windows found"}
+
+        # Grab full screenshot once
+        from PIL import Image, ImageDraw, ImageFont
+        from io import BytesIO
+        screen_bytes = None
+        try:
+            from PIL import ImageGrab
+            img_full = ImageGrab.grab()
+            screen_bytes = BytesIO()
+            img_full.save(screen_bytes, format="PNG")
+            screen_bytes = screen_bytes.getvalue()
+        except:
+            return {"success": False, "error": "Cannot capture screen"}
+
+        if window_title:
+            # Single window mode
+            windows = [w for w in windows if window_title.lower() in w["title"].lower()]
+            if not windows:
+                return {"success": False, "error": f"Window '{window_title}' not found"}
+
+        from PIL import Image as PILImage
+        img_base = PILImage.open(BytesIO(screen_bytes)).convert("RGBA")
+        try:
+            font = ImageFont.truetype("arial.ttf", 12)
+        except:
+            font = ImageFont.load_default()
+
+        per_window_results = []
+        combined_draw = ImageDraw.Draw(img_base)
+
+        for wi, winfo in enumerate(windows):
+            r = winfo["rect"]
+            wx, wy, ww, wh = r["left"], r["top"], r["width"], r["height"]
+            title = winfo["title"]
+
+            # Crop to this window
+            if wx >= 0 and wy >= 0 and wx + ww <= img_base.width and wy + wh <= img_base.height:
+                win_img = img_base.crop((wx, wy, wx + ww, wy + wh))
+            else:
+                win_img = img_base
+
+            # Get UIA elements within this window
+            win_elements = []
+            snap = uia_snapshot(timeout=5)
+            if snap.get("success"):
+                def flatten_win(node, depth=0):
+                    if depth > 4 or not node:
+                        return
+                    rect = node.get("rect")
+                    if rect:
+                        rx, ry, rw, rh = rect["left"], rect["top"], rect["width"], rect["height"]
+                        # Only elements within this window bounds
+                        if (rx >= wx and ry >= wy and rx + rw <= wx + ww and ry + rh <= wy + wh
+                            and rw > 15 and rh > 15 and rw < ww * 0.8 and rh < wh * 0.8):
+                            win_elements.append({
+                                "id": node.get("id", 0),
+                                "name": node.get("name", ""),
+                                "control_type": node.get("control_type", ""),
+                                "bbox": [rx - wx, ry - wy, rw, rh],  # relative to window
+                                "absolute_bbox": [rx, ry, rw, rh],
+                                "center": [rx - wx + rw//2, ry - wy + rh//2]
+                            })
+                    for child in node.get("children", []):
+                        flatten_win(child, depth+1)
+                flatten_win(snap.get("tree", {}))
+
+            win_elements = win_elements[:30]
+
+            # Draw window outline
+            combined_draw.rectangle([wx, wy, wx + ww, wy + wh], outline="#00FF88", width=2)
+            # Draw title
+            combined_draw.text((wx + 4, wy + 4), f"[{wi+1}] {title[:50]}", fill="#00FF88", font=font)
+
+            # Draw elements
+            label_counter = 1
+            labeled = []
+            for elem in win_elements:
+                abs_bx, abs_by, abs_bw, abs_bh = elem["absolute_bbox"]
+                label = str(wi * 100 + label_counter)
+
+                # Draw box in window-specific color
+                combined_draw.rectangle([abs_bx, abs_by, abs_bx + abs_bw, abs_by + abs_bh],
+                                       outline="#44FFAA", width=1)
+
+                # Draw label
+                tb = combined_draw.textbbox((abs_bx, abs_by - 14), label, font=font)
+                combined_draw.rectangle(tb, fill="#44FFAA")
+                combined_draw.text((abs_bx + 1, abs_by - 14), label, fill="black", font=font)
+
+                labeled.append({
+                    "index": label_counter,
+                    "window_index": wi,
+                    "id": elem.get("id", 0),
+                    "name": elem.get("name", ""),
+                    "control_type": elem.get("control_type", ""),
+                    "center": elem["center"],
+                    "bbox_relative": elem["bbox"],
+                    "bbox_absolute": elem["absolute_bbox"]
+                })
+                label_counter += 1
+
+            per_window_results.append({
+                "window_index": wi,
+                "title": title,
+                "rect": {"x": wx, "y": wy, "width": ww, "height": wh},
+                "elements": labeled,
+                "total": len(labeled)
+            })
+
+        # Pad with outer labels for windows list
+        for wi, winfo in enumerate(windows):
+            r = winfo["rect"]
+            wx, wy, ww, wh = r["left"], r["top"], r["width"], r["height"]
+            label = str(wi + 1)
+            combined_draw.text((wx + 4, wy + wh - 18), f"[W{label}]", fill="#00FF88", font=font)
+
+        buf = BytesIO()
+        img_base.save(buf, format="PNG")
+
+        return {
+            "success": True,
+            "per_window": per_window_results,
+            "total_windows": len(per_window_results),
+            "combined_screenshot": base64.b64encode(buf.getvalue()).decode(),
         }
     except Exception as e:
         return {"success": False, "error": str(e), "traceback": traceback.format_exc()}

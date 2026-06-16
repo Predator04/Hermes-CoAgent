@@ -1,4 +1,4 @@
-# Hermes CoAgent v5.0
+# Hermes CoAgent v5.1
 
 **Ultimate Desktop Co-Pilot for Windows** — gives AI agents (Hermes, Claude, Codex, etc.) full native Windows desktop control. Screenshots, mouse/keyboard, UIA accessibility trees, OCR, voice control, file search, wallpaper, power management — all local, zero API costs.
 
@@ -7,6 +7,18 @@
 ---
 
 ## 🔥 Features
+
+### v5.1 — SOM & UIA Intelligence
+| Feature | Endpoints | What it does |
+|---------|-----------|-------------|
+| **UIA Element Tracking** | All UIA routes | Stable `id` field on every element — survives across frames |
+| **SOM Diff Cache** | `/som/screenshot`, `/som/cache/clear` | Pixel-hash comparison: returns cached SOM in <1ms if screen unchanged |
+| **UIA→SOM Bridge** | `/som/bridge` | Cross-references OCR-visible elements with their UIA metadata |
+| **Per-Window SOM** | `/som/per-window` | Individual window snapshots with relative element coordinates |
+| **Element Finder** | `/som/point` | `POST {x, y}` → gets the UIA element at any pixel coordinate |
+| **Accelerated Regions** | `/uia/accelerated-regions` | Tracks which screen areas change most/least often |
+
+### v5.0 — 10 New Feature Categories
 
 | Capability | What it does |
 |---|---|
