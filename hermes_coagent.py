@@ -1840,7 +1840,7 @@ def _handle_mcp():
 
 # =========== MAIN ===========
 if __name__ == "__main__":
-    port = int(sys.argv[1]) if len(sys.argv) > 1 else 9123
+    port = int(next((a for a in sys.argv[1:] if a.isdigit()), 9123))
     SERVER_PORT = port
 
     # Start queue worker
