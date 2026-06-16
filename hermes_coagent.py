@@ -1926,54 +1926,93 @@ def _handle_mcp():
 _tray_running = threading.Event()
 
 def _start_tray():
-    """Start system tray in daemon thread.
-    Right-click menu: Dashboard, Voice Toggle, SOM Refresh, Restart, Quit.
+    """Start system tray icon in a SEPARATE subprocess.
+    Uses pystray run as an independent process so the message pump
+    doesn't conflict with Flask's threading model.
     Falls back silently if pystray not installed."""
-    def _try_tray():
-        try:
-            import pystray
-            from PIL import Image, ImageDraw
-            icon_size = 64
-            img = Image.new("RGBA", (icon_size, icon_size), (17, 17, 34, 255))
-            draw = ImageDraw.Draw(img)
-            draw.ellipse([4, 4, icon_size - 4, icon_size - 4], fill=(102, 126, 234, 255))
-            draw.text((18, 14), "C", fill="white", font=None)
-            def _on_open(icon, item):
-                import webbrowser; webbrowser.open(f"http://localhost:{SERVER_PORT}/")
-            def _on_voice_toggle(icon, item):
-                import urllib.request
-                d = json.dumps({"enable": not _voice_active}).encode()
-                try:
-                    req = urllib.request.Request(f"http://127.0.0.1:{SERVER_PORT}/voice/toggle",
-                        data=d, headers={"Content-Type": "application/json"}, method="POST")
-                    urllib.request.urlopen(req, timeout=3)
-                except: pass
-            def _on_restart(icon, item):
-                icon.stop(); os.execl(sys.executable, sys.executable, *sys.argv)
-            def _on_quit(icon, item):
-                icon.stop(); os._exit(0)
-            def _on_som_refresh(icon, item):
-                import urllib.request
-                try: urllib.request.urlopen(f"http://127.0.0.1:{SERVER_PORT}/som/cache/clear", timeout=3)
-                except: pass
-            menu = pystray.Menu(
-                pystray.MenuItem("Open Dashboard", _on_open, default=True),
-                pystray.Menu.SEPARATOR,
-                pystray.MenuItem("Toggle Voice", _on_voice_toggle),
-                pystray.MenuItem("Refresh SOM Cache", _on_som_refresh),
-                pystray.Menu.SEPARATOR,
-                pystray.MenuItem("Restart CoAgent", _on_restart),
-                pystray.MenuItem("Quit", _on_quit),
-            )
-            icon = pystray.Icon("HermesCoAgent", img, "Hermes CoAgent v5.1", menu)
-            _console("  [OK] System Tray Icon - Right-click for menu")
-            icon.run()
-        except ImportError:
-            _console("  [INFO] System Tray not available (install pystray: pip install pystray)")
-        except Exception as e:
-            _console(f"  [INFO] Tray icon skipped: {e}")
-    t = threading.Thread(target=_try_tray, daemon=True)
-    t.start()
+    script = r'''
+import sys, os, json, urllib.request, threading
+PORT = {port}
+SERVER = "http://127.0.0.1:" + str(PORT)
+
+def main():
+    try:
+        import pystray
+        from PIL import Image, ImageDraw
+
+        icon_size = 64
+        img = Image.new("RGBA", (icon_size, icon_size), (17, 17, 34, 255))
+        draw = ImageDraw.Draw(img)
+        draw.ellipse([4, 4, icon_size - 4, icon_size - 4], fill=(102, 126, 234, 255))
+        draw.text((18, 14), "C", fill="white", font=None)
+
+        def _api(path, method="POST", body=None):
+            try:
+                data = json.dumps(body).encode() if body else None
+                req = urllib.request.Request(SERVER + path,
+                    data=data, headers={"Content-Type": "application/json"} if body else {},
+                    method=method)
+                urllib.request.urlopen(req, timeout=3)
+            except: pass
+
+        def on_open(icon, item):
+            import webbrowser; webbrowser.open(SERVER + "/")
+
+        def on_voice_toggle(icon, item):
+            _api("/voice/toggle", body={"enable": True})
+            import threading
+            def auto_off():
+                import time; time.sleep(2)
+                _api("/voice/toggle", body={"enable": False})
+            threading.Thread(target=auto_off, daemon=True).start()
+
+        def on_som_refresh(icon, item):
+            _api("/som/cache/clear")
+
+        def on_restart(icon, item):
+            icon.stop()
+            os.execl(sys.executable, sys.executable, *sys.argv)
+
+        def on_quit(icon, item):
+            _api("/emergency/stop")
+            icon.stop()
+            os._exit(0)
+
+        menu = pystray.Menu(
+            pystray.MenuItem("Open Dashboard", on_open, default=True),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem("Toggle Voice", on_voice_toggle),
+            pystray.MenuItem("Refresh SOM Cache", on_som_refresh),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem("Restart CoAgent", on_restart),
+            pystray.MenuItem("Quit", on_quit),
+        )
+
+        icon = pystray.Icon("HermesCoAgent", img, "Hermes CoAgent v5.1", menu)
+        icon.run()
+    except ImportError:
+        pass
+    except Exception as e:
+        pass
+
+if __name__ == "__main__":
+    main()
+'''
+    import subprocess
+    try:
+        code = script.format(port=SERVER_PORT)
+        py = sys.executable
+        # Launch pystray as a hidden subprocess
+        proc = subprocess.Popen(
+            [py, "-c", code],
+            creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL
+        )
+        _console("  [OK] System Tray Icon - Look for purple 'C' in notification area")
+    except Exception as e:
+        _console(f"  [INFO] Tray icon skipped: {e}")
 
 # =========== MAIN ===========
 if __name__ == "__main__":
