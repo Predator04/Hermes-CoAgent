@@ -16,11 +16,8 @@ Config:
   COAGENT_URL=http://localhost:9123            # CoAgent server
   MCP_FAST=1                                   # Lazy-import mode via env
 """
-import sys, os, json, base64, io, time, subprocess, threading, re, traceback
-from pathlib import Path
-from typing import Any, Optional
-from dataclasses import dataclass, field
-from io import BytesIO
+import sys, os, json, base64, io, time, asyncio
+from typing import Optional
 
 FAST_MODE = os.environ.get("MCP_FAST", "") or "--fast" in sys.argv
 
@@ -31,7 +28,7 @@ if _platform.system() != "Windows":
     print(f"[MCP] Detected: {_platform.system()} — most features will be stubs.")
 
 # ── MCP SDK ──────────────────────────────────────────────────────────────
-from mcp.server.fastmcp import FastMCP, Context as MCPContext
+from mcp.server.fastmcp import FastMCP
 
 # ── Lazy image imports ───────────────────────────────────────────────────
 def _lazy_imports():
@@ -93,7 +90,7 @@ else:
 
 # ── CoAgent HTTP client ──────────────────────────────────────────────────
 COAGENT_URL = os.environ.get("COAGENT_URL", "http://localhost:9123")
-import urllib.request, urllib.error
+import urllib.request
 
 _coagent_cache = {}
 _coagent_cache_ttl = 2.0  # seconds
@@ -103,7 +100,6 @@ def _coagent_get(path: str, no_cache=False) -> Optional[dict]:
     """GET request to CoAgent server with simple caching."""
     global _coagent_cache, _last_coagent_cache
     now = time.time()
-    cache_key = f"GET:{path}"
     if not no_cache and path in _coagent_cache and (now - _last_coagent_cache) < _coagent_cache_ttl:
         return _coagent_cache[path]
     try:
@@ -198,6 +194,10 @@ async def capture(mode: str = "som") -> str:
     if not data or "data" not in data:
         return json.dumps(data or {"error": "no screenshot data"})
     try:
+        if FAST_MODE and not HAS_PIL:
+            _lazy_imports()
+        if not HAS_PIL:
+            return json.dumps({"error": "PIL not available"})
         img_b64 = data["data"]
         img_bytes = base64.b64decode(img_b64)
         img = Image.open(io.BytesIO(img_bytes))
@@ -214,22 +214,22 @@ async def capture(mode: str = "som") -> str:
                     x, y, w, h = win["left"], win["top"], win["width"], win["height"]
                 else:
                     continue
-                    elements.append({
-                        "index": idx,
-                        "name": win.get("name", ""),
-                        "control_type": win.get("control_type", "Window"),
-                        "x": x + w // 2,
-                        "y": y + h // 2,
-                        "width": w,
-                        "height": h
-                    })
-                    # Draw number circle
-                    cx, cy = x + w // 2, y + 8
-                    draw.ellipse([cx - 10, cy - 10, cx + 10, cy + 10], fill="red")
-                    draw.text((cx - 4, cy - 6), str(idx), fill="white")
-                    # Draw bounding box
-                    draw.rectangle([x, y, x + w, y + h], outline="red", width=2)
-                    idx += 1
+                elements.append({
+                    "index": idx,
+                    "name": win.get("name", ""),
+                    "control_type": win.get("control_type", "Window"),
+                    "x": x + w // 2,
+                    "y": y + h // 2,
+                    "width": w,
+                    "height": h
+                })
+                # Draw number circle
+                cx, cy = x + w // 2, y + 8
+                draw.ellipse([cx - 10, cy - 10, cx + 10, cy + 10], fill="red")
+                draw.text((cx - 4, cy - 6), str(idx), fill="white")
+                # Draw bounding box
+                draw.rectangle([x, y, x + w, y + h], outline="red", width=2)
+                idx += 1
         buf = io.BytesIO()
         img.save(buf, format="PNG")
         return json.dumps({
@@ -274,7 +274,7 @@ async def click_element(index: int) -> str:
 async def double_click(x: int, y: int, button: str = "left") -> str:
     """Double-click at specific coordinates."""
     await click(x, y, button)
-    time.sleep(0.05)
+    await asyncio.sleep(0.05)
     result = _coagent_post("/click", {"x": x, "y": y, "button": button})
     return json.dumps(result or {"error": "double click failed"})
 
@@ -393,28 +393,30 @@ async def find_on_screen(text: str) -> str:
                         "control_type": child.get("control_type", "Control")
                     })
     # Try OCR for text find if no matches
-    if not matches and HAS_TESSERACT and not FAST_MODE:
-        _lazy_imports()
-        try:
-            import pytesseract
-            from PIL import Image
-            data = _coagent_get("/screenshot", no_cache=True)
-            if data and "data" in data:
-                img = Image.open(io.BytesIO(base64.b64decode(data["data"])))
-                ocr_data = pytesseract.image_to_data(img, output_type=pytesseract.Output.DICT)
-                for i in range(len(ocr_data["text"])):
-                    if text.lower() in ocr_data["text"][i].lower():
-                        x, y, w, h = (ocr_data["left"][i], ocr_data["top"][i],
-                                       ocr_data["width"][i], ocr_data["height"][i])
-                        matches.append({
-                            "method": "ocr",
-                            "text": ocr_data["text"][i],
-                            "center": {"x": x + w // 2, "y": y + h // 2},
-                            "bounds": {"x": x, "y": y, "width": w, "height": h},
-                            "confidence": ocr_data["conf"][i] if i < len(ocr_data["conf"]) else 0
-                        })
-        except:
-            pass
+    if not matches:
+        if FAST_MODE and not HAS_TESSERACT:
+            _lazy_imports()
+        if HAS_TESSERACT:
+            try:
+                import pytesseract
+                from PIL import Image
+                data = _coagent_get("/screenshot", no_cache=True)
+                if data and "data" in data:
+                    img = Image.open(io.BytesIO(base64.b64decode(data["data"])))
+                    ocr_data = pytesseract.image_to_data(img, output_type=pytesseract.Output.DICT)
+                    for i in range(len(ocr_data["text"])):
+                        if text.lower() in ocr_data["text"][i].lower():
+                            x, y, w, h = (ocr_data["left"][i], ocr_data["top"][i],
+                                           ocr_data["width"][i], ocr_data["height"][i])
+                            matches.append({
+                                "method": "ocr",
+                                "text": ocr_data["text"][i],
+                                "center": {"x": x + w // 2, "y": y + h // 2},
+                                "bounds": {"x": x, "y": y, "width": w, "height": h},
+                                "confidence": ocr_data["conf"][i] if i < len(ocr_data["conf"]) else 0
+                            })
+            except Exception:
+                pass
     return json.dumps({
         "query": text,
         "count": len(matches),
@@ -441,9 +443,9 @@ async def chain(actions: list) -> str:
                 r = _coagent_post("/click", {"x": d.get("x", 0), "y": d.get("y", 0),
                                              "button": d.get("button", "left")})
             elif t == "doubleclick":
-                r1 = _coagent_post("/click", {"x": d.get("x", 0), "y": d.get("y", 0),
-                                              "button": d.get("button", "left")})
-                time.sleep(0.05)
+                _coagent_post("/click", {"x": d.get("x", 0), "y": d.get("y", 0),
+                                         "button": d.get("button", "left")})
+                await asyncio.sleep(0.05)
                 r = _coagent_post("/click", {"x": d.get("x", 0), "y": d.get("y", 0),
                                               "button": d.get("button", "left")})
             elif t == "rightclick":
@@ -463,7 +465,7 @@ async def chain(actions: list) -> str:
             results.append({"step": i, "action": t, "result": r or {}})
         except Exception as e:
             results.append({"step": i, "action": t, "error": str(e)})
-    return json.dumps({"actions_completed": i + 1, "results": results})
+    return json.dumps({"actions_completed": len(results), "results": results})
 
 # ── System ────────────────────────────────────────────────────────────────
 
@@ -503,9 +505,9 @@ async def emergency_resume() -> str:
 async def wake_screen() -> str:
     """Wake the display from sleep/lock using Ctrl+Alt+Del, then Esc."""
     _coagent_post("/hotkey", {"keys": ["ctrl", "alt", "del"]})
-    time.sleep(2)
+    await asyncio.sleep(2)
     _coagent_post("/hotkey", {"keys": ["escape"]})
-    time.sleep(1)
+    await asyncio.sleep(1)
     return json.dumps({"status": "wake_signal_sent"})
 
 # ── Launch app ───────────────────────────────────────────────────────────

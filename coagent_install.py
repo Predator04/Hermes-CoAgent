@@ -2,13 +2,13 @@
 """
 Hermes CoAgent Installer — set up autostart via Windows Scheduled Task.
 Run once: python coagent_install.py install
-Remove:   python coagent_agent.py uninstall
+Remove:   python coagent_install.py uninstall
 Status:   python coagent_install.py status
 
 Sets up a scheduled task that launches CoAgent on user logon
 with full interactive desktop access (UIA works, SOM finds windows).
 """
-import sys, os, subprocess, json, getpass
+import sys, os, subprocess, getpass
 
 COAGENT_DIR = os.path.dirname(os.path.abspath(__file__))
 SCRIPT = os.path.join(COAGENT_DIR, "hermes_coagent.py")
@@ -40,8 +40,6 @@ def install():
         pythonw = PYTHON  # fallback
         print(f"[WARN] pythonw.exe not found at {pythonw}, using python.exe")
     
-    args = f'"{pythonw}" "{SCRIPT}" --secure'
-
     # Create the scheduled task
     ps_script = f'''
 $action = New-ScheduledTaskAction -Execute "{pythonw}" -Argument "`"{SCRIPT}`" --secure"
@@ -129,7 +127,7 @@ def main():
     
     if cmd == "install":
         install()
-    elif cmd == "uninstall" or cmd == "remove":
+    elif cmd in ("uninstall", "remove"):
         uninstall()
     elif cmd == "status":
         status()

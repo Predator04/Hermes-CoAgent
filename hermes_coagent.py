@@ -12,17 +12,16 @@ import ctypes
 
 # Auth module (optional - provides --secure and --token support)
 try:
-    from auth import require_auth as _require_auth, init_auth as _init_auth, AUTH_ENABLED as _AUTH_ENABLED
+    from auth import require_auth as _require_auth
     # Make them available at module level for route decorators
     require_auth = _require_auth
-    AUTH_AVAILABLE = True
 except ImportError:
     # Fallback no-op decorator
     def require_auth(f): return f
-    AUTH_AVAILABLE = False
 
 # UIA engine (Windows accessibility tree, SOM overlays, background input)
 _uia_engine = None
+HAS_SENDINPUT = False
 def _get_uia_engine():
     global _uia_engine
     if _uia_engine is None:
@@ -36,7 +35,7 @@ import platform as _platform
 if _platform.system() != "Windows":
     print(f"[WARN] Hermes CoAgent is designed for Windows (detected: {_platform.system()})")
     print("[WARN] Most features will not work. Running in stub mode.")
-    # Stub pyautogui so import doesn't crash
+    HAS_SENDINPUT = False
     import types as _types
     _stub = _types.ModuleType('pyautogui')
     _stub.FAILSAFE = False
@@ -62,6 +61,9 @@ os.environ["PYAUTOGUI_FAILSAFE"] = "false"
 
 try:
     import pyautogui
+    # On Windows, enable background SendInput co-pilot mode
+    if _platform.system() == "Windows":
+        HAS_SENDINPUT = True
 except ImportError:
     print("[WARN] pyautogui not installed — input features disabled")
     pyautogui = _stub if '_stub' in dir() else None
@@ -94,9 +96,19 @@ SCREENSHOTS_DIR = COAGENT_DIR / "screenshots"
 TUNNEL_LOG = COAGENT_DIR / "tunnel.log"
 TRAY_LOG = COAGENT_DIR / "tray_icon.log"
 SERVER_LOG = COAGENT_DIR / "coagent_server.log"
-TIMESTAMP = datetime.now().strftime("%Y-%m-%d %H:%M")
 SERVER_PORT = 9123
 TRAY_PORT = 9124
+PULSE_DEFAULT_COLOR = 0x00FF00
+PULSE_ACTION_COLORS = {
+    "click": 0xFF4400,
+    "doubleclick": 0xFF4400,
+    "rightclick": 0xFF4400,
+    "tripleclick": 0xFF4400,
+    "type": 0x4488FF,
+    "hotkey": 0xFF00FF,
+    "scroll": 0xFFFF00,
+    "drag": 0xFFAA00,
+}
 
 # Windows host IP reachable from WSL
 try:
@@ -111,8 +123,6 @@ except:
     _host_ip = "172.21.192.1"
 HOST_IP = _host_ip
 
-# Check UIA availability early (but don't block startup — deferred)
-_uia_ok = False
 
 # === SESSION CHECK — warn if no desktop access ===
 def _ensure_interactive_session():
@@ -204,19 +214,40 @@ def ps(cmd, timeout=30):
     except Exception as e:
         return -1, "", str(e)
 
+def _interactive_task_xml(command, arguments, author="CoAgent", execution_limit="PT10S", working_dir=None):
+    """Build a Scheduled Task XML body for work that must run on the interactive desktop."""
+    working_dir_xml = f"      <WorkingDirectory>{working_dir}</WorkingDirectory>\n" if working_dir else ""
+    return (
+        '<?xml version="1.0" encoding="UTF-16"?>\n'
+        '<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">\n'
+        f'  <RegistrationInfo><Author>{author}</Author></RegistrationInfo>\n'
+        '  <Principals>\n'
+        '    <Principal id="Author">\n'
+        '      <UserId>Admin</UserId>\n'
+        '      <LogonType>InteractiveToken</LogonType>\n'
+        '      <RunLevel>HighestAvailable</RunLevel>\n'
+        '    </Principal>\n'
+        '  </Principals>\n'
+        '  <Settings>\n'
+        '    <Enabled>true</Enabled>\n'
+        '    <AllowStartOnDemand>true</AllowStartOnDemand>\n'
+        '    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>\n'
+        '    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>\n'
+        f'    <ExecutionTimeLimit>{execution_limit}</ExecutionTimeLimit>\n'
+        '    <Priority>7</Priority>\n'
+        '  </Settings>\n'
+        '  <Actions Context="Author">\n'
+        '    <Exec>\n'
+        f'      <Command>{command}</Command>\n'
+        f'      <Arguments>{arguments}</Arguments>\n'
+        f'{working_dir_xml}'
+        '    </Exec>\n'
+        '  </Actions>\n'
+        '</Task>\n'
+    )
+
 # === CURSOR PULSE - temporary topmost popup ===
 # Each pulse owns a small topmost window, then fades and destroys it.
-
-def _register_pulse_popup_class(win32gui):
-    wc = win32gui.WNDCLASS()
-    wc.lpfnWndProc = win32gui.DefWindowProc
-    wc.hInstance = win32gui.GetModuleHandle(None)
-    wc.lpszClassName = "HermesPulsePopup"
-    try:
-        win32gui.RegisterClass(wc)
-    except Exception:
-        pass
-    return wc.lpszClassName
 
 def _cursor_pulse(x, y, color=None):
     import win32gui, win32con, win32api, time
@@ -269,17 +300,7 @@ def _pulse_before_action(action: dict):
     try:
         act_type = action.get("type", "")
         data = action.get("data", {})
-        color = 0x00FF00  # green default
-        if act_type in ("click", "doubleclick", "rightclick", "tripleclick"):
-            color = 0xFF4400  # orange for clicks
-        elif act_type == "type":
-            color = 0x4488FF  # blue for typing
-        elif act_type == "hotkey":
-            color = 0xFF00FF  # magenta for hotkeys
-        elif act_type == "scroll":
-            color = 0xFFFF00  # yellow for scroll
-        elif act_type == "drag":
-            color = 0xFFAA00
+        color = PULSE_ACTION_COLORS.get(act_type, PULSE_DEFAULT_COLOR)
 
         fallback_x, fallback_y = _current_cursor_pos()
         x = data.get("x", data.get("x2", data.get("x1", fallback_x)))
@@ -292,6 +313,7 @@ def _pulse_before_action(action: dict):
 def _execute_action(action: dict):
     act_type = action.get("type")
     data = action.get("data", {})
+    bg_mode = data.get("background", True)  # default to background mode
     _pulse_before_action(action)
     with state.input_lock:
         if state.emergency_stop:
@@ -301,25 +323,56 @@ def _execute_action(action: dict):
             time.sleep(state.min_action_gap - elapsed)
         try:
             if act_type == "move":
-                pyautogui.moveTo(data["x"], data["y"], duration=data.get("duration", 0.01))
+                if bg_mode and HAS_SENDINPUT:
+                    _get_uia_engine().send_mouse_move(data["x"], data["y"])
+                else:
+                    pyautogui.moveTo(data["x"], data["y"], duration=data.get("duration", 0.01))
             elif act_type == "click":
-                pyautogui.click(button=data.get("button", "left"), clicks=data.get("clicks", 1), interval=0.005)
+                if bg_mode and HAS_SENDINPUT:
+                    btn = data.get("button", "left")
+                    _get_uia_engine().send_mouse_click(data.get("x", None), data.get("y", None), button=btn, clicks=data.get("clicks", 1))
+                else:
+                    pyautogui.click(button=data.get("button", "left"), clicks=data.get("clicks", 1), interval=0.005)
             elif act_type == "type":
-                pyautogui.typewrite(data["text"], interval=data.get("interval", 0.005))
+                if bg_mode and HAS_SENDINPUT:
+                    _get_uia_engine().send_keys(data["text"])
+                else:
+                    pyautogui.typewrite(data["text"], interval=data.get("interval", 0.005))
             elif act_type == "hotkey":
-                pyautogui.hotkey(*data.get("keys", []))
+                if bg_mode and HAS_SENDINPUT:
+                    _get_uia_engine().send_input(data.get("keys", []))
+                else:
+                    pyautogui.hotkey(*data.get("keys", []))
             elif act_type == "scroll":
-                pyautogui.scroll(data.get("clicks", -3))
+                if bg_mode and HAS_SENDINPUT:
+                    _get_uia_engine().send_scroll(data.get("clicks", -3))
+                else:
+                    pyautogui.scroll(data.get("clicks", -3))
             elif act_type == "drag":
-                pyautogui.moveTo(data["x1"], data["y1"], duration=0.01)
-                pyautogui.drag(data["x2"]-data["x1"], data["y2"]-data["y1"],
-                              button=data.get("button","left"), duration=data.get("duration",0.15))
+                if bg_mode and HAS_SENDINPUT:
+                    _get_uia_engine().send_mouse_drag(
+                        data["x1"], data["y1"], data["x2"], data["y2"],
+                        button=data.get("button", "left")
+                    )
+                else:
+                    pyautogui.moveTo(data["x1"], data["y1"], duration=0.01)
+                    pyautogui.drag(data["x2"]-data["x1"], data["y2"]-data["y1"],
+                                  button=data.get("button","left"), duration=data.get("duration",0.15))
             elif act_type == "doubleclick":
-                pyautogui.doubleClick(button=data.get("button","left"))
+                if bg_mode and HAS_SENDINPUT:
+                    _get_uia_engine().send_mouse_click(data.get("x", None), data.get("y", None), button=data.get("button","left"), clicks=2)
+                else:
+                    pyautogui.doubleClick(button=data.get("button","left"))
             elif act_type == "rightclick":
-                pyautogui.rightClick(button=data.get("button","right"))
+                if bg_mode and HAS_SENDINPUT:
+                    _get_uia_engine().send_mouse_click(data.get("x", None), data.get("y", None), button="right")
+                else:
+                    pyautogui.rightClick(button=data.get("button","right"))
             elif act_type == "tripleclick":
-                pyautogui.tripleClick(button=data.get("button","left"))
+                if bg_mode and HAS_SENDINPUT:
+                    _get_uia_engine().send_mouse_click(data.get("x", None), data.get("y", None), button=data.get("button","left"), clicks=3)
+                else:
+                    pyautogui.tripleClick(button=data.get("button","left"))
         finally:
             state.last_action_time = time.time()
         state.action_history.append({"type":act_type,"data":data,"time":datetime.now().isoformat()})
@@ -383,32 +436,11 @@ def _capture_via_session1(fmt="png") -> bytes:
     subprocess.run(["schtasks", "/Delete", "/TN", task_name, "/F"],
                    capture_output=True, timeout=5)
 
-    xml = (
-        '<?xml version="1.0" encoding="UTF-16"?>\n'
-        '<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">\n'
-        '  <RegistrationInfo><Author>CoAgent</Author></RegistrationInfo>\n'
-        '  <Principals>\n'
-        '    <Principal id="Author">\n'
-        '      <UserId>Admin</UserId>\n'
-        '      <LogonType>InteractiveToken</LogonType>\n'
-        '      <RunLevel>HighestAvailable</RunLevel>\n'
-        '    </Principal>\n'
-        '  </Principals>\n'
-        '  <Settings>\n'
-        '    <Enabled>true</Enabled>\n'
-        '    <AllowStartOnDemand>true</AllowStartOnDemand>\n'
-        '    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>\n'
-        '    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>\n'
-        '    <ExecutionTimeLimit>PT30S</ExecutionTimeLimit>\n'
-        '    <Priority>7</Priority>\n'
-        '  </Settings>\n'
-        '  <Actions Context="Author">\n'
-        '    <Exec>\n'
-        '      <Command>C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe</Command>\n'
-        '      <Arguments>-ExecutionPolicy Bypass -WindowStyle Hidden -File "' + str(ps1_script) + '" -OutputPath "' + str(out_path) + '"</Arguments>\n'
-        '    </Exec>\n'
-        '  </Actions>\n'
-        '</Task>\n'
+    xml = _interactive_task_xml(
+        r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
+        '-ExecutionPolicy Bypass -WindowStyle Hidden -File "' + str(ps1_script) +
+        '" -OutputPath "' + str(out_path) + '"',
+        execution_limit="PT30S",
     )
 
     xml_path = COAGENT_DIR / "_snap_task.xml"
@@ -423,7 +455,7 @@ def _capture_via_session1(fmt="png") -> bytes:
     )
 
     if r1.returncode == 0:
-        r2 = subprocess.run(
+        subprocess.run(
             ["schtasks", "/Run", "/TN", task_name],
             capture_output=True, text=True, timeout=30
         )
@@ -464,32 +496,10 @@ def _send_keys_session1(keys: str) -> bool:
     subprocess.run(["schtasks", "/Delete", "/TN", task_name, "/F"],
                    capture_output=True, timeout=5)
 
-    xml = (
-        '<?xml version="1.0" encoding="UTF-16"?>\n'
-        '<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">\n'
-        '  <RegistrationInfo><Author>CoAgent</Author></RegistrationInfo>\n'
-        '  <Principals>\n'
-        '    <Principal id="Author">\n'
-        '      <UserId>Admin</UserId>\n'
-        '      <LogonType>InteractiveToken</LogonType>\n'
-        '      <RunLevel>HighestAvailable</RunLevel>\n'
-        '    </Principal>\n'
-        '  </Principals>\n'
-        '  <Settings>\n'
-        '    <Enabled>true</Enabled>\n'
-        '    <AllowStartOnDemand>true</AllowStartOnDemand>\n'
-        '    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>\n'
-        '    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>\n'
-        '    <ExecutionTimeLimit>PT10S</ExecutionTimeLimit>\n'
-        '    <Priority>7</Priority>\n'
-        '  </Settings>\n'
-        '  <Actions Context="Author">\n'
-        '    <Exec>\n'
-        '      <Command>C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe</Command>\n'
-        '      <Arguments>-ExecutionPolicy Bypass -WindowStyle Hidden -File "' + str(ps1_script) + '" -Keys "' + keys + '"</Arguments>\n'
-        '    </Exec>\n'
-        '  </Actions>\n'
-        '</Task>\n'
+    xml = _interactive_task_xml(
+        r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
+        '-ExecutionPolicy Bypass -WindowStyle Hidden -File "' + str(ps1_script) +
+        '" -Keys "' + keys + '"',
     )
 
     xml_path = COAGENT_DIR / "_keys_task.xml"
@@ -751,8 +761,8 @@ def macro_list_api():
 
 def macro_save_api(name, actions):
     path = MACROS_DIR / f"{name}.json"
-    data = {"name": name, "actions": actions, "created": str(datetime.now()),
-            "modified": str(datetime.now())}
+    now = str(datetime.now())
+    data = {"name": name, "actions": actions, "created": now, "modified": now}
     path.write_text(json.dumps(data, indent=2))
     return {"status": "saved", "name": name, "actions": len(actions)}
 
@@ -831,10 +841,11 @@ def file_list_api(folder="."):
         for item in sorted(p.iterdir()):
             try:
                 is_dir = item.is_dir()
+                stat = item.stat()
                 items.append({
                     "name": item.name, "path": str(item),
-                    "is_dir": is_dir, "size": 0 if is_dir else item.stat().st_size,
-                    "modified": datetime.fromtimestamp(item.stat().st_mtime).isoformat()
+                    "is_dir": is_dir, "size": 0 if is_dir else stat.st_size,
+                    "modified": datetime.fromtimestamp(stat.st_mtime).isoformat()
                 })
             except: pass
         return {"path": str(p), "items": items, "count": len(items)}
@@ -846,17 +857,19 @@ def file_read_api(path):
         p = Path(path)
         if not p.exists():
             return {"error": f"File not found: {path}"}
-        if p.stat().st_size > 50 * 1024 * 1024:
+        stat = p.stat()
+        if stat.st_size > 50 * 1024 * 1024:
             return {"error": "File too large (>50MB)"}
         data = p.read_bytes()
-        is_text = True
         try:
-            data.decode("utf-8")
-        except:
+            text = data.decode("utf-8")
+            is_text = True
+        except UnicodeDecodeError:
+            text = base64.b64encode(data).decode()
             is_text = False
-        return {"path": str(p), "size": p.stat().st_size,
+        return {"path": str(p), "size": stat.st_size,
                 "is_text": is_text,
-                "content": data.decode("utf-8", errors="replace") if is_text else base64.b64encode(data).decode()}
+                "content": text}
     except Exception as e:
         return {"error": str(e)}
 
@@ -923,6 +936,7 @@ SAFE_ALLOWED_ROOTS = [
     Path(os.environ.get('TEMP', 'C:/Temp')).resolve(),
     COAGENT_DIR,
 ]
+DANGEROUS_CMD_CHARS = frozenset('|;&`$(){}<>')
 
 def _sanitize_path(p):
     """Block path traversal. Only allow paths under allowed roots."""
@@ -933,8 +947,7 @@ def _sanitize_path(p):
 
 def _sanitize_cmd(cmd_str):
     """Block dangerous shell metacharacters in string commands."""
-    dangerous = ['|', ';', '&', '`', '$', '(', ')', '{', '}', '<', '>']
-    for d in dangerous:
+    for d in DANGEROUS_CMD_CHARS:
         if d in cmd_str:
             raise ValueError(f"Command blocked: contains character {repr(d)}")
     return cmd_str.split()
@@ -1312,6 +1325,16 @@ def route_mouse_click():
     _execute_action({"type": "click", "data": d})
     return jsonify({"status": "clicked", "button": d.get("button", "left")})
 
+@app.route("/copilot/mode")
+def route_copilot_mode():
+    """Get current co-pilot mode (background vs foreground input)."""
+    return jsonify({
+        "background_input": HAS_SENDINPUT,
+        "available": True,
+        "description": "background" if HAS_SENDINPUT else "foreground (pyautogui)",
+        "info": "Co-pilot mode uses SendInput/mouse_event — no focus steal, you keep control"
+    })
+
 @app.route("/mouse/doubleclick", methods=["POST"])
 def route_mouse_dclick():
     d = request.json or {}
@@ -1397,32 +1420,9 @@ Write-Output "Clicked {x},{y}"
                    capture_output=True, timeout=5)
     
     xml_path = COAGENT_DIR / "_clk_task.xml"
-    xml = (
-        '<?xml version="1.0" encoding="UTF-16"?>\n'
-        '<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">\n'
-        '  <RegistrationInfo><Author>CoAgent</Author></RegistrationInfo>\n'
-        '  <Principals>\n'
-        '    <Principal id="Author">\n'
-        '      <UserId>Admin</UserId>\n'
-        '      <LogonType>InteractiveToken</LogonType>\n'
-        '      <RunLevel>HighestAvailable</RunLevel>\n'
-        '    </Principal>\n'
-        '  </Principals>\n'
-        '  <Settings>\n'
-        '    <Enabled>true</Enabled>\n'
-        '    <AllowStartOnDemand>true</AllowStartOnDemand>\n'
-        '    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>\n'
-        '    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>\n'
-        '    <ExecutionTimeLimit>PT10S</ExecutionTimeLimit>\n'
-        '    <Priority>7</Priority>\n'
-        '  </Settings>\n'
-        '  <Actions Context="Author">\n'
-        '    <Exec>\n'
-        '      <Command>C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe</Command>\n'
-        '      <Arguments>-ExecutionPolicy Bypass -WindowStyle Hidden -File "' + str(click_ps1) + '"</Arguments>\n'
-        '    </Exec>\n'
-        '  </Actions>\n'
-        '</Task>\n'
+    xml = _interactive_task_xml(
+        r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
+        '-ExecutionPolicy Bypass -WindowStyle Hidden -File "' + str(click_ps1) + '"',
     )
     xml_path.write_text(xml, encoding="utf-16")
     
@@ -2043,6 +2043,7 @@ def route_wallpaper_random():
 @app.route("/search/files", methods=["POST"])
 def route_search_files():
     """Search files by name/glob. Body: {pattern: "*.pdf", path: "C:/Users", limit: 50}"""
+    import fnmatch
     d = request.json or {}
     pattern = d.get("pattern", "*")
     search_path = d.get("path", "C:\\")
@@ -2054,7 +2055,6 @@ def route_search_files():
                 for f in files:
                     if len(results) >= limit:
                         break
-                    import fnmatch
                     if fnmatch.fnmatch(f, pattern):
                         full = os.path.join(root, f)
                         try:
@@ -2087,6 +2087,7 @@ def route_crop():
             pil.save(buf, format="PNG")
             img = buf.getvalue()
         import pytesseract
+        import pyperclip
         text = pytesseract.image_to_string(BytesIO(img))
         pyperclip.copy(text.strip())
         _log(f"Cropped text ({len(text)} chars) copied to clipboard")
@@ -2260,7 +2261,6 @@ def _voice_loop():
                 text = r.recognize_google(audio).lower()
                 _log(f"[Voice] Heard: {text}")
                 if "click" in text:
-                    import re
                     nums = re.findall(r'\d+', text)
                     if len(nums) >= 2:
                         x, y = int(nums[0]), int(nums[1])
@@ -2316,7 +2316,7 @@ def route_launch_ai():
                 return jsonify({"status": "launched", "app": exe, "query": query})
             except Exception as e:
                 return jsonify({"error": str(e)}), 500
-    import re, webbrowser
+    import webbrowser
     if re.match(r'^https?://', query):
         webbrowser.open_new_tab(query)
         return jsonify({"status": "launched", "app": "browser", "url": query})
@@ -2327,35 +2327,13 @@ def route_launch_ai():
 # ════════════════════════════════════════════════════════════════
 
 
-# === MCP PROXY ===
-mcp_queue = queue.Queue()
-mcp_result_queue = queue.Queue()
-mcp_ready = threading.Event()
-
-def _mcp_listener_thread():
-    """Read MCP responses from the MCP subprocess."""
-    import sys as _sys
-    while True:
-        try:
-            line = _sys.stdin.readline()
-        except:
-            break
-
-def _handle_mcp():
-    """Handle MCP connections by spawning a subprocess."""
-    pass
-
 # ── System Tray Icon ────────────────────────────────────────
-_tray_running = threading.Event()
-
 def _start_tray():
     """Start system tray icon on the interactive desktop (Session 1).
     Uses schtasks with InteractiveToken logon type so the tray icon
     appears in the notification area even when the server runs in Session 0.
     Falls back silently."""
-    import subprocess, time
-    from pathlib import Path
-    
+
     try:
         tray_script = Path(__file__).parent / "tray_icon.py"
         if not tray_script.exists():
@@ -2376,33 +2354,12 @@ def _start_tray():
         subprocess.run(["schtasks", "/Delete", "/TN", task_name, "/F"],
                        capture_output=True, timeout=5)
 
-        xml = (
-            '<?xml version="1.0" encoding="UTF-16"?>\n'
-            '<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">\n'
-            '  <RegistrationInfo><Author>Admin</Author></RegistrationInfo>\n'
-            '  <Principals>\n'
-            '    <Principal id="Author">\n'
-            '      <UserId>Admin</UserId>\n'
-            '      <LogonType>InteractiveToken</LogonType>\n'
-            '      <RunLevel>HighestAvailable</RunLevel>\n'
-            '    </Principal>\n'
-            '  </Principals>\n'
-            '  <Settings>\n'
-            '    <Enabled>true</Enabled>\n'
-            '    <AllowStartOnDemand>true</AllowStartOnDemand>\n'
-            '    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>\n'
-            '    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>\n'
-            '    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>\n'
-            '    <Priority>7</Priority>\n'
-            '  </Settings>\n'
-            '  <Actions Context="Author">\n'
-            '    <Exec>\n'
-            '      <Command>' + pyw + '</Command>\n'
-            '      <Arguments>"' + str(tray_script) + '" ' + str(SERVER_PORT) + ' ' + str(TRAY_PORT) + '</Arguments>\n'
-            '      <WorkingDirectory>' + str(COAGENT_DIR) + '</WorkingDirectory>\n'
-            '    </Exec>\n'
-            '  </Actions>\n'
-            '</Task>\n'
+        xml = _interactive_task_xml(
+            pyw,
+            '"' + str(tray_script) + '" ' + str(SERVER_PORT) + ' ' + str(TRAY_PORT),
+            author="Admin",
+            execution_limit="PT0S",
+            working_dir=str(COAGENT_DIR),
         )
 
         xml_path = COAGENT_DIR / "_tray_task.xml"
@@ -2482,21 +2439,22 @@ if __name__ == "__main__":
     _token_arg = next((a.split("=", 1)[1] for a in sys.argv if a.startswith("--token=")), None)
     if _secure_mode or _token_arg:
         try:
-            from auth import init_auth, require_auth, AUTH_ENABLED, AUTH_TOKEN
+            from auth import init_auth, require_auth
             init_auth(port)
-            if AUTH_ENABLED:
-                _console(f"  [SECURITY]   Auth enabled — token: {AUTH_TOKEN[:16]}...{AUTH_TOKEN[-8:]}")
-                _console("  [SECURITY]   All endpoints require: Authorization: Bearer <token>")
+            import auth
+            if auth.AUTH_ENABLED:
+                _console(f"  [SECURITY]   Auth enabled — token: {auth.AUTH_TOKEN[:16]}...{auth.AUTH_TOKEN[-8:]}")
+                _console("  [SECURITY]   Auth enabled — Bearer token required")
                 # Global before_request for auth
                 @app.before_request
                 def _check_auth():
                     if request.path.startswith("/static") or request.path == "/health" or request.path.startswith("/emergency"):
                         return None
-                    auth = request.headers.get("Authorization", "")
-                    if not auth.startswith("Bearer "):
+                    auth_header = request.headers.get("Authorization", "")
+                    if not auth_header.startswith("Bearer "):
                         return jsonify({"error": "Unauthorized"}), 401
-                    token = auth[7:]
-                    if token != AUTH_TOKEN:
+                    token = auth_header[7:]
+                    if token != auth.AUTH_TOKEN:
                         return jsonify({"error": "Invalid token"}), 403
                     return None
             else:

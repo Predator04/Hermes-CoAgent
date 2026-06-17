@@ -7,7 +7,6 @@ import sys, os, json, traceback, urllib.request, threading, webbrowser, time
 from datetime import datetime
 from pathlib import Path
 from io import BytesIO
-import base64
 
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 9123
 TRAY_PORT = int(sys.argv[2]) if len(sys.argv) > 2 else 9124
@@ -18,6 +17,7 @@ LOG_FILE = SCRIPT_DIR / "tray_icon.log"
 # Screenshot cache
 _last_screenshot = None
 _last_screenshot_time = 0
+_last_screenshot_key = None
 _SCREENSHOT_CACHE_TTL = 0.2  # 200ms cache
 
 def _log(message):
@@ -36,14 +36,6 @@ def _api(path, method="POST", body=None):
         urllib.request.urlopen(req, timeout=2)
     except:
         pass
-
-def _api_get(path):
-    try:
-        req = urllib.request.Request(SERVER + path, method="GET")
-        with urllib.request.urlopen(req, timeout=2) as resp:
-            return json.loads(resp.read().decode())
-    except:
-        return None
 
 def _load_icon_font():
     from PIL import ImageFont
@@ -82,10 +74,15 @@ def _build_icon_image():
 
 def _capture_screenshot_impl(jpeg=False, quality=85):
     """Actually grab the screenshot. Returns bytes."""
-    global _last_screenshot, _last_screenshot_time
+    global _last_screenshot, _last_screenshot_time, _last_screenshot_key
     from PIL import ImageGrab
     now = time.time()
-    if _last_screenshot and (now - _last_screenshot_time) < _SCREENSHOT_CACHE_TTL:
+    cache_key = ("jpeg", quality) if jpeg else ("png", None)
+    if (
+        _last_screenshot
+        and _last_screenshot_key == cache_key
+        and (now - _last_screenshot_time) < _SCREENSHOT_CACHE_TTL
+    ):
         return _last_screenshot
     img = ImageGrab.grab()
     buf = BytesIO()
@@ -97,6 +94,7 @@ def _capture_screenshot_impl(jpeg=False, quality=85):
     data = buf.getvalue()
     _last_screenshot = data
     _last_screenshot_time = now
+    _last_screenshot_key = cache_key
     return data
 
 # === Screenshot relay server (runs on Session 1, no cmd flash) ===
@@ -108,62 +106,49 @@ def _start_screenshot_server():
     import socketserver
 
     class ScreenHandler(http.server.BaseHTTPRequestHandler):
+        def _send_body(self, data, status=200, content_type="application/json", extra_headers=None):
+            self.send_response(status)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Access-Control-Allow-Origin", "*")
+            for key, value in (extra_headers or {}).items():
+                self.send_header(key, value)
+            self.end_headers()
+            self.wfile.write(data)
+
         def do_GET(self):
-            global _last_screenshot, _last_screenshot_time, _SCREENSHOT_CACHE_TTL
+            global _last_screenshot, _last_screenshot_time, _last_screenshot_key, _SCREENSHOT_CACHE_TTL
             try:
                 if self.path.startswith("/screen"):
                     # Check for JPEG format
                     use_jpeg = "format=jpeg" in self.path or "format=jpg" in self.path
                     if use_jpeg:
                         data = _capture_screenshot_impl(jpeg=True, quality=85)
-                        self.send_response(200)
-                        self.send_header("Content-Type", "image/jpeg")
-                        self.send_header("Content-Length", str(len(data)))
-                        self.send_header("Access-Control-Allow-Origin", "*")
-                        self.send_header("X-Format", "jpeg")
-                        self.end_headers()
-                        self.wfile.write(data)
+                        self._send_body(data, content_type="image/jpeg", extra_headers={"X-Format": "jpeg"})
                     else:
                         data = _capture_screenshot_impl(jpeg=False)
-                        self.send_response(200)
-                        self.send_header("Content-Type", "image/png")
-                        self.send_header("Content-Length", str(len(data)))
-                        self.send_header("Access-Control-Allow-Origin", "*")
-                        self.send_header("X-Format", "png")
-                        self.end_headers()
-                        self.wfile.write(data)
+                        self._send_body(data, content_type="image/png", extra_headers={"X-Format": "png"})
                 elif self.path == "/uia/tree":
                     self._handle_uia()
                 elif self.path == "/health":
-                    self.send_response(200)
-                    self.send_header("Content-Type", "application/json")
-                    self.end_headers()
-                    self.wfile.write(b'{"status":"ok","session":1}')
+                    self._send_body(b'{"status":"ok","session":1}')
                 elif self.path == "/cache/info":
                     info = json.dumps({
                         "cached": _last_screenshot is not None,
                         "age_ms": int((time.time() - _last_screenshot_time) * 1000) if _last_screenshot else -1,
                         "ttl_ms": int(_SCREENSHOT_CACHE_TTL * 1000)
                     }).encode()
-                    self.send_response(200)
-                    self.send_header("Content-Type", "application/json")
-                    self.end_headers()
-                    self.wfile.write(info)
+                    self._send_body(info)
                 elif self.path == "/cache/clear":
                     _last_screenshot = None
-                    self.send_response(200)
-                    self.end_headers()
-                    self.wfile.write(b'{"status":"cleared"}')
+                    _last_screenshot_key = None
+                    self._send_body(b'{"status":"cleared"}')
                 else:
-                    self.send_response(404)
-                    self.end_headers()
-                    self.wfile.write(b'{"error":"not found"}')
+                    self._send_body(b'{"error":"not found"}', status=404)
             except Exception as e:
                 try:
-                    self.send_response(500)
-                    self.end_headers()
-                    self.wfile.write(str(e).encode())
-                except:
+                    self._send_body(str(e).encode(), status=500, content_type="text/plain")
+                except Exception:
                     pass
 
         def _handle_uia(self):
@@ -218,17 +203,10 @@ def _start_screenshot_server():
                     except:
                         pass
                 data = json.dumps({"windows": result, "count": len(result), "session": 1}).encode()
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Access-Control-Allow-Origin", "*")
-                self.end_headers()
-                self.wfile.write(data)
+                self._send_body(data)
             except Exception as e:
                 err = json.dumps({"error": str(e), "session": 1}).encode()
-                self.send_response(500)
-                self.send_header("Content-Type", "application/json")
-                self.end_headers()
-                self.wfile.write(err)
+                self._send_body(err, status=500)
 
         def log_message(self, format, *args):
             _log(f"screenshot-server: {args[0]} {args[1]} {args[2]}")
@@ -282,12 +260,6 @@ def main():
 
         def on_mcp_test(icon, item):
             webbrowser.open(SERVER + "/mcp/test")
-
-        def get_status():
-            info = _api_get("/")
-            if info and isinstance(info, dict):
-                return f"v{info.get('version', '?')} - Port {PORT}"
-            return f"Running on :{PORT}"
 
         menu = Menu(
             Item("Open Dashboard", on_open, default=True),

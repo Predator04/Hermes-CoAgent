@@ -9,15 +9,11 @@ Provides:
 - send_input_background(keys): send keystrokes WITHOUT stealing focus
 """
 
-import sys, os, json, base64, time, threading, struct, hashlib
+import base64, time, threading, hashlib
 from io import BytesIO
-from pathlib import Path
-from typing import List, Optional, Tuple
-from dataclasses import dataclass, field, asdict
 import ctypes
 from ctypes import wintypes, windll
 import traceback
-import threading
 
 # v5.1: UIA element tracking — stable IDs across frames
 _ELEMENT_TRACKER = {}  # key_hash -> {id, first_seen, last_seen}
@@ -49,17 +45,17 @@ def _get_stable_id(elem) -> int:
     """Get or create a stable numeric ID for a UIA element."""
     global _NEXT_ELEMENT_ID
     key = _get_element_key(elem)
+    now = time.time()
     if key and key in _ELEMENT_TRACKER:
-        _ELEMENT_TRACKER[key]["last_seen"] = time.time()
+        _ELEMENT_TRACKER[key]["last_seen"] = now
         return _ELEMENT_TRACKER[key]["id"]
     # New element
     eid = _NEXT_ELEMENT_ID
     _NEXT_ELEMENT_ID += 1
     if key:
-        _ELEMENT_TRACKER[key] = {"id": eid, "first_seen": time.time(), "last_seen": time.time()}
+        _ELEMENT_TRACKER[key] = {"id": eid, "first_seen": now, "last_seen": now}
     # Prune stale entries every 100 new IDs
     if _NEXT_ELEMENT_ID % 100 == 0:
-        now = time.time()
         stale = [k for k, v in _ELEMENT_TRACKER.items() if now - v["last_seen"] > 60]
         for k in stale:
             del _ELEMENT_TRACKER[k]
@@ -101,8 +97,6 @@ _uia_error = ""
 
 try:
     from pywinauto import Desktop as PyWinDesktop
-    from pywinauto import Application
-    from pywinauto.timings import Timings
     # Don't call Timings.slow() globally — it can hang on some desktops
 
     def _uia_element_rect(elem):
@@ -454,8 +448,30 @@ def uia_som_bridge(screenshot_bytes: bytes) -> dict:
     if not som.get("success"):
         return som
 
-    # Build lookup: for each SOM element, find its UIA element by bbox center overlap
+    # Build lookup: take one UIA snapshot, then match each SOM element by center overlap.
     uia_lookup = {}
+    snap = uia_snapshot(timeout=5) if UIA_READY else {}
+    uia_tree = snap.get("tree", {}) if snap.get("success") else {}
+
+    def find_by_point(node, px, py, depth=0):
+        if depth > 3 or not node:
+            return None
+        rect = node.get("rect")
+        if rect:
+            rx, ry, rw, rh = rect["left"], rect["top"], rect["width"], rect["height"]
+            if rx <= px <= rx + rw and ry <= py <= ry + rh:
+                for child in node.get("children", []):
+                    found = find_by_point(child, px, py, depth+1)
+                    if found:
+                        return found
+                return {
+                    "name": node.get("name", ""),
+                    "automation_id": node.get("automation_id", ""),
+                    "control_type": node.get("control_type", ""),
+                    "class_name": node.get("class_name", ""),
+                }
+        return None
+
     for elem in som.get("elements", []):
         bbox = elem.get("bbox")
         if not bbox:
@@ -465,35 +481,15 @@ def uia_som_bridge(screenshot_bytes: bytes) -> dict:
         e_center_y = ey + eh // 2
 
         # Scan UIA tree for element containing this center point
-        if UIA_READY:
-            snap = uia_snapshot(timeout=5)
-            if snap.get("success"):
-                def find_by_point(node, px, py, depth=0):
-                    if depth > 3 or not node:
-                        return None
-                    rect = node.get("rect")
-                    if rect:
-                        rx, ry, rw, rh = rect["left"], rect["top"], rect["width"], rect["height"]
-                        if rx <= px <= rx + rw and ry <= py <= ry + rh:
-                            for child in node.get("children", []):
-                                found = find_by_point(child, px, py, depth+1)
-                                if found:
-                                    return found
-                            return {
-                                "name": node.get("name", ""),
-                                "automation_id": node.get("automation_id", ""),
-                                "control_type": node.get("control_type", ""),
-                                "class_name": node.get("class_name", ""),
-                            }
-                    return None
-                match = find_by_point(snap.get("tree", {}), e_center_x, e_center_y)
-                if match:
-                    elem["automation_id"] = match.get("automation_id", "")
-                    elem["uia_name"] = match.get("name", "")
-                    elem["uia_control_type"] = match.get("control_type", "")
-                    aid = match.get("automation_id", "")
-                    if aid:
-                        uia_lookup[aid] = elem["index"]
+        if uia_tree:
+            match = find_by_point(uia_tree, e_center_x, e_center_y)
+            if match:
+                elem["automation_id"] = match.get("automation_id", "")
+                elem["uia_name"] = match.get("name", "")
+                elem["uia_control_type"] = match.get("control_type", "")
+                aid = match.get("automation_id", "")
+                if aid:
+                    uia_lookup[aid] = elem["index"]
 
     som["uia_lookup"] = uia_lookup
     return som
@@ -559,8 +555,6 @@ def per_window_som(window_title: str = None) -> dict:
 
         # Grab full screenshot once
         from PIL import Image, ImageDraw, ImageFont
-        from io import BytesIO
-        screen_bytes = None
         try:
             from PIL import ImageGrab
             img_full = ImageGrab.grab()
@@ -576,8 +570,7 @@ def per_window_som(window_title: str = None) -> dict:
             if not windows:
                 return {"success": False, "error": f"Window '{window_title}' not found"}
 
-        from PIL import Image as PILImage
-        img_base = PILImage.open(BytesIO(screen_bytes)).convert("RGBA")
+        img_base = Image.open(BytesIO(screen_bytes)).convert("RGBA")
         try:
             font = ImageFont.truetype("arial.ttf", 12)
         except:
@@ -585,21 +578,15 @@ def per_window_som(window_title: str = None) -> dict:
 
         per_window_results = []
         combined_draw = ImageDraw.Draw(img_base)
+        snap = uia_snapshot(timeout=5)
 
         for wi, winfo in enumerate(windows):
             r = winfo["rect"]
             wx, wy, ww, wh = r["left"], r["top"], r["width"], r["height"]
             title = winfo["title"]
 
-            # Crop to this window
-            if wx >= 0 and wy >= 0 and wx + ww <= img_base.width and wy + wh <= img_base.height:
-                win_img = img_base.crop((wx, wy, wx + ww, wy + wh))
-            else:
-                win_img = img_base
-
             # Get UIA elements within this window
             win_elements = []
-            snap = uia_snapshot(timeout=5)
             if snap.get("success"):
                 def flatten_win(node, depth=0):
                     if depth > 4 or not node:
@@ -802,6 +789,62 @@ def send_input_background(keys: list, hold_ms: int = 30):
         return {"success": False, "error": "No valid keys"}
     except Exception as e:
         return {"success": False, "error": str(e)}
+
+_MOUSE_DOWN = {"left": 0x02, "right": 0x08, "middle": 0x20}
+_MOUSE_UP = {"left": 0x04, "right": 0x10, "middle": 0x40}
+
+def send_mouse_move(x: int, y: int):
+    """Move mouse with user32 without using pyautogui."""
+    try:
+        windll.user32.SetCursorPos(int(x), int(y))
+        return {"success": True, "x": x, "y": y}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+def send_mouse_click(x=None, y=None, button="left", clicks=1):
+    """Click with user32 mouse_event; optionally move first."""
+    try:
+        if x is not None and y is not None:
+            windll.user32.SetCursorPos(int(x), int(y))
+            time.sleep(0.01)
+        down = _MOUSE_DOWN.get(button, _MOUSE_DOWN["left"])
+        up = _MOUSE_UP.get(button, _MOUSE_UP["left"])
+        for _ in range(int(clicks)):
+            windll.user32.mouse_event(down, 0, 0, 0, 0)
+            windll.user32.mouse_event(up, 0, 0, 0, 0)
+            time.sleep(0.01)
+        return {"success": True, "button": button, "clicks": clicks}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+def send_mouse_drag(x1, y1, x2, y2, button="left"):
+    """Drag with user32 mouse_event."""
+    try:
+        windll.user32.SetCursorPos(int(x1), int(y1))
+        windll.user32.mouse_event(_MOUSE_DOWN.get(button, _MOUSE_DOWN["left"]), 0, 0, 0, 0)
+        for i in range(1, 21):
+            windll.user32.SetCursorPos(int(x1 + (x2 - x1) * i / 20), int(y1 + (y2 - y1) * i / 20))
+            time.sleep(0.005)
+        windll.user32.mouse_event(_MOUSE_UP.get(button, _MOUSE_UP["left"]), 0, 0, 0, 0)
+        return {"success": True, "x1": x1, "y1": y1, "x2": x2, "y2": y2}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+def send_scroll(clicks=-3):
+    """Scroll mouse wheel with user32 mouse_event."""
+    try:
+        windll.user32.mouse_event(0x0800, 0, 0, int(clicks) * 120, 0)
+        return {"success": True, "clicks": clicks}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+def send_input(keys: list, hold_ms: int = 30):
+    """Compatibility wrapper for the server's background hotkey path."""
+    return send_input_background(keys, hold_ms)
+
+def send_keys(text: str):
+    """Compatibility wrapper for the server's background text path."""
+    return send_input_background(list(text))
 
 # ── Test / Diag ────────────────────────────────────────────────────────────
 def diag():

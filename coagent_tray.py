@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
     QApplication, QSystemTrayIcon, QMenu, QMessageBox, QDialog, QVBoxLayout,
     QHBoxLayout, QLabel, QPushButton, QLineEdit, QCheckBox, QGroupBox,
     QTabWidget, QWidget, QSpinBox, QTextEdit, QListWidget, QListWidgetItem,
-    QInputDialog, QDialogButtonBox, QScrollArea, QDoubleSpinBox, QComboBox,
+    QInputDialog, QScrollArea, QDoubleSpinBox, QComboBox,
     QFormLayout, QStyle
 )
 from PySide6.QtGui import QIcon, QAction, QFont, QPixmap, QPainter, QColor, QPen, QBrush
@@ -330,9 +330,7 @@ class ServerManager(QObject):
         debug_log("Initializing ServerManager")
         # Kill any old stray server processes (not other pythonw like the tray itself)
         try:
-            import subprocess, time
             # Use WMI-like approach: find pythonw processes running hermes_coagent
-            script_path = str(SERVER_SCRIPT)
             result = subprocess.run(
                 ['wmic', 'process', 'where', f"name='pythonw.exe' and commandline like '%{SERVER_SCRIPT.name}%'",
                  'get', 'processid', '/format:csv'],
@@ -413,12 +411,15 @@ def _api(method, path, body=None, timeout=5):
     """Make HTTP request to CoAgent server."""
     url = f"http://localhost:{config['port']}{path}"
     try:
-        data = json.dumps(body).encode() if body else None
-        req = urllib.request.Request(url, data=data,
-            headers={'Content-Type': 'application/json'} if body else {})
-        if method == "POST" and not body:
-            req = urllib.request.Request(url, data=b'{}',
-                headers={'Content-Type': 'application/json'})
+        data = None
+        headers = {}
+        if method == "POST":
+            data = json.dumps(body or {}).encode()
+            headers = {'Content-Type': 'application/json'}
+        elif body is not None:
+            data = json.dumps(body).encode()
+            headers = {'Content-Type': 'application/json'}
+        req = urllib.request.Request(url, data=data, headers=headers, method=method)
         with urllib.request.urlopen(req, timeout=timeout) as r:
             return json.loads(r.read().decode())
     except Exception as e:
