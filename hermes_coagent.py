@@ -91,6 +91,7 @@ COAGENT_DIR = Path(__file__).parent.resolve()
 MACROS_DIR = COAGENT_DIR / "macros"
 SCREENSHOTS_DIR = COAGENT_DIR / "screenshots"
 TUNNEL_LOG = COAGENT_DIR / "tunnel.log"
+TRAY_LOG = COAGENT_DIR / "tray_icon.log"
 TIMESTAMP = datetime.now().strftime("%Y-%m-%d %H:%M")
 SERVER_PORT = 9123
 
@@ -1190,6 +1191,27 @@ def route_emergency_resume():
     state.emergency_stop = False
     return jsonify({"status": "resumed", "message": "Input re-enabled"})
 
+@app.route("/emergency/restart", methods=["POST"])
+def route_emergency_restart():
+    launcher = COAGENT_DIR / "start_coagent.bat"
+    if not launcher.exists():
+        return jsonify({"error": f"Launcher not found: {launcher}"}), 500
+
+    def _restart_from_launcher():
+        time.sleep(0.5)
+        creationflags = subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0
+        subprocess.Popen(
+            ["cmd.exe", "/c", "start", "", "/min", str(launcher)],
+            cwd=str(COAGENT_DIR),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=creationflags,
+        )
+
+    threading.Thread(target=_restart_from_launcher, daemon=True).start()
+    return jsonify({"status": "restarting", "launcher": str(launcher)})
+
 @app.route("/emergency/status")
 def route_emergency_status():
     return jsonify({
@@ -1930,21 +1952,45 @@ def _start_tray():
     pythonw.exe has no console window but has a proper Windows message pump
     so the tray icon can register with the shell notification area.
     Falls back silently if pystray not installed."""
-    import subprocess
     try:
         tray_script = Path(__file__).parent / "tray_icon.py"
         if not tray_script.exists():
             _console("  [INFO] tray_icon.py not found, skip tray icon")
             return
-        # Use pythonw.exe - no console window, proper Windows GUI context
-        pyw = r"C:\Users\Admin\AppData\Local\Programs\Python\Python313\pythonw.exe"
-        proc = subprocess.Popen(
-            [pyw, str(tray_script), str(SERVER_PORT)],
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL
-        )
-        _console("  [OK] System Tray Icon - Look for purple 'C' in notification area")
+
+        pyw = Path(sys.executable).with_name("pythonw.exe")
+        if not pyw.exists():
+            pyw = Path(r"C:\Users\Admin\AppData\Local\Programs\Python\Python313\pythonw.exe")
+        if not pyw.exists():
+            _console(f"  [INFO] Tray icon skipped: pythonw.exe not found ({pyw})")
+            return
+
+        startupinfo = None
+        creationflags = 0
+        if os.name == "nt":
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = 0
+            creationflags = subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0
+
+        with TRAY_LOG.open("a", encoding="utf-8") as tray_log:
+            tray_log.write(f"{datetime.now().isoformat(timespec='seconds')} launching {tray_script}\n")
+            tray_log.flush()
+            proc = subprocess.Popen(
+                [str(pyw), str(tray_script), str(SERVER_PORT)],
+                cwd=str(COAGENT_DIR),
+                stdin=subprocess.DEVNULL,
+                stdout=tray_log,
+                stderr=subprocess.STDOUT,
+                startupinfo=startupinfo,
+                creationflags=creationflags,
+            )
+
+        time.sleep(0.75)
+        if proc.poll() is None:
+            _console(f"  [OK] System Tray Icon - PID {proc.pid}; look for purple 'C' in notification area")
+        else:
+            _console(f"  [INFO] Tray icon exited early with code {proc.returncode}; see {TRAY_LOG}")
     except Exception as e:
         _console(f"  [INFO] Tray icon skipped: {e}")
 
