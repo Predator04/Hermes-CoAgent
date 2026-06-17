@@ -1289,6 +1289,85 @@ def route_minimize():
         "win_m": ok2,
         "status": "minimized" if ok1 or ok2 else "failed"
     })
+
+@app.route("/click/session1", methods=["POST"])
+def route_click_session1():
+    """Click at coordinates on Session 1 via schtasks.
+    Required: {"x": int, "y": int}"""
+    d = request.json
+    x = d.get("x", 960)
+    y = d.get("y", 540)
+    
+    click_ps1 = COAGENT_DIR / "_click_s1.ps1"
+    click_ps1.write_text(f'''Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public class M {{
+    [DllImport("user32.dll")]
+    public static extern void SetCursorPos(int x, int y);
+    [DllImport("user32.dll")]
+    public static extern void mouse_event(uint f, uint dx, uint dy, uint d, UIntPtr e);
+}}
+"@
+[M]::SetCursorPos({x}, {y})
+Start-Sleep -Milliseconds 50
+[M]::mouse_event(0x02, 0, 0, 0, [UIntPtr]::Zero)
+Start-Sleep -Milliseconds 30
+[M]::mouse_event(0x04, 0, 0, 0, [UIntPtr]::Zero)
+Write-Output "Clicked {x},{y}"
+''')
+    
+    task_name = "HermesCoAgent_Clk"
+    subprocess.run(["schtasks", "/Delete", "/TN", task_name, "/F"],
+                   capture_output=True, timeout=5)
+    
+    xml_path = COAGENT_DIR / "_clk_task.xml"
+    xml = (
+        '<?xml version="1.0" encoding="UTF-16"?>\n'
+        '<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">\n'
+        '  <RegistrationInfo><Author>CoAgent</Author></RegistrationInfo>\n'
+        '  <Principals>\n'
+        '    <Principal id="Author">\n'
+        '      <UserId>Admin</UserId>\n'
+        '      <LogonType>InteractiveToken</LogonType>\n'
+        '      <RunLevel>HighestAvailable</RunLevel>\n'
+        '    </Principal>\n'
+        '  </Principals>\n'
+        '  <Settings>\n'
+        '    <Enabled>true</Enabled>\n'
+        '    <AllowStartOnDemand>true</AllowStartOnDemand>\n'
+        '    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>\n'
+        '    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>\n'
+        '    <ExecutionTimeLimit>PT10S</ExecutionTimeLimit>\n'
+        '    <Priority>7</Priority>\n'
+        '  </Settings>\n'
+        '  <Actions Context="Author">\n'
+        '    <Exec>\n'
+        '      <Command>C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe</Command>\n'
+        '      <Arguments>-ExecutionPolicy Bypass -WindowStyle Hidden -File "' + str(click_ps1) + '"</Arguments>\n'
+        '    </Exec>\n'
+        '  </Actions>\n'
+        '</Task>\n'
+    )
+    xml_path.write_text(xml, encoding="utf-16")
+    
+    r1 = subprocess.run(
+        ["schtasks", "/Create", "/XML", str(xml_path), "/TN", task_name, "/F"],
+        capture_output=True, text=True, timeout=10
+    )
+    if r1.returncode == 0:
+        subprocess.run(
+            ["schtasks", "/Run", "/TN", task_name],
+            capture_output=True, text=True, timeout=15
+        )
+    try:
+        xml_path.unlink()
+        click_ps1.unlink()
+    except:
+        pass
+    return jsonify({"x": x, "y": y, "status": "clicked" if r1.returncode == 0 else "failed"})
+
+
 # === CHAIN ===
 @app.route("/chain", methods=["POST"])
 def route_chain():
