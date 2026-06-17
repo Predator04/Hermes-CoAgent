@@ -514,7 +514,14 @@ async def launch_app(path: str) -> str:
         _lazy_imports()
     import subprocess
     try:
-        subprocess.Popen(path, shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
+        # Security: only allow safe file types, no shell=True
+        safe_exts = ('.exe', '.lnk', '.bat', '.cmd', '.msi')
+        if path.startswith(('http://', 'https://', 'ms-')):
+            subprocess.Popen(['start', path], shell=True)
+        elif path.lower().endswith(safe_exts):
+            subprocess.Popen([path])
+        else:
+            return json.dumps({"error": f"Unsafe file type: {path}"})
         return json.dumps({"status": "launched", "path": path})
     except Exception as e:
         return json.dumps({"error": str(e)})

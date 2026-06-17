@@ -5,14 +5,15 @@
 
 $ErrorActionPreference = "Continue"
 
-$coagentDir = "C:\Users\Admin\Desktop\Hermes CoAgent"
-$pythonw = "C:\Users\Admin\AppData\Local\Programs\Python\Python313\pythonw.exe"
-$python = "C:\Users\Admin\AppData\Local\Programs\Python\Python313\python.exe"
-$hermesHome = "C:\Users\Admin\.hermes"
+# Auto-detect paths relative to this script
+$coagentDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$pythonw = "pythonw.exe"
+$python = "python.exe"
 
 Write-Output "=========================================="
-Write-Output " Hermes CoAgent Launch v2.0 (Optimized)"
+Write-Output " Hermes CoAgent Launch (Path-Relative)"
 Write-Output "=========================================="
+Write-Output "Workspace: $coagentDir"
 
 # ── Step 1: Kill stale CoAgent processes ──
 Write-Output "[1/5] Cleaning stale processes..."
@@ -21,7 +22,7 @@ Get-Process -Name "python*" -ErrorAction SilentlyContinue | ForEach-Object {
         $cmdLine = (Get-CimInstance Win32_Process -Filter "ProcessId = $($_.Id)").CommandLine
         if ($cmdLine -match "hermes_coagent" -or $cmdLine -match "coagent_tray") {
             Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue
-            Write-Output "  Killed PID $($_.Id) ($($cmdLine -replace '.{80}', '$0...'))"
+            Write-Output "  Killed PID $($_.Id)"
         }
     } catch {}
 }
@@ -29,62 +30,43 @@ Start-Sleep -Milliseconds 500
 
 # ── Step 2: Launch CoAgent server ──
 Write-Output "[2/5] Starting CoAgent server..."
+$serverArgs = @(
+    "$coagentDir\hermes_coagent.py"
+    "--allow-external"
+    "--secure"
+)
 $env:MCP_FAST = "1"
-Start-Process -FilePath $pythonw -ArgumentList "$coagentDir\hermes_coagent.py" -WindowStyle Hidden
-Write-Output "  PID: $( (Get-Process -Name pythonw | Select-Object -Last 1).Id )"
-
-# ── Step 3: Wait for CoAgent ──
-Write-Output "[3/5] Waiting for CoAgent (max 20s)..."
-$maxWait = 20
-for ($i = 0; $i -lt $maxWait; $i++) {
-    try {
-        $resp = Invoke-WebRequest -Uri "http://localhost:9123/" -UseBasicParsing -TimeoutSec 1
-        if ($resp.StatusCode -eq 200) {
-            $body = $resp.Content | ConvertFrom-Json
-            Write-Output "  Ready! Version: $($body.version) (${i}s)"
-            break
-        }
-    } catch {}
-    if ($i -eq 0) { Write-Output "  Waiting..." }
-    Start-Sleep -Seconds 1
+$serverProc = Start-Process -FilePath "pythonw.exe" -ArgumentList $serverArgs -WorkingDirectory $coagentDir -PassThru -WindowStyle Hidden -ErrorAction SilentlyContinue
+if (-not $serverProc) {
+    # Fallback to python.exe if pythonw not found
+    $serverProc = Start-Process -FilePath "python.exe" -ArgumentList $serverArgs -WorkingDirectory $coagentDir -PassThru -WindowStyle Hidden
 }
-if ($i -ge $maxWait) { Write-Warning "  CoAgent not responding after ${maxWait}s" }
+Write-Output "  Server PID: $($serverProc.Id)"
 
-# ── Step 4: Enable fast mode in Hermes MCP ──
-Write-Output "[4/5] Configuring Hermes MCP for fast start..."
-$configPath = "$hermesHome\config.yaml"
-if (Test-Path $configPath) {
-    $config = Get-Content $configPath -Raw
-    # Add MCP_FAST=1 env to windows-computer-use MCP server if not present
-    $search = "windows-computer-use:"
-    $replace = "windows-computer-use:`n    env:`n      MCP_FAST: '1'"
-    $newConfig = $config -replace [regex]::Escape($search), $replace
-    # Check if it already has env: block
-    if ($config -match "windows-computer-use:\s*\n\s+command:" -or $config -match "windows-computer-use:\s*\n\s+env:") {
-        $newConfig = $config -replace "MCP_FAST: '1'", "MCP_FAST: '1'"  # no-op, already there
-    }
-    $config | Out-File -FilePath "$configPath.tmp"
-    $newConfig | Out-File -FilePath $configPath
-    Write-Output "  Config updated"
-}
+Start-Sleep -Seconds 2
 
-# ── Step 5: Final status ──
-Write-Output "[5/5] Final status check..."
+# ── Step 3: Launch tray icon on Session 1 ──
+Write-Output "[3/5] Launching tray icon..."
+& "$coagentDir\launch_fixed.ps1"
+
+# ── Step 4: Verify server is running ──
+Write-Output "[4/5] Verifying server..."
+Start-Sleep -Seconds 2
 try {
-    $status = Invoke-WebRequest -Uri "http://localhost:9123/" -UseBasicParsing -TimeoutSec 2
-    $body = $status.Content | ConvertFrom-Json
-    Write-Output ""
-    Write-Output "=========================================="
-    Write-Output " ALL SYSTEMS READY"
-    Write-Output "=========================================="
-    Write-Output " CoAgent:      http://localhost:9123/"
-    Write-Output " Dashboard2:   http://localhost:9123/dashboard2"
-    Write-Output " MCP:          Active via Hermes config"
-    Write-Output " Fast mode:    ON (lazy imports)"
-    Write-Output ""
-    Write-Output " Commands:"
-    Write-Output "   powershell -File send_telegram_file.ps1 -FilePath `"C:\path\to\file.apk`""
-    Write-Output "=========================================="
+    $ping = Invoke-WebRequest -Uri "http://127.0.0.1:9123/ping" -UseBasicParsing -TimeoutSec 5 -ErrorAction SilentlyContinue
+    if ($ping.StatusCode -eq 200) {
+        Write-Output "  ✅ Server OK (port 9123)"
+    }
 } catch {
-    Write-Warning "CoAgent not responding - check manually"
+    Write-Output "  ⚠️  Server not responding yet - check coagent_server.log"
 }
+
+# ── Step 5: Done ──
+Write-Output "[5/5] Launch complete!"
+Write-Output ""
+Write-Output "  Dashboard: http://localhost:9123/"
+Write-Output "  Dashboard2: http://localhost:9123/dashboard2"
+Write-Output "  Tray icon: Look for purple 'C' in system tray"
+Write-Output ""
+Write-Output "  MCP server auto-launches on first tool call (MCP_FAST=1)"
+Write-Output "  Auth token: check coagent_server.log for '[SECURE]'"

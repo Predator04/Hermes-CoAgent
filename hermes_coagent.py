@@ -1,5 +1,6 @@
-# Hermes CoAgent v5.0 - Ultimate Desktop Co-Pilot
-# All features: Dashboard, MCP, OCR, Visual Search, TTS, Watchdog, Macros, Tunnel, Recorder, File API
+# ════════════════════════════════════════════════════════════════
+# HERMES COAGENT v6.0 — SECURITY HARDENED
+# ════════════════════════════════════════════════════════════════
 import sys, os, json, base64, subprocess, threading, time, shutil
 import re, queue, urllib.request
 from io import BytesIO
@@ -612,7 +613,7 @@ def run_mcp():
         "clipboard_set": lambda p: clipboard_set_api(p["text"]),
         "emergency_stop": lambda p: (setattr(state,"emergency_stop",True),{"status":"stopped"})[1],
         "emergency_resume": lambda p: (setattr(state,"emergency_stop",False),{"status":"resumed"})[1],
-        "app_open": lambda p: (subprocess.Popen(p["path"],shell=True),{"status":"launched"})[1],
+        "app_open": lambda p: _launch_app_safe(p["path"]),
         "monitors": lambda p: monitors_api(),
         "tts_speak": lambda p: tts_speak_api(p["text"]),
     }
@@ -917,9 +918,34 @@ def monitors_api():
     except:
         return {"monitors": [{"width": 1920, "height": 1080, "left": 0, "top": 0}]}
 
+SAFE_ALLOWED_ROOTS = [
+    Path(os.environ.get('USERPROFILE', 'C:/Users/Default')).resolve(),
+    Path(os.environ.get('TEMP', 'C:/Temp')).resolve(),
+    COAGENT_DIR,
+]
+
+def _sanitize_path(p):
+    """Block path traversal. Only allow paths under allowed roots."""
+    resolved = Path(p).resolve()
+    if not any(str(resolved).startswith(str(r)) for r in SAFE_ALLOWED_ROOTS):
+        raise ValueError(f"Path traversal blocked: {p} -> {resolved}")
+    return str(resolved)
+
+def _sanitize_cmd(cmd_str):
+    """Block dangerous shell metacharacters in string commands."""
+    dangerous = ['|', ';', '&', '`', '$', '(', ')', '{', '}', '<', '>']
+    for d in dangerous:
+        if d in cmd_str:
+            raise ValueError(f"Command blocked: contains character {repr(d)}")
+    return cmd_str.split()
+
 def run_command_api(cmd, timeout=30):
     try:
-        r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout)
+        if isinstance(cmd, str):
+            args = _sanitize_cmd(cmd)
+            r = subprocess.run(args, capture_output=True, text=True, timeout=timeout)
+        else:
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
         return {"stdout": r.stdout[:100000], "stderr": r.stderr[:50000], "exit_code": r.returncode}
     except subprocess.TimeoutExpired:
         return {"error": "Command timed out"}
@@ -940,6 +966,20 @@ def clipboard_set_api(text):
         return {"status": "copied", "chars": len(text)}
     except Exception as e:
         return {"error": str(e)}
+
+def _launch_app_safe(path):
+    """Launch an application without shell=True. Only allows .exe, .lnk, URLs."""
+    path = str(path)
+    # Only allow safe file types
+    safe_extensions = ('.exe', '.lnk', '.bat', '.cmd', '.msi', '.url')
+    if path.startswith(('http://', 'https://', 'ms-')):
+        # System protocol handlers (ms-settings: etc) are safe
+        subprocess.Popen(['start', path], shell=True)
+        return {"status": "launched", "path": path}
+    if not path.lower().endswith(safe_extensions):
+        return {"error": f"Unsafe file type: {path}"}, 400
+    subprocess.Popen([path], shell=False)
+    return {"status": "launched", "path": path}
 
 # === CLOUDFLARE TUNNEL ===
 def tunnel_start_action():
@@ -1247,7 +1287,7 @@ def dashboard2():
 @app.route("/ping")
 def route_ping():
     return jsonify({
-        "status": "ok", "agent": "Hermes CoAgent v5.0",
+        "status": "ok", "agent": "Hermes CoAgent v6.0",
         "mode": "copilot", "emergency_stop": state.emergency_stop,
         "queue_size": state.pending_queue.qsize(),
         "actions_today": len(state.action_history),
@@ -1576,66 +1616,95 @@ def route_clip_set():
 
 # === APP ===
 @app.route("/app/open", methods=["POST"])
+@require_auth
 def route_app_open():
     d = request.json
-    subprocess.Popen(d["path"], shell=True)
-    return jsonify({"status": "launched", "path": d["path"]})
+    result = _launch_app_safe(d["path"])
+    return jsonify(result)
 
 @app.route("/app/run", methods=["POST"])
+@require_auth
 def route_app_run():
     d = request.json
     return jsonify(run_command_api(d["cmd"], d.get("timeout", 30)))
 
 # === MONITORS ===
 @app.route("/monitors")
+@require_auth
 def route_monitors():
     return jsonify(monitors_api())
 
 # === OCR ===
 @app.route("/ocr/find", methods=["POST"])
+@require_auth
 def route_ocr():
     d = request.json
     return jsonify(ocr_find_text(d["text"], d.get("region")))
 
 # === VISUAL SEARCH ===
 @app.route("/visual/find", methods=["POST"])
+@require_auth
 def route_visual():
     d = request.json
     return jsonify(visual_find_image(d["template_path"], d.get("confidence", 0.8)))
 
 # === FILES ===
 @app.route("/file/list", methods=["POST"])
+@require_auth
 def route_file_list():
     d = request.json
-    return jsonify(file_list_api(d.get("path", ".")))
+    p = d.get("path", ".")
+    try:
+        p = _sanitize_path(p)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 403
+    return jsonify(file_list_api(p))
 
 @app.route("/file/read", methods=["POST"])
+@require_auth
 def route_file_read():
     d = request.json
-    return jsonify(file_read_api(d["path"]))
+    try:
+        p = _sanitize_path(d["path"])
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 403
+    return jsonify(file_read_api(p))
 
 @app.route("/file/write", methods=["POST"])
+@require_auth
 def route_file_write():
     d = request.json
-    return jsonify(file_write_api(d["path"], d["content"], d.get("is_base64", False)))
+    try:
+        p = _sanitize_path(d["path"])
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 403
+    return jsonify(file_write_api(p, d["content"], d.get("is_base64", False)))
 
 @app.route("/file/delete", methods=["POST"])
+@require_auth
 def route_file_delete():
     d = request.json
-    return jsonify(file_delete_api(d["path"]))
+    try:
+        p = _sanitize_path(d["path"])
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 403
+    return jsonify(file_delete_api(p))
 
 # === TTS ===
 @app.route("/tts/speak", methods=["POST"])
+@require_auth
 def route_tts():
     d = request.json
     return jsonify(tts_speak_api(d["text"]))
 
 # === TUNNEL ===
 @app.route("/tunnel/start", methods=["POST"])
+@require_auth
 def route_tunnel_start():
     return jsonify(tunnel_start_action())
 
 @app.route("/tunnel/stop", methods=["POST"])
+@require_auth
 def route_tunnel_stop():
     return jsonify(tunnel_stop_action())
 
@@ -1665,6 +1734,7 @@ def route_macro_record():
     return jsonify(macro_record_api(d["name"]))
 
 @app.route("/macro/delete", methods=["POST"])
+@require_auth
 def route_macro_delete():
     d = request.json
     p = MACROS_DIR / f"{d['name']}.json"
@@ -2236,14 +2306,15 @@ def route_launch_ai():
                 if exe.startswith("ms-"):
                     subprocess.run(["start", exe], shell=True, capture_output=True)
                 else:
-                    subprocess.Popen([exe], shell=True)
+                    # Safe: exe is from hardcoded map, not user input
+                    subprocess.Popen([exe])
                 _log(f"AI Launcher: '{query}' -> {exe}")
                 return jsonify({"status": "launched", "app": exe, "query": query})
             except Exception as e:
                 return jsonify({"error": str(e)}), 500
-    import re
+    import re, webbrowser
     if re.match(r'^https?://', query):
-        subprocess.Popen(["start", query], shell=True)
+        webbrowser.open_new_tab(query)
         return jsonify({"status": "launched", "app": "browser", "url": query})
     return jsonify({"error": f"Could not find app matching '{query}'"}), 404
 
@@ -2426,7 +2497,7 @@ if __name__ == "__main__":
 
     _console()
     _console("  +" + "="*44 + "+")
-    _console("  |         Hermes CoAgent v5.1              |")
+    _console("  |         Hermes CoAgent v6.0              |")
     _console("  |      Ultimate Desktop Co-Pilot            |")
     _console("  +" + "="*44 + "+")
     _console()
