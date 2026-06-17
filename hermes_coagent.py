@@ -1,7 +1,7 @@
 # ════════════════════════════════════════════════════════════════
 # HERMES COAGENT v6.0 — SECURITY HARDENED
 # ════════════════════════════════════════════════════════════════
-import sys, os, json, base64, subprocess, threading, time, shutil
+import sys, os, json, base64, subprocess, threading, time, shutil, traceback
 import re, queue, urllib.request
 from io import BytesIO
 from pathlib import Path
@@ -143,6 +143,46 @@ from flask import Flask, request, jsonify, send_file, Response
 app = Flask(__name__, static_folder=None)
 MACROS_DIR.mkdir(exist_ok=True)
 SCREENSHOTS_DIR.mkdir(exist_ok=True)
+
+# ── Global Error Handlers ──────────────────────────────────
+@app.errorhandler(400)
+def _handle_bad_request(e):
+    return jsonify({"error": "Bad request", "detail": str(e)}), 400
+
+@app.errorhandler(401)
+def _handle_unauthorized(e):
+    return jsonify({"error": "Unauthorized", "detail": str(e)}), 401
+
+@app.errorhandler(403)
+def _handle_forbidden(e):
+    return jsonify({"error": "Forbidden", "detail": str(e)}), 403
+
+@app.errorhandler(404)
+def _handle_not_found(e):
+    return jsonify({"error": "Not found", "path": request.path}), 404
+
+@app.errorhandler(405)
+def _handle_method_not_allowed(e):
+    return jsonify({"error": "Method not allowed", "method": request.method, "path": request.path}), 405
+
+@app.errorhandler(413)
+def _handle_payload_too_large(e):
+    return jsonify({"error": "Payload too large", "max_mb": 16}), 413
+
+@app.errorhandler(429)
+def _handle_rate_limited(e):
+    return jsonify({"error": "Too many requests"}), 429
+
+@app.errorhandler(500)
+def _handle_internal_error(e):
+    _log(f"[500] Internal error: {e}")
+    return jsonify({"error": "Internal server error"}), 500
+
+@app.errorhandler(Exception)
+def _handle_unhandled(e):
+    _log(f"[UNHANDLED] {type(e).__name__}: {e}")
+    traceback.print_exc()
+    return jsonify({"error": "Internal error", "type": type(e).__name__, "detail": str(e)[:200]}), 500
 
 def _attach_pythonw_stdio():
     try:
@@ -1300,12 +1340,35 @@ def dashboard2():
 @app.route("/ping")
 def route_ping():
     return jsonify({
-        "status": "ok", "agent": "Hermes CoAgent v6.1",
+        "status": "ok", "agent": "Hermes CoAgent v6.2",
         "mode": "copilot", "emergency_stop": state.emergency_stop,
         "queue_size": state.pending_queue.qsize(),
         "actions_today": len(state.action_history),
         "watchdog": state.watchdog_running,
         "recorder": state.recorder_active
+    })
+
+@app.route("/version")
+def route_version():
+    return jsonify({
+        "version": "v6.2",
+        "agent": "Hermes CoAgent",
+        "mode": "copilot",
+        "build": "2026-06-17",
+        "commit": "2f6065d",
+        "tag": "v6.2",
+        "features": [
+            "Co-Pilot Mode (background SendInput)",
+            "UIA accessibility tree + SOM overlays",
+            "Global auth (--secure default)",
+            "Command injection protection",
+            "Path traversal protection",
+            "Codex optimization pass",
+            "Tray icon screenshot relay",
+            "OCR / Visual search",
+            "Macro record/replay",
+            "MCP server mode"
+        ]
     })
 
 @app.route("/cursor/pos")
@@ -2468,7 +2531,7 @@ if __name__ == "__main__":
 
     _console()
     _console("  +" + "="*44 + "+")
-    _console("  |         Hermes CoAgent v6.1              |")
+    _console("  |         Hermes CoAgent v6.2              |")
     _console("  |      Ultimate Desktop Co-Pilot            |")
     _console("  +" + "="*44 + "+")
     _console()
