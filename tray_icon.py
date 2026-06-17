@@ -39,12 +39,12 @@ def _api_get(path):
 def _load_icon_font():
     from PIL import ImageFont
 
-    font_size = 36
+    font_size = 40
     for font_path in [
+        r"C:\Windows\Fonts\arialbd.ttf",
         r"C:\Windows\Fonts\segoeuib.ttf",
-        r"C:\Windows\Fonts\segoeui.ttf",
         r"C:\Windows\Fonts\arial.ttf",
-        r"C:\Windows\Fonts\calibri.ttf",
+        r"C:\Windows\Fonts\calibrib.ttf",
         r"C:\Windows\Fonts\consola.ttf",
     ]:
         if Path(font_path).exists():
@@ -67,7 +67,7 @@ def _build_icon_image():
     tw = bbox[2] - bbox[0]
     th = bbox[3] - bbox[1]
     x = (64 - tw) // 2
-    y = (64 - th) // 2 - 2
+    y = (64 - th) // 2 - 1
     draw.text((x, y), text, fill=(255, 255, 255, 255), font=font)
     return img
 
