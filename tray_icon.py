@@ -67,7 +67,7 @@ def _build_icon_image():
     tw = bbox[2] - bbox[0]
     th = bbox[3] - bbox[1]
     x = (64 - tw) // 2
-    y = (64 - th) // 2 - 1
+    y = (64 - th) // 2 - 2
     draw.text((x, y), text, fill=(255, 255, 255, 255), font=font)
     return img
 
