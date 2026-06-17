@@ -109,6 +109,7 @@ def _start_screenshot_server():
 
     class ScreenHandler(http.server.BaseHTTPRequestHandler):
         def do_GET(self):
+            global _last_screenshot, _last_screenshot_time, _SCREENSHOT_CACHE_TTL
             try:
                 if self.path.startswith("/screen"):
                     # Check for JPEG format
@@ -139,7 +140,6 @@ def _start_screenshot_server():
                     self.end_headers()
                     self.wfile.write(b'{"status":"ok","session":1}')
                 elif self.path == "/cache/info":
-                    global _last_screenshot_time, _SCREENSHOT_CACHE_TTL
                     info = json.dumps({
                         "cached": _last_screenshot is not None,
                         "age_ms": int((time.time() - _last_screenshot_time) * 1000) if _last_screenshot else -1,
@@ -150,7 +150,6 @@ def _start_screenshot_server():
                     self.end_headers()
                     self.wfile.write(info)
                 elif self.path == "/cache/clear":
-                    global _last_screenshot
                     _last_screenshot = None
                     self.send_response(200)
                     self.end_headers()

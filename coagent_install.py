@@ -40,11 +40,11 @@ def install():
         pythonw = PYTHON  # fallback
         print(f"[WARN] pythonw.exe not found at {pythonw}, using python.exe")
     
-    args = f'"{pythonw}" "{SCRIPT}" --allow-external'
-    
+    args = f'"{pythonw}" "{SCRIPT}" --secure'
+
     # Create the scheduled task
     ps_script = f'''
-$action = New-ScheduledTaskAction -Execute "{pythonw}" -Argument "`"{SCRIPT}`" --allow-external"
+$action = New-ScheduledTaskAction -Execute "{pythonw}" -Argument "`"{SCRIPT}`" --secure"
 $trigger = New-ScheduledTaskTrigger -AtLogOn
 $principal = New-ScheduledTaskPrincipal -UserId "{USERNAME}" -LogonType Interactive -RunLevel Highest
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
@@ -55,7 +55,7 @@ Register-ScheduledTask -TaskName "{TASK_NAME}" -Action $action -Trigger $trigger
     if rc == 0:
         print(f"[+] Scheduled task '{TASK_NAME}' created successfully!")
         print(f"[+] CoAgent will start automatically on next logon.")
-        print(f"[+] Running with --allow-external for WSL/remote access")
+        print(f"[+] Running with --secure — auth token required for all requests")
         print(f"[+] UIA will have full desktop tree (Session 1)")
         print()
         # Verify

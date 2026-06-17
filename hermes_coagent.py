@@ -1287,7 +1287,7 @@ def dashboard2():
 @app.route("/ping")
 def route_ping():
     return jsonify({
-        "status": "ok", "agent": "Hermes CoAgent v6.0",
+        "status": "ok", "agent": "Hermes CoAgent v6.1",
         "mode": "copilot", "emergency_stop": state.emergency_stop,
         "queue_size": state.pending_queue.qsize(),
         "actions_today": len(state.action_history),
@@ -1366,8 +1366,12 @@ def route_click_session1():
     """Click at coordinates on Session 1 via schtasks.
     Required: {"x": int, "y": int}"""
     d = request.json
-    x = d.get("x", 960)
-    y = d.get("y", 540)
+    x = int(d.get("x", 960))
+    y = int(d.get("y", 540))
+    
+    # Coerce to safe integers — prevent script injection
+    if not (-99999 <= x <= 99999 and -99999 <= y <= 99999):
+        return jsonify({"error": "Coordinates out of range"}), 400
     
     click_ps1 = COAGENT_DIR / "_click_s1.ps1"
     click_ps1.write_text(f'''Add-Type @"
@@ -2466,6 +2470,15 @@ if __name__ == "__main__":
 
     # Auth setup
     _secure_mode = "--secure" in sys.argv
+    _allow_external = "--allow-external" in sys.argv
+    
+    # Require auth for external access
+    if _allow_external and not _secure_mode:
+        _console("  [ERROR]      --allow-external requires --secure")
+        _console("  [ERROR]      Refusing to start: would expose desktop to network without auth")
+        _console("  [ERROR]      Add --secure or bind to 127.0.0.1 (omit --allow-external)")
+        sys.exit(1)
+    
     _token_arg = next((a.split("=", 1)[1] for a in sys.argv if a.startswith("--token=")), None)
     if _secure_mode or _token_arg:
         try:
@@ -2497,7 +2510,7 @@ if __name__ == "__main__":
 
     _console()
     _console("  +" + "="*44 + "+")
-    _console("  |         Hermes CoAgent v6.0              |")
+    _console("  |         Hermes CoAgent v6.1              |")
     _console("  |      Ultimate Desktop Co-Pilot            |")
     _console("  +" + "="*44 + "+")
     _console()

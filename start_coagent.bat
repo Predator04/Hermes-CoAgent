@@ -37,7 +37,8 @@ if not defined PYTHON (
 
 echo Using: %PYTHON%
 echo Launching CoAgent with secure auth...
-start "" "%PYTHON%" "%~dp0hermes_coagent.py" --allow-external --secure
+echo To access from other devices, add --allow-external
+start "" "%PYTHON%" "%~dp0hermes_coagent.py" --secure
 echo CoAgent started - look for purple 'C' in system tray
 echo Auth token will be shown in coagent_server.log
 ping -n 3 127.0.0.1 >nul

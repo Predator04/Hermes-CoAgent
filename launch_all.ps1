@@ -32,7 +32,6 @@ Start-Sleep -Milliseconds 500
 Write-Output "[2/5] Starting CoAgent server..."
 $serverArgs = @(
     "$coagentDir\hermes_coagent.py"
-    "--allow-external"
     "--secure"
 )
 $env:MCP_FAST = "1"

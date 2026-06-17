@@ -794,9 +794,10 @@ def send_input_background(keys: list, hold_ms: int = 30):
                 inputs.append(_make_input(vk, KEYEVENTF_KEYUP))  # key up
         
         if inputs:
-            n = windll.user32.SendInput(len(inputs), 
-                                         ctypes.c_void_p(ctypes.addressof(ctypes.cast(inputs, ctypes.POINTER(INPUT))[0])),
-                                         ctypes.sizeof(INPUT))
+            # Build proper ctypes array for SendInput
+            InputArray = INPUT * len(inputs)
+            input_array = InputArray(*inputs)
+            n = windll.user32.SendInput(len(inputs), input_array, ctypes.sizeof(INPUT))
             return {"success": True, "sent": len(inputs)//2, "injected": n}
         return {"success": False, "error": "No valid keys"}
     except Exception as e:

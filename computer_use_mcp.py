@@ -195,10 +195,10 @@ async def capture(mode: str = "som") -> str:
     if mode == "raw":
         return json.dumps(data or {"error": "no screenshot data"})
     # SOM mode — overlay elements on screenshot
-    if not data or "image" not in data:
+    if not data or "data" not in data:
         return json.dumps(data or {"error": "no screenshot data"})
     try:
-        img_b64 = data["image"]
+        img_b64 = data["data"]
         img_bytes = base64.b64decode(img_b64)
         img = Image.open(io.BytesIO(img_bytes))
         draw = ImageDraw.Draw(img)
@@ -207,10 +207,13 @@ async def capture(mode: str = "som") -> str:
         if uia_data and "windows" in uia_data:
             idx = 1
             for win in uia_data["windows"]:
-                if all(k in win for k in ("left", "top", "width", "height")):
+                # Handle both flat (left/top/width/height) and nested (rect) UIA formats
+                if "rect" in win and all(k in win.get("rect", {}) for k in ("left", "top", "width", "height")):
+                    x, y, w, h = win["rect"]["left"], win["rect"]["top"], win["rect"]["width"], win["rect"]["height"]
+                elif all(k in win for k in ("left", "top", "width", "height")):
                     x, y, w, h = win["left"], win["top"], win["width"], win["height"]
-                    if w < 20 or h < 20:
-                        continue
+                else:
+                    continue
                     elements.append({
                         "index": idx,
                         "name": win.get("name", ""),
@@ -270,7 +273,7 @@ async def click_element(index: int) -> str:
 @mcp.tool()
 async def double_click(x: int, y: int, button: str = "left") -> str:
     """Double-click at specific coordinates."""
-    click(x, y, button)
+    await click(x, y, button)
     time.sleep(0.05)
     result = _coagent_post("/click", {"x": x, "y": y, "button": button})
     return json.dumps(result or {"error": "double click failed"})
@@ -396,8 +399,8 @@ async def find_on_screen(text: str) -> str:
             import pytesseract
             from PIL import Image
             data = _coagent_get("/screenshot", no_cache=True)
-            if data and "image" in data:
-                img = Image.open(io.BytesIO(base64.b64decode(data["image"])))
+            if data and "data" in data:
+                img = Image.open(io.BytesIO(base64.b64decode(data["data"])))
                 ocr_data = pytesseract.image_to_data(img, output_type=pytesseract.Output.DICT)
                 for i in range(len(ocr_data["text"])):
                     if text.lower() in ocr_data["text"][i].lower():
