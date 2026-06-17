@@ -340,17 +340,74 @@ def _grab_screen_bytes(force=False) -> bytes:
         state.last_screenshot_time = time.time()
         return img_bytes
 
-def _capture_raw() -> bytes:
-    # Method 1: PIL ImageGrab (fastest when available - <100ms)
+def _capture_via_session1() -> bytes:
+    """Capture screenshot from Session 1 via schtasks with InteractiveToken.
+    This is the only reliable way to get a real screenshot when server runs on Session 0."""
+    out_path = Path("C:/Temp/_coagent_screen.png")
+    ps1_script = COAGENT_DIR / "session1_capture.ps1"
     try:
-        from PIL import ImageGrab
-        img = ImageGrab.grab()
-        buf = BytesIO()
-        img.save(buf, format="PNG")
-        return buf.getvalue()
+        out_path.parent.mkdir(parents=True, exist_ok=True)
     except:
         pass
-    # Method 2: PowerShell System.Drawing (fallback, ~1s)
+
+    # Build XML task targeting Session 1 with InteractiveToken
+    task_name = "HermesCoAgent_Snap"
+    subprocess.run(["schtasks", "/Delete", "/TN", task_name, "/F"],
+                   capture_output=True, timeout=5)
+
+    xml = (
+        '<?xml version="1.0" encoding="UTF-16"?>\n'
+        '<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">\n'
+        '  <RegistrationInfo><Author>CoAgent</Author></RegistrationInfo>\n'
+        '  <Principals>\n'
+        '    <Principal id="Author">\n'
+        '      <UserId>Admin</UserId>\n'
+        '      <LogonType>InteractiveToken</LogonType>\n'
+        '      <RunLevel>HighestAvailable</RunLevel>\n'
+        '    </Principal>\n'
+        '  </Principals>\n'
+        '  <Settings>\n'
+        '    <Enabled>true</Enabled>\n'
+        '    <AllowStartOnDemand>true</AllowStartOnDemand>\n'
+        '    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>\n'
+        '    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>\n'
+        '    <ExecutionTimeLimit>PT30S</ExecutionTimeLimit>\n'
+        '    <Priority>7</Priority>\n'
+        '  </Settings>\n'
+        '  <Actions Context="Author">\n'
+        '    <Exec>\n'
+        '      <Command>C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe</Command>\n'
+        '      <Arguments>-ExecutionPolicy Bypass -File "' + str(ps1_script) + '" -OutputPath "' + str(out_path) + '"</Arguments>\n'
+        '    </Exec>\n'
+        '  </Actions>\n'
+        '</Task>\n'
+    )
+
+    xml_path = COAGENT_DIR / "_snap_task.xml"
+    try:
+        xml_path.write_text(xml, encoding="utf-16")
+    except:
+        pass
+
+    r1 = subprocess.run(
+        ["schtasks", "/Create", "/XML", str(xml_path), "/TN", task_name, "/F"],
+        capture_output=True, text=True, timeout=10
+    )
+
+    if r1.returncode == 0:
+        r2 = subprocess.run(
+            ["schtasks", "/Run", "/TN", task_name],
+            capture_output=True, text=True, timeout=30
+        )
+        # Give it a moment to write the file
+        import time as _time
+        _time.sleep(1.0)
+        if out_path.exists():
+            data = out_path.read_bytes()
+            if len(data) > 1000:
+                return data
+
+    # Fallback: try direct PowerShell
     try:
         rc, out, err = ps('''
 Add-Type -AssemblyName System.Drawing; Add-Type -AssemblyName System.Windows.Forms
@@ -365,19 +422,42 @@ $g.Dispose(); $bmp.Dispose()
 ''', timeout=15)
         if rc == 0 and len(out) > 500:
             return base64.b64decode(out)
-    except: pass
-    # Method 3: mss (alternative fast method)
+    except:
+        pass
+
+    raise Exception("No screenshot method works on Session 0. Tray icon must be running on desktop.")
+
+
+def _is_black_screenshot(img) -> bool:
+    """Detect if PIL ImageGrab returned a blank/black screen (Session 0 ghost desktop)."""
     try:
-        import mss
-        with mss.mss() as sct:
-            mon = sct.monitors[1]
-            sct_img = sct.grab(mon)
-            from PIL import Image
-            img = Image.frombytes("RGB", sct_img.size, sct_img.rgb)
+        extrema = img.getextrema()
+        # (0, 0) for all bands = pure black
+        for band in extrema:
+            if band != (0, 0):
+                return False
+        return True
+    except:
+        return False
+
+
+def _capture_raw() -> bytes:
+    # Method 1: PIL ImageGrab (fastest when available - <100ms)
+    try:
+        from PIL import ImageGrab
+        img = ImageGrab.grab()
+        if img and not _is_black_screenshot(img):
             buf = BytesIO()
             img.save(buf, format="PNG")
             return buf.getvalue()
-    except: pass
+        _console("  [INFO] PIL returned black screen (Session 0) - trying Session 1...")
+    except:
+        pass
+    # Method 2: schtasks to Session 1 (works from Session 0)
+    try:
+        return _capture_via_session1()
+    except Exception as e:
+        _console(f"  [WARN] Session 1 capture failed: {e}")
     raise Exception("No screenshot method works. Double-click start.bat in your desktop session.")
 
 # === MCP SERVER (stdin/stdout JSON-RPC for Hermes) ===
