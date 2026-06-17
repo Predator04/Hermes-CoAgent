@@ -1,9 +1,9 @@
-"""Hermes CoAgent - System Tray Icon v2
-Full right-click menu with settings, minimize-to-tray, and server control.
+"""Hermes CoAgent - System Tray Icon v3
+Full right-click menu + screenshot relay + UIA relay + screenshot cache.
 Launched as pythonw subprocess by hermes_coagent.py.
-v2.1: Added screenshot server (Session 1 capture relay) - no more cmd flash
+v3.0: JPEG support (?format=jpeg), screenshot cache (200ms), UIA relay (/uia/tree)
 """
-import sys, os, json, traceback, urllib.request, threading, webbrowser
+import sys, os, json, traceback, urllib.request, threading, webbrowser, time
 from datetime import datetime
 from pathlib import Path
 from io import BytesIO
@@ -14,6 +14,11 @@ TRAY_PORT = int(sys.argv[2]) if len(sys.argv) > 2 else 9124
 SERVER = f"http://127.0.0.1:{PORT}"
 SCRIPT_DIR = Path(__file__).parent.resolve()
 LOG_FILE = SCRIPT_DIR / "tray_icon.log"
+
+# Screenshot cache
+_last_screenshot = None
+_last_screenshot_time = 0
+_SCREENSHOT_CACHE_TTL = 0.2  # 200ms cache
 
 def _log(message):
     try:
@@ -75,51 +80,164 @@ def _build_icon_image():
     draw.text((x, y), text, fill=(255, 255, 255, 255), font=font)
     return img
 
+def _capture_screenshot_impl(jpeg=False, quality=85):
+    """Actually grab the screenshot. Returns bytes."""
+    global _last_screenshot, _last_screenshot_time
+    from PIL import ImageGrab
+    now = time.time()
+    if _last_screenshot and (now - _last_screenshot_time) < _SCREENSHOT_CACHE_TTL:
+        return _last_screenshot
+    img = ImageGrab.grab()
+    buf = BytesIO()
+    if jpeg:
+        img = img.convert("RGB")
+        img.save(buf, format="JPEG", quality=quality, optimize=True)
+    else:
+        img.save(buf, format="PNG")
+    data = buf.getvalue()
+    _last_screenshot = data
+    _last_screenshot_time = now
+    return data
+
 # === Screenshot relay server (runs on Session 1, no cmd flash) ===
 def _start_screenshot_server():
-    """Start a tiny HTTP server on TRAY_PORT that serves screenshots.
+    """Start a tiny HTTP server on TRAY_PORT that serves screenshots and UIA data.
     Runs on the same thread as the tray icon (Session 1).
     PIL.ImageGrab works here because we're on the interactive desktop."""
     import http.server
     import socketserver
-    
+
     class ScreenHandler(http.server.BaseHTTPRequestHandler):
         def do_GET(self):
-            if self.path == "/screen" or self.path.startswith("/screen?"):
-                try:
-                    from PIL import ImageGrab
-                    img = ImageGrab.grab()
-                    buf = BytesIO()
-                    img.save(buf, format="PNG")
-                    data = buf.getvalue()
+            try:
+                if self.path.startswith("/screen"):
+                    # Check for JPEG format
+                    use_jpeg = "format=jpeg" in self.path or "format=jpg" in self.path
+                    if use_jpeg:
+                        data = _capture_screenshot_impl(jpeg=True, quality=85)
+                        self.send_response(200)
+                        self.send_header("Content-Type", "image/jpeg")
+                        self.send_header("Content-Length", str(len(data)))
+                        self.send_header("Access-Control-Allow-Origin", "*")
+                        self.send_header("X-Format", "jpeg")
+                        self.end_headers()
+                        self.wfile.write(data)
+                    else:
+                        data = _capture_screenshot_impl(jpeg=False)
+                        self.send_response(200)
+                        self.send_header("Content-Type", "image/png")
+                        self.send_header("Content-Length", str(len(data)))
+                        self.send_header("Access-Control-Allow-Origin", "*")
+                        self.send_header("X-Format", "png")
+                        self.end_headers()
+                        self.wfile.write(data)
+                elif self.path == "/uia/tree":
+                    self._handle_uia()
+                elif self.path == "/health":
                     self.send_response(200)
-                    self.send_header("Content-Type", "image/png")
-                    self.send_header("Content-Length", str(len(data)))
-                    self.send_header("Access-Control-Allow-Origin", "*")
+                    self.send_header("Content-Type", "application/json")
                     self.end_headers()
-                    self.wfile.write(data)
-                except Exception as e:
+                    self.wfile.write(b'{"status":"ok","session":1}')
+                elif self.path == "/cache/info":
+                    global _last_screenshot_time, _SCREENSHOT_CACHE_TTL
+                    info = json.dumps({
+                        "cached": _last_screenshot is not None,
+                        "age_ms": int((time.time() - _last_screenshot_time) * 1000) if _last_screenshot else -1,
+                        "ttl_ms": int(_SCREENSHOT_CACHE_TTL * 1000)
+                    }).encode()
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.end_headers()
+                    self.wfile.write(info)
+                elif self.path == "/cache/clear":
+                    global _last_screenshot
+                    _last_screenshot = None
+                    self.send_response(200)
+                    self.end_headers()
+                    self.wfile.write(b'{"status":"cleared"}')
+                else:
+                    self.send_response(404)
+                    self.end_headers()
+                    self.wfile.write(b'{"error":"not found"}')
+            except Exception as e:
+                try:
                     self.send_response(500)
                     self.end_headers()
                     self.wfile.write(str(e).encode())
-            elif self.path == "/health":
+                except:
+                    pass
+
+        def _handle_uia(self):
+            """Capture UIA tree from Session 1."""
+            try:
+                import pythoncom
+                try:
+                    pythoncom.CoInitialize()
+                except:
+                    pass
+                from pywinauto import Desktop as PyWinDesktop
+                desktop = PyWinDesktop(backend="uia")
+                windows = desktop.windows()
+                result = []
+                for w in windows[:50]:  # limit to 50 windows
+                    try:
+                        info = {
+                            "title": w.window_text() if hasattr(w, 'window_text') else str(w),
+                            "control_type": w.element_info.control_type if hasattr(w, 'element_info') else "",
+                            "automation_id": w.element_info.automation_id if hasattr(w, 'element_info') else "",
+                            "class_name": w.element_info.class_name if hasattr(w, 'element_info') else "",
+                            "visible": w.is_visible() if hasattr(w, 'is_visible') else True,
+                            "enabled": w.is_enabled() if hasattr(w, 'is_enabled') else True,
+                        }
+                        try:
+                            r = w.rectangle()
+                            info["rect"] = {"left": r.left, "top": r.top, "width": r.width(), "height": r.height()}
+                        except:
+                            pass
+                        # Get children
+                        try:
+                            children = []
+                            for c in w.descendants(depth=1)[:20]:
+                                try:
+                                    ci = {
+                                        "control_type": c.element_info.control_type if hasattr(c, 'element_info') else "",
+                                        "name": c.element_info.name if hasattr(c, 'element_info') else "",
+                                        "automation_id": c.element_info.automation_id if hasattr(c, 'element_info') else "",
+                                    }
+                                    try:
+                                        r2 = c.rectangle()
+                                        ci["rect"] = {"left": r2.left, "top": r2.top, "width": r2.width(), "height": r2.height()}
+                                    except:
+                                        pass
+                                    children.append(ci)
+                                except:
+                                    pass
+                            info["children"] = children
+                        except:
+                            info["children"] = []
+                        result.append(info)
+                    except:
+                        pass
+                data = json.dumps({"windows": result, "count": len(result), "session": 1}).encode()
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
+                self.send_header("Access-Control-Allow-Origin", "*")
                 self.end_headers()
-                self.wfile.write(b'{"status":"ok","session":1}')
-            else:
-                self.send_response(404)
+                self.wfile.write(data)
+            except Exception as e:
+                err = json.dumps({"error": str(e), "session": 1}).encode()
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json")
                 self.end_headers()
-                self.wfile.write(b'{"error":"not found"}')
-        
+                self.wfile.write(err)
+
         def log_message(self, format, *args):
             _log(f"screenshot-server: {args[0]} {args[1]} {args[2]}")
-    
+
     try:
         server = socketserver.TCPServer(("0.0.0.0", TRAY_PORT), ScreenHandler)
         server.timeout = 0.5
         _log(f"screenshot server started on :{TRAY_PORT}")
-        # Run in a loop that the tray icon mainloop can coexist with
         while True:
             server.handle_request()
     except Exception as e:
@@ -132,46 +250,46 @@ def main():
 
         import pystray
         from pystray import MenuItem as Item, Menu
-        
+
         def on_open(icon, item):
             webbrowser.open(SERVER + "/")
-        
+
         def on_dashboard(icon, item):
             webbrowser.open(SERVER + "/dashboard2")
-        
+
         def on_screen(icon, item):
             webbrowser.open(f"http://127.0.0.1:{TRAY_PORT}/screen")
-        
+
         def on_voice(icon, item):
             _api("/voice/toggle", body={"enable": True})
             threading.Timer(2.0, lambda: _api("/voice/toggle", body={"enable": False})).start()
-        
+
         def on_som_refresh(icon, item):
             _api("/som/cache/clear")
-        
+
         def on_restart(icon, item):
             _api("/emergency/restart")
-        
+
         def on_emergency_stop(icon, item):
             _api("/emergency/stop")
-        
+
         def on_quit(icon, item):
             _api("/emergency/stop")
             icon.stop()
             os._exit(0)
-        
+
         def on_open_folder(icon, item):
             os.startfile(str(SCRIPT_DIR))
-        
+
         def on_mcp_test(icon, item):
             webbrowser.open(SERVER + "/mcp/test")
-        
+
         def get_status():
             info = _api_get("/")
             if info and isinstance(info, dict):
                 return f"v{info.get('version', '?')} - Port {PORT}"
             return f"Running on :{PORT}"
-        
+
         menu = Menu(
             Item("Open Dashboard", on_open, default=True),
             Item("Screen View", on_screen),
@@ -193,15 +311,15 @@ def main():
             Menu.SEPARATOR,
             Item("Quit CoAgent", on_quit),
         )
-        
+
         icon = pystray.Icon("HermesCoAgent", img, "Hermes CoAgent v5.1", menu)
         _log(f"starting tray icon on {SERVER}")
-        
+
         # Start screenshot server in a daemon thread
         ss_thread = threading.Thread(target=_start_screenshot_server, daemon=True)
         ss_thread.start()
         _log(f"screenshot relay thread started on :{TRAY_PORT}")
-        
+
         icon.run()
     except ImportError as e:
         _log(f"import error: {e}")

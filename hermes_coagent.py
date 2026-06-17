@@ -354,12 +354,16 @@ def _grab_screen_bytes(force=False) -> bytes:
         state.last_screenshot_time = time.time()
         return img_bytes
 
-def _capture_via_session1() -> bytes:
+def _capture_via_session1(fmt="png") -> bytes:
     """Capture screenshot from Session 1 via tray icon relay server.
     The tray icon (running on Session 1) serves screenshots on TRAY_PORT.
-    This is instant with no PowerShell flash."""
+    This is instant with no PowerShell flash.
+    Supports fmt='png' or fmt='jpeg' (quality 85)."""
     try:
-        req = urllib.request.Request(f"http://{HOST_IP}:{TRAY_PORT}/screen")
+        url = f"http://{HOST_IP}:{TRAY_PORT}/screen"
+        if fmt == "jpeg":
+            url += "?format=jpeg"
+        req = urllib.request.Request(url)
         with urllib.request.urlopen(req, timeout=10) as r:
             return r.read()
     except Exception as e:
@@ -528,21 +532,25 @@ def _is_black_screenshot(img) -> bool:
         return False
 
 
-def _capture_raw() -> bytes:
+def _capture_raw(fmt="png") -> bytes:
     # Method 1: PIL ImageGrab (fastest when available - <100ms)
     try:
         from PIL import ImageGrab
         img = ImageGrab.grab()
         if img and not _is_black_screenshot(img):
             buf = BytesIO()
-            img.save(buf, format="PNG")
+            if fmt == "jpeg":
+                img = img.convert("RGB")
+                img.save(buf, format="JPEG", quality=85, optimize=True)
+            else:
+                img.save(buf, format="PNG")
             return buf.getvalue()
         _console("  [INFO] PIL returned black screen (Session 0) - trying Session 1...")
     except:
         pass
     # Method 2: schtasks to Session 1 (works from Session 0)
     try:
-        return _capture_via_session1()
+        return _capture_via_session1(fmt=fmt)
     except Exception as e:
         _console(f"  [WARN] Session 1 capture failed: {e}")
     raise Exception("No screenshot method works. Double-click start.bat in your desktop session.")
@@ -1434,6 +1442,26 @@ def route_screen_cached():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+@app.route("/screen/jpeg")
+@app.route("/screenshot/jpeg")
+def route_screen_jpeg():
+    """Return screenshot as JPEG (smaller, faster transfer)."""
+    try:
+        img_bytes = _capture_via_session1(fmt="jpeg")
+        return send_file(BytesIO(img_bytes), mimetype="image/jpeg")
+    except Exception as e:
+        try:
+            # Fallback: convert cached PNG to JPEG
+            buf = BytesIO()
+            from PIL import Image
+            img = Image.open(BytesIO(_grab_screen_bytes(force=False)))
+            img = img.convert("RGB")
+            img.save(buf, format="JPEG", quality=85, optimize=True)
+            buf.seek(0)
+            return send_file(buf, mimetype="image/jpeg")
+        except Exception as e2:
+            return jsonify({"error": str(e2)}), 500
+
 @app.route("/screenshot/fresh")
 @app.route("/screenshot/force")
 def route_screen_fresh():
@@ -1647,10 +1675,26 @@ def route_macro_delete():
 
 # === UIA ENGINE ROUTES ===
 @app.route("/uia/snapshot")
+@app.route("/uia/tree")
 def route_uia_snapshot():
-    """Get full accessibility tree of all windows and elements."""
+    """Get full accessibility tree of all windows and elements.
+    Tries Session 1 relay first, falls back to Session 0 UIA."""
+    try:
+        # Try Session 1 relay first (has real desktop)
+        req = urllib.request.Request(f"http://{HOST_IP}:{TRAY_PORT}/uia/tree")
+        with urllib.request.urlopen(req, timeout=5) as r:
+            data = json.loads(r.read().decode())
+            if data and "windows" in data and data.get("count", 0) > 0:
+                data["source"] = "session1_relay"
+                return jsonify(data)
+    except:
+        pass
+    # Fallback to Session 0 UIA
     ue = _get_uia_engine()
-    return jsonify(ue.uia_snapshot())
+    result = ue.uia_snapshot()
+    if isinstance(result, dict):
+        result["source"] = "session0"
+    return jsonify(result)
 
 @app.route("/uia/find/<path:name>")
 def route_uia_find(name):
@@ -2349,6 +2393,37 @@ if __name__ == "__main__":
     # Check MCP mode
     mcp_mode = "--mcp" in sys.argv
 
+    # Auth setup
+    _secure_mode = "--secure" in sys.argv
+    _token_arg = next((a.split("=", 1)[1] for a in sys.argv if a.startswith("--token=")), None)
+    if _secure_mode or _token_arg:
+        try:
+            from auth import init_auth, require_auth, AUTH_ENABLED, AUTH_TOKEN
+            init_auth(port)
+            if AUTH_ENABLED:
+                _console(f"  [SECURITY]   Auth enabled — token: {AUTH_TOKEN[:16]}...{AUTH_TOKEN[-8:]}")
+                _console("  [SECURITY]   All endpoints require: Authorization: Bearer <token>")
+                # Global before_request for auth
+                @app.before_request
+                def _check_auth():
+                    if request.path.startswith("/static") or request.path == "/health" or request.path.startswith("/emergency"):
+                        return None
+                    auth = request.headers.get("Authorization", "")
+                    if not auth.startswith("Bearer "):
+                        return jsonify({"error": "Unauthorized"}), 401
+                    token = auth[7:]
+                    if token != AUTH_TOKEN:
+                        return jsonify({"error": "Invalid token"}), 403
+                    return None
+            else:
+                _console("  [WARNING]    No auth — desktop controllable by anyone on network")
+        except Exception as e:
+            _console(f"  [AUTH]       Auth module error: {e}")
+            _console("  [WARNING]    No auth — desktop controllable by anyone on network")
+    else:
+        _console("  [WARNING]    No auth — desktop controllable by anyone on network")
+    _console()
+
     _console()
     _console("  +" + "="*44 + "+")
     _console("  |         Hermes CoAgent v5.1              |")
@@ -2415,16 +2490,11 @@ if __name__ == "__main__":
         _console(f"  [Macros]      POST /macro/record + /macro/run")
         _console(f"  [Tunnel]      POST /tunnel/start")
         _console()
-        # Show auth status
-        try:
-            from auth import init_auth, require_auth, AUTH_ENABLED
-            init_auth(port)
-            if AUTH_ENABLED:
-                _console("  [SECURITY]   Auth enabled — all endpoints require Bearer token")
-            else:
-                _console("  [WARNING]    No auth — desktop controllable by anyone on network")
-        except Exception as e:
-            _console(f"  [AUTH]       Auth module not loaded: {e}")
+        # Auth already initialized above
+        if _secure_mode or _token_arg:
+            _console(f"  [SECURE]     Auth active — Bearer token required")
+        else:
+            _console("  [WARNING]    No auth — desktop controllable by anyone on network (add --secure)")
         _console()
 
         bind_host = "127.0.0.1" if "--allow-external" not in sys.argv else "0.0.0.0"
