@@ -377,7 +377,7 @@ def _capture_via_session1() -> bytes:
         '  <Actions Context="Author">\n'
         '    <Exec>\n'
         '      <Command>C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe</Command>\n'
-        '      <Arguments>-ExecutionPolicy Bypass -File "' + str(ps1_script) + '" -OutputPath "' + str(out_path) + '"</Arguments>\n'
+        '      <Arguments>-ExecutionPolicy Bypass -WindowStyle Hidden -File "' + str(ps1_script) + '" -OutputPath "' + str(out_path) + '"</Arguments>\n'
         '    </Exec>\n'
         '  </Actions>\n'
         '</Task>\n'
@@ -426,6 +426,70 @@ $g.Dispose(); $bmp.Dispose()
         pass
 
     raise Exception("No screenshot method works on Session 0. Tray icon must be running on desktop.")
+
+
+def _send_keys_session1(keys: str) -> bool:
+    """Execute key combo on Session 1 via schtasks with InteractiveToken.
+    Works from Session 0 by running session1_keys.ps1 on the interactive desktop."""
+    ps1_script = COAGENT_DIR / "session1_keys.ps1"
+    task_name = "HermesCoAgent_Keys"
+    subprocess.run(["schtasks", "/Delete", "/TN", task_name, "/F"],
+                   capture_output=True, timeout=5)
+
+    xml = (
+        '<?xml version="1.0" encoding="UTF-16"?>\n'
+        '<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">\n'
+        '  <RegistrationInfo><Author>CoAgent</Author></RegistrationInfo>\n'
+        '  <Principals>\n'
+        '    <Principal id="Author">\n'
+        '      <UserId>Admin</UserId>\n'
+        '      <LogonType>InteractiveToken</LogonType>\n'
+        '      <RunLevel>HighestAvailable</RunLevel>\n'
+        '    </Principal>\n'
+        '  </Principals>\n'
+        '  <Settings>\n'
+        '    <Enabled>true</Enabled>\n'
+        '    <AllowStartOnDemand>true</AllowStartOnDemand>\n'
+        '    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>\n'
+        '    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>\n'
+        '    <ExecutionTimeLimit>PT10S</ExecutionTimeLimit>\n'
+        '    <Priority>7</Priority>\n'
+        '  </Settings>\n'
+        '  <Actions Context="Author">\n'
+        '    <Exec>\n'
+        '      <Command>C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe</Command>\n'
+        '      <Arguments>-ExecutionPolicy Bypass -WindowStyle Hidden -File "' + str(ps1_script) + '" -Keys "' + keys + '"</Arguments>\n'
+        '    </Exec>\n'
+        '  </Actions>\n'
+        '</Task>\n'
+    )
+
+    xml_path = COAGENT_DIR / "_keys_task.xml"
+    try:
+        xml_path.write_text(xml, encoding="utf-16")
+    except:
+        pass
+
+    r1 = subprocess.run(
+        ["schtasks", "/Create", "/XML", str(xml_path), "/TN", task_name, "/F"],
+        capture_output=True, text=True, timeout=10
+    )
+
+    if r1.returncode == 0:
+        r2 = subprocess.run(
+            ["schtasks", "/Run", "/TN", task_name],
+            capture_output=True, text=True, timeout=15
+        )
+        try:
+            xml_path.unlink()
+        except:
+            pass
+        return r2.returncode == 0
+    try:
+        xml_path.unlink()
+    except:
+        pass
+    return False
 
 
 def _is_black_screenshot(img) -> bool:
@@ -1213,6 +1277,18 @@ def route_key_press():
     _execute_action({"type": "hotkey", "data": d})
     return jsonify({"status": "pressed", "keys": d.get("keys",[])})
 
+@app.route("/minimize", methods=["POST"])
+def route_minimize():
+    """Minimize all windows on Session 1 (interactive desktop).
+    Works from Session 0 by using schtasks with InteractiveToken."""
+    ok1 = _send_keys_session1("win,d")
+    time.sleep(0.3)
+    ok2 = _send_keys_session1("win,m")
+    return jsonify({
+        "win_d": ok1,
+        "win_m": ok2,
+        "status": "minimized" if ok1 or ok2 else "failed"
+    })
 # === CHAIN ===
 @app.route("/chain", methods=["POST"])
 def route_chain():
