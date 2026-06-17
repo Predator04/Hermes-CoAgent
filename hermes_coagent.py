@@ -1,7 +1,7 @@
 # Hermes CoAgent v5.0 - Ultimate Desktop Co-Pilot
 # All features: Dashboard, MCP, OCR, Visual Search, TTS, Watchdog, Macros, Tunnel, Recorder, File API
 import sys, os, json, base64, subprocess, threading, time, shutil
-import re, queue
+import re, queue, urllib.request
 from io import BytesIO
 from pathlib import Path
 from datetime import datetime
@@ -95,6 +95,20 @@ TRAY_LOG = COAGENT_DIR / "tray_icon.log"
 SERVER_LOG = COAGENT_DIR / "coagent_server.log"
 TIMESTAMP = datetime.now().strftime("%Y-%m-%d %H:%M")
 SERVER_PORT = 9123
+TRAY_PORT = 9124
+
+# Windows host IP reachable from WSL
+try:
+    _host_ip = subprocess.run(
+        ["powershell.exe", "-Command",
+         "(Get-NetIPAddress -InterfaceAlias 'vEthernet (WSL)' -AddressFamily IPv4).IPAddress"],
+        capture_output=True, text=True, timeout=5
+    ).stdout.strip()
+    if not _host_ip:
+        _host_ip = "172.21.192.1"
+except:
+    _host_ip = "172.21.192.1"
+HOST_IP = _host_ip
 
 # Check UIA availability early (but don't block startup — deferred)
 _uia_ok = False
@@ -341,8 +355,17 @@ def _grab_screen_bytes(force=False) -> bytes:
         return img_bytes
 
 def _capture_via_session1() -> bytes:
-    """Capture screenshot from Session 1 via schtasks with InteractiveToken.
-    This is the only reliable way to get a real screenshot when server runs on Session 0."""
+    """Capture screenshot from Session 1 via tray icon relay server.
+    The tray icon (running on Session 1) serves screenshots on TRAY_PORT.
+    This is instant with no PowerShell flash."""
+    try:
+        req = urllib.request.Request(f"http://{HOST_IP}:{TRAY_PORT}/screen")
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return r.read()
+    except Exception as e:
+        _console(f"  [WARN] Tray relay failed ({e}), falling back to schtasks")
+
+    # Fallback: original schtasks method
     out_path = Path("C:/Temp/_coagent_screen.png")
     ps1_script = COAGENT_DIR / "session1_capture.ps1"
     try:
@@ -2256,7 +2279,7 @@ def _start_tray():
             '  <Actions Context="Author">\n'
             '    <Exec>\n'
             '      <Command>' + pyw + '</Command>\n'
-            '      <Arguments>"' + str(tray_script) + '" ' + str(SERVER_PORT) + '</Arguments>\n'
+            '      <Arguments>"' + str(tray_script) + '" ' + str(SERVER_PORT) + ' ' + str(TRAY_PORT) + '</Arguments>\n'
             '      <WorkingDirectory>' + str(COAGENT_DIR) + '</WorkingDirectory>\n'
             '    </Exec>\n'
             '  </Actions>\n'
@@ -2285,7 +2308,7 @@ def _start_tray():
         else:
             _console("  [INFO] schtasks failed, fallback to direct subprocess")
             proc = subprocess.Popen(
-                [pyw, str(tray_script), str(SERVER_PORT)],
+                [pyw, str(tray_script), str(SERVER_PORT), str(TRAY_PORT)],
                 cwd=str(COAGENT_DIR),
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,

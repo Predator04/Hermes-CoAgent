@@ -1,12 +1,16 @@
 """Hermes CoAgent - System Tray Icon v2
 Full right-click menu with settings, minimize-to-tray, and server control.
 Launched as pythonw subprocess by hermes_coagent.py.
+v2.1: Added screenshot server (Session 1 capture relay) - no more cmd flash
 """
 import sys, os, json, traceback, urllib.request, threading, webbrowser
 from datetime import datetime
 from pathlib import Path
+from io import BytesIO
+import base64
 
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 9123
+TRAY_PORT = int(sys.argv[2]) if len(sys.argv) > 2 else 9124
 SERVER = f"http://127.0.0.1:{PORT}"
 SCRIPT_DIR = Path(__file__).parent.resolve()
 LOG_FILE = SCRIPT_DIR / "tray_icon.log"
@@ -71,6 +75,57 @@ def _build_icon_image():
     draw.text((x, y), text, fill=(255, 255, 255, 255), font=font)
     return img
 
+# === Screenshot relay server (runs on Session 1, no cmd flash) ===
+def _start_screenshot_server():
+    """Start a tiny HTTP server on TRAY_PORT that serves screenshots.
+    Runs on the same thread as the tray icon (Session 1).
+    PIL.ImageGrab works here because we're on the interactive desktop."""
+    import http.server
+    import socketserver
+    
+    class ScreenHandler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            if self.path == "/screen" or self.path.startswith("/screen?"):
+                try:
+                    from PIL import ImageGrab
+                    img = ImageGrab.grab()
+                    buf = BytesIO()
+                    img.save(buf, format="PNG")
+                    data = buf.getvalue()
+                    self.send_response(200)
+                    self.send_header("Content-Type", "image/png")
+                    self.send_header("Content-Length", str(len(data)))
+                    self.send_header("Access-Control-Allow-Origin", "*")
+                    self.end_headers()
+                    self.wfile.write(data)
+                except Exception as e:
+                    self.send_response(500)
+                    self.end_headers()
+                    self.wfile.write(str(e).encode())
+            elif self.path == "/health":
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"status":"ok","session":1}')
+            else:
+                self.send_response(404)
+                self.end_headers()
+                self.wfile.write(b'{"error":"not found"}')
+        
+        def log_message(self, format, *args):
+            _log(f"screenshot-server: {args[0]} {args[1]} {args[2]}")
+    
+    try:
+        server = socketserver.TCPServer(("0.0.0.0", TRAY_PORT), ScreenHandler)
+        server.timeout = 0.5
+        _log(f"screenshot server started on :{TRAY_PORT}")
+        # Run in a loop that the tray icon mainloop can coexist with
+        while True:
+            server.handle_request()
+    except Exception as e:
+        _log(f"screenshot server error: {e}")
+
+
 def main():
     try:
         img = _build_icon_image()
@@ -85,7 +140,7 @@ def main():
             webbrowser.open(SERVER + "/dashboard2")
         
         def on_screen(icon, item):
-            webbrowser.open(SERVER + "/screen")
+            webbrowser.open(f"http://127.0.0.1:{TRAY_PORT}/screen")
         
         def on_voice(icon, item):
             _api("/voice/toggle", body={"enable": True})
@@ -111,7 +166,6 @@ def main():
         def on_mcp_test(icon, item):
             webbrowser.open(SERVER + "/mcp/test")
         
-        # Status submenu
         def get_status():
             info = _api_get("/")
             if info and isinstance(info, dict):
@@ -142,6 +196,12 @@ def main():
         
         icon = pystray.Icon("HermesCoAgent", img, "Hermes CoAgent v5.1", menu)
         _log(f"starting tray icon on {SERVER}")
+        
+        # Start screenshot server in a daemon thread
+        ss_thread = threading.Thread(target=_start_screenshot_server, daemon=True)
+        ss_thread.start()
+        _log(f"screenshot relay thread started on :{TRAY_PORT}")
+        
         icon.run()
     except ImportError as e:
         _log(f"import error: {e}")
