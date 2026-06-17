@@ -1972,49 +1972,101 @@ def _handle_mcp():
 _tray_running = threading.Event()
 
 def _start_tray():
-    """Start system tray icon using pythonw.exe in a SEPARATE process.
-    pythonw.exe has no console window but has a proper Windows message pump
-    so the tray icon can register with the shell notification area.
-    Falls back silently if pystray not installed."""
+    """Start system tray icon on the interactive desktop (Session 1).
+    Uses schtasks with InteractiveToken logon type so the tray icon
+    appears in the notification area even when the server runs in Session 0.
+    Falls back silently."""
+    import subprocess, time
+    from pathlib import Path
+    
     try:
         tray_script = Path(__file__).parent / "tray_icon.py"
         if not tray_script.exists():
             _console("  [INFO] tray_icon.py not found, skip tray icon")
             return
 
-        pyw = Path(sys.executable).with_name("pythonw.exe")
-        if not pyw.exists():
-            pyw = Path(r"C:\Users\Admin\AppData\Local\Programs\Python\Python313\pythonw.exe")
-        if not pyw.exists():
-            _console(f"  [INFO] Tray icon skipped: pythonw.exe not found ({pyw})")
+        pyw = r"C:\Users\Admin\AppData\Local\Programs\Python\Python313\pythonw.exe"
+        if not Path(pyw).exists():
+            _console("  [INFO] Tray icon skipped: pythonw.exe not found")
             return
 
-        startupinfo = None
-        creationflags = 0
-        if os.name == "nt":
-            startupinfo = subprocess.STARTUPINFO()
-            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-            startupinfo.wShowWindow = 0
-            creationflags = subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0
+        task_name = "HermesCoAgent_Tray"
 
         with TRAY_LOG.open("a", encoding="utf-8") as tray_log:
-            tray_log.write(f"{datetime.now().isoformat(timespec='seconds')} launching {tray_script}\n")
+            tray_log.write(f"{datetime.now().isoformat(timespec='seconds')} launching tray via schtasks...\n")
             tray_log.flush()
+
+        subprocess.run(["schtasks", "/Delete", "/TN", task_name, "/F"],
+                       capture_output=True, timeout=5)
+
+        xml = (
+            '<?xml version="1.0" encoding="UTF-16"?>\n'
+            '<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">\n'
+            '  <RegistrationInfo><Author>Admin</Author></RegistrationInfo>\n'
+            '  <Principals>\n'
+            '    <Principal id="Author">\n'
+            '      <UserId>Admin</UserId>\n'
+            '      <LogonType>InteractiveToken</LogonType>\n'
+            '      <RunLevel>HighestAvailable</RunLevel>\n'
+            '    </Principal>\n'
+            '  </Principals>\n'
+            '  <Settings>\n'
+            '    <Enabled>true</Enabled>\n'
+            '    <AllowStartOnDemand>true</AllowStartOnDemand>\n'
+            '    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>\n'
+            '    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>\n'
+            '    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>\n'
+            '    <Priority>7</Priority>\n'
+            '  </Settings>\n'
+            '  <Actions Context="Author">\n'
+            '    <Exec>\n'
+            '      <Command>' + pyw + '</Command>\n'
+            '      <Arguments>"' + str(tray_script) + '" ' + str(SERVER_PORT) + '</Arguments>\n'
+            '      <WorkingDirectory>' + str(COAGENT_DIR) + '</WorkingDirectory>\n'
+            '    </Exec>\n'
+            '  </Actions>\n'
+            '</Task>\n'
+        )
+
+        xml_path = COAGENT_DIR / "_tray_task.xml"
+        xml_path.write_text(xml, encoding="utf-16")
+
+        result = subprocess.run(
+            ["schtasks", "/Create", "/XML", str(xml_path), "/TN", task_name, "/F"],
+            capture_output=True, text=True, timeout=10
+        )
+
+        with TRAY_LOG.open("a", encoding="utf-8") as tray_log:
+            tray_log.write(f"schtasks create: {result.stdout.strip()} {result.stderr.strip()}\n")
+
+        if result.returncode == 0:
+            run_result = subprocess.run(
+                ["schtasks", "/Run", "/TN", task_name],
+                capture_output=True, text=True, timeout=10
+            )
+            with TRAY_LOG.open("a", encoding="utf-8") as tray_log:
+                tray_log.write(f"schtasks run: {run_result.stdout.strip()} {run_result.stderr.strip()}\n")
+            _console("  [OK] System Tray Icon launched on Session 1 via schtasks")
+        else:
+            _console("  [INFO] schtasks failed, fallback to direct subprocess")
             proc = subprocess.Popen(
-                [str(pyw), str(tray_script), str(SERVER_PORT)],
+                [pyw, str(tray_script), str(SERVER_PORT)],
                 cwd=str(COAGENT_DIR),
                 stdin=subprocess.DEVNULL,
-                stdout=tray_log,
-                stderr=subprocess.STDOUT,
-                startupinfo=startupinfo,
-                creationflags=creationflags,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
             )
+            time.sleep(0.75)
+            if proc.poll() is None:
+                _console(f"  [OK] System Tray Icon - PID {proc.pid}")
+            else:
+                _console(f"  [INFO] Tray icon exited early with code {proc.returncode}")
 
-        time.sleep(0.75)
-        if proc.poll() is None:
-            _console(f"  [OK] System Tray Icon - PID {proc.pid}; look for purple 'C' in notification area")
-        else:
-            _console(f"  [INFO] Tray icon exited early with code {proc.returncode}; see {TRAY_LOG}")
+        try:
+            xml_path.unlink()
+        except:
+            pass
+
     except Exception as e:
         _console(f"  [INFO] Tray icon skipped: {e}")
 
