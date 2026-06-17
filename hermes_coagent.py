@@ -92,6 +92,7 @@ MACROS_DIR = COAGENT_DIR / "macros"
 SCREENSHOTS_DIR = COAGENT_DIR / "screenshots"
 TUNNEL_LOG = COAGENT_DIR / "tunnel.log"
 TRAY_LOG = COAGENT_DIR / "tray_icon.log"
+SERVER_LOG = COAGENT_DIR / "coagent_server.log"
 TIMESTAMP = datetime.now().strftime("%Y-%m-%d %H:%M")
 SERVER_PORT = 9123
 
@@ -118,11 +119,34 @@ app = Flask(__name__, static_folder=None)
 MACROS_DIR.mkdir(exist_ok=True)
 SCREENSHOTS_DIR.mkdir(exist_ok=True)
 
+def _attach_pythonw_stdio():
+    try:
+        if getattr(sys, "stdout", None) is None:
+            sys.stdout = SERVER_LOG.open("a", encoding="utf-8", buffering=1)
+        if getattr(sys, "stderr", None) is None:
+            sys.stderr = SERVER_LOG.open("a", encoding="utf-8", buffering=1)
+    except Exception:
+        pass
+
+_attach_pythonw_stdio()
+
 PYTHON = sys.executable
 
 def _console(msg=""):
-    sys.stderr.write(str(msg) + "\n")
-    sys.stderr.flush()
+    text = str(msg) + "\n"
+    stream = getattr(sys, "stderr", None)
+    if stream is not None:
+        try:
+            stream.write(text)
+            stream.flush()
+            return
+        except Exception:
+            pass
+    try:
+        with SERVER_LOG.open("a", encoding="utf-8") as f:
+            f.write(text)
+    except Exception:
+        pass
 
 # === STATE ===
 @dataclass
