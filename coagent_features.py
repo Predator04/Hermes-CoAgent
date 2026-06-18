@@ -1,4 +1,4 @@
-"""CoAgent v7.3 — Feature Module
+"""CoAgent v7.0 — Feature Module
 
 Adds:
 1. Agent Cursor Overlay — shows animated arrow on screen before each click
@@ -422,7 +422,7 @@ def start_recording(output_dir: str = None, record_video: bool = False) -> dict:
         session_dir = rec_dir / f"session_{timestamp}"
         session_dir.mkdir(parents=True, exist_ok=True)
         
-        # v7.3: Auto-cleanup — keep max 10 sessions, delete oldest
+        # v7.0: Auto-cleanup — keep max 10 sessions, delete oldest
         _cleanup_old_sessions(rec_dir, max_keep=_MAX_KEEP_SESSIONS)
         
         _RECORDING_DIR = session_dir

@@ -1,5 +1,5 @@
 # ════════════════════════════════════════════════════════════════
-# HERMES COAGENT v7.3 — PERFORMANCE OPTIMIZATIONS
+# HERMES COAGENT v7.0 — PERFORMANCE OPTIMIZATIONS
 # ════════════════════════════════════════════════════════════════
 """
 Hermes CoAgent — Windows Desktop Co-Pilot (Flask REST + MCP server)
