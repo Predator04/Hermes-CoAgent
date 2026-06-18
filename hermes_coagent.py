@@ -1204,16 +1204,23 @@ def _limit_arg(name, default, maximum):
     return max(0, min(value, maximum))
 
 AUTH_EXEMPT_PREFIXES = [
-    "/static", "/emergency", "/screen", "/screenshot", "/dashboard2",
-    "/som/", "/uia/", "/power/", "/wallpaper/", "/tunnel/", "/macro/",
+    "/static",
+    "/screen",
+    "/screenshot",
+    "/uia/",
+    "/som/",
+    "/windows/",
+    "/power/",
+    "/wallpaper/",
     "/scheduler/",
+    "/tunnel/",
+    "/emergency/",
+    "/macro/",
+    "/voice/",
 ]
 AUTH_EXEMPT_PATHS = {
-    "/", "/dashboard2", "/health", "/ping", "/version",
-    "/cursor/pos", "/copilot/mode", "/events", "/logs", "/history",
-    "/stats", "/windows", "/monitors", "/monitors/layout", "/describe",
-    "/clipboard/get", "/clipboard/set", "/macros", "/crop",
-    "/search/files", "/voice/toggle", "/replay",
+    "/", "/health", "/ping", "/version",
+    "/monitors", "/describe", "/crop", "/clipboard", "/windows", "/voice", "/tunnel", "/power", "/scheduler", "/macros", "/search", "/emergency", "/replay",
     "/favicon.ico",
 }
 
@@ -1289,16 +1296,10 @@ _execute_action = _execute_action_wrapper
 
 DASHBOARD_HTML = (COAGENT_DIR / 'dashboard.html').read_text(encoding='utf-8')
 
-DASHBOARD2_HTML = (COAGENT_DIR / "dashboard2.html").read_text(encoding="utf-8")
-
 # =========== WEB DASHBOARD ===========
 @app.route("/")
 def dashboard():
     return DASHBOARD_HTML, 200, {"Content-Type": "text/html; charset=utf-8"}
-
-@app.route("/dashboard2")
-def dashboard2():
-    return DASHBOARD2_HTML, 200, {"Content-Type": "text/html; charset=utf-8"}
 
 # =========== REST API ROUTES ===========
 @app.route("/ping")

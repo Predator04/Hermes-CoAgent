@@ -17,7 +17,7 @@ DEPLOYMENT:
   python hermes_coagent.py --mcp              # MCP stdio mode
   python hermes_coagent.py --secure           # Auth enabled (random token)
   python hermes_coagent.py --token=KEY        # Auth with fixed token
-  python hermes_coagent.py --allow-external   # Bind 0.0.0.0 (requires --secure)
+  python hermes_coagent.py --allow-external   # Bind 0.0.0.0 (requires --secure, --token, or env token)
 
 ROUTE MAP (REST API):
   ┌─────────────────────┬──────────────────────────────────────────────────┐
@@ -126,9 +126,10 @@ ROUTE MAP (REST API):
   └─────────────────────┴──────────────────────────────────────────────────┘
 
 SECURITY:
-  - Authentication via Bearer token (--secure or --token=KEY)
+  - Authentication via Bearer token (--secure, --token=KEY, or HERMES_COAGENT_TOKEN)
+  - In secure/token mode every route requires Authorization except /, /dashboard2, /ping, /version, /health, /favicon.ico
   - Path traversal protection: _sanitize_path() restricts to USERPROFILE/TEMP/CoAgent
   - Command injection protection: _sanitize_cmd() blocks shell metacharacters
   - No shell=True anywhere — all subprocess calls use argument lists
-  - Routes requiring desktop control are marked @require_auth
+  - Mutating desktop-control routes are also marked @require_auth for route-level defense
 """
