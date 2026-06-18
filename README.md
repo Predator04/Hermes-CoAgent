@@ -1,479 +1,247 @@
-# Hermes CoAgent v5.1
+# Hermes CoAgent v7.0
 
-**Ultimate Desktop Co-Pilot for Windows** — gives AI agents (Hermes, Claude, Codex, etc.) full native Windows desktop control. Screenshots, mouse/keyboard, UIA accessibility trees, OCR, voice control, file search, wallpaper, power management — all local, zero API costs.
+**Ultimate Desktop Co-Pilot for Windows** — gives AI agents (Hermes, Claude, Codex, Gemini, etc.) full native Windows desktop control. Screenshots, mouse/keyboard, UIA accessibility trees, OCR, voice, file operations, macros, scheduled tasks — all local, zero API costs.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-
----
-
-## 🔥 Features
-
-### v5.1 — SOM & UIA Intelligence
-| Feature | Endpoints | What it does |
-|---------|-----------|-------------|
-| **UIA Element Tracking** | All UIA routes | Stable `id` field on every element — survives across frames |
-| **SOM Diff Cache** | `/som/screenshot`, `/som/cache/clear` | Pixel-hash comparison: returns cached SOM in <1ms if screen unchanged |
-| **UIA→SOM Bridge** | `/som/bridge` | Cross-references OCR-visible elements with their UIA metadata |
-| **Per-Window SOM** | `/som/per-window` | Individual window snapshots with relative element coordinates |
-| **Element Finder** | `/som/point` | `POST {x, y}` → gets the UIA element at any pixel coordinate |
-| **Accelerated Regions** | `/uia/accelerated-regions` | Tracks which screen areas change most/least often |
-
-### v5.0 — 10 New Feature Categories
-
-| Capability | What it does |
-|---|---|
-| **UIA Accessibility Tree** | Full Windows accessibility tree — find any button, label, text field by name |
-| **SOM Overlays** | Numbered bounding boxes on every interactable element |
-| **OCR Find** | Locate text on screen using Tesseract OCR |
-| **Mouse Control** | Click, double-click, right-click, move, drag, scroll |
-| **Keyboard** | Type text, press hotkeys (ctrl+c, alt+tab, etc.) |
-| **Window Management** | List windows, activate by title |
-| **Screenshots** | Full screen capture as PNG, JPEG, or base64 |
-| **Smart Crop** | OCR a screen region, copy text to clipboard |
-| **Screen Description** | OCR the whole screen, return formatted text |
-| **Clipboard** | Read/write clipboard text |
-| **File Operations** | List, read, write, delete files on Windows |
-| **File Search** | Find files by name/glob across drives |
-| **Chain Actions** | Execute multi-step sequences atomically |
-| **Emergency Stop** | Kill all input instantly via API or Ctrl+Alt+Shift |
-| **Macro Recorder** | Record and replay mouse/keyboard sequences |
-| **TTS** | Speak text through speakers (edge-tts) |
-| **Power Management** | Sleep, shutdown, restart, lock workstation |
-| **Wallpaper Control** | Set, cycle, or random desktop wallpapers |
-| **Voice Control** | Wake-word voice commands (click, type, scroll) |
-| **AI App Launcher** | Smart launch apps by description ("open chrome to reddit") |
-| **Scheduled Actions** | Cron-like timed desktop operations |
-| **Monitor Layout** | Tile all visible windows in a grid |
-| **System Tray** | Persistent tray icon with start/stop/emergency controls |
-| **Fast Mode** | Lazy-imports heavy deps for sub-second MCP startup |
-| **Auth** | Bearer token authentication (`--secure`) |
-| **MCP Protocol** | Full Model Context Protocol support for Hermes Agent |
-
----
-
-## 🏗 Architecture
-
-```
-                    ┌─────────────────────────────┐
-                    │      AI Agent (Hermes)       │
-                    │  (runs in WSL / anywhere)    │
-                    └──────────┬──────────────────┘
-                               │ MCP stdio protocol
-                               │ (cmd.exe /c python)
-                               ▼
-                    ┌─────────────────────────────┐
-                    │   computer_use_mcp.py       │
-                    │   (MCP Server — 26 tools)   │
-                    │   - Routes all calls to     │
-                    │     CoAgent HTTP API        │
-                    └──────────┬──────────────────┘
-                               │ HTTP localhost:9123
-                               ▼
-        ┌─────────────────────────────────────────────┐
-        │           hermes_coagent.py                  │
-        │   (Flask HTTP server + input engine)         │
-        │                                              │
-        │  ┌────────────┐  ┌──────────┐  ┌─────────┐  │
-        │  │ pyautogui  │  │pytesseract│  │ win32gui│  │
-        │  │ mouse/kbd  │  │  OCR     │  │  pulse  │  │
-        │  └────────────┘  └──────────┘  └─────────┘  │
-        │                                              │
-        │  ┌──────────────────────────────────────┐    │
-        │  │        uia_engine.py                  │    │
-        │  │  pywinauto — UIA tree, SOM overlay,  │    │
-        │  │  background input, find-on-screen    │    │
-        │  └──────────────────────────────────────┘    │
-        │                                              │
-        │  ┌──────────────────────────────────────┐    │
-        │  │        auth.py                         │    │
-        │  │  Bearer token auth — --secure / --token│    │
-        │  └──────────────────────────────────────┘    │
-        │                                              │
-        │  ┌──────────────────────────────────────┐    │
-        │  │   V5.0 NEW:                          │    │
-        │  │   Power, Wallpaper, File Search,     │    │
-        │  │   Voice, Smart Crop, Describe,       │    │
-        │  │   Scheduler, AI Launcher, Layout     │    │
-        │  └──────────────────────────────────────┘    │
-        └─────────────────────────────────────────────┘
-                              │
-                    ┌─────────▼─────────┐
-                    │    Windows Desktop │
-                    │  (actual session)  │
-                    └───────────────────┘
-```
-
-**Data flow:** Agent → MCP stdio → `computer_use_mcp.py` → HTTP → `hermes_coagent.py` → Windows APIs → Desktop
 
 ---
 
 ## 🚀 Quick Start
 
 ```bash
-# 1. Install dependencies
-pip install pyautogui flask pillow pynput mss pygetwindow pyperclip pytesseract opencv-python edge-tts psutil pywinauto
+# Install deps (Windows Python)
+pip install flask pillow pyautogui pywinauto pytesseract pygetwindow pyperclip pystray waitress mss
 
-# 2. Start the server (DEFAULT: secure mode on localhost)
-python hermes_coagent.py --secure
-
-# 3. Open dashboard
-# Open http://localhost:9123/ in your browser
-
-# For AI agent integration (MCP mode):
-python hermes_coagent.py --mcp
+# Start CoAgent (secure mode)
+cd C:\Users\Admin\Desktop\Hermes CoAgent
+python hermes_coagent.py --secure --allow-external
+# → Running on http://0.0.0.0:9123/
 ```
 
-### One-shot launcher (recommended)
+### From WSL / another machine
+```bash
+# Ping it
+curl -s http://172.21.192.1:9123/ping
+# → {"agent":"Hermes CoAgent v7.0","status":"pong"}
 
-```powershell
-powershell -File "launch_all.ps1"
+# See the screen
+curl -s http://172.21.192.1:9123/describe
+
+# Click something
+curl -s -X POST http://172.21.192.1:9123/mouse/click \
+  -H "Content-Type: application/json" \
+  -d '{"x":960,"y":540}'
+
+# Take screenshot
+curl -s http://172.21.192.1:9123/screen/base64 | python3 -c "
+import sys,json,base64; d=json.load(sys.stdin)
+open('/tmp/desktop.png','wb').write(base64.b64decode(d['data']))
+"
+
+# Get UIA tree (all windows + buttons)
+curl -s http://172.21.192.1:9123/uia/tree
 ```
 
-This kills stale processes, starts CoAgent with auth, and configures MCP fast mode.
+---
+
+## 🤖 For AI Agents
+
+### Python client (recommended)
+
+```python
+# Clone/download coagent_client.py, then:
+from coagent_client import CoAgent
+
+c = CoAgent()  # auto-detects 172.21.192.1:9123
+
+# See what's on screen
+desc = c.describe()
+print(desc.get("description", ""))
+
+# Take screenshot
+c.screenshot("/tmp/screen.png")
+
+# Click + type
+c.click(500, 400)
+c.type("hello from AI")
+c.hotkey(["enter"])
+
+# Search for text then click it
+c.click_text("Submit")
+
+# Chain multiple actions fast
+c.chain([
+    {"type": "move", "x": 200, "y": 300},
+    {"type": "click", "x": 200, "y": 300},
+    {"type": "type", "text": "automated input"},
+    {"type": "hotkey", "keys": ["enter"]}
+])
+
+# Get UIA accessibility tree
+tree = c.uia_tree()
+for win in tree.get("children", []):
+    print(f"{win.get('control_type')}: {win.get('name')}")
+
+# Open Telegram and send message
+c.telegram_send("William", "Hello from CoAgent!")
+
+# Emergency stop
+c.emergency_stop()
+```
+
+### Curl one-liners (for any AI)
+
+| Task | Command |
+|------|---------|
+| **Health check** | `curl -s http://172.21.192.1:9123/ping` |
+| **Describe screen** | `curl -s http://172.21.192.1:9123/describe` |
+| **Screenshot** | `curl -s http://172.21.192.1:9123/screen/base64` |
+| **SOM overlay** | `curl -s http://172.21.192.1:9123/som/screenshot` |
+| **UIA tree** | `curl -s http://172.21.192.1:9123/uia/tree` |
+| **Move mouse** | `curl -s -X POST http://172.21.192.1:9123/mouse/move -d '{"x":500,"y":400}'` |
+| **Click** | `curl -s -X POST http://172.21.192.1:9123/mouse/click -H "Content-Type: application/json" -d '{"x":960,"y":540}'` |
+| **Type text** | `curl -s -X POST http://172.21.192.1:9123/key/type -d '{"text":"hello"}'` |
+| **Hotkey** | `curl -s -X POST http://172.21.192.1:9123/key/press -d '{"keys":["ctrl","c"]}'` |
+| **Drag** | `curl -s -X POST http://172.21.192.1:9123/mouse/drag -d '{"x1":100,"y1":100,"x2":500,"y2":500}'` |
+| **Chain actions** | `curl -s -X POST http://172.21.192.1:9123/chain -d '{"actions":[{"type":"click","x":500,"y":400},{"type":"type","text":"hi"}]}'` |
+| **Find by OCR** | `curl -s -X POST http://172.21.192.1:9123/ocr/find -d '{"text":"Submit"}'` |
+| **Open app** | `curl -s -X POST http://172.21.192.1:9123/launch/ai -d '{"query":"open telegram"}'` |
+| **List windows** | `curl -s http://172.21.192.1:9123/windows` |
+| **Activate window** | `curl -s -X POST http://172.21.192.1:9123/windows/activate -d '{"title":"Chrome"}'` |
+| **Clipboard get** | `curl -s http://172.21.192.1:9123/clipboard/get` |
+| **Clipboard set** | `curl -s -X POST http://172.21.192.1:9123/clipboard/set -d '{"text":"copied"}'` |
+| **Save macro** | `curl -s -X POST http://172.21.192.1:9123/macro/save -d '{"name":"refresh","actions":[...]}'` |
+| **Run macro** | `curl -s -X POST http://172.21.192.1:9123/macro/run -d '{"name":"refresh"}'` |
+| **Emergency stop** | `curl -s -X POST http://172.21.192.1:9123/emergency/stop` |
+| **File list** | `curl -s -X POST http://172.21.192.1:9123/file/list -d '{"path":"C:/Users/Admin/Desktop"}'` |
+| **Search files** | `curl -s -X POST http://172.21.192.1:9123/search/files -d '{"pattern":"*.pdf","path":"C:/Users/Admin"}'` |
+| **TTS speak** | `curl -s -X POST http://172.21.192.1:9123/tts/speak -d '{"text":"Hello world"}'` |
+| **Screenshot to file** | `curl -s http://172.21.192.1:9123/screen/base64 \| python3 -c "import sys,json,base64; open('/tmp/screen.png','wb').write(base64.b64decode(json.load(sys.stdin)['data']))"` |
+
+### AI Workflow: Find → Click → Type → Verify
+
+```python
+from coagent_client import CoAgent
+import time
+
+c = CoAgent()
+
+# 1. See what's on screen
+print(c.describe().get("description"))
+
+# 2. Find Submit button via OCR
+matches = c.ocr_find("Submit")
+if matches.get("matches"):
+    m = matches["matches"][0]
+    x, y = m["center"]["x"], m["center"]["y"]
+    c.click(x, y)
+
+# 3. Type into a text field
+c.click(300, 400)  # click the field first
+time.sleep(0.2)
+c.type("hello world")
+
+# 4. Press Enter
+c.hotkey(["enter"])
+
+# 5. Verify the result
+time.sleep(1)
+print(c.describe().get("description"))
+```
+
+### AI Workflow: Open app, navigate, automate
+
+```python
+from coagent_client import CoAgent
+
+c = CoAgent()
+
+# Open Chrome to Gmail
+c.launch("chrome")
+c.type("https://mail.google.com")
+c.hotkey(["enter"])
+
+# Wait for page, then interact via UIA
+time.sleep(5)
+tree = c.uia_tree()
+# Find compose button
+matches = c.ocr_find("Compose")
+if matches.get("matches"):
+    m = matches["matches"][0]
+    c.click(m["center"]["x"], m["center"]["y"])
+```
+
+---
+
+## 🏗 Architecture (v7.0 — Modular)
+
+```
+hermes_coagent.py (268 lines — coordinator only)
+├── shared.py          — Logging, path safety, SSE, task XML
+├── routes_mouse.py    — Mouse, keyboard, chain, emergency (15 routes)
+├── routes_ocr.py      — Screenshots, OCR, crop, describe (10 routes)
+├── routes_uia.py      — UIA tree, SOM overlays, element find (16 routes)
+├── routes_file.py     — File ops, app launch, power (10 routes)
+├── routes_media.py    — Wallpaper, clipboard, macros, scheduler (30+ routes)
+├── uia_engine.py      — UIA accessibility tree + SOM engine
+├── computer_use_mcp.py— FastMCP server (proxy to HTTP API)
+├── coagent_client.py  — Python client library
+├── tray_icon.py       — System tray + screenshot relay
+└── auth.py            — Bearer token auth
+```
+
+**Data flow:** AI Agent → HTTP API → CoAgent → Windows APIs → Desktop
 
 ---
 
 ## 🔐 Security
 
-**Security is always opt-in** by design for local development, but **strongly encouraged** for any network-accessible deployment.
+| Flag | Effect |
+|------|--------|
+| `--secure` | Random 64-char Bearer token |
+| `--token=KEY` | Use your own token |
+| `--allow-external` | Bind `0.0.0.0` (LAN access) |
 
-| Flag | Behavior |
-|---|---|
-| _(none)_ | No auth. Binds to `127.0.0.1` (localhost only). Safe for local use. |
-| `--secure` | Generates a random 64-char token. Prints it at startup. All endpoints require `Authorization: Bearer <token>` |
-| `--token=MYKEY` | Uses your key instead of a random one. Combine with `--secure` or use alone. |
-| `--allow-external` | Binds to `0.0.0.0` (all network interfaces). **Requires `--secure` or `--token` to be safe.** |
-
-```bash
-# Recommended for LAN access:
-python hermes_coagent.py --secure --allow-external
-# Output: [Auth] Secure mode enabled — token: a1b2c3d4e5f6...7890abcd
-# Clients send header: Authorization: Bearer a1b2c3...abcd
-```
-
-**Emergency stop:** Press `Ctrl+Alt+Shift` anywhere to instantly kill all input. No API call needed.
+**Always use `--secure --allow-external` for network access.**
 
 ---
 
-## 🤖 MCP Integration with Hermes Agent
-
-Add this to your `~/.hermes/config.yaml`:
-
-```yaml
-mcp_servers:
-  windows-computer-use:
-    command: cmd.exe
-    args:
-      - /c
-      - python
-      - C:\Users\Admin\Desktop\Hermes CoAgent\computer_use_mcp.py
-    timeout: 120
-    connect_timeout: 30
-    env:
-      MCP_FAST: '1'
-      COAGENT_URL: 'http://localhost:9123'
-```
-
-### Available MCP Tools (26 total)
-
-- `ping` — health check
-- `screenshot` — raw screenshot (base64 PNG)
-- `capture(mode)` — SOM overlay, raw, or UIA tree
-- `click(x, y, button)` — click at coordinates
-- `click_element(index)` — click by SOM index
-- `double_click(x, y)` — double click
-- `right_click(x, y)` — right click
-- `move_mouse(x, y)` — move to coordinates
-- `type_text(text)` — type at cursor
-- `press_key(keys)` — hotkey combo
-- `scroll(clicks)` — scroll wheel
-- `drag(x1, y1, x2, y2)` — drag action
-- `get_uia_tree()` — full accessibility tree
-- `list_windows()` — all open windows
-- `activate_window(title)` — focus window
-- `find_on_screen(text)` — UIA + OCR combined search
-- `chain(actions)` — execute multiple actions atomically
-- `get_monitors()` — display layout
-- `get_cursor_position()` — current mouse position
-- `get_coagent_status()` — server health
-- `emergency_stop()` / `emergency_resume()` — kill/resume input
-- `wake_screen()` — Ctrl+Alt+Del screen wake
-- `launch_app(path)` — start application
-- `click_by_name(name)` — click by UIA element label
-
----
-
-## 📡 REST API
-
-All endpoints at `http://localhost:9123/` (requires Auth header if `--secure`).
+## 🖥️ Full REST API
 
 ### Core
+`GET /` — dashboard · `GET /ping` — health · `GET /version` — version + features · `GET /stats` — server stats · `GET /logs` — server logs · `GET /events` — SSE stream
 
-| Method | Route | Description |
-|---|---|---|
-| GET | `/` | Web dashboard |
-| GET | `/dashboard2` | Alternative dashboard (SOM view) |
-| GET | `/ping` | Health check |
-| GET | `/settings` | Autostart status |
-| POST | `/settings/autostart` | Toggle autostart on/off |
-| GET | `/cursor/pos` | Mouse position |
-| GET | `/cursor` | Alias |
-| GET | `/monitors` | Display layout |
-| GET | `/screensize` | Display resolution |
-| GET | `/stats` | Server stats |
+### Mouse & Keyboard
+`POST /mouse/move` · `POST /mouse/click` · `POST /mouse/dblclick` · `POST /mouse/rclick` · `POST /mouse/drag` · `POST /mouse/scroll` · `POST /key/type` · `POST /key/press` · `POST /chain` · `POST /act` · `POST /input/send` · `GET /cursor/pos` · `GET /copilot/mode`
 
-### Mouse
+### Screenshots & OCR
+`GET /screen` · `GET /screen/jpeg` · `GET /screen/base64` · `GET /screen/fresh` · `GET /screen/diag` · `POST /ocr/find` · `POST /visual/find` · `POST /crop` · `GET /describe`
 
-| Method | Route | Body |
-|---|---|---|
-| POST | `/mouse/move` | `{"x": 500, "y": 400}` |
-| POST | `/mouse/click` | `{"button": "left"}` |
-| POST | `/mouse/doubleclick` | |
-| POST | `/mouse/rightclick` | |
-| POST | `/mouse/drag` | `{"x1":0,"y1":0,"x2":500,"y2":400}` |
-| POST | `/mouse/scroll` | `{"clicks": -3}` |
-| POST | `/move` | Alias |
-| POST | `/click` | Alias |
-| POST | `/drag` | Alias |
-| POST | `/scroll` | Alias |
+### UIA & SOM
+`GET /uia/tree` · `GET /uia/find/<name>` · `POST /uia/click` · `POST /uia/find-cmb` · `GET /uia/diag` · `GET /uia/window-tree` · `POST /uia/element/find` · `POST /uia/element/click-by-name` · `POST /uia/element/click-by-index` · `GET /som/screenshot` · `GET /som/cache/clear` · `GET /som/bridge` · `POST /som/point` · `GET /uia/accel-reg`
 
-### Keyboard
+### Files & Power
+`POST /file/list` · `POST /file/read` · `POST /file/write` · `POST /file/delete` · `POST /app/open` · `POST /app/run` · `POST /power/sleep` · `POST /power/shutdown` · `POST /power/restart` · `POST /power/lock` · `POST /power/cancel`
 
-| Method | Route | Body |
-|---|---|---|
-| POST | `/key/type` | `{"text": "hello"}` |
-| POST | `/key/press` | `{"keys": ["ctrl", "c"]}` |
-| POST | `/type` | Alias |
-| POST | `/hotkey` | Alias |
+### Windows & Wallpaper
+`GET /windows` · `POST /windows/activate` · `POST /wallpaper/set` · `POST /wallpaper/cycle` · `POST /wallpaper/random` · `GET /monitors` · `POST /monitors/layout`
 
-### Screen
+### Clipboard & TTS
+`GET /clipboard/get` · `POST /clipboard/set` · `POST /tts/speak`
 
-| Method | Route | Description |
-|---|---|---|
-| GET | `/screen` | Cached screenshot (PNG image) |
-| GET | `/screenshot` | Base64 screenshot JSON |
-| GET | `/screenshot/fresh` | Force fresh screenshot |
-| GET | `/screenshot/cached` | Cached version |
-| GET | `/screen/base64` | Base64 screenshot |
-| GET | `/screen/diagnose` | Diagnostic info |
-
-### Smart Actions
-
-| Method | Route | Body |
-|---|---|---|
-| POST | `/chain` | `{"actions": [...]}` |
-| POST | `/act` | Action + before/after screenshots |
-
-### Find
-
-| Method | Route | Body |
-|---|---|---|
-| POST | `/ocr/find` | `{"text": "Save"}` |
-| POST | `/visual/find` | `{"template_path": "C:/img.png", "confidence": 0.8}` |
-| GET | `/uia/tree` | Full UIA tree |
-| GET | `/uia/snapshot` | UIA snapshot |
-| POST | `/uia/click` | `{"index": 3}` or `{"name": "..."}` |
-| POST | `/uia/find-combined` | UIA + OCR combined |
-| GET | `/uia/diag` | UIA diagnostic |
-| GET | `/som` | SOM overlay screenshot |
-| GET | `/som/screenshot` | SOM overlay |
-| GET | `/som/image` | SOM image |
-
-### Windows
-
-| Method | Route | Body |
-|---|---|---|
-| GET | `/windows` | All open windows |
-| POST | `/windows/activate` | `{"title": "Chrome"}` |
-| POST | `/activate` | Alias |
-
-### Files
-
-| Method | Route | Body |
-|---|---|---|
-| POST | `/file/list` | `{"path": "C:/Users/..."}` |
-| POST | `/file/read` | `{"path": "C:/file.txt"}` |
-| POST | `/file/write` | `{"path": "...", "content": "..."}` |
-| POST | `/file/delete` | `{"path": "..."}` |
-
-### V5.0 — Power
-
-| Method | Route | Description |
-|---|---|---|
-| POST | `/power/sleep` | Put PC to sleep |
-| POST | `/power/shutdown` | Shutdown (body: `{timeout: 30}`) |
-| POST | `/power/restart` | Restart |
-| POST | `/power/lock` | Lock workstation |
-| POST | `/power/cancel` | Cancel pending shutdown |
-
-### V5.0 — Wallpaper
-
-| Method | Route | Body |
-|---|---|---|
-| POST | `/wallpaper/set` | `{path: "C:/img.jpg"}` |
-| POST | `/wallpaper/cycle` | `{folder: "C:/wallpapers"}` |
-| POST | `/wallpaper/random` | `{folder: "C:/wallpapers"}` |
-
-### V5.0 — Search & OCR
-
-| Method | Route | Body |
-|---|---|---|
-| POST | `/search/files` | `{pattern: "*.pdf", path: "C:/", limit: 50}` |
-| POST | `/crop` | `{region: [x,y,w,h]}` (optional — OCR screen) |
-| GET | `/describe` | OCR the whole screen |
-
-### V5.0 — Scheduler
-
-| Method | Route | Body |
-|---|---|---|
-| GET | `/scheduler/list` | List all scheduled actions |
-| POST | `/scheduler/add` | `{name, cron, action}` |
-| POST | `/scheduler/remove` | `{name}` |
-| POST | `/scheduler/run` | `{name}` |
-
-### V5.0 — Voice & AI
-
-| Method | Route | Body |
-|---|---|---|
-| POST | `/voice/toggle` | `{enable: true/false}` |
-| POST | `/launch/ai` | `{query: "open chrome to reddit"}` |
-| POST | `/monitors/layout` | `{layout: "grid"}` |
-
-### Emergency
-
-| Method | Route | Description |
-|---|---|---|
-| POST | `/emergency/stop` | Lock all input |
-| POST | `/emergency/resume` | Unlock input |
-| GET | `/emergency/status` | Current state |
-| *(keyboard)* | `Ctrl+Alt+Shift` | Instant emergency stop |
+### Macros & Scheduler
+`POST /macro/list` · `POST /macro/save` · `POST /macro/run` · `POST /macro/record` · `POST /macro/delete` · `POST /replay` · `GET /scheduler/list` · `POST /scheduler/add` · `POST /scheduler/remove` · `POST /scheduler/run`
 
 ### Other
-
-| Method | Route | Body |
-|---|---|---|
-| POST | `/clipboard/set` | `{"text": "..."}` |
-| GET | `/clipboard/get` | Clipboard text |
-| POST | `/app/open` | `{"path": "notepad.exe"}` |
-| POST | `/app/run` | `{"cmd": "dir", "timeout": 30}` |
-| POST | `/tts/speak` | `{"text": "hello"}` |
-| GET | `/history` | Last N actions |
-| POST | `/replay` | Replay last N actions |
-| GET | `/events` | SSE event stream |
-| GET | `/logs` | Server logs |
-| POST | `/tunnel/start` | Start Cloudflare tunnel |
-| POST | `/tunnel/stop` | Stop tunnel |
-| GET | `/tunnel/status` | Tunnel status |
-| POST | `/macro/list` | List macros |
-| POST | `/macro/record` | `{name: "..."}` |
-| POST | `/macro/run` | `{name: "..."}` |
-| POST | `/macro/delete` | `{name: "..."}` |
-| POST | `/input/send` | Background key send |
+`POST /voice/toggle` · `POST /tunnel/start` · `POST /tunnel/stop` · `GET /tunnel/status` · `POST /search/files` · `POST /launch/ai` · `POST /emergency/stop` · `POST /emergency/resume` · `GET /emergency/status`
 
 ---
 
-## 📋 Requirements
+## 🔧 Requirements
 
-- **OS:** Windows 10/11
-- **Python:** 3.8+
-- **Tesseract OCR** (optional — for OCR find/crop/describe features)
-- **SpeechRecognition** (optional — for voice control)
-- **Hermes Agent** (optional — for MCP protocol integration)
-
-### Python Packages
-```
-pyautogui flask pillow pynput mss pygetwindow pyperclip
-pytesseract opencv-python edge-tts psutil pywinauto
-SpeechRecognition  # optional — voice control
-pygetwindow        # optional — monitor layout
-```
-
----
-
-## 🖥️ CLI Reference
-
-```
-usage: hermes_coagent.py [port] [options]
-
-positional arguments:
-  port                  HTTP server port (default: 9123)
-
-options:
-  --secure              Enable Bearer token auth (generates random token)
-  --token=KEY           Use specific auth token (implies --secure)
-  --allow-external      Bind to 0.0.0.0 (all interfaces, not just localhost)
-  --mcp                 Run in MCP stdin/stdout protocol mode
-  --http                Run HTTP SSE MCP server (computer_use_mcp.py)
-  --test                Run self-test and exit
-  --fast                Lazy-load heavy imports (MCP mode)
-
-environment variables:
-  HERMES_COAGENT_TOKEN  Auth token (alternative to --token)
-  MCP_FAST=1            Enable fast mode (env var for MCP)
-  COAGENT_URL           CoAgent HTTP URL (default: http://localhost:9123)
-```
-
----
-
-## 📁 Project Structure
-
-```
-Hermes-CoAgent/
-├── hermes_coagent.py        # Main server — 2000+ lines, all APIs + dashboard
-├── computer_use_mcp.py      # MCP protocol server — 26 tools for AI agents
-├── uia_engine.py            # UIA accessibility tree + SOM overlay engine
-├── coagent_tray.py          # System tray app (runs via pythonw.exe)
-├── auth.py                  # Bearer token authentication module
-├── AGENTS.md                # Instructions for AI coding agents
-├── launch_all.ps1           # One-shot launcher (kill stale + start + wait)
-├── send_telegram_file.ps1   # One-shot file transfer prep
-├── create_coagent_task.ps1  # Scheduled task installer for Session 1
-├── send_pf.py               # File transfer automation via pyautogui
-├── patch_coagent_v5.py      # V5.0 feature updater
-├── LICENSE                  # MIT License
-├── .gitignore
-└── README.md
-```
-
----
-
-## ⚡ Performance
-
-- **MCP startup:** ~2s with `MCP_FAST=1` (lazy imports)
-- **Screenshots:** <100ms (PIL ImageGrab)
-- **JPEG SOM overlays:** ~50ms (q85 JPEG, 3x faster than PNG)
-- **Actions:** 20ms gap between actions (chain mode)
-- **UIA queries:** <100ms with synchronous cached desktop
-- **UIA cache:** 300ms TTL, auto-invalidated on desktop changes
-- **Batch chain:** 5 actions in ~150ms (single HTTP POST)
-- **Direct SOM in MCP:** ~80ms (in-process, no HTTP round-trip)
-
----
-
-## 🔧 Troubleshooting
-
-### UIA returns 0 elements / empty SOM
-The server may be running in Session 0 (non-interactive). Verify:
-- Screenshot <20KB = virtual display (Session 0)
-- Screenshot >100KB = real desktop (Session 1)
-- Run via scheduled task with `-LogonType Interactive`
-
-### Voice control not working
-```
-pip install SpeechRecognition pyaudio
-```
-
-### Wallpaper / Power buttons not doing anything
-These features require Windows APIs that work from any session. Check the server log for errors.
-
-### "App not installed" on Android
-Telegram bot API truncates files >50MB. Use Catbox URL or desktop drag-drop via CoAgent.
-
----
-
-## ⚠️ Disclaimer
-
-This tool provides **full remote desktop control** to anyone who can reach the HTTP server. **Always use `--secure` when allowing network access.** The authors are not responsible for misuse.
+- **Windows 10/11**
+- **Python 3.8+**
+- **Packages:** `flask pillow pyautogui pywinauto pytesseract pygetwindow pyperclip pystray waitress mss`
 
 ---
 
