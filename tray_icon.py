@@ -294,7 +294,7 @@ def main():
             Item("Quit CoAgent", on_quit),
         )
 
-        icon = pystray.Icon("HermesCoAgent", img, "Hermes CoAgent v7.0", menu)
+        icon = pystray.Icon("HermesCoAgent", img, "Hermes CoAgent v7.3", menu)
         _log(f"starting tray icon on {SERVER}")
 
         # Start screenshot server in a daemon thread

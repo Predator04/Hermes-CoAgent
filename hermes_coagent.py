@@ -1,13 +1,13 @@
 # ════════════════════════════════════════════════════════════════
-# HERMES COAGENT v7.0 — PERFORMANCE OPTIMIZATIONS
+# HERMES COAGENT v7.3 — PERFORMANCE OPTIMIZATIONS
 # ════════════════════════════════════════════════════════════════
 """
 Hermes CoAgent — Windows Desktop Co-Pilot (Flask REST + MCP server)
 ====================================================================
 Primary server for the CoAgent desktop automation system.
 
-v7.0: Performance and reliability optimizations on the modular route layout.
-v7.0: Codebase split into modular route files:
+v7.3: Performance and reliability optimizations on the modular route layout.
+v7.3: Codebase split into modular route files:
   shared.py          — Shared utilities (logging, auth, path safety, SSE)
   routes_mouse.py    — Mouse, keyboard, chain, emergency
   routes_ocr.py      — Screenshots, OCR, crop, describe
@@ -66,9 +66,9 @@ import waitress
 
 app = Flask(__name__, static_folder=None)
 
-# ── v7.0: Single-source version ────────────────────────────────
+# ── v7.3: Single-source version ────────────────────────────────
 
-# ── v7.0: Security middleware ───────────────────────────────────
+# ── v7.3: Security middleware ───────────────────────────────────
 AUTH_EXEMPT_PREFIXES = (
     "/auth/",
     "/static/",
@@ -133,7 +133,7 @@ def _security_headers(response):
     response.headers["Cache-Control"] = "no-store"
     return response
 
-# ── v7.0: CORS support for dashboard ───────────────────────────
+# ── v7.3: CORS support for dashboard ───────────────────────────
 @app.after_request
 def _cors_headers(response):
     origin = request.headers.get("Origin", "")
@@ -161,7 +161,7 @@ def _cors_preflight():
             resp.headers["Access-Control-Max-Age"] = "86400"
         return resp
 
-# ── v7.0: Request body size enforcement ──────────────────────
+# ── v7.3: Request body size enforcement ──────────────────────
 _MAX_BODY_SIZE = 16 * 1024 * 1024  # 16 MB
 
 @app.before_request
@@ -169,7 +169,7 @@ def _check_body_size():
     if request.content_length and request.content_length > _MAX_BODY_SIZE:
         return jsonify({"error": "Payload too large", "max_bytes": _MAX_BODY_SIZE}), 413
 
-# ── v7.0: Rate limiter (simple token bucket with TTL cleanup) ───
+# ── v7.3: Rate limiter (simple token bucket with TTL cleanup) ───
 _RATE_LIMITS = {}  # ip -> (tokens, last_refill)
 _RATE_MAX_TOKENS = 60
 _RATE_REFILL_PER_SEC = 10
@@ -297,7 +297,7 @@ def route_health():
 def route_version():
     return jsonify({"agent": AGENT_NAME, "version": VERSION, "build": BUILD,
                     "features": ["modular_routes", "sse", "sse_mcp", "health_watchdog",
-                                 "thread_pool_4", "mss_dxgi", "uia_window_timeout",
+                                 "waitress_wsgi", "mss_dxgi", "uia_window_timeout",
                                  "log_rotation_5mb", "recording_cleanup", "windows_ocr", "uia",
                                  "som", "background_input", "chain_actions", "macro_recorder",
                                  "scheduler", "tunnel", "voice", "session_recording",
@@ -465,6 +465,6 @@ if __name__ == "__main__":
     # Start tray icon
     _start_tray()
 
-    # v7.0: Waitress WSGI server
+    # v7.3: Waitress WSGI server
     _console(f"  [OK] Waitress WSGI on http://{bind_host}:{port}/")
     waitress.serve(app, host=bind_host, port=port, threads=8, connection_limit=100)

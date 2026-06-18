@@ -1,4 +1,4 @@
-"""v7.0 feature routes: cursor overlay, recording, waits, and stabilization."""
+"""v7.3 feature routes: cursor overlay, recording, waits, and stabilization."""
 from flask import jsonify
 from shared import _json_body
 

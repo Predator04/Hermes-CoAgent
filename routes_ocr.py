@@ -20,7 +20,7 @@ _last_screenshot_time = 0.0
 _last_screenshot_raw = b""
 _last_screenshot_hash = None
 _screenshot_lock = threading.Lock()
-# v7.0: Pixel hash — skip capture if screen unchanged
+# v7.3: Pixel hash — skip capture if screen unchanged
 _PIXEL_HASH_CACHE = 0
 _PIXEL_HASH_LOCK = threading.Lock()
 
@@ -43,7 +43,7 @@ def _grab_screen_mss(force=False):
                 raw = sct_img.rgb
                 size = sct_img.size
 
-        # v7.0: Quick pixel hash to detect screen changes before PNG encode.
+        # v7.3: Quick pixel hash to detect screen changes before PNG encode.
         step = 100
         sample = bytearray()
         for i in range(0, len(raw) // 3, step):

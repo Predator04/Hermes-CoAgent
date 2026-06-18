@@ -1,4 +1,4 @@
-"""CoAgent — Python client for Hermes CoAgent v7.0 REST API.
+"""CoAgent — Python client for Hermes CoAgent v7.3 REST API.
 
 Usage: from coagent_client import CoAgent; c = CoAgent()
 """
@@ -9,7 +9,7 @@ from urllib.error import URLError
 
 
 class CoAgent:
-    """Client for Hermes CoAgent v7.0 REST API."""
+    """Client for Hermes CoAgent v7.3 REST API."""
 
     def __init__(self, url=None, token=None):
         self.url = (url or os.environ.get("COAGENT_URL", "http://172.21.192.1:9123")).rstrip("/")

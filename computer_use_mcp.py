@@ -1,5 +1,5 @@
 # ════════════════════════════════════════════════════════════════
-# HERMES COAGENT v7.0 — Windows Computer Use MCP Server
+# HERMES COAGENT v7.3 — Windows Computer Use MCP Server
 # ════════════════════════════════════════════════════════════════
 """
 FastMCP server that proxies desktop control through CoAgent's REST API.
@@ -454,7 +454,7 @@ async def find_on_screen(text: str) -> str:
     })
 
 # ════════════════════════════════════════════════════════════════
-# v7.0: FEATURES — Element Index, Stabilization, Recording, Cursor
+# v7.3: FEATURES — Element Index, Stabilization, Recording, Cursor
 # ════════════════════════════════════════════════════════════════
 
 @mcp.tool()
@@ -541,7 +541,7 @@ async def get_agent_cursor_state() -> str:
 
 @mcp.tool()
 async def get_features_mcp() -> str:
-    """Get status of all v7.0 features (cursor, recording, etc)."""
+    """Get status of all v7.3 features (cursor, recording, etc)."""
     result = _coagent_get("/features", no_cache=True)
     return json.dumps(result or {"error": "features check failed"})
 

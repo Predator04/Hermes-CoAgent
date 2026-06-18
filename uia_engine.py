@@ -1,4 +1,4 @@
-"""Hermes CoAgent v7.0 — UIA Engine
+"""Hermes CoAgent v7.3 — UIA Engine
 Windows UI Automation tree + SOM overlays + background SendInput.
 
 Provides:
@@ -181,7 +181,7 @@ try:
     def _uia_element_info(elem, depth=0):
         """Extract info dict from a UI element."""
         try:
-            # v7.0: Skip offscreen/invisible elements
+            # v7.3: Skip offscreen/invisible elements
             try:
                 if not _uia_element_state(elem, "is_visible", True):
                     return None
@@ -197,7 +197,7 @@ try:
                 "visible": True,
                 "children": []
             }
-            # v7.0: Depth 3 instead of 5 — saves ~40% on busy desktops
+            # v7.3: Depth 3 instead of 5 — saves ~40% on busy desktops
             if depth < 3:
                 try:
                     for child in elem.children():
@@ -228,14 +228,14 @@ try:
                         "name": "Desktop",
                         "children": []
                     }
-                    # v7.0: Skip full crawl if window list hasn't changed
+                    # v7.3: Skip full crawl if window list hasn't changed
                     win_list = list(desktop.windows())[:100]
                     if win_list and not _uia_winlist_changed(win_list):
                         if _UIA_LAST_CRAWL_RESULT is not None:
                             info = _UIA_LAST_CRAWL_RESULT
                             result = {"success": True, "tree": info}
                             return
-                    # v7.0: Per-window timeout — skip windows that take >3s to crawl.
+                    # v7.3: Per-window timeout — skip windows that take >3s to crawl.
                     for win in win_list:
                         try:
                             win_start = time.time()
@@ -272,7 +272,7 @@ try:
                         except:
                             pass
                     result = {"success": True, "tree": info}
-                    # v7.0: Cache successful result for next call
+                    # v7.3: Cache successful result for next call
                     _UIA_LAST_CRAWL_RESULT = info
                 except Exception as e:
                     result = {"success": False, "error": str(e), "traceback": traceback.format_exc()}
@@ -408,7 +408,7 @@ except Exception as e:
     UIA_READY = False
     _uia_error = str(e)
 
-# v7.0: UIA window list cache — skip full crawl if nothing changed
+# v7.3: UIA window list cache — skip full crawl if nothing changed
 _UIA_WIN_CACHE = []  # list of (win_name, win_rect_hash)
 _UIA_WIN_CACHE_LOCK = threading.Lock()
 _UIA_LAST_HASH = None
