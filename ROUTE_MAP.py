@@ -45,11 +45,12 @@ ROUTE MAP (REST API):
   │ POST /minimize      │ Yes   │ Minimize all windows (Session 1)         │
   │ POST /click/session1│ Yes   │ Click at XY on Session 1 (schtasks)     │
   │─────────────────────┼──────────────────────────────────────────────────┤
-  │ GET  /screen        │ No    │ Cached JPEG screenshot                   │
+  │ GET  /screen        │ No    │ Direct JPEG via tray relay/local fallback│
   │ GET  /screen/jpeg   │ No    │ JPEG screenshot                          │
   │ GET  /screen/base64 │ No    │ Base64 PNG screenshot                    │
   │ GET  /screen/fresh  │ No    │ Fresh JPEG screenshot (force capture)    │
   │ GET  /screen/diag   │ No    │ Session diagnostics                      │
+  │ GET  /screen/probe  │ No    │ Relay availability and capture latency   │
   │─────────────────────┼──────────────────────────────────────────────────┤
   │ POST /emergency/stop│ No    │ Emergency stop all input                 │
   │ POST /emergency/resm│ No    │ Resume input                             │

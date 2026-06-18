@@ -47,7 +47,18 @@ Start-Sleep -Seconds 2
 
 # ── Step 3: Launch tray icon on Session 1 ──
 Write-Output "[3/5] Launching tray icon..."
-& "$coagentDir\launch_fixed.ps1"
+$trayScript = Join-Path $coagentDir "tray_icon.py"
+$trayArgs = @(
+    "`"$trayScript`""
+    "9123"
+    "9124"
+)
+try {
+    Start-Process -FilePath "pythonw.exe" -ArgumentList $trayArgs -WorkingDirectory $coagentDir -WindowStyle Hidden -ErrorAction Stop | Out-Null
+    Write-Output "  Tray launch requested with pythonw.exe"
+} catch {
+    Write-Output "  Tray launch failed: $($_.Exception.Message)"
+}
 
 # ── Step 4: Verify server is running ──
 Write-Output "[4/5] Verifying server..."

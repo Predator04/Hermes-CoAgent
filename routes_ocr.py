@@ -1,9 +1,10 @@
 """OCR, screenshot, crop, and screen-describe routes."""
 import io, base64, json, os, tempfile, subprocess, time, threading, hashlib
+import urllib.error, urllib.request
 from io import BytesIO
 from pathlib import Path
-from flask import jsonify
-from shared import _json_body, _log, _console, _missing_field, get_host_ip, COAGENT_DIR, SCREENSHOTS_DIR
+from flask import Response, jsonify
+from shared import _json_body, _log, _console, _missing_field, get_host_ip, COAGENT_DIR, SCREENSHOTS_DIR, TRAY_PORT
 
 # MSS for fast screenshots (DXGI)
 _MSS_AVAILABLE = False
@@ -102,6 +103,45 @@ def _capture_jpeg(force=False, quality=85):
     except Exception as e:
         _log(f"JPEG capture failed: {type(e).__name__}: {e}")
         return b""
+
+def _fetch_tray_relay_screen(timeout=2.0):
+    """Return (jpeg_bytes, latency_ms, error) from the Session 1 tray relay."""
+    start = time.perf_counter()
+    errors = []
+    for path in ("/screen", "/screen?format=jpeg"):
+        remaining = max(0.1, timeout - (time.perf_counter() - start))
+        try:
+            req = urllib.request.Request(
+                f"http://127.0.0.1:{TRAY_PORT}{path}",
+                headers={"Accept": "image/jpeg"},
+            )
+            with urllib.request.urlopen(req, timeout=remaining) as resp:
+                data = resp.read()
+                latency_ms = round((time.perf_counter() - start) * 1000, 1)
+                status = getattr(resp, "status", 200)
+                content_type = resp.headers.get("Content-Type", "")
+                if status == 200 and data and ("jpeg" in content_type.lower() or data.startswith(b"\xff\xd8")):
+                    return data, latency_ms, None
+                errors.append(f"{path}: status={status} content_type={content_type}")
+        except (urllib.error.URLError, TimeoutError, OSError) as e:
+            errors.append(f"{path}: {type(e).__name__}: {e}")
+    latency_ms = round((time.perf_counter() - start) * 1000, 1)
+    return b"", latency_ms, "; ".join(errors) or "relay unavailable"
+
+def _probe_tray_relay(timeout=2.0):
+    """Check tray relay health without fetching a full screenshot."""
+    start = time.perf_counter()
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{TRAY_PORT}/health", timeout=timeout) as resp:
+            body = resp.read(4096)
+            latency_ms = round((time.perf_counter() - start) * 1000, 1)
+            payload = json.loads(body.decode("utf-8", errors="replace") or "{}")
+            ok = getattr(resp, "status", 200) == 200 and payload.get("status") == "ok"
+            return {"available": ok, "latency_ms": latency_ms, "status": payload.get("status"), "error": None}
+    except Exception as e:
+        latency_ms = round((time.perf_counter() - start) * 1000, 1)
+        return {"available": False, "latency_ms": latency_ms, "status": None,
+                "error": f"{type(e).__name__}: {e}"}
 
 def _grab_screen_bytes(force=False):
     """Alias for _capture_raw."""
@@ -252,10 +292,57 @@ def register_routes(app, state, require_auth):
     @app.route("/screen", methods=["GET"])
     @require_auth
     def route_screen():
+        data, latency_ms, relay_error = _fetch_tray_relay_screen(timeout=2.0)
+        if data:
+            return Response(data, mimetype="image/jpeg", headers={
+                "X-Capture-Method": "tray-relay",
+                "X-Relay-Latency-Ms": str(latency_ms),
+            })
+        _log(f"Tray relay screen unavailable; falling back to local capture: {relay_error}")
         data = _capture_jpeg()
         if data:
-            return jsonify({"data": base64.b64encode(data).decode()})
+            return Response(data, mimetype="image/jpeg", headers={
+                "X-Capture-Method": "local",
+                "X-Relay-Error": (relay_error or "")[:200],
+            })
         return jsonify({"error": "No screenshot"}), 500
+
+    @app.route("/screen/probe", methods=["GET"])
+    @require_auth
+    def route_screen_probe():
+        relay_health = _probe_tray_relay(timeout=2.0)
+        relay_data, relay_latency_ms, relay_error = _fetch_tray_relay_screen(timeout=2.0)
+        relay = {
+            "available": bool(relay_data),
+            "health": relay_health,
+            "latency_ms": relay_latency_ms,
+            "bytes": len(relay_data) if relay_data else 0,
+            "error": relay_error,
+        }
+        start = time.perf_counter()
+        local = {"available": False, "latency_ms": None, "bytes": 0, "error": None}
+        try:
+            data = _capture_jpeg(force=True)
+            local["latency_ms"] = round((time.perf_counter() - start) * 1000, 1)
+            local["bytes"] = len(data) if data else 0
+            local["available"] = bool(data)
+            if not data:
+                local["error"] = "local capture returned no bytes"
+        except Exception as e:
+            local["latency_ms"] = round((time.perf_counter() - start) * 1000, 1)
+            local["error"] = f"{type(e).__name__}: {e}"
+        if relay["available"]:
+            method = "tray-relay"
+        elif local["available"]:
+            method = "local"
+        else:
+            method = "unavailable"
+        return jsonify({
+            "tray_relay": relay,
+            "local_capture": local,
+            "method": method,
+            "screen_endpoint": "/screen returns image/jpeg bytes directly",
+        })
 
     @app.route("/screen/jpeg", methods=["GET"])
     @require_auth

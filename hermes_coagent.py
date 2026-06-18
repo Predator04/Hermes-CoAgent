@@ -28,6 +28,7 @@ from html import escape
 from pathlib import Path
 from dataclasses import dataclass, field
 from typing import List
+from shutil import which
 
 # Auth module (required: fail closed if unavailable)
 try:
@@ -99,6 +100,7 @@ AUTH_EXEMPT_PATHS = {
     "/screen/base64",
     "/screen/fresh",
     "/screen/diag",
+    "/screen/probe",
     "/monitors",
     "/stats",
     "/history",
@@ -361,34 +363,57 @@ for _route, _handler_name in list(_short_routes.items()):
 # ── System Tray Icon ──────────────────────────────────────────
 def _start_tray():
     try:
+        def _ps_quote(value):
+            return "'" + str(value).replace("'", "''") + "'"
+
         tray_script = COAGENT_DIR / "tray_icon.py"
         if not tray_script.exists():
             _console("  [INFO] tray_icon.py not found, skip tray icon")
             return
-        pyw = r"C:\Users\Admin\AppData\Local\Programs\Python\Python313\pythonw.exe"
-        if not Path(pyw).exists():
+        pyw_candidates = [
+            r"C:\Users\Admin\AppData\Local\Programs\Python\Python313\pythonw.exe",
+            r"C:\Users\Admin\AppData\Local\Programs\Python\Python312\pythonw.exe",
+            str(Path(sys.executable).with_name("pythonw.exe")),
+            which("pythonw.exe"),
+        ]
+        pyw = next((p for p in pyw_candidates if p and Path(p).exists()), None)
+        if not pyw:
             _console("  [INFO] Tray icon skipped: pythonw.exe not found")
             return
         task_name = "HermesCoAgent_Tray"
-        from shared import _interactive_task_xml
-        subprocess.run(["schtasks", "/Delete", "/TN", task_name, "/F"], capture_output=True, timeout=5)
-        xml = _interactive_task_xml(
-            pyw,
-            f'"{tray_script}" {SERVER_PORT} {TRAY_PORT}',
-            author="Admin",
-            execution_limit="PT0S",
-            working_dir=str(COAGENT_DIR),
-        )
-        xml_path = COAGENT_DIR / "_tray_task.xml"
-        xml_path.write_text(xml, encoding="utf-16")
-        r = subprocess.run(["schtasks", "/Create", "/XML", str(xml_path), "/TN", task_name, "/F"],
-                           capture_output=True, text=True, timeout=10)
+        tray_args = f'"{tray_script}" {SERVER_PORT} {TRAY_PORT}'
+        tray_cmd = f'"{pyw}" {tray_args}'
+        create_flags = subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0
+        subprocess.run(["schtasks", "/Delete", "/TN", task_name, "/F"],
+                       capture_output=True, timeout=5, creationflags=create_flags)
+        r = subprocess.run([
+            "schtasks", "/Create",
+            "/TN", task_name,
+            "/TR", tray_cmd,
+            "/SC", "ONCE",
+            "/ST", "23:59",
+            "/RL", "HIGHEST",
+            "/IT",
+            "/F",
+        ], capture_output=True, text=True, timeout=10, creationflags=create_flags)
         if r.returncode == 0:
-            subprocess.run(["schtasks", "/Run", "/TN", task_name], capture_output=True, text=True, timeout=10)
-            _console("  [OK] System Tray Icon launched on Session 1")
+            subprocess.run(["schtasks", "/Run", "/TN", task_name],
+                           capture_output=True, text=True, timeout=10, creationflags=create_flags)
+            _console("  [OK] System Tray Icon launched on Session 1 via /IT task")
         else:
-            _console("  [INFO] schtasks fallback to direct subprocess")
-        if xml_path.exists(): xml_path.unlink()
+            _console(f"  [INFO] schtasks failed ({r.stderr.strip()[:160]}), using hidden Start-Process fallback")
+            ps_cmd = (
+                "Start-Process "
+                f"-FilePath {_ps_quote(pyw)} "
+                f"-ArgumentList {_ps_quote(tray_args)} "
+                f"-WorkingDirectory {_ps_quote(str(COAGENT_DIR))} "
+                "-WindowStyle Hidden"
+            )
+            subprocess.Popen([
+                "powershell.exe", "-NoProfile", "-WindowStyle", "Hidden", "-Command", ps_cmd
+            ], cwd=str(COAGENT_DIR), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+               creationflags=create_flags)
+            _console("  [OK] System Tray Icon launched via hidden PowerShell Start-Process")
     except Exception as e:
         _console(f"  [INFO] Tray icon skipped: {e}")
 

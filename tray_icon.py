@@ -4,6 +4,7 @@ Launched as pythonw subprocess by hermes_coagent.py.
 v3.0: JPEG support (?format=jpeg), screenshot cache (200ms), UIA relay (/uia/tree)
 """
 import sys, os, json, traceback, urllib.request, threading, webbrowser, time
+from urllib.parse import urlparse
 from datetime import datetime
 from pathlib import Path
 from io import BytesIO
@@ -72,7 +73,7 @@ def _build_icon_image():
     draw.text((x, y), text, fill=(255, 255, 255, 255), font=font)
     return img
 
-def _capture_screenshot_impl(jpeg=False, quality=85):
+def _capture_screenshot_impl(jpeg=True, quality=85):
     """Actually grab the screenshot. Returns bytes."""
     global _last_screenshot, _last_screenshot_time, _last_screenshot_key
     from PIL import ImageGrab
@@ -105,12 +106,17 @@ def _start_screenshot_server():
     import http.server
     import socketserver
 
+    class ThreadingReusableTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
+        daemon_threads = True
+        allow_reuse_address = True
+
     class ScreenHandler(http.server.BaseHTTPRequestHandler):
         def _send_body(self, data, status=200, content_type="application/json", extra_headers=None):
             self.send_response(status)
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(data)))
             self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Cache-Control", "no-store")
             for key, value in (extra_headers or {}).items():
                 self.send_header(key, value)
             self.end_headers()
@@ -119,27 +125,22 @@ def _start_screenshot_server():
         def do_GET(self):
             global _last_screenshot, _last_screenshot_time, _last_screenshot_key, _SCREENSHOT_CACHE_TTL
             try:
-                if self.path.startswith("/screen"):
-                    # Check for JPEG format
-                    use_jpeg = "format=jpeg" in self.path or "format=jpg" in self.path
-                    if use_jpeg:
-                        data = _capture_screenshot_impl(jpeg=True, quality=85)
-                        self._send_body(data, content_type="image/jpeg", extra_headers={"X-Format": "jpeg"})
-                    else:
-                        data = _capture_screenshot_impl(jpeg=False)
-                        self._send_body(data, content_type="image/png", extra_headers={"X-Format": "png"})
-                elif self.path == "/uia/tree":
+                parsed = urlparse(self.path)
+                if parsed.path == "/screen":
+                    data = _capture_screenshot_impl(jpeg=True, quality=85)
+                    self._send_body(data, content_type="image/jpeg", extra_headers={"X-Format": "jpeg"})
+                elif parsed.path == "/uia/tree":
                     self._handle_uia()
-                elif self.path == "/health":
-                    self._send_body(b'{"status":"ok","session":1}')
-                elif self.path == "/cache/info":
+                elif parsed.path == "/health":
+                    self._send_body(b'{"status":"ok"}')
+                elif parsed.path == "/cache/info":
                     info = json.dumps({
                         "cached": _last_screenshot is not None,
                         "age_ms": int((time.time() - _last_screenshot_time) * 1000) if _last_screenshot else -1,
                         "ttl_ms": int(_SCREENSHOT_CACHE_TTL * 1000)
                     }).encode()
                     self._send_body(info)
-                elif self.path == "/cache/clear":
+                elif parsed.path == "/cache/clear":
                     _last_screenshot = None
                     _last_screenshot_key = None
                     self._send_body(b'{"status":"cleared"}')
@@ -209,12 +210,16 @@ def _start_screenshot_server():
                 self._send_body(err, status=500)
 
         def log_message(self, format, *args):
-            _log(f"screenshot-server: {args[0]} {args[1]} {args[2]}")
+            try:
+                msg = format % args
+            except Exception:
+                msg = format
+            _log(f"screenshot-server: {msg}")
 
     try:
-        server = socketserver.TCPServer(("0.0.0.0", TRAY_PORT), ScreenHandler)
+        server = ThreadingReusableTCPServer(("127.0.0.1", TRAY_PORT), ScreenHandler)
         server.timeout = 0.5
-        _log(f"screenshot server started on :{TRAY_PORT}")
+        _log(f"screenshot server started on 127.0.0.1:{TRAY_PORT}")
         while True:
             server.handle_request()
     except Exception as e:
