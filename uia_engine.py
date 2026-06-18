@@ -18,6 +18,7 @@ import traceback
 # v5.1: UIA element tracking — stable IDs across frames
 _ELEMENT_TRACKER = {}  # key_hash -> {id, first_seen, last_seen}
 _NEXT_ELEMENT_ID = 1
+_TRACKER_LOCK = threading.Lock()
 
 def _get_element_key(elem) -> str:
     """Generate a stable key for a UIA element across frames.
@@ -46,43 +47,48 @@ def _get_stable_id(elem) -> int:
     global _NEXT_ELEMENT_ID
     key = _get_element_key(elem)
     now = time.time()
-    if key and key in _ELEMENT_TRACKER:
-        _ELEMENT_TRACKER[key]["last_seen"] = now
-        return _ELEMENT_TRACKER[key]["id"]
-    # New element
-    eid = _NEXT_ELEMENT_ID
-    _NEXT_ELEMENT_ID += 1
-    if key:
-        _ELEMENT_TRACKER[key] = {"id": eid, "first_seen": now, "last_seen": now}
-    # Prune stale entries every 100 new IDs
-    if _NEXT_ELEMENT_ID % 100 == 0:
-        stale = [k for k, v in _ELEMENT_TRACKER.items() if now - v["last_seen"] > 60]
-        for k in stale:
-            del _ELEMENT_TRACKER[k]
-    return eid
+    with _TRACKER_LOCK:
+        if key and key in _ELEMENT_TRACKER:
+            _ELEMENT_TRACKER[key]["last_seen"] = now
+            return _ELEMENT_TRACKER[key]["id"]
+        # New element
+        eid = _NEXT_ELEMENT_ID
+        _NEXT_ELEMENT_ID += 1
+        if key:
+            _ELEMENT_TRACKER[key] = {"id": eid, "first_seen": now, "last_seen": now}
+        # Prune stale entries every 100 new IDs
+        if _NEXT_ELEMENT_ID % 100 == 0:
+            stale = [k for k, v in _ELEMENT_TRACKER.items() if now - v["last_seen"] > 60]
+            for k in stale:
+                del _ELEMENT_TRACKER[k]
+        return eid
 
 # v5.1: Accelerated regions — track which screen areas change most often
 _ACCEL_REGIONS = {}  # region_key -> {change_count, stable_count, priority}
+_ACCEL_LOCK = threading.Lock()
 def _mark_region_changed(region_key: str):
     """Mark a screen region as having changed."""
-    if region_key not in _ACCEL_REGIONS:
-        _ACCEL_REGIONS[region_key] = {"change_count": 0, "stable_count": 0, "priority": 0}
-    _ACCEL_REGIONS[region_key]["change_count"] += 1
-    _ACCEL_REGIONS[region_key]["stable_count"] = 0
-    _ACCEL_REGIONS[region_key]["priority"] = min(100, _ACCEL_REGIONS[region_key]["change_count"] * 2)
+    with _ACCEL_LOCK:
+        if region_key not in _ACCEL_REGIONS:
+            _ACCEL_REGIONS[region_key] = {"change_count": 0, "stable_count": 0, "priority": 0}
+        _ACCEL_REGIONS[region_key]["change_count"] += 1
+        _ACCEL_REGIONS[region_key]["stable_count"] = 0
+        _ACCEL_REGIONS[region_key]["priority"] = min(100, _ACCEL_REGIONS[region_key]["change_count"] * 2)
 
 def _mark_region_stable(region_key: str):
     """Mark a screen region as unchanged."""
-    if region_key not in _ACCEL_REGIONS:
-        _ACCEL_REGIONS[region_key] = {"change_count": 0, "stable_count": 0, "priority": 0}
-    _ACCEL_REGIONS[region_key]["stable_count"] += 1
-    _ACCEL_REGIONS[region_key]["change_count"] = max(0, _ACCEL_REGIONS[region_key]["change_count"] - 1)
+    with _ACCEL_LOCK:
+        if region_key not in _ACCEL_REGIONS:
+            _ACCEL_REGIONS[region_key] = {"change_count": 0, "stable_count": 0, "priority": 0}
+        _ACCEL_REGIONS[region_key]["stable_count"] += 1
+        _ACCEL_REGIONS[region_key]["change_count"] = max(0, _ACCEL_REGIONS[region_key]["change_count"] - 1)
 
 def _get_cold_regions():
     """Return region keys that have been stable for >5 consecutive checks.
     These are safe to skip in accelerated capture.
     """
-    return [k for k, v in _ACCEL_REGIONS.items() if v["stable_count"] > 5]
+    with _ACCEL_LOCK:
+        return [k for k, v in _ACCEL_REGIONS.items() if v["stable_count"] > 5]
 
 # ── UIA via pywinauto ─────────────────────────────────────────────────────
 # Initialize COM in STA mode BEFORE importing pywinauto
@@ -771,21 +777,29 @@ def send_input_background(keys: list, hold_ms: int = 30):
             inp.u.ki = KEYBDINPUT(vk, 0, flags, 0, 0)
             return inp
         
-        # Build input sequence
-        inputs = []
+        if isinstance(keys, str):
+            keys = [keys]
+        # Build input sequence. Multiple keys are a chord, not sequential taps.
+        vks = []
         for key in keys:
-            k = key.lower()
+            k = str(key).lower()
+            if not k:
+                continue
             vk = vk_map.get(k, ord(k[0].upper())) if len(k) == 1 else vk_map.get(k, 0)
             if vk:
-                inputs.append(_make_input(vk))  # key down
-                inputs.append(_make_input(vk, KEYEVENTF_KEYUP))  # key up
+                vks.append(vk)
+        inputs = []
+        for vk in vks:
+            inputs.append(_make_input(vk))
+        for vk in reversed(vks):
+            inputs.append(_make_input(vk, KEYEVENTF_KEYUP))
         
         if inputs:
             # Build proper ctypes array for SendInput
             InputArray = INPUT * len(inputs)
             input_array = InputArray(*inputs)
             n = windll.user32.SendInput(len(inputs), input_array, ctypes.sizeof(INPUT))
-            return {"success": True, "sent": len(inputs)//2, "injected": n}
+            return {"success": True, "sent": len(vks), "injected": n}
         return {"success": False, "error": "No valid keys"}
     except Exception as e:
         return {"success": False, "error": str(e)}
@@ -844,7 +858,16 @@ def send_input(keys: list, hold_ms: int = 30):
 
 def send_keys(text: str):
     """Compatibility wrapper."""
-    return send_input_background(list(text))
+    sent = 0
+    injected = 0
+    for ch in str(text):
+        result = send_input_background([ch])
+        if not result.get("success"):
+            return result
+        sent += result.get("sent", 0)
+        injected += result.get("injected", 0)
+        time.sleep(0.005)
+    return {"success": True, "sent": sent, "injected": injected}
 
 # ── Test / Diag ────────────────────────────────────────────────────────────
 def diag():

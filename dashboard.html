@@ -510,7 +510,7 @@ label{font-size:10px;color:var(--text-dim);display:block;margin-bottom:2px;font-
 
   <!-- CENTER: SCREENSHOT -->
   <div id="screen-area">
-    <img id="screen-img" src="/screenshot/fresh" alt="Screen">
+    <img id="screen-img" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==" alt="Screen">
     <div id="coord-overlay">Click for coordinates</div>
   </div>
 
@@ -531,6 +531,26 @@ const BASE = '';
 let logCount = 0;
 let autoRefresh = true;
 let autoRefreshTimer = null;
+let authToken = '';
+let screenObjectUrl = null;
+
+try {
+  const params = new URLSearchParams(window.location.search);
+  authToken = params.get('token') || localStorage.getItem('hermes_auth_token') || '';
+  if (params.get('token')) {
+    localStorage.setItem('hermes_auth_token', authToken);
+    params.delete('token');
+    const clean = window.location.pathname + (params.toString() ? '?' + params.toString() : '') + window.location.hash;
+    history.replaceState(null, '', clean);
+  }
+} catch (_) {}
+
+function authHeaders(json=true){
+  const headers = {};
+  if(json) headers['Content-Type'] = 'application/json';
+  if(authToken) headers['Authorization'] = 'Bearer ' + authToken;
+  return headers;
+}
 
 function toast(msg){
   const t=document.getElementById('toast');
@@ -541,7 +561,7 @@ function toast(msg){
 }
 
 function api(method, path, body, cb){
-  const opts={method, headers:{'Content-Type':'application/json'}};
+  const opts={method, headers:authHeaders(true)};
   if(body) opts.body=JSON.stringify(body);
   fetch(BASE+path, opts)
     .then(r=>r.json().then(d=>({status:r.status, data:d})).catch(()=>({status:r.status, data:{}})))
@@ -553,7 +573,7 @@ function api(method, path, body, cb){
 }
 
 function apiText(method, path, body, cb){
-  const opts={method};
+  const opts={method, headers:authHeaders(false)};
   if(body) opts.body=body;
   fetch(BASE+path, opts)
     .then(r=>r.text().then(t=>{if(cb) cb(t)}))
@@ -567,13 +587,19 @@ function addLog(text, err){
   const ts=d.getHours().toString().padStart(2,'0')+':'+d.getMinutes().toString().padStart(2,'0')+':'+d.getSeconds().toString().padStart(2,'0');
   const entry=document.createElement('div');
   entry.className='action-entry';
-  entry.innerHTML='<span class="action-text">'+(err?'⚠ ':'')+text+'</span><span class="action-time">'+ts+'</span>';
+  const textSpan=document.createElement('span');
+  textSpan.className='action-text';
+  textSpan.textContent=(err?'⚠ ':'')+text;
+  const timeSpan=document.createElement('span');
+  timeSpan.className='action-time';
+  timeSpan.textContent=ts;
+  entry.append(textSpan,timeSpan);
   el.prepend(entry);
   if(logCount>100){el.lastChild.remove();logCount--}
 }
 
 function clearLog(){
-  document.getElementById('action-log').innerHTML='';
+  document.getElementById('action-log').replaceChildren();
   logCount=0;
   addLog('Cleared');
 }
@@ -697,7 +723,7 @@ function appOpen(){
 }
 function appRun(){
   const p=document.getElementById('file-path').value;
-  api('POST','/app/run',{command:p},d=>{
+  api('POST','/app/run',{cmd:p},d=>{
     addLog('⚡ Ran: '+p);
     document.getElementById('file-info').textContent=d.error?'Error: '+d.error:'Executed';
   });
@@ -754,7 +780,12 @@ function searchFiles(){
   api('POST','/search/files',{pattern:pat,path:p,limit:20},d=>{
     const el=document.getElementById('search-results');
     if(d.matches&&d.matches.length){
-      el.innerHTML=d.matches.slice(0,20).map(m=>'📄 '+(m.name||m.path||'?')+' '+(m.size?'('+(m.size/1024).toFixed(0)+'KB)':'')).join('<br>');
+      const nodes=d.matches.slice(0,20).map(m=>{
+        const row=document.createElement('div');
+        row.textContent='📄 '+(m.name||m.path||'?')+' '+(m.size?'('+(m.size/1024).toFixed(0)+'KB)':'');
+        return row;
+      });
+      el.replaceChildren(...nodes);
       addLog('🔎 Search: '+d.count+' matches');
     }else{
       el.textContent=d.error||'No matches';
@@ -789,7 +820,7 @@ function wpRandom(){
 
 // ── TUNNEL ──
 function tunnelCtrl(a){
-  api('POST','/tunnel/'+a,{},d=>{
+  api(a==='status'?'GET':'POST','/tunnel/'+a,a==='status'?null:{},d=>{
     const el=document.getElementById('tunnel-info');
     const txt=a==='start'?'▶ Started':a==='stop'?'⏹ Stopped':'📊 '+(d.url||d.status||JSON.stringify(d));
     el.textContent=txt;
@@ -849,8 +880,18 @@ function macroRun(){
 function winList(){
   api('GET','/windows',null,d=>{
     if(d.windows&&d.windows.length){
-      const names=d.windows.slice(0,10).map(w=>'🪟 '+(w.title||'?')).join('<br>');
-      document.getElementById('win-info').innerHTML=names+(d.windows.length>10?'<br>+'+(d.windows.length-10)+' more':'');
+      const el=document.getElementById('win-info');
+      const nodes=d.windows.slice(0,10).map(w=>{
+        const row=document.createElement('div');
+        row.textContent='🪟 '+(w.title||'?');
+        return row;
+      });
+      if(d.windows.length>10){
+        const more=document.createElement('div');
+        more.textContent='+'+(d.windows.length-10)+' more';
+        nodes.push(more);
+      }
+      el.replaceChildren(...nodes);
       addLog('🪟 Windows: '+d.windows.length+' open');
     }else{
       addLog('🪟 '+(d.error||'No windows'),true);
@@ -891,10 +932,29 @@ function toggleScreenshotRefresh(){
   }
 }
 
+function refreshScreenshot(){
+  fetch(BASE+'/screenshot/fresh?'+Date.now(), {headers:authHeaders(false)})
+    .then(r=>{
+      if(r.status===401||r.status===403){
+        toast('🔒 Auth required — add ?token=...');
+        throw new Error('auth required');
+      }
+      if(!r.ok) throw new Error('screenshot '+r.status);
+      return r.blob();
+    })
+    .then(blob=>{
+      if(screenObjectUrl) URL.revokeObjectURL(screenObjectUrl);
+      screenObjectUrl=URL.createObjectURL(blob);
+      document.getElementById('screen-img').src=screenObjectUrl;
+    })
+    .catch(e=>addLog('Screenshot: '+e.message, true));
+}
+
 function startAutoRefresh(){
   stopAutoRefresh();
+  refreshScreenshot();
   autoRefreshTimer=setInterval(()=>{
-    document.getElementById('screen-img').src='/screenshot/fresh?'+Date.now();
+    refreshScreenshot();
   }, 2000);
 }
 
@@ -904,21 +964,31 @@ function stopAutoRefresh(){
 
 // ── HISTORY POLL ──
 function pollHistory(){
-  fetch(BASE+'/history?limit=20')
+  fetch(BASE+'/history?limit=20', {headers:authHeaders(false)})
     .then(r=>r.json())
     .then(d=>{
       if(!d.actions||!d.actions.length)return;
       const el=document.getElementById('action-log');
-      let html='';
+      const nodes=[];
       const actions=[...d.actions].reverse();
       for(let i=Math.max(0,actions.length-20);i<actions.length;i++){
         const a=actions[i];
         const t=a.time?(()=>{const d2=new Date(a.time);return d2.getHours().toString().padStart(2,'0')+':'+d2.getMinutes().toString().padStart(2,'0')+':'+d2.getSeconds().toString().padStart(2,'0')})():'';
         const label=typeof a.type==='string'?a.type:'action';
         const dataStr=typeof a.data==='object'?JSON.stringify(a.data).substring(0,35):(String(a.data||'').substring(0,35));
-        html+='<div class="action-entry"><span class="action-text">'+label+' '+dataStr+'</span><span class="action-time">'+t+'</span></div>';
+        const entry=document.createElement('div');
+        entry.className='action-entry';
+        const textSpan=document.createElement('span');
+        textSpan.className='action-text';
+        textSpan.textContent=label+' '+dataStr;
+        const timeSpan=document.createElement('span');
+        timeSpan.className='action-time';
+        timeSpan.textContent=t;
+        entry.append(textSpan,timeSpan);
+        nodes.push(entry);
       }
-      el.innerHTML=html;
+      el.replaceChildren(...nodes);
+      logCount=nodes.length;
     })
     .catch(()=>{});
 }

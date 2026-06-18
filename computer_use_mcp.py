@@ -28,6 +28,7 @@ USAGE:
 
 CONFIG:
   COAGENT_URL=http://localhost:9123  (default)
+  COAGENT_TOKEN=... or HERMES_COAGENT_TOKEN=...  Bearer token for --secure CoAgent
   MCP_FAST=1                          Lazy-import mode
 """
 import sys, os, json, base64, io, time, asyncio
@@ -103,27 +104,42 @@ else:
         pass
 
 # ── CoAgent HTTP client ──────────────────────────────────────────────────
-COAGENT_URL = os.environ.get("COAGENT_URL", "http://localhost:9123")
+COAGENT_URL = os.environ.get("COAGENT_URL", "http://localhost:9123").rstrip("/")
+COAGENT_TOKEN = os.environ.get("COAGENT_TOKEN") or os.environ.get("HERMES_COAGENT_TOKEN", "")
 import urllib.request
+import urllib.error
 
 _coagent_cache = {}
+_coagent_cache_ts = {}
 _coagent_cache_ttl = 2.0  # seconds
-_last_coagent_cache = 0.0
+
+def _coagent_headers(json_body: bool = False) -> dict:
+    headers = {}
+    if json_body:
+        headers["Content-Type"] = "application/json"
+    if COAGENT_TOKEN:
+        headers["Authorization"] = f"Bearer {COAGENT_TOKEN}"
+    return headers
 
 def _coagent_get(path: str, no_cache=False) -> Optional[dict]:
     """GET request to CoAgent server with simple caching."""
-    global _coagent_cache, _last_coagent_cache
     now = time.time()
-    if not no_cache and path in _coagent_cache and (now - _last_coagent_cache) < _coagent_cache_ttl:
+    if not no_cache and path in _coagent_cache and (now - _coagent_cache_ts.get(path, 0)) < _coagent_cache_ttl:
         return _coagent_cache[path]
     try:
-        req = urllib.request.Request(f"{COAGENT_URL}{path}")
+        req = urllib.request.Request(f"{COAGENT_URL}{path}", headers=_coagent_headers())
         with urllib.request.urlopen(req, timeout=8) as resp:
             result = json.loads(resp.read().decode())
             if not no_cache:
                 _coagent_cache[path] = result
-                _last_coagent_cache = now
+                _coagent_cache_ts[path] = now
             return result
+    except urllib.error.HTTPError as e:
+        try:
+            detail = e.read().decode(errors="replace")[:500]
+        except Exception:
+            detail = e.reason
+        return {"error": f"HTTP {e.code}: {detail}", "status": e.code}
     except Exception as e:
         return {"error": str(e)}
 
@@ -132,23 +148,28 @@ def _coagent_post(path: str, data: dict) -> Optional[dict]:
         req = urllib.request.Request(
             f"{COAGENT_URL}{path}",
             data=json.dumps(data).encode(),
-            headers={"Content-Type": "application/json"},
+            headers=_coagent_headers(json_body=True),
             method="POST"
         )
         with urllib.request.urlopen(req, timeout=8) as resp:
             return json.loads(resp.read().decode())
+    except urllib.error.HTTPError as e:
+        try:
+            detail = e.read().decode(errors="replace")[:500]
+        except Exception:
+            detail = e.reason
+        return {"error": f"HTTP {e.code}: {detail}", "status": e.code}
     except Exception as e:
         return {"error": str(e)}
 
 def _coagent_ensure_alive():
     """Quick ping with fallback retry."""
-    result = _coagent_get("/", no_cache=True)
+    result = _coagent_get("/ping", no_cache=True)
     if result and "error" not in result:
         return True
-    # One retry: try to wake screenshot endpoint
     for _ in range(2):
         time.sleep(1)
-        result = _coagent_get("/", no_cache=True)
+        result = _coagent_get("/ping", no_cache=True)
         if result and "error" not in result:
             return True
     return False
@@ -166,7 +187,7 @@ mcp = FastMCP(
 async def ping() -> str:
     """Quick health check. Returns 'pong' plus CoAgent status."""
     alive = _coagent_ensure_alive()
-    status = _coagent_get("/", no_cache=True)
+    status = _coagent_get("/version", no_cache=True)
     return json.dumps({
         "status": "ok",
         "coagent": alive,
@@ -179,8 +200,8 @@ async def ping() -> str:
 @mcp.tool()
 async def screenshot() -> str:
     """Get a raw screenshot (base64 PNG). No overlays."""
-    data = _coagent_get("/screenshot", no_cache=True)
-    data = _coagent_get("/screenshot", no_cache=True) if not data or "error" in data else data
+    data = _coagent_get("/screen/base64", no_cache=True)
+    data = _coagent_get("/screen/base64", no_cache=True) if not data or "error" in data else data
     return json.dumps(data or {"error": "no screenshot data"})
 
 @mcp.tool()
@@ -194,8 +215,8 @@ async def capture(mode: str = "som") -> str:
     if mode == "uia":
         data = _coagent_get("/uia/tree", no_cache=True)
         return json.dumps(data or {"error": "no UIA data"})
-    data = _coagent_get("/screenshot", no_cache=True)
-    data = _coagent_get("/screenshot", no_cache=True) if not data or "error" in data else data
+    data = _coagent_get("/screen/base64", no_cache=True)
+    data = _coagent_get("/screen/base64", no_cache=True) if not data or "error" in data else data
     if mode == "raw":
         return json.dumps(data or {"error": "no screenshot data"})
     # SOM mode — overlay elements on screenshot
@@ -252,7 +273,7 @@ async def capture(mode: str = "som") -> str:
 @mcp.tool()
 async def click(x: int, y: int, button: str = "left") -> str:
     """Click at specific screen coordinates."""
-    result = _coagent_post("/click", {"x": x, "y": y, "button": button})
+    result = _coagent_post("/mouse/click", {"x": x, "y": y, "button": button})
     return json.dumps(result or {"error": "click failed"})
 
 @mcp.tool()
@@ -275,7 +296,7 @@ async def click_element(index: int) -> str:
     el = elements[idx]
     x = el["left"] + el["width"] // 2
     y = el["top"] + el["height"] // 2
-    result = _coagent_post("/click", {"x": x, "y": y, "button": "left"})
+    result = _coagent_post("/mouse/click", {"x": x, "y": y, "button": "left"})
     return json.dumps(result or {"error": "click failed"})
 
 @mcp.tool()
@@ -283,43 +304,43 @@ async def double_click(x: int, y: int, button: str = "left") -> str:
     """Double-click at specific coordinates."""
     r1 = await click(x, y, button)
     await asyncio.sleep(0.05)
-    r2 = _coagent_post("/click", {"x": x, "y": y, "button": button})
+    r2 = _coagent_post("/mouse/click", {"x": x, "y": y, "button": button})
     return json.dumps(r2 or {"error": "double click failed"})
 
 @mcp.tool()
 async def right_click(x: int, y: int) -> str:
     """Right-click at coordinates."""
-    result = _coagent_post("/click", {"x": x, "y": y, "button": "right"})
+    result = _coagent_post("/mouse/click", {"x": x, "y": y, "button": "right"})
     return json.dumps(result or {"error": "right click failed"})
 
 @mcp.tool()
 async def move_mouse(x: int, y: int) -> str:
     """Move mouse to coordinates."""
-    result = _coagent_post("/move", {"x": x, "y": y})
+    result = _coagent_post("/mouse/move", {"x": x, "y": y})
     return json.dumps(result or {"error": "move failed"})
 
 @mcp.tool()
 async def type_text(text: str) -> str:
     """Type text at current cursor position."""
-    result = _coagent_post("/type", {"text": text})
+    result = _coagent_post("/key/type", {"text": text})
     return json.dumps(result or {"error": "type failed"})
 
 @mcp.tool()
 async def press_key(keys: list) -> str:
     """Press key combination. Examples: ['ctrl','c'], ['alt','tab'], ['enter']"""
-    result = _coagent_post("/hotkey", {"keys": keys})
+    result = _coagent_post("/key/press", {"keys": keys})
     return json.dumps(result or {"error": "hotkey failed"})
 
 @mcp.tool()
 async def scroll(clicks: int = -3) -> str:
     """Scroll mouse wheel. Negative=down, positive=up."""
-    result = _coagent_post("/scroll", {"clicks": clicks})
+    result = _coagent_post("/mouse/scroll", {"clicks": clicks})
     return json.dumps(result or {"error": "scroll failed"})
 
 @mcp.tool()
 async def drag(x1: int, y1: int, x2: int, y2: int, button: str = "left") -> str:
     """Drag from (x1,y1) to (x2,y2)."""
-    result = _coagent_post("/drag", {"x1": x1, "y1": y1, "x2": x2, "y2": y2, "button": button})
+    result = _coagent_post("/mouse/drag", {"x1": x1, "y1": y1, "x2": x2, "y2": y2, "button": button})
     return json.dumps(result or {"error": "drag failed"})
 
 # ── Window management ────────────────────────────────────────────────────
@@ -351,7 +372,7 @@ async def list_windows() -> str:
 @mcp.tool()
 async def activate_window(title: str) -> str:
     """Bring a window to foreground by title (substring match)."""
-    result = _coagent_post("/activate", {"title": title})
+    result = _coagent_post("/windows/activate", {"title": title})
     return json.dumps(result or {"error": "activate failed"})
 
 # ── Find on screen ───────────────────────────────────────────────────────
@@ -408,7 +429,7 @@ async def find_on_screen(text: str) -> str:
             try:
                 import pytesseract
                 from PIL import Image
-                data = _coagent_get("/screenshot", no_cache=True)
+                data = _coagent_get("/screen/base64", no_cache=True)
                 if data and "data" in data:
                     img = Image.open(io.BytesIO(base64.b64decode(data["data"])))
                     ocr_data = pytesseract.image_to_data(img, output_type=pytesseract.Output.DICT)
@@ -446,26 +467,26 @@ async def chain(actions: list) -> str:
         d = action.get("data", {})
         try:
             if t == "move":
-                r = _coagent_post("/move", {"x": d["x"], "y": d["y"]})
+                r = _coagent_post("/mouse/move", {"x": d["x"], "y": d["y"]})
             elif t == "click":
-                r = _coagent_post("/click", {"x": d.get("x", 0), "y": d.get("y", 0),
+                r = _coagent_post("/mouse/click", {"x": d.get("x", 0), "y": d.get("y", 0),
                                              "button": d.get("button", "left")})
             elif t == "doubleclick":
-                _coagent_post("/click", {"x": d.get("x", 0), "y": d.get("y", 0),
+                _coagent_post("/mouse/click", {"x": d.get("x", 0), "y": d.get("y", 0),
                                          "button": d.get("button", "left")})
                 await asyncio.sleep(0.05)
-                r = _coagent_post("/click", {"x": d.get("x", 0), "y": d.get("y", 0),
+                r = _coagent_post("/mouse/click", {"x": d.get("x", 0), "y": d.get("y", 0),
                                               "button": d.get("button", "left")})
             elif t == "rightclick":
-                r = _coagent_post("/click", {"x": d.get("x", 0), "y": d.get("y", 0), "button": "right"})
+                r = _coagent_post("/mouse/click", {"x": d.get("x", 0), "y": d.get("y", 0), "button": "right"})
             elif t == "type":
-                r = _coagent_post("/type", {"text": d.get("text", "")})
+                r = _coagent_post("/key/type", {"text": d.get("text", "")})
             elif t == "hotkey":
-                r = _coagent_post("/hotkey", {"keys": d.get("keys", [])})
+                r = _coagent_post("/key/press", {"keys": d.get("keys", [])})
             elif t == "scroll":
-                r = _coagent_post("/scroll", {"clicks": d.get("clicks", -3)})
+                r = _coagent_post("/mouse/scroll", {"clicks": d.get("clicks", -3)})
             elif t == "drag":
-                r = _coagent_post("/drag", {"x1": d["x1"], "y1": d["y1"],
+                r = _coagent_post("/mouse/drag", {"x1": d["x1"], "y1": d["y1"],
                                             "x2": d["x2"], "y2": d["y2"],
                                             "button": d.get("button", "left")})
             else:
@@ -480,19 +501,19 @@ async def chain(actions: list) -> str:
 @mcp.tool()
 async def get_monitors() -> str:
     """Get monitor info."""
-    data = _coagent_get("/screensize", no_cache=True)
+    data = _coagent_get("/monitors", no_cache=True)
     return json.dumps(data or {"error": "no monitor data"})
 
 @mcp.tool()
 async def get_cursor_position() -> str:
     """Get current cursor position."""
-    data = _coagent_get("/cursor", no_cache=True)
+    data = _coagent_get("/cursor/pos", no_cache=True)
     return json.dumps(data or {"error": "no cursor data"})
 
 @mcp.tool()
 async def get_coagent_status() -> str:
     """Get full CoAgent server status."""
-    data = _coagent_get("/", no_cache=True)
+    data = _coagent_get("/ping", no_cache=True)
     return json.dumps(data or {"error": "CoAgent unreachable"})
 
 @mcp.tool()
@@ -512,9 +533,9 @@ async def emergency_resume() -> str:
 @mcp.tool()
 async def wake_screen() -> str:
     """Wake the display from sleep/lock using Ctrl+Alt+Del, then Esc."""
-    _coagent_post("/hotkey", {"keys": ["ctrl", "alt", "del"]})
+    _coagent_post("/key/press", {"keys": ["ctrl", "alt", "del"]})
     await asyncio.sleep(2)
-    _coagent_post("/hotkey", {"keys": ["escape"]})
+    _coagent_post("/key/press", {"keys": ["escape"]})
     await asyncio.sleep(1)
     return json.dumps({"status": "wake_signal_sent"})
 
@@ -523,21 +544,8 @@ async def wake_screen() -> str:
 @mcp.tool()
 async def launch_app(path: str) -> str:
     """Launch application or open file."""
-    if FAST_MODE:
-        _lazy_imports()
-    import subprocess
-    try:
-        # Security: only allow safe file types, no shell=True
-        safe_exts = ('.exe', '.lnk', '.bat', '.cmd', '.msi')
-        if path.startswith(('http://', 'https://', 'ms-')):
-            os.startfile(path)
-        elif path.lower().endswith(safe_exts):
-            subprocess.Popen([path])
-        else:
-            return json.dumps({"error": f"Unsafe file type: {path}"})
-        return json.dumps({"status": "launched", "path": path})
-    except Exception as e:
-        return json.dumps({"error": str(e)})
+    result = _coagent_post("/app/open", {"path": path})
+    return json.dumps(result or {"error": "launch failed"})
 
 # ── Run via command click_element ────────────────────────────────────────
 
@@ -552,7 +560,7 @@ async def click_by_name(name: str) -> str:
 if __name__ == "__main__":
     if "--test" in sys.argv:
         print("Running self-test...")
-        result = _coagent_get("/", no_cache=True)
+        result = _coagent_get("/ping", no_cache=True)
         print(f"CoAgent ping: {'OK' if result and 'error' not in result else 'FAIL'}")
         print(f"PIL: {'OK' if HAS_PIL else 'MISSING'}")
         print(f"Tesseract: {'OK' if HAS_TESSERACT else 'MISSING'}")

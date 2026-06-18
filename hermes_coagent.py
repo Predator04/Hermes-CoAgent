@@ -22,20 +22,29 @@ LAUNCH:
   python hermes_coagent.py --token=KEY        # Auth with fixed token
   python hermes_coagent.py --allow-external   # Bind 0.0.0.0 (requires --secure)
 """
-import sys, os, json, base64, subprocess, threading, time, shutil, traceback
-import re, queue, urllib.request
+import sys, os, json, base64, subprocess, threading, time, shutil, traceback, functools
+import re, queue, urllib.request, secrets, shlex, concurrent.futures
 from io import BytesIO
 from pathlib import Path
 from datetime import datetime
 from dataclasses import dataclass, field
 from typing import List
 import ctypes
+from xml.sax.saxutils import escape as _xml_escape
 
 # Auth module (optional - provides --secure and --token support)
 try:
     from auth import require_auth as _require_auth
-    # Make them available at module level for route decorators
-    require_auth = _require_auth
+    # Wrap require_auth to skip auth-check for whitelisted routes
+    # (before_request already checks the whitelist and sets g._auth_passed)
+    def require_auth(f):
+        @functools.wraps(f)
+        def wrapper(*args, **kwargs):
+            ap = getattr(g, '_auth_passed', False)
+            if ap:
+                return f(*args, **kwargs)
+            return _require_auth(f)(*args, **kwargs)
+        return wrapper
 except ImportError:
     # Fallback no-op decorator
     def require_auth(f): return f
@@ -140,10 +149,11 @@ def _ensure_interactive_session():
 
 _ensure_interactive_session()
 
-from flask import Flask, request, jsonify, send_file, Response
+from flask import Flask, request, jsonify, send_file, Response, g
 app = Flask(__name__, static_folder=None)
 MACROS_DIR.mkdir(exist_ok=True)
 SCREENSHOTS_DIR.mkdir(exist_ok=True)
+
 
 # ── Global Error Handlers ──────────────────────────────────
 @app.errorhandler(400)
@@ -266,11 +276,18 @@ def ps(cmd, timeout=30):
 
 def _interactive_task_xml(command, arguments, author="CoAgent", execution_limit="PT10S", working_dir=None):
     """Build a Scheduled Task XML body for work that must run on the interactive desktop."""
-    working_dir_xml = f"      <WorkingDirectory>{working_dir}</WorkingDirectory>\n" if working_dir else ""
+    command_xml = _xml_escape(str(command))
+    arguments_xml = _xml_escape(str(arguments))
+    author_xml = _xml_escape(str(author))
+    execution_limit_xml = _xml_escape(str(execution_limit))
+    working_dir_xml = (
+        f"      <WorkingDirectory>{_xml_escape(str(working_dir))}</WorkingDirectory>\n"
+        if working_dir else ""
+    )
     return (
         '<?xml version="1.0" encoding="UTF-16"?>\n'
         '<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">\n'
-        f'  <RegistrationInfo><Author>{author}</Author></RegistrationInfo>\n'
+        f'  <RegistrationInfo><Author>{author_xml}</Author></RegistrationInfo>\n'
         '  <Principals>\n'
         '    <Principal id="Author">\n'
         '      <UserId>Admin</UserId>\n'
@@ -283,13 +300,13 @@ def _interactive_task_xml(command, arguments, author="CoAgent", execution_limit=
         '    <AllowStartOnDemand>true</AllowStartOnDemand>\n'
         '    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>\n'
         '    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>\n'
-        f'    <ExecutionTimeLimit>{execution_limit}</ExecutionTimeLimit>\n'
+        f'    <ExecutionTimeLimit>{execution_limit_xml}</ExecutionTimeLimit>\n'
         '    <Priority>7</Priority>\n'
         '  </Settings>\n'
         '  <Actions Context="Author">\n'
         '    <Exec>\n'
-        f'      <Command>{command}</Command>\n'
-        f'      <Arguments>{arguments}</Arguments>\n'
+        f'      <Command>{command_xml}</Command>\n'
+        f'      <Arguments>{arguments_xml}</Arguments>\n'
         f'{working_dir_xml}'
         '    </Exec>\n'
         '  </Actions>\n'
@@ -307,8 +324,9 @@ def _schtasks_ps1(task_name: str, xml_path: Path, ps1_path: Path, arguments: str
     )
     try:
         xml_path.write_text(xml, encoding="utf-16")
-    except:
-        pass
+    except Exception as e:
+        _console(f"[schtasks] Could not write task XML {xml_path}: {e}")
+        return False
     r1 = subprocess.run(
         ["schtasks", "/Create", "/XML", str(xml_path), "/TN", task_name, "/F"],
         capture_output=True, text=True, timeout=10
@@ -411,35 +429,36 @@ def _execute_action(action: dict):
         if elapsed < state.min_action_gap:
             time.sleep(state.min_action_gap - elapsed)
         try:
+            action_result = None
             if act_type == "move":
                 if bg_mode and HAS_SENDINPUT:
-                    _get_uia_engine().send_mouse_move(data["x"], data["y"])
+                    action_result = _get_uia_engine().send_mouse_move(data["x"], data["y"])
                 else:
                     pyautogui.moveTo(data["x"], data["y"], duration=data.get("duration", 0.01))
             elif act_type == "click":
                 if bg_mode and HAS_SENDINPUT:
                     btn = data.get("button", "left")
-                    _get_uia_engine().send_mouse_click(data.get("x", None), data.get("y", None), button=btn, clicks=data.get("clicks", 1))
+                    action_result = _get_uia_engine().send_mouse_click(data.get("x", None), data.get("y", None), button=btn, clicks=data.get("clicks", 1))
                 else:
                     pyautogui.click(button=data.get("button", "left"), clicks=data.get("clicks", 1), interval=0.005)
             elif act_type == "type":
                 if bg_mode and HAS_SENDINPUT:
-                    _get_uia_engine().send_keys(data["text"])
+                    action_result = _get_uia_engine().send_keys(data["text"])
                 else:
                     pyautogui.typewrite(data["text"], interval=data.get("interval", 0.005))
             elif act_type == "hotkey":
                 if bg_mode and HAS_SENDINPUT:
-                    _get_uia_engine().send_input(data.get("keys", []))
+                    action_result = _get_uia_engine().send_input(data.get("keys", []))
                 else:
                     pyautogui.hotkey(*data.get("keys", []))
             elif act_type == "scroll":
                 if bg_mode and HAS_SENDINPUT:
-                    _get_uia_engine().send_scroll(data.get("clicks", -3))
+                    action_result = _get_uia_engine().send_scroll(data.get("clicks", -3))
                 else:
                     pyautogui.scroll(data.get("clicks", -3))
             elif act_type == "drag":
                 if bg_mode and HAS_SENDINPUT:
-                    _get_uia_engine().send_mouse_drag(
+                    action_result = _get_uia_engine().send_mouse_drag(
                         data["x1"], data["y1"], data["x2"], data["y2"],
                         button=data.get("button", "left")
                     )
@@ -449,19 +468,23 @@ def _execute_action(action: dict):
                                   button=data.get("button","left"), duration=data.get("duration",0.15))
             elif act_type == "doubleclick":
                 if bg_mode and HAS_SENDINPUT:
-                    _get_uia_engine().send_mouse_click(data.get("x", None), data.get("y", None), button=data.get("button","left"), clicks=2)
+                    action_result = _get_uia_engine().send_mouse_click(data.get("x", None), data.get("y", None), button=data.get("button","left"), clicks=2)
                 else:
                     pyautogui.doubleClick(button=data.get("button","left"))
             elif act_type == "rightclick":
                 if bg_mode and HAS_SENDINPUT:
-                    _get_uia_engine().send_mouse_click(data.get("x", None), data.get("y", None), button="right")
+                    action_result = _get_uia_engine().send_mouse_click(data.get("x", None), data.get("y", None), button="right")
                 else:
                     pyautogui.rightClick(button=data.get("button","right"))
             elif act_type == "tripleclick":
                 if bg_mode and HAS_SENDINPUT:
-                    _get_uia_engine().send_mouse_click(data.get("x", None), data.get("y", None), button=data.get("button","left"), clicks=3)
+                    action_result = _get_uia_engine().send_mouse_click(data.get("x", None), data.get("y", None), button=data.get("button","left"), clicks=3)
                 else:
                     pyautogui.tripleClick(button=data.get("button","left"))
+            else:
+                raise ValueError(f"Unsupported action type: {act_type}")
+            if isinstance(action_result, dict) and action_result.get("success") is False:
+                raise RuntimeError(action_result.get("error", f"{act_type} failed"))
         finally:
             state.last_action_time = time.time()
         state.action_history.append({"type":act_type,"data":data,"time":datetime.now().isoformat()})
@@ -791,31 +814,55 @@ def _keyboard_watchdog():
     state.watchdog_running = False
 
 # === MACROS ENGINE ===
+_MACRO_NAME_RE = re.compile(r"^[A-Za-z0-9_. -]{1,80}$")
+
+def _sanitize_macro_name(name):
+    """Return a safe single-file macro name, or raise ValueError."""
+    cleaned = str(name or "").strip()
+    if not cleaned:
+        raise ValueError("Macro name is required")
+    if Path(cleaned).name != cleaned or "/" in cleaned or "\\" in cleaned:
+        raise ValueError("Macro name must not contain path separators")
+    if not _MACRO_NAME_RE.fullmatch(cleaned):
+        raise ValueError("Macro name contains unsupported characters")
+    return cleaned
+
+def _macro_path(name):
+    return MACROS_DIR / f"{_sanitize_macro_name(name)}.json"
+
 def macro_list_api():
     macros = []
     for f in MACROS_DIR.glob("*.json"):
-        data = json.loads(f.read_text())
-        macros.append({"name": f.stem, "actions": len(data.get("actions", [])),
-                       "created": data.get("created",""), "modified": data.get("modified","")})
+        try:
+            data = json.loads(f.read_text(encoding="utf-8"))
+            macros.append({"name": f.stem, "actions": len(data.get("actions", [])),
+                           "created": data.get("created",""), "modified": data.get("modified","")})
+        except Exception as e:
+            macros.append({"name": f.stem, "error": str(e)})
     return {"macros": macros}
 
 def macro_save_api(name, actions):
-    path = MACROS_DIR / f"{name}.json"
+    name = _sanitize_macro_name(name)
+    path = _macro_path(name)
     now = str(datetime.now())
     data = {"name": name, "actions": actions, "created": now, "modified": now}
-    path.write_text(json.dumps(data, indent=2))
+    path.write_text(json.dumps(data, indent=2), encoding="utf-8")
     return {"status": "saved", "name": name, "actions": len(actions)}
 
 def macro_load(name):
-    path = MACROS_DIR / f"{name}.json"
+    path = _macro_path(name)
     if path.exists():
-        return json.loads(path.read_text())
+        return json.loads(path.read_text(encoding="utf-8"))
     return None
 
 def macro_run_api(name):
-    data = macro_load(name)
+    try:
+        safe_name = _sanitize_macro_name(name)
+        data = macro_load(safe_name)
+    except ValueError as e:
+        return {"error": str(e)}
     if not data:
-        return {"error": f"Macro '{name}' not found"}
+        return {"error": f"Macro '{safe_name}' not found"}
     actions = data.get("actions", [])
     results = []
     for i, action in enumerate(actions):
@@ -825,9 +872,13 @@ def macro_run_api(name):
         except Exception as e:
             results.append({"index": i, "status": "error", "error": str(e)})
             break
-    return {"name": name, "executed": len(results), "total": len(actions), "results": results}
+    return {"name": safe_name, "executed": len(results), "total": len(actions), "results": results}
 
 def macro_record_api(name):
+    try:
+        name = _sanitize_macro_name(name)
+    except ValueError as e:
+        return {"error": str(e)}
     state.recorder_active = True
     state.recorder_actions = []
     # Start listener thread that captures keyboard/mouse events
@@ -928,6 +979,8 @@ def file_write_api(path, content, is_base64=False):
 def file_delete_api(path):
     try:
         p = Path(path)
+        if _is_protected_root(p):
+            return {"error": "Refusing to delete an allowed root directory"}
         if p.is_dir():
             shutil.rmtree(p)
         else:
@@ -980,17 +1033,34 @@ DANGEROUS_CMD_CHARS = frozenset('|;&`$(){}<>')
 
 def _sanitize_path(p):
     """Block path traversal. Only allow paths under allowed roots."""
-    resolved = Path(p).resolve()
-    if not any(str(resolved).startswith(str(r)) for r in SAFE_ALLOWED_ROOTS):
-        raise ValueError(f"Path traversal blocked: {p} -> {resolved}")
-    return str(resolved)
+    if p is None or str(p).strip() == "":
+        raise ValueError("Path is required")
+    resolved = Path(p).expanduser().resolve()
+    for root in SAFE_ALLOWED_ROOTS:
+        try:
+            common = os.path.commonpath([
+                os.path.normcase(str(resolved)),
+                os.path.normcase(str(root)),
+            ])
+        except ValueError:
+            continue
+        if common == os.path.normcase(str(root)):
+            return str(resolved)
+    raise ValueError(f"Path traversal blocked: {p} -> {resolved}")
+
+def _is_protected_root(path):
+    resolved = Path(path).resolve()
+    return any(resolved == root for root in SAFE_ALLOWED_ROOTS)
 
 def _sanitize_cmd(cmd_str):
     """Block dangerous shell metacharacters in string commands."""
     for d in DANGEROUS_CMD_CHARS:
         if d in cmd_str:
             raise ValueError(f"Command blocked: contains character {repr(d)}")
-    return cmd_str.split()
+    args = shlex.split(cmd_str, posix=False)
+    if not args:
+        raise ValueError("Command is empty")
+    return args
 
 def run_command_api(cmd, timeout=30):
     try:
@@ -1024,14 +1094,16 @@ def _launch_app_safe(path):
     """Launch an application without shell=True. Only allows .exe, .lnk, URLs."""
     path = str(path)
     # Only allow safe file types
-    safe_extensions = ('.exe', '.lnk', '.bat', '.cmd', '.msi', '.url')
+    safe_extensions = ('.exe', '.lnk', '.url')
     if path.startswith(('http://', 'https://', 'ms-')):
         # System protocol handlers — use os.startfile (no shell=True)
         import os as _os
         _os.startfile(path)
         return {"status": "launched", "path": path}
     if not path.lower().endswith(safe_extensions):
-        return {"error": f"Unsafe file type: {path}"}, 400
+        return {"error": f"Unsafe file type: {path}"}
+    if not os.path.isfile(path):
+        return {"error": f"File not found: {path}"}
     subprocess.Popen([path], shell=False)
     return {"status": "launched", "path": path}
 
@@ -1130,6 +1202,43 @@ def _limit_arg(name, default, maximum):
     except (TypeError, ValueError):
         value = default
     return max(0, min(value, maximum))
+
+AUTH_EXEMPT_PREFIXES = [
+    "/static", "/emergency", "/screen", "/screenshot", "/dashboard2",
+    "/som/", "/uia/", "/power/", "/wallpaper/", "/tunnel/", "/macro/",
+    "/scheduler/",
+]
+AUTH_EXEMPT_PATHS = {
+    "/", "/dashboard2", "/health", "/ping", "/version",
+    "/cursor/pos", "/copilot/mode", "/events", "/logs", "/history",
+    "/stats", "/windows", "/monitors", "/monitors/layout", "/describe",
+    "/clipboard/get", "/clipboard/set", "/macros", "/crop",
+    "/search/files", "/voice/toggle", "/replay",
+    "/favicon.ico",
+}
+
+def _json_body():
+    data = request.get_json(silent=True)
+    return data if isinstance(data, dict) else {}
+
+def _missing_field(name):
+    return jsonify({"error": f"Missing required field: {name}"}), 400
+
+def _result_response(result, default_error_status=400):
+    if isinstance(result, tuple) and len(result) == 2:
+        payload, status = result
+        return jsonify(payload), status
+    status = default_error_status if isinstance(result, dict) and result.get("error") else 200
+    return jsonify(result), status
+
+def _auth_required_response(auth_module):
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        return jsonify({"error": "Unauthorized"}), 401
+    token = auth_header[7:]
+    if not secrets.compare_digest(token, auth_module.AUTH_TOKEN or ""):
+        return jsonify({"error": "Invalid token"}), 403
+    return None
 
 @app.route("/logs")
 def route_logs():
@@ -1234,14 +1343,16 @@ def route_cursor():
 @app.route("/mouse/move", methods=["POST"])
 @require_auth
 def route_mouse_move():
-    d = request.json
+    d = _json_body()
+    if "x" not in d or "y" not in d:
+        return jsonify({"error": "Missing required fields: x, y"}), 400
     _execute_action({"type": "move", "data": d})
     return jsonify({"status": "moved", "x": d["x"], "y": d["y"]})
 
 @app.route("/mouse/click", methods=["POST"])
 @require_auth
 def route_mouse_click():
-    d = request.json or {}
+    d = _json_body()
     _execute_action({"type": "click", "data": d})
     return jsonify({"status": "clicked", "button": d.get("button", "left")})
 
@@ -1256,44 +1367,52 @@ def route_copilot_mode():
     })
 
 @app.route("/mouse/doubleclick", methods=["POST"])
+@app.route("/mouse/dblclick", methods=["POST"])
 @require_auth
 def route_mouse_dclick():
-    d = request.json or {}
+    d = _json_body()
     _execute_action({"type": "doubleclick", "data": d})
     return jsonify({"status": "double_clicked"})
 
 @app.route("/mouse/rightclick", methods=["POST"])
+@app.route("/mouse/rclick", methods=["POST"])
 @require_auth
 def route_mouse_rclick():
-    d = request.json or {}
+    d = _json_body()
     _execute_action({"type": "rightclick", "data": d})
     return jsonify({"status": "right_clicked"})
 
 @app.route("/mouse/drag", methods=["POST"])
 @require_auth
 def route_mouse_drag():
-    d = request.json
+    d = _json_body()
+    if not all(k in d for k in ("x1", "y1", "x2", "y2")):
+        return jsonify({"error": "Missing required fields: x1, y1, x2, y2"}), 400
     _execute_action({"type": "drag", "data": d})
     return jsonify({"status": "dragged"})
 
 @app.route("/mouse/scroll", methods=["POST"])
 @require_auth
 def route_mouse_scroll():
-    d = request.json or {}
+    d = _json_body()
     _execute_action({"type": "scroll", "data": d})
     return jsonify({"status": "scrolled"})
 
 @app.route("/key/type", methods=["POST"])
 @require_auth
 def route_key_type():
-    d = request.json
+    d = _json_body()
+    if "text" not in d:
+        return _missing_field("text")
     _execute_action({"type": "type", "data": d})
     return jsonify({"status": "typed", "chars": len(d.get("text",""))})
 
 @app.route("/key/press", methods=["POST"])
 @require_auth
 def route_key_press():
-    d = request.json
+    d = _json_body()
+    if "keys" not in d:
+        return _missing_field("keys")
     _execute_action({"type": "hotkey", "data": d})
     return jsonify({"status": "pressed", "keys": d.get("keys",[])})
 
@@ -1315,7 +1434,7 @@ def route_minimize():
 @require_auth
 def route_click_session1():
     """Click at coordinates on Session 1 via schtasks."""
-    d = request.json
+    d = _json_body()
     x = int(d.get("x", 960))
     y = int(d.get("y", 540))
     if not (-99999 <= x <= 99999 and -99999 <= y <= 99999):
@@ -1330,8 +1449,10 @@ def route_click_session1():
 @app.route("/chain", methods=["POST"])
 @require_auth
 def route_chain():
-    data = request.json
+    data = _json_body()
     actions = data.get("actions", [])
+    if not isinstance(actions, list):
+        return jsonify({"error": "actions must be a list"}), 400
     results = []
     for i, action in enumerate(actions):
         try:
@@ -1346,8 +1467,10 @@ def route_chain():
 @app.route("/act", methods=["POST"])
 @require_auth
 def route_act_snap():
-    data = request.json
+    data = _json_body()
     action = data.get("action", {})
+    if not isinstance(action, dict) or not action.get("type"):
+        return jsonify({"error": "action.type is required"}), 400
     before = _grab_screen_bytes(force=True)
     try:
         _execute_action(action)
@@ -1393,6 +1516,8 @@ def route_screen_jpeg():
 
 @app.route("/screenshot/fresh")
 @app.route("/screenshot/force")
+@app.route("/screen/fresh")
+@app.route("/screen/force")
 def route_screen_fresh():
     try:
         return send_file(BytesIO(_grab_screen_bytes(force=True)), mimetype="image/png")
@@ -1409,6 +1534,7 @@ def route_screen_b64():
         return jsonify({"error": str(e)}), 500
 
 @app.route("/screen/diagnose")
+@app.route("/screen/diag")
 def route_screen_diag():
     return jsonify({
         "session_id": os.environ.get("SESSIONNAME", "none"),
@@ -1472,8 +1598,9 @@ def route_history():
     return jsonify({"actions": actions, "total": total})
 
 @app.route("/replay", methods=["POST"])
+@require_auth
 def route_replay():
-    d = request.json or {}
+    d = _json_body()
     count = min(d.get("count", 5), 50)
     results = []
     for action in state.action_history[-count:]:
@@ -1486,37 +1613,50 @@ def route_replay():
 
 # === WINDOWS ===
 @app.route("/windows")
+@require_auth
 def route_windows():
     return jsonify(list_windows_api())
 
 @app.route("/windows/activate", methods=["POST"])
+@require_auth
 def route_win_activate():
-    d = request.json
+    d = _json_body()
+    if "title" not in d:
+        return _missing_field("title")
     return jsonify(activate_window_api(d["title"]))
 
 # === CLIPBOARD ===
 @app.route("/clipboard/get")
+@require_auth
 def route_clip_get():
     return jsonify(clipboard_get_api())
 
 @app.route("/clipboard/set", methods=["POST"])
+@require_auth
 def route_clip_set():
-    d = request.json
+    d = _json_body()
+    if "text" not in d:
+        return _missing_field("text")
     return jsonify(clipboard_set_api(d["text"]))
 
 # === APP ===
 @app.route("/app/open", methods=["POST"])
 @require_auth
 def route_app_open():
-    d = request.json
+    d = _json_body()
+    if "path" not in d:
+        return _missing_field("path")
     result = _launch_app_safe(d["path"])
-    return jsonify(result)
+    return _result_response(result)
 
 @app.route("/app/run", methods=["POST"])
 @require_auth
 def route_app_run():
-    d = request.json
-    return jsonify(run_command_api(d["cmd"], d.get("timeout", 30)))
+    d = _json_body()
+    cmd = d.get("cmd", d.get("command"))
+    if not cmd:
+        return _missing_field("cmd")
+    return _result_response(run_command_api(cmd, d.get("timeout", 30)))
 
 # === MONITORS ===
 @app.route("/monitors")
@@ -1527,64 +1667,80 @@ def route_monitors():
 @app.route("/ocr/find", methods=["POST"])
 @require_auth
 def route_ocr():
-    d = request.json
-    return jsonify(ocr_find_text(d["text"], d.get("region")))
+    d = _json_body()
+    if "text" not in d:
+        return _missing_field("text")
+    return _result_response(ocr_find_text(d["text"], d.get("region")), default_error_status=500)
 
 # === VISUAL SEARCH ===
 @app.route("/visual/find", methods=["POST"])
 @require_auth
 def route_visual():
-    d = request.json
-    return jsonify(visual_find_image(d["template_path"], d.get("confidence", 0.8)))
+    d = _json_body()
+    if "template_path" not in d:
+        return _missing_field("template_path")
+    try:
+        template_path = _sanitize_path(d["template_path"])
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 403
+    return _result_response(visual_find_image(template_path, d.get("confidence", 0.8)), default_error_status=500)
 
 # === FILES ===
 @app.route("/file/list", methods=["POST"])
 @require_auth
 def route_file_list():
-    d = request.json
+    d = _json_body()
     p = d.get("path", ".")
     try:
         p = _sanitize_path(p)
     except ValueError as e:
         return jsonify({"error": str(e)}), 403
-    return jsonify(file_list_api(p))
+    return _result_response(file_list_api(p))
 
 @app.route("/file/read", methods=["POST"])
 @require_auth
 def route_file_read():
-    d = request.json
+    d = _json_body()
+    if "path" not in d:
+        return _missing_field("path")
     try:
         p = _sanitize_path(d["path"])
     except ValueError as e:
         return jsonify({"error": str(e)}), 403
-    return jsonify(file_read_api(p))
+    return _result_response(file_read_api(p), default_error_status=404)
 
 @app.route("/file/write", methods=["POST"])
 @require_auth
 def route_file_write():
-    d = request.json
+    d = _json_body()
+    if "path" not in d or "content" not in d:
+        return jsonify({"error": "Missing required fields: path, content"}), 400
     try:
         p = _sanitize_path(d["path"])
     except ValueError as e:
         return jsonify({"error": str(e)}), 403
-    return jsonify(file_write_api(p, d["content"], d.get("is_base64", False)))
+    return _result_response(file_write_api(p, d["content"], d.get("is_base64", False)))
 
 @app.route("/file/delete", methods=["POST"])
 @require_auth
 def route_file_delete():
-    d = request.json
+    d = _json_body()
+    if "path" not in d:
+        return _missing_field("path")
     try:
         p = _sanitize_path(d["path"])
     except ValueError as e:
         return jsonify({"error": str(e)}), 403
-    return jsonify(file_delete_api(p))
+    return _result_response(file_delete_api(p))
 
 # === TTS ===
 @app.route("/tts/speak", methods=["POST"])
 @require_auth
 def route_tts():
-    d = request.json
-    return jsonify(tts_speak_api(d["text"]))
+    d = _json_body()
+    if "text" not in d:
+        return _missing_field("text")
+    return _result_response(tts_speak_api(d["text"]), default_error_status=500)
 
 # === TUNNEL ===
 @app.route("/tunnel/start", methods=["POST"])
@@ -1597,36 +1753,57 @@ def route_tunnel_start():
 def route_tunnel_stop():
     return jsonify(tunnel_stop_action())
 
-@app.route("/tunnel/status")
+@app.route("/tunnel/status", methods=["GET", "POST"])
+@require_auth
 def route_tunnel_status():
     return jsonify(tunnel_status_action())
 
 # === MACROS ===
 @app.route("/macro/list", methods=["GET", "POST"])
 @app.route("/macros")
+@require_auth
 def route_macro_list():
     return jsonify(macro_list_api())
 
 @app.route("/macro/save", methods=["POST"])
+@require_auth
 def route_macro_save():
-    d = request.json
-    return jsonify(macro_save_api(d["name"], d.get("actions", [])))
+    d = _json_body()
+    if "name" not in d:
+        return _missing_field("name")
+    try:
+        return jsonify(macro_save_api(d["name"], d.get("actions", [])))
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
 
 @app.route("/macro/run", methods=["POST"])
+@require_auth
 def route_macro_run():
-    d = request.json
-    return jsonify(macro_run_api(d["name"]))
+    d = _json_body()
+    if "name" not in d:
+        return _missing_field("name")
+    result = macro_run_api(d["name"])
+    status = 404 if result.get("error", "").endswith("not found") else 400 if result.get("error") else 200
+    return jsonify(result), status
 
 @app.route("/macro/record", methods=["POST"])
+@require_auth
 def route_macro_record():
-    d = request.json
-    return jsonify(macro_record_api(d["name"]))
+    d = _json_body()
+    if "name" not in d:
+        return _missing_field("name")
+    return _result_response(macro_record_api(d["name"]))
 
 @app.route("/macro/delete", methods=["POST"])
 @require_auth
 def route_macro_delete():
-    d = request.json
-    p = MACROS_DIR / f"{d['name']}.json"
+    d = _json_body()
+    if "name" not in d:
+        return _missing_field("name")
+    try:
+        p = _macro_path(d["name"])
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
     if p.exists():
         p.unlink()
         return jsonify({"status": "deleted", "name": d["name"]})
@@ -1665,7 +1842,7 @@ def route_uia_find(name):
 @require_auth
 def route_uia_click():
     """Click a UI element by index (int) or name (str)."""
-    d = request.json
+    d = _json_body()
     target = d.get("target", d.get("index", d.get("name", 0)))
     ue = _get_uia_engine()
     result = ue.uia_click_element(target)
@@ -1741,9 +1918,10 @@ def route_som_image():
         return jsonify({"error": str(e)}), 500
 
 @app.route("/uia/find-combined", methods=["POST"])
+@require_auth
 def route_find_combined():
     """Find element by text using both UIA and OCR, return coordinates."""
-    d = request.json
+    d = _json_body()
     text = d.get("text", "")
     ue = _get_uia_engine()
     return jsonify(ue.find_on_screen(text))
@@ -1752,7 +1930,7 @@ def route_find_combined():
 @require_auth
 def route_input_send():
     """Send keystrokes in background (doesn't steal focus)."""
-    d = request.json
+    d = _json_body()
     keys = d.get("keys", d.get("text", "").split())
     ue = _get_uia_engine()
     return jsonify(ue.send_input_background(keys))
@@ -1789,12 +1967,12 @@ def route_som_bridge():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-@app.route("/som/per-window")
+@app.route("/som/per-window", methods=["GET", "POST"])
 def route_som_per_window():
     """Per-window SOM snapshots (v5.1). Body: {window_title: 'Telegram'} or empty for all windows."""
     ue = _get_uia_engine()
-    d = request.json or {}
-    window_title = d.get("window_title", None) if hasattr(request, 'json') and request.json else None
+    d = _json_body()
+    window_title = request.args.get("window_title") or d.get("window_title")
     result = ue.per_window_som(window_title)
     return jsonify(result)
 
@@ -1802,7 +1980,7 @@ def route_som_per_window():
 def route_som_point():
     """Find the UIA element at pixel coordinates (v5.1). Body: {x: 100, y: 200}"""
     ue = _get_uia_engine()
-    d = request.json or {}
+    d = _json_body()
     x = d.get("x", 0)
     y = d.get("y", 0)
     result = ue.find_element_by_center(x, y)
@@ -1830,6 +2008,7 @@ def route_uia_accelerated():
 # ── POWER MANAGEMENT ──────────────────────────────────────────
 
 @app.route("/power/sleep", methods=["POST"])
+@require_auth
 def route_power_sleep():
     """Put PC to sleep."""
     try:
@@ -1840,27 +2019,31 @@ def route_power_sleep():
         return jsonify({"error": str(e)}), 500
 
 @app.route("/power/shutdown", methods=["POST"])
+@require_auth
 def route_power_shutdown():
     """Shutdown PC. Body: {timeout: 30} (seconds)."""
-    d = request.json or {}
+    d = _json_body()
     t = d.get("timeout", 30)
     subprocess.run(["shutdown", "/s", "/t", str(t)], capture_output=True)
     return jsonify({"status": "shutdown_scheduled", "timeout": t})
 
 @app.route("/power/restart", methods=["POST"])
+@require_auth
 def route_power_restart():
     """Restart PC."""
-    t = (request.json or {}).get("timeout", 30)
+    t = _json_body().get("timeout", 30)
     subprocess.run(["shutdown", "/r", "/t", str(t)], capture_output=True)
     return jsonify({"status": "restart_scheduled", "timeout": t})
 
 @app.route("/power/lock", methods=["POST"])
+@require_auth
 def route_power_lock():
     """Lock the workstation."""
     ctypes.windll.user32.LockWorkStation()
     return jsonify({"status": "locked"})
 
 @app.route("/power/cancel", methods=["POST"])
+@require_auth
 def route_power_cancel():
     """Cancel pending shutdown/restart."""
     subprocess.run(["shutdown", "/a"], capture_output=True)
@@ -1869,10 +2052,14 @@ def route_power_cancel():
 # ── WALLPAPER CONTROL ─────────────────────────────────────────
 
 @app.route("/wallpaper/set", methods=["POST"])
+@require_auth
 def route_wallpaper_set():
     """Set desktop wallpaper. Body: {path: "C:/img.jpg"}"""
-    d = request.json or {}
-    img_path = d.get("path", "")
+    d = _json_body()
+    try:
+        img_path = _sanitize_path(d.get("path", ""))
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 403
     if not os.path.isfile(img_path):
         return jsonify({"error": "File not found"}), 404
     abs_path = os.path.abspath(img_path)
@@ -1881,10 +2068,14 @@ def route_wallpaper_set():
     return jsonify({"status": "ok", "wallpaper": abs_path})
 
 @app.route("/wallpaper/cycle", methods=["POST"])
+@require_auth
 def route_wallpaper_cycle():
     """Cycle through wallpapers in a folder."""
-    d = request.json or {}
-    folder = d.get("folder", "")
+    d = _json_body()
+    try:
+        folder = _sanitize_path(d.get("folder", ""))
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 403
     if not os.path.isdir(folder):
         return jsonify({"error": "Folder not found"}), 404
     exts = ('.jpg','.jpeg','.png','.bmp','.gif')
@@ -1909,10 +2100,14 @@ def route_wallpaper_cycle():
     return jsonify({"status": "ok", "wallpaper": os.path.basename(img), "index": idx, "total": len(files)})
 
 @app.route("/wallpaper/random", methods=["POST"])
+@require_auth
 def route_wallpaper_random():
     """Set random wallpaper from a folder."""
-    d = request.json or {}
-    folder = d.get("folder", "")
+    d = _json_body()
+    try:
+        folder = _sanitize_path(d.get("folder", ""))
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 403
     if not os.path.isdir(folder):
         return jsonify({"error": "Folder not found"}), 404
     import random as _rnd
@@ -1928,12 +2123,16 @@ def route_wallpaper_random():
 # ── FILE SEARCH ───────────────────────────────────────────────
 
 @app.route("/search/files", methods=["POST"])
+@require_auth
 def route_search_files():
     """Search files by name/glob. Body: {pattern: "*.pdf", path: "C:/Users", limit: 50}"""
     import fnmatch
-    d = request.json or {}
+    d = _json_body()
     pattern = d.get("pattern", "*")
-    search_path = d.get("path", "C:\\")
+    try:
+        search_path = _sanitize_path(d.get("path", os.environ.get("USERPROFILE", "C:/Users/Default")))
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 403
     limit = min(d.get("limit", 50), 200)
     try:
         results = []
@@ -1960,9 +2159,10 @@ def route_search_files():
 # ── SMART CROP / OCR ──────────────────────────────────────────
 
 @app.route("/crop", methods=["POST"])
+@require_auth
 def route_crop():
     """Smart crop: OCR the whole screen, copy text to clipboard."""
-    d = request.json or {}
+    d = _json_body()
     region = d.get("region")
     try:
         img = _capture_raw()
@@ -1990,6 +2190,7 @@ def route_crop():
 # ── DESCRIBE SCREEN ───────────────────────────────────────────
 
 @app.route("/describe", methods=["GET"])
+@require_auth
 def route_describe():
     """Describe current screen via OCR."""
     try:
@@ -2026,14 +2227,16 @@ def _save_scheduler(data):
     SCHEDULER_FILE.write_text(json.dumps(data, indent=2))
 
 @app.route("/scheduler/list", methods=["GET"])
+@require_auth
 def route_scheduler_list():
     """List scheduled actions."""
     return jsonify(_load_scheduler())
 
 @app.route("/scheduler/add", methods=["POST"])
+@require_auth
 def route_scheduler_add():
     """Add a scheduled action."""
-    d = request.json or {}
+    d = _json_body()
     name = d.get("name", f"action_{int(time.time())}")
     cron = d.get("cron", "* * * * *")
     action = d.get("action", {})
@@ -2053,9 +2256,10 @@ def route_scheduler_add():
     return jsonify({"status": "added", "name": name})
 
 @app.route("/scheduler/remove", methods=["POST"])
+@require_auth
 def route_scheduler_remove():
     """Remove a scheduled action."""
-    d = request.json or {}
+    d = _json_body()
     name = d.get("name", "")
     data = _load_scheduler()
     data["actions"] = [a for a in data["actions"] if a["name"] != name]
@@ -2064,9 +2268,10 @@ def route_scheduler_remove():
     return jsonify({"status": "removed", "name": name})
 
 @app.route("/scheduler/run", methods=["POST"])
+@require_auth
 def route_scheduler_run():
     """Run a scheduled action immediately."""
-    d = request.json or {}
+    d = _json_body()
     name = d.get("name", "")
     data = _load_scheduler()
     for a in data["actions"]:
@@ -2079,9 +2284,10 @@ def route_scheduler_run():
 # ── MONITOR LAYOUT ────────────────────────────────────────────
 
 @app.route("/monitors/layout", methods=["POST"])
+@require_auth
 def route_monitor_layout():
     """Arrange windows across monitors in a grid."""
-    d = request.json or {}
+    d = _json_body()
     layout = d.get("layout", "grid")
     try:
         import pygetwindow as gw
@@ -2116,10 +2322,11 @@ _voice_active = False
 _voice_thread = None
 
 @app.route("/voice/toggle", methods=["POST"])
+@require_auth
 def route_voice_toggle():
     """Toggle voice control on/off. Requires SpeechRecognition package."""
     global _voice_active, _voice_thread
-    d = request.json or {}
+    d = _json_body()
     state = d.get("enable")
     if state is True:
         if _voice_active:
@@ -2167,7 +2374,10 @@ def _voice_loop():
                 elif "scroll" in text:
                     pyautogui.scroll(-3)
                 elif "stop" in text or "emergency" in text:
-                    _emergency_stop()
+                    state.emergency_stop = True
+                    with state.pending_queue.mutex:
+                        state.pending_queue.queue.clear()
+                    _log("[Voice] Emergency stop activated")
             except sr.WaitTimeoutError:
                 continue
             except sr.UnknownValueError:
@@ -2178,9 +2388,10 @@ def _voice_loop():
 # ── AI APP LAUNCHER ───────────────────────────────────────────
 
 @app.route("/launch/ai", methods=["POST"])
+@require_auth
 def route_launch_ai():
     """Smart app launcher. Body: {query: 'open chrome'} or {app: 'chrome'}"""
-    d = request.json or {}
+    d = _json_body()
     query = d.get("query", d.get("app", "")).lower()
     if not query:
         return jsonify({"error": "No query provided"}), 400
@@ -2320,18 +2531,20 @@ if __name__ == "__main__":
     # Auth setup
     _secure_mode = "--secure" in sys.argv
     _allow_external = "--allow-external" in sys.argv
+    _token_arg = next((a.split("=", 1)[1] for a in sys.argv if a.startswith("--token=")), None)
+    _env_token = os.environ.get("HERMES_COAGENT_TOKEN", "")
+    _auth_requested = _secure_mode or bool(_token_arg) or bool(_env_token)
     
     # Require auth for external access
-    if _allow_external and not _secure_mode:
+    if _allow_external and not _auth_requested:
         _console("  [ERROR]      --allow-external requires --secure")
         _console("  [ERROR]      Refusing to start: would expose desktop to network without auth")
-        _console("  [ERROR]      Add --secure or bind to 127.0.0.1 (omit --allow-external)")
+        _console("  [ERROR]      Add --secure/--token or bind to 127.0.0.1 (omit --allow-external)")
         sys.exit(1)
     
-    _token_arg = next((a.split("=", 1)[1] for a in sys.argv if a.startswith("--token=")), None)
-    if _secure_mode or _token_arg:
+    if _auth_requested:
         try:
-            from auth import init_auth, require_auth
+            from auth import init_auth
             init_auth(port)
             import auth
             if auth.AUTH_ENABLED:
@@ -2340,15 +2553,16 @@ if __name__ == "__main__":
                 # Global before_request for auth
                 @app.before_request
                 def _check_auth():
-                    if any(request.path.startswith(p) for p in ("/static", "/emergency", "/screen", "/screenshot", "/dashboard2", "/som/", "/uia/", "/power/", "/wallpaper/", "/tunnel/", "/macro/", "/scheduler/")) or request.path in ("/", "/health", "/ping", "/version", "/cursor/pos", "/copilot/mode", "/events", "/logs", "/history", "/stats", "/windows", "/monitors", "/monitors/layout", "/describe", "/clipboard/get", "/clipboard/set", "/macros", "/crop", "/search/files", "/voice/toggle", "/replay"):
+                    if request.method == "OPTIONS":
                         return None
-                    auth_header = request.headers.get("Authorization", "")
-                    if not auth_header.startswith("Bearer "):
-                        return jsonify({"error": "Unauthorized"}), 401
-                    token = auth_header[7:]
-                    if token != auth.AUTH_TOKEN:
-                        return jsonify({"error": "Invalid token"}), 403
-                    return None
+                    if request.path in AUTH_EXEMPT_PATHS:
+                        g._auth_passed = True
+                        return None
+                    for p in AUTH_EXEMPT_PREFIXES:
+                        if request.path.startswith(p):
+                            g._auth_passed = True
+                            return None
+                    return _auth_required_response(auth)
             else:
                 _console("  [WARNING]    No auth — desktop controllable by anyone on network")
         except Exception as e:
@@ -2425,7 +2639,7 @@ if __name__ == "__main__":
         _console(f"  [Tunnel]      POST /tunnel/start")
         _console()
         # Auth already initialized above
-        if _secure_mode or _token_arg:
+        if _auth_requested:
             _console(f"  [SECURE]     Auth active — Bearer token required")
         else:
             _console("  [WARNING]    No auth — desktop controllable by anyone on network (add --secure)")
@@ -2444,7 +2658,7 @@ if __name__ == "__main__":
             "/hotkey":             route_key_press,
             "/scroll":             route_mouse_scroll,
             "/drag":               route_mouse_drag,
-            "/activate":           lambda: jsonify(activate_window_api(request.json["title"])),
+            "/activate":           route_win_activate,
             "/cursor":             route_cursor,
             "/screensize":         monitors_api,
         }
