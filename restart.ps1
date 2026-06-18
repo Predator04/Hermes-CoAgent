@@ -11,6 +11,6 @@ Start-Sleep -Seconds 3
 
 # Launch fresh
 cd "C:\Users\Admin\Desktop\Hermes CoAgent"
-Start-Process -FilePath pythonw.exe -ArgumentList "hermes_coagent.py --secure --token=YOUR_TOKEN_HERE --allow-external" -WindowStyle Hidden -PassThru
+Start-Process -FilePath pythonw.exe -ArgumentList "hermes_coagent.py --secure --allow-external" -WindowStyle Hidden -PassThru
 
 Write-Output "DONE"

@@ -1,5 +1,5 @@
 # ════════════════════════════════════════════════════════════════
-# HERMES COAGENT v6.0 — SECURITY HARDENED
+# HERMES COAGENT v7.3 — PERFORMANCE OPTIMIZATIONS
 # ════════════════════════════════════════════════════════════════
 """
 Hermes CoAgent — Windows Desktop Co-Pilot (Flask REST + MCP server)
@@ -45,10 +45,10 @@ ROUTE MAP (REST API):
   │ POST /minimize      │ Yes   │ Minimize all windows (Session 1)         │
   │ POST /click/session1│ Yes   │ Click at XY on Session 1 (schtasks)     │
   │─────────────────────┼──────────────────────────────────────────────────┤
-  │ GET  /screen        │ No    │ Cached PNG screenshot                    │
+  │ GET  /screen        │ No    │ Cached JPEG screenshot                   │
   │ GET  /screen/jpeg   │ No    │ JPEG screenshot                          │
   │ GET  /screen/base64 │ No    │ Base64 PNG screenshot                    │
-  │ GET  /screen/fresh  │ No    │ Fresh PNG screenshot (force capture)     │
+  │ GET  /screen/fresh  │ No    │ Fresh JPEG screenshot (force capture)    │
   │ GET  /screen/diag   │ No    │ Session diagnostics                      │
   │─────────────────────┼──────────────────────────────────────────────────┤
   │ POST /emergency/stop│ No    │ Emergency stop all input                 │

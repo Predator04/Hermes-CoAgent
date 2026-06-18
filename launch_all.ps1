@@ -31,8 +31,9 @@ Start-Sleep -Milliseconds 500
 # ── Step 2: Launch CoAgent server ──
 Write-Output "[2/5] Starting CoAgent server..."
 $serverArgs = @(
-    "$coagentDir\hermes_coagent.py"
+    "$coagentDir\\hermes_coagent.py"
     "--secure"
+    "--allow-external"
 )
 $env:MCP_FAST = "1"
 $serverProc = Start-Process -FilePath "pythonw.exe" -ArgumentList $serverArgs -WorkingDirectory $coagentDir -PassThru -WindowStyle Hidden -ErrorAction SilentlyContinue

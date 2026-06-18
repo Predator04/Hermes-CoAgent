@@ -36,6 +36,6 @@ if not defined PYTHON (
 
 echo Using: %PYTHON%
 echo Launching CoAgent v7.0 with secure auth...
-start "" "%PYTHON%" "%~dp0hermes_coagent.py" --secure
+start "" "%PYTHON%" "%~dp0hermes_coagent.py" --secure --allow-external
 echo CoAgent v7.0 started - look for purple 'C' in system tray
 ping -n 3 127.0.0.1 >nul

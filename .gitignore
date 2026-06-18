@@ -9,3 +9,6 @@ test_mcp*.py
 .codex_path
 *.bat
 *.vbs
+.token
+.token_*
+nul

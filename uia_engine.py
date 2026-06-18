@@ -15,6 +15,11 @@ import ctypes
 from ctypes import wintypes, windll
 import traceback
 
+_UIA_SNAPSHOT_SEMAPHORE = threading.BoundedSemaphore(1)
+_UIA_CHILD_SEMAPHORE = threading.BoundedSemaphore(4)
+_WINDOW_CRAWL_TIMEOUT = 3.0
+_WINDOW_CHILD_JOIN_TIMEOUT = 2.0
+
 # v5.1: UIA element tracking — stable IDs across frames
 _ELEMENT_TRACKER = {}  # key_hash -> {id, first_seen, last_seen}
 _NEXT_ELEMENT_ID = 1
@@ -176,6 +181,12 @@ try:
     def _uia_element_info(elem, depth=0):
         """Extract info dict from a UI element."""
         try:
+            # v7.0: Skip offscreen/invisible elements
+            try:
+                if not _uia_element_state(elem, "is_visible", True):
+                    return None
+            except:
+                pass
             info = {
                 "control_type": elem.element_info.control_type or "",
                 "automation_id": elem.element_info.automation_id or "",
@@ -186,7 +197,8 @@ try:
                 "visible": True,
                 "children": []
             }
-            if depth < 5:
+            # v7.0: Depth 3 instead of 5 — saves ~40% on busy desktops
+            if depth < 3:
                 try:
                     for child in elem.children():
                         child_info = _uia_element_info(child, depth+1)
@@ -202,8 +214,11 @@ try:
         global UIA_READY
         if not UIA_READY:
             return {"success": False, "error": "UIA not available"}
+        if not _UIA_SNAPSHOT_SEMAPHORE.acquire(timeout=0.1):
+            return {"success": False, "error": "UIA busy"}
         result = {"success": False, "error": "timeout"}
         def _run():
+            global _UIA_LAST_CRAWL_RESULT
             try:
                 nonlocal result
                 try:
@@ -213,9 +228,15 @@ try:
                         "name": "Desktop",
                         "children": []
                     }
-                    # v6.4: Per-window timeout — skip windows that take >3s to crawl
-                    _WINDOW_CRAWL_TIMEOUT = 3.0
-                    for win in desktop.windows():
+                    # v7.0: Skip full crawl if window list hasn't changed
+                    win_list = list(desktop.windows())[:100]
+                    if win_list and not _uia_winlist_changed(win_list):
+                        if _UIA_LAST_CRAWL_RESULT is not None:
+                            info = _UIA_LAST_CRAWL_RESULT
+                            result = {"success": True, "tree": info}
+                            return
+                    # v7.0: Per-window timeout — skip windows that take >3s to crawl.
+                    for win in win_list:
                         try:
                             win_start = time.time()
                             win_info = {
@@ -237,24 +258,35 @@ try:
                                         children_result.extend(_get_children(w, max_depth=2))
                                     except:
                                         pass
-                                ct = threading.Thread(target=_crawl_window_children, daemon=True)
-                                ct.start()
-                                ct.join(timeout=2.0)
+                                    finally:
+                                        try:
+                                            _UIA_CHILD_SEMAPHORE.release()
+                                        except ValueError:
+                                            pass
+                                if _UIA_CHILD_SEMAPHORE.acquire(timeout=0.05):
+                                    ct = threading.Thread(target=_crawl_window_children, daemon=True)
+                                    ct.start()
+                                    ct.join(timeout=_WINDOW_CHILD_JOIN_TIMEOUT)
                                 win_info["children"] = children_result
                             info["children"].append(win_info)
                         except:
                             pass
                     result = {"success": True, "tree": info}
+                    # v7.0: Cache successful result for next call
+                    _UIA_LAST_CRAWL_RESULT = info
                 except Exception as e:
                     result = {"success": False, "error": str(e), "traceback": traceback.format_exc()}
             except:
                 pass
-        t = threading.Thread(target=_run, daemon=True)
-        t.start()
-        t.join(timeout=timeout)
-        if not result.get("success"):
-            UIA_READY = False
-        return result
+        try:
+            t = threading.Thread(target=_run, daemon=True)
+            t.start()
+            t.join(timeout=timeout)
+            if not result.get("success"):
+                UIA_READY = False
+            return result
+        finally:
+            _UIA_SNAPSHOT_SEMAPHORE.release()
     
     def uia_find_deep(name: str) -> list:
         """Find windows and descendants whose UIA name contains the search text."""
@@ -375,6 +407,26 @@ try:
 except Exception as e:
     UIA_READY = False
     _uia_error = str(e)
+
+# v7.0: UIA window list cache — skip full crawl if nothing changed
+_UIA_WIN_CACHE = []  # list of (win_name, win_rect_hash)
+_UIA_WIN_CACHE_LOCK = threading.Lock()
+_UIA_LAST_HASH = None
+_UIA_LAST_CRAWL_RESULT = None
+
+def _uia_winlist_changed(win_list: list) -> bool:
+    """Quick check: did the window list change since last call?
+    Returns True if changed (caller should re-crawl)."""
+    global _UIA_WIN_CACHE
+    try:
+        sig = tuple(sorted((w.element_info.name or "", str(w.rectangle())) for w in win_list))
+        with _UIA_WIN_CACHE_LOCK:
+            if sig == tuple(_UIA_WIN_CACHE):
+                return False
+            _UIA_WIN_CACHE[:] = sig
+        return True
+    except:
+        return True
 
 if "uia_find_deep" not in globals():
     def uia_find_deep(name: str) -> list:

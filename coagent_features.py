@@ -1,4 +1,4 @@
-"""CoAgent v6.3 — New Features Module
+"""CoAgent v7.3 — Feature Module
 
 Adds:
 1. Agent Cursor Overlay — shows animated arrow on screen before each click
@@ -28,11 +28,17 @@ from ctypes import wintypes
 # Uses a transparent overlay window (WS_EX_LAYERED + WS_EX_TRANSPARENT).
 
 _CURSOR_ENABLED = True
-_CURSOR_COLOR = "#FF4400"  # Default orange-red
-_CURSOR_SIZE = 32
+_CURSOR_COLOR = 0xFF4400  # Default orange-red
+_CURSOR_SIZE = 48
 _CURSOR_WINDOW = None
 _CURSOR_LOCK = threading.Lock()
 _CURSOR_HWND = None
+_WS_EX_TOPMOST = 0x00000008
+_WS_EX_TRANSPARENT = 0x00000020
+_WS_EX_LAYERED = 0x00080000
+_WS_EX_NOACTIVATE = 0x08000000
+_WS_POPUP = 0x80000000
+_LWA_ALPHA = 0x00000002
 
 # Cursor animation constants
 _CURSOR_FADE_STEPS = 8
@@ -51,14 +57,13 @@ def _ensure_cursor_window():
             pass
     try:
         hwnd = ctypes.windll.user32.CreateWindowExW(
-            0x80000 | 0x20,  # WS_EX_LAYERED | WS_EX_TRANSPARENT
+            _WS_EX_LAYERED | _WS_EX_TRANSPARENT | _WS_EX_NOACTIVATE | _WS_EX_TOPMOST,
             "STATIC", None,
-            0x80000000,  # WS_POPUP
+            _WS_POPUP,
             0, 0, 0, 0, 0, 0, 0, 0
         )
         if hwnd:
-            # Set layered window attributes: 50% transparency, orange
-            ctypes.windll.user32.SetLayeredWindowAttributes(hwnd, 0xFF4400, 180, 0x2)
+            ctypes.windll.user32.SetLayeredWindowAttributes(hwnd, 0, 200, _LWA_ALPHA)
             ctypes.windll.user32.ShowWindow(hwnd, 8)  # SW_SHOWNA
             _CURSOR_HWND = hwnd
             return hwnd
@@ -85,7 +90,7 @@ def set_cursor_enabled(enabled: bool):
             _destroy_cursor_window()
     return {"cursor_enabled": enabled}
 
-def set_cursor_style(color: str = "#FF4400", size: int = 32):
+def set_cursor_style(color: str = "#FF4400", size: int = 48):
     """Change cursor appearance."""
     global _CURSOR_COLOR, _CURSOR_SIZE
     with _CURSOR_LOCK:
@@ -417,8 +422,8 @@ def start_recording(output_dir: str = None, record_video: bool = False) -> dict:
         session_dir = rec_dir / f"session_{timestamp}"
         session_dir.mkdir(parents=True, exist_ok=True)
         
-        # v6.4: Auto-cleanup — keep max 10 sessions, delete oldest
-        _cleanup_old_sessions(rec_dir, max_keep=10)
+        # v7.3: Auto-cleanup — keep max 10 sessions, delete oldest
+        _cleanup_old_sessions(rec_dir, max_keep=_MAX_KEEP_SESSIONS)
         
         _RECORDING_DIR = session_dir
         _RECORDING_TURN = 0
@@ -558,7 +563,7 @@ def cursor_set_enabled(data: dict):
 def cursor_set_style(data: dict):
     return set_cursor_style(
         color=data.get("color", "#FF4400"),
-        size=data.get("size", 32)
+        size=data.get("size", 48)
     )
 
 def recording_start(data: dict):

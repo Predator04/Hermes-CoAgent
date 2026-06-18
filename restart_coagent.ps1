@@ -10,6 +10,6 @@ Get-Process -Name python* 2>$null | Where-Object {
 Start-Sleep -Seconds 2
 
 # Launch fresh with token+secure
-Start-Process -FilePath 'pythonw.exe' -ArgumentList "C:\Users\Admin\Desktop\Hermes CoAgent\hermes_coagent.py --secure --token=YOUR_TOKEN_HERE --allow-external" -WindowStyle Hidden
+Start-Process -FilePath 'pythonw.exe' -ArgumentList "C:\Users\Admin\Desktop\Hermes CoAgent\hermes_coagent.py --secure --allow-external" -WindowStyle Hidden
 
 Write-Output 'Done'

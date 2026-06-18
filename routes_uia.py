@@ -30,6 +30,7 @@ def register_routes(app, state, require_auth):
     ue = _get_uia_engine()
 
     @app.route("/uia/tree", methods=["GET"])
+    @require_auth
     def route_uia_tree():
         snap = ue.uia_snapshot()
         if snap.get("success"):
@@ -37,10 +38,12 @@ def register_routes(app, state, require_auth):
         return jsonify({"error": snap.get("error", "UIA timeout"), "windows": []})
 
     @app.route("/uia/snapshot", methods=["GET"])
+    @require_auth
     def route_uia_snapshot():
         return route_uia_tree()
 
     @app.route("/uia/find/<name>", methods=["GET"])
+    @require_auth
     def route_uia_find(name):
         results = ue.uia_find_deep(name)
         return jsonify({"query": name, "count": len(results), "results": results})
@@ -60,6 +63,7 @@ def register_routes(app, state, require_auth):
         return jsonify({"status": "queried" if result else "failed", "name": name, "index": index})
 
     @app.route("/uia/find-cmb", methods=["POST"])
+    @require_auth
     def route_uia_find_cmb():
         """Combined UIA + text find."""
         d = _json_body()
@@ -82,10 +86,12 @@ def register_routes(app, state, require_auth):
         return jsonify({"query": text, "count": len(matches), "matches": matches})
 
     @app.route("/uia/diag", methods=["GET"])
+    @require_auth
     def route_uia_diag():
         return jsonify({"ready": ue.UIA_READY, "error": getattr(ue, "_uia_error", "")})
 
     @app.route("/uia/window-tree", methods=["GET"])
+    @require_auth
     def route_uia_window_tree():
         snap = ue.uia_snapshot()
         if snap.get("success"):
@@ -93,6 +99,7 @@ def register_routes(app, state, require_auth):
         return jsonify({"error": snap.get("error", "UIA timeout")})
 
     @app.route("/uia/element/find", methods=["POST"])
+    @require_auth
     def route_uia_element_find():
         d = _json_body()
         query = d.get("query", "")
@@ -127,6 +134,7 @@ def register_routes(app, state, require_auth):
         return jsonify({"index": index, "found": bool(result)})
 
     @app.route("/som/screenshot", methods=["GET"])
+    @require_auth
     def route_som_screenshot():
         """SOM overlay with numbered elements."""
         try:
@@ -160,24 +168,29 @@ def register_routes(app, state, require_auth):
             return jsonify({"error": str(e)}), 500
 
     @app.route("/som/image", methods=["GET"])
+    @require_auth
     def route_som_image():
         return route_som_screenshot()
 
     @app.route("/som/cache/clear", methods=["GET"])
+    @require_auth
     def route_som_cache_clear():
         _som_cache.clear()
         _som_cache_ts.clear()
         return jsonify({"status": "cleared"})
 
     @app.route("/som/bridge", methods=["GET"])
+    @require_auth
     def route_som_bridge():
         return route_som_screenshot()
 
     @app.route("/som/per-window", methods=["GET"])
+    @require_auth
     def route_som_per_window():
         return route_som_screenshot()
 
     @app.route("/som/point", methods=["POST"])
+    @require_auth
     def route_som_point():
         d = _json_body()
         px = int(d.get("x", 0))
@@ -196,6 +209,7 @@ def register_routes(app, state, require_auth):
         return jsonify({"x": px, "y": py, "count": len(matches), "matches": matches[:10]})
 
     @app.route("/uia/accel-reg", methods=["GET"])
+    @require_auth
     def route_uia_accel():
         if hasattr(ue, "_ACCEL_REGIONS"):
             return jsonify({"regions": {k: v for k, v in ue._ACCEL_REGIONS.items()}})

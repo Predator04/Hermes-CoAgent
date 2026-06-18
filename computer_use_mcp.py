@@ -12,7 +12,7 @@ COMPARISON with hermes_coagent.py --mcp:
   This file (computer_use_mcp.py):
     - Uses FastMCP SDK (async, structured)
     - Proxies via HTTP to CoAgent server on :9123
-    - Supports --http mode (SSE on :8000)
+    - Supports --http/--sse mode (SSE on :8001 by default)
     - Has its own SOM overlay generation (no UIA engine needed)
   
   hermes_coagent.py --mcp:
@@ -22,7 +22,8 @@ COMPARISON with hermes_coagent.py --mcp:
 
 USAGE:
   python computer_use_mcp.py                          # stdio MCP
-  python computer_use_mcp.py --http                   # HTTP SSE on :8000
+  python computer_use_mcp.py --http                   # HTTP SSE on :8001
+  python computer_use_mcp.py --sse --port 8002        # HTTP SSE on a custom port
   python computer_use_mcp.py --test                   # Self-test
   python computer_use_mcp.py --fast                   # Lazy-load deps
 
@@ -453,7 +454,7 @@ async def find_on_screen(text: str) -> str:
     })
 
 # ════════════════════════════════════════════════════════════════
-# v6.3: NEW FEATURES — Element Index, Stabilization, Recording, Cursor
+# v7.0: FEATURES — Element Index, Stabilization, Recording, Cursor
 # ════════════════════════════════════════════════════════════════
 
 @mcp.tool()
@@ -540,7 +541,7 @@ async def get_agent_cursor_state() -> str:
 
 @mcp.tool()
 async def get_features_mcp() -> str:
-    """Get status of all v6.3 features (cursor, recording, etc)."""
+    """Get status of all v7.0 features (cursor, recording, etc)."""
     result = _coagent_get("/features", no_cache=True)
     return json.dumps(result or {"error": "features check failed"})
 
@@ -665,7 +666,7 @@ if __name__ == "__main__":
             idx = sys.argv.index("--port")
             port = int(sys.argv[idx + 1])
         print(f"[MCP] Running SSE server on port {port}")
-        mcp.run(transport="sse")
+        mcp.run(transport="sse", host="0.0.0.0", port=port)
     else:
         print("[MCP] Running stdio MCP server")
         mcp.run(transport="stdio")

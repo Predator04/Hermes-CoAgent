@@ -213,12 +213,14 @@ def register_routes(app, state, require_auth):
         return _key_action("type", d.get("keys", ""), state)
 
     @app.route("/emergency/stop", methods=["POST"])
+    @require_auth
     def route_emergency_stop():
         state.emergency_stop = True
         _log("[EMERGENCY] STOP")
         return jsonify({"status": "emergency_stop", "emergency": True})
 
     @app.route("/emergency/resume", methods=["POST"])
+    @require_auth
     def route_emergency_resume():
         state.emergency_stop = False
         _log("[EMERGENCY] RESUME")

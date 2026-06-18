@@ -10,6 +10,9 @@ import ctypes
 from flask import Response, jsonify, request
 
 COAGENT_DIR = Path(__file__).parent.resolve()
+VERSION = "7.0"
+BUILD = "2026-06-18"
+AGENT_NAME = "Hermes CoAgent"
 MACROS_DIR = COAGENT_DIR / "macros"
 SCREENSHOTS_DIR = COAGENT_DIR / "screenshots"
 TUNNEL_LOG = COAGENT_DIR / "tunnel.log"
@@ -32,16 +35,29 @@ _sse_clients = []
 _sse_lock = threading.Lock()
 
 HOST_IP = "172.21.192.1"
-try:
-    r = subprocess.run(
-        ["powershell.exe", "-Command",
-         "(Get-NetIPAddress -InterfaceAlias 'vEthernet (WSL)' -AddressFamily IPv4).IPAddress"],
-        capture_output=True, text=True, timeout=5
-    )
-    if r.stdout.strip():
-        HOST_IP = r.stdout.strip()
-except:
-    pass
+_HOST_IP_LOADED = False
+_HOST_IP_LOCK = threading.Lock()
+
+def get_host_ip():
+    """Return the WSL host IP, resolving lazily to avoid import-time PowerShell work."""
+    global HOST_IP, _HOST_IP_LOADED
+    if _HOST_IP_LOADED:
+        return HOST_IP
+    with _HOST_IP_LOCK:
+        if _HOST_IP_LOADED:
+            return HOST_IP
+        try:
+            r = subprocess.run(
+                ["powershell.exe", "-NoProfile", "-Command",
+                 "(Get-NetIPAddress -InterfaceAlias 'vEthernet (WSL)' -AddressFamily IPv4).IPAddress"],
+                capture_output=True, text=True, timeout=2
+            )
+            if r.stdout.strip():
+                HOST_IP = r.stdout.strip().splitlines()[0]
+        except Exception:
+            pass
+        _HOST_IP_LOADED = True
+        return HOST_IP
 
 
 def _console(msg=""):
@@ -51,11 +67,13 @@ def _console(msg=""):
         try:
             stream.write(text)
             stream.flush()
-            return
         except:
             pass
     try:
         if SERVER_LOG.exists() and SERVER_LOG.stat().st_size > 5 * 1024 * 1024:
+            oldest = SERVER_LOG.with_suffix(".log.5")
+            if oldest.exists():
+                oldest.unlink()
             for i in range(4, 0, -1):
                 old = SERVER_LOG.with_suffix(f".log.{i}")
                 if old.exists():

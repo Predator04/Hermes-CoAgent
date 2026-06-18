@@ -1,137 +1,107 @@
-"""v6.3 feature routes: cursor overlay, recording, waits, and element actions."""
-
+"""v7.3 feature routes: cursor overlay, recording, waits, and stabilization."""
 from flask import jsonify
-
-import shared
-from shared import _json_body, _result_response
-
-try:
-    import coagent_features as features
-
-    _FEATURES_ERROR = None
-except Exception as e:
-    features = None
-    _FEATURES_ERROR = e
+from shared import _json_body
 
 
-def _feature_error():
-    return {"error": f"coagent_features unavailable: {_FEATURES_ERROR}"}
+def register_routes(app, state, require_auth):
+    @app.route("/features", methods=["GET"])
+    @require_auth
+    def route_features():
+        try:
+            import coagent_features as cf
+            return jsonify(cf.get_status() if hasattr(cf, "get_status") else {
+                "cursor": cf.cursor_get_status() if hasattr(cf, "cursor_get_status") else False,
+                "recording": cf.recording_status() if hasattr(cf, "recording_status") else False,
+            })
+        except Exception as e:
+            return jsonify({"error": str(e), "cursor": False, "recording": False}), 500
 
+    @app.route("/wait/element", methods=["POST"])
+    @require_auth
+    def route_wait_element():
+        d = _json_body()
+        query = d.get("query", "")
+        if not query or not isinstance(query, str) or len(query) > 200:
+            return jsonify({"error": "Invalid or missing 'query' field"}), 400
+        try:
+            import coagent_features as cf
+            return jsonify(cf.wait_element(d))
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
 
-def route_cursor_enable():
-    if not features:
-        return jsonify(_feature_error()), 500
-    return _result_response(features.cursor_set_enabled(_json_body()))
+    @app.route("/wait/element-gone", methods=["POST"])
+    @require_auth
+    def route_wait_element_gone():
+        d = _json_body()
+        try:
+            import coagent_features as cf
+            return jsonify(cf.wait_element_gone(d))
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
 
+    @app.route("/stabilize", methods=["POST"])
+    @require_auth
+    def route_stabilize():
+        d = _json_body()
+        try:
+            import coagent_features as cf
+            return jsonify(cf.stabilize_action(d))
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
 
-def route_cursor_style():
-    if not features:
-        return jsonify(_feature_error()), 500
-    return _result_response(features.cursor_set_style(_json_body()))
+    @app.route("/cursor/enable", methods=["POST"])
+    @require_auth
+    def route_cursor_enable():
+        d = _json_body()
+        if "enable" in d and "enabled" not in d:
+            d["enabled"] = d["enable"]
+        try:
+            import coagent_features as cf
+            return jsonify(cf.cursor_set_enabled(d))
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
 
+    @app.route("/cursor/style", methods=["POST"])
+    @require_auth
+    def route_cursor_style():
+        try:
+            import coagent_features as cf
+            return jsonify(cf.cursor_set_style(_json_body()))
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
 
-def route_cursor_status():
-    if not features:
-        return jsonify(_feature_error()), 500
-    return jsonify(features.cursor_get_status())
+    @app.route("/cursor/status", methods=["GET"])
+    @require_auth
+    def route_cursor_status():
+        try:
+            import coagent_features as cf
+            return jsonify(cf.cursor_get_status())
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
 
+    @app.route("/recording/start", methods=["POST"])
+    @require_auth
+    def route_recording_start():
+        try:
+            import coagent_features as cf
+            return jsonify(cf.recording_start(_json_body()))
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
 
-def route_recording_start():
-    if not features:
-        return jsonify(_feature_error()), 500
-    return _result_response(features.recording_start(_json_body()))
+    @app.route("/recording/stop", methods=["POST"])
+    @require_auth
+    def route_recording_stop():
+        try:
+            import coagent_features as cf
+            return jsonify(cf.recording_stop())
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
 
-
-def route_recording_stop():
-    if not features:
-        return jsonify(_feature_error()), 500
-    return _result_response(features.recording_stop())
-
-
-def route_recording_status():
-    if not features:
-        return jsonify(_feature_error()), 500
-    return jsonify(features.recording_status())
-
-
-def route_features():
-    if not features:
-        return jsonify({"available": False, **_feature_error()}), 500
-    status = features.get_status()
-    status.update(
-        {
-            "available": True,
-            "v70": {
-                "modular_routes": "route monolith split into modules",
-                "sse_mcp": "SSE transport for MCP",
-                "health_watchdog": "auto-restart watchdog",
-                "thread_pool_4": "increased SOM thread pool",
-            },
-        }
-    )
-    return jsonify(status)
-
-
-def route_element_find():
-    if not features:
-        return jsonify(_feature_error()), 500
-    return _result_response(features.element_find(_json_body()))
-
-
-def route_element_click_by_name():
-    if not features:
-        return jsonify(_feature_error()), 500
-    return _result_response(features.element_click_by_name(_json_body()), default_error_status=404)
-
-
-def route_element_click_by_index():
-    if not features:
-        return jsonify(_feature_error()), 500
-    return _result_response(features.element_click_by_index(_json_body()), default_error_status=404)
-
-
-def route_wait_element():
-    if not features:
-        return jsonify(_feature_error()), 500
-    return _result_response(features.wait_element(_json_body()), default_error_status=408)
-
-
-def route_wait_element_gone():
-    if not features:
-        return jsonify(_feature_error()), 500
-    return _result_response(features.wait_element_gone(_json_body()), default_error_status=408)
-
-
-def route_stabilize():
-    if not features:
-        return jsonify(_feature_error()), 500
-    return _result_response(features.stabilize_action(_json_body()), default_error_status=408)
-
-
-def route_window_tree():
-    if not features:
-        return jsonify(_feature_error()), 500
-    return _result_response(features.get_window_tree(), default_error_status=500)
-
-
-def _add(app, rules, func, methods=None, auth=False):
-    view = shared.require_auth(func) if auth else func
-    for rule in rules:
-        app.add_url_rule(rule, endpoint=func.__name__, view_func=view, methods=methods)
-
-
-def register_routes(app):
-    _add(app, ["/cursor/enable"], route_cursor_enable, methods=["POST"], auth=True)
-    _add(app, ["/cursor/style"], route_cursor_style, methods=["POST"], auth=True)
-    _add(app, ["/cursor/status"], route_cursor_status)
-    _add(app, ["/recording/start"], route_recording_start, methods=["POST"], auth=True)
-    _add(app, ["/recording/stop"], route_recording_stop, methods=["POST"], auth=True)
-    _add(app, ["/recording/status"], route_recording_status)
-    _add(app, ["/features"], route_features)
-    _add(app, ["/uia/element/find"], route_element_find, methods=["POST"], auth=True)
-    _add(app, ["/uia/element/click-by-name"], route_element_click_by_name, methods=["POST"], auth=True)
-    _add(app, ["/uia/element/click-by-index"], route_element_click_by_index, methods=["POST"], auth=True)
-    _add(app, ["/wait/element"], route_wait_element, methods=["POST"], auth=True)
-    _add(app, ["/wait/element-gone"], route_wait_element_gone, methods=["POST"], auth=True)
-    _add(app, ["/stabilize"], route_stabilize, methods=["POST"], auth=True)
-    _add(app, ["/uia/window-tree"], route_window_tree)
+    @app.route("/recording/status", methods=["GET"])
+    @require_auth
+    def route_recording_status():
+        try:
+            import coagent_features as cf
+            return jsonify(cf.recording_status())
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500

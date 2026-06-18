@@ -3,7 +3,7 @@ import io, base64, json, os, tempfile, subprocess, time, threading, hashlib
 from io import BytesIO
 from pathlib import Path
 from flask import jsonify
-from shared import _json_body, _log, _console, _missing_field, HOST_IP, COAGENT_DIR, SCREENSHOTS_DIR
+from shared import _json_body, _log, _console, _missing_field, get_host_ip, COAGENT_DIR, SCREENSHOTS_DIR
 
 # MSS for fast screenshots (DXGI)
 _MSS_AVAILABLE = False
@@ -15,10 +15,14 @@ except ImportError:
     pass
 
 # Screenshot cache
-SCREENSHOT_CACHE_TTL = 0.5
+SCREENSHOT_CACHE_TTL = 2.0
 _last_screenshot_time = 0.0
 _last_screenshot_raw = b""
+_last_screenshot_hash = None
 _screenshot_lock = threading.Lock()
+# v7.0: Pixel hash — skip capture if screen unchanged
+_PIXEL_HASH_CACHE = 0
+_PIXEL_HASH_LOCK = threading.Lock()
 
 try:
     from PIL import Image
@@ -26,28 +30,51 @@ try:
 except ImportError:
     HAS_PIL = False
 
+def _grab_screen_mss(force=False):
+    """Capture the primary monitor via MSS and return PNG bytes."""
+    global _last_screenshot_time, _PIXEL_HASH_CACHE
+    if not _MSS_AVAILABLE or not HAS_PIL:
+        return b""
+    try:
+        with _MSS_LOCK:
+            with mss.mss() as sct:
+                mon = sct.monitors[1]
+                sct_img = sct.grab(mon)
+                raw = sct_img.rgb
+                size = sct_img.size
+
+        # v7.0: Quick pixel hash to detect screen changes before PNG encode.
+        step = 100
+        sample = bytearray()
+        for i in range(0, len(raw) // 3, step):
+            base = 3 * i
+            sample.extend(raw[base:base + 3])
+        hash_val = hashlib.blake2b(bytes(sample), digest_size=8).digest()
+        with _PIXEL_HASH_LOCK:
+            if not force and hash_val == _PIXEL_HASH_CACHE and _last_screenshot_raw:
+                _last_screenshot_time = time.time()
+                return _last_screenshot_raw
+            _PIXEL_HASH_CACHE = hash_val
+
+        pil_img = Image.frombytes("RGB", size, raw)
+        buf = BytesIO()
+        pil_img.save(buf, format="PNG")
+        return buf.getvalue()
+    except Exception as e:
+        _log(f"MSS capture failed: {type(e).__name__}: {e}")
+        return b""
+
 def _capture_raw(force=False):
     """Capture full screen as PNG bytes. Uses MSS (~5ms) then PIL fallback."""
-    global _last_screenshot_time, _last_screenshot_raw
+    global _last_screenshot_time, _last_screenshot_raw, _PIXEL_HASH_CACHE
     now = time.time()
     if not force and (now - _last_screenshot_time) < SCREENSHOT_CACHE_TTL and _last_screenshot_raw:
         return _last_screenshot_raw
     with _screenshot_lock:
         if not force and (now - _last_screenshot_time) < SCREENSHOT_CACHE_TTL and _last_screenshot_raw:
             return _last_screenshot_raw
-        img_bytes = b""
-        if _MSS_AVAILABLE:
-            try:
-                with mss.mss() as sct:
-                    mon = sct.monitors[1]
-                    sct_img = sct.grab(mon)
-                    if HAS_PIL:
-                        pil_img = Image.frombytes("RGB", sct_img.size, sct_img.rgb)
-                        buf = BytesIO()
-                        pil_img.save(buf, format="PNG")
-                        img_bytes = buf.getvalue()
-            except:
-                pass
+        # Method 0: MSS / DXGI-style fast capture before PIL ImageGrab fallback.
+        img_bytes = _grab_screen_mss(force=force)
         if not img_bytes and HAS_PIL:
             try:
                 from PIL import ImageGrab
@@ -62,6 +89,20 @@ def _capture_raw(force=False):
             _last_screenshot_raw = img_bytes
         return img_bytes
 
+def _capture_jpeg(force=False, quality=85):
+    """Capture full screen as JPEG bytes."""
+    data = _capture_raw(force=force)
+    if not data or not HAS_PIL:
+        return b""
+    try:
+        img = Image.open(BytesIO(data))
+        buf = BytesIO()
+        img.convert("RGB").save(buf, format="JPEG", quality=quality)
+        return buf.getvalue()
+    except Exception as e:
+        _log(f"JPEG capture failed: {type(e).__name__}: {e}")
+        return b""
+
 def _grab_screen_bytes(force=False):
     """Alias for _capture_raw."""
     return _capture_raw(force)
@@ -72,6 +113,14 @@ def _screen_img(force=False):
     if data and HAS_PIL:
         return Image.open(BytesIO(data))
     return None
+
+def _check_winrt_version():
+    """Return the installed winrt-runtime version for OCR diagnostics."""
+    try:
+        from importlib import metadata
+        return metadata.version("winrt-runtime")
+    except Exception:
+        return None
 
 def _windows_ocr(pil_image):
     """Use Windows.Media.Ocr to recognize text. WinRT direct path."""
@@ -103,11 +152,12 @@ def _windows_ocr(pil_image):
                               "bbox": [int(bbox.x), int(bbox.y), int(bbox.width), int(bbox.height)]})
         return {"success": True, "words": words, "text": " ".join(w["text"] for w in words),
                 "line_count": len(result.lines), "word_count": len(words)}
-    except ImportError:
+    except (ImportError, AttributeError, TypeError) as e:
+        _log(f"WinRT OCR direct path unavailable; falling back to PowerShell: {type(e).__name__}: {e}")
         try:
             return _windows_ocr_powershell(pil_image)
         except:
-            return {"success": False, "error": "Windows OCR unavailable"}
+            return {"success": False, "error": "Windows OCR unavailable", "winrt_runtime": _check_winrt_version()}
     except Exception as e:
         return {"success": False, "error": str(e)}
 
@@ -152,7 +202,6 @@ Remove-Item "$imgPath" -Force -ErrorAction SilentlyContinue
         r = subprocess.run(["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", tmp_ps1_path],
                            capture_output=True, text=True, timeout=30,
                            creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0)
-        os.unlink(tmp_ps1_path)
         if r.returncode == 0 and r.stdout.strip():
             data = json.loads(base64.b64decode(r.stdout.strip()).decode())
             words = []
@@ -167,6 +216,12 @@ Remove-Item "$imgPath" -Force -ErrorAction SilentlyContinue
         return {"success": False, "error": "PowerShell timeout"}
     except Exception as e:
         return {"success": False, "error": str(e)}
+    finally:
+        for path in (tmp_ps1_path, tmp_img_path):
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
 
 def ocr_find_text(text, pil_img=None):
     """Find text on screen, return matches with positions."""
@@ -195,23 +250,23 @@ def ocr_find_text(text, pil_img=None):
 
 def register_routes(app, state, require_auth):
     @app.route("/screen", methods=["GET"])
+    @require_auth
     def route_screen():
-        data = _capture_raw()
+        data = _capture_jpeg()
         if data:
             return jsonify({"data": base64.b64encode(data).decode()})
         return jsonify({"error": "No screenshot"}), 500
 
     @app.route("/screen/jpeg", methods=["GET"])
+    @require_auth
     def route_screen_jpeg():
-        data = _capture_raw()
-        if data and HAS_PIL:
-            img = Image.open(BytesIO(data))
-            buf = BytesIO()
-            img.convert("RGB").save(buf, format="JPEG", quality=85)
-            return jsonify({"data": base64.b64encode(buf.getvalue()).decode(), "format": "jpeg"})
+        data = _capture_jpeg()
+        if data:
+            return jsonify({"data": base64.b64encode(data).decode(), "format": "jpeg"})
         return jsonify({"error": "No screenshot"}), 500
 
     @app.route("/screen/base64", methods=["GET"])
+    @require_auth
     def route_screen_b64():
         data = _capture_raw()
         if data:
@@ -219,13 +274,15 @@ def register_routes(app, state, require_auth):
         return jsonify({"error": "No screenshot"}), 500
 
     @app.route("/screen/fresh", methods=["GET"])
+    @require_auth
     def route_screen_fresh():
-        data = _capture_raw(force=True)
+        data = _capture_jpeg(force=True)
         if data:
-            return jsonify({"data": base64.b64encode(data).decode(), "format": "png", "fresh": True})
+            return jsonify({"data": base64.b64encode(data).decode(), "format": "jpeg", "fresh": True})
         return jsonify({"error": "No screenshot"}), 500
 
     @app.route("/screen/diag", methods=["GET"])
+    @require_auth
     def route_screen_diag():
         sid = 1
         try:
@@ -235,7 +292,8 @@ def register_routes(app, state, require_auth):
             sid = int(r.stdout.strip()) if r.stdout.strip() else 0
         except:
             pass
-        return jsonify({"mss": _MSS_AVAILABLE, "pil": HAS_PIL, "session": sid, "host": HOST_IP})
+        return jsonify({"mss": _MSS_AVAILABLE, "pil": HAS_PIL, "session": sid,
+                        "host": get_host_ip(), "winrt_runtime": _check_winrt_version()})
 
     @app.route("/ocr/find", methods=["POST"])
     @require_auth
@@ -258,6 +316,7 @@ def register_routes(app, state, require_auth):
         return jsonify({"query": text, "count": len(matches), "matches": matches})
 
     @app.route("/crop", methods=["POST"])
+    @require_auth
     def route_crop():
         d = _json_body()
         img = _screen_img(force=True)
@@ -272,6 +331,7 @@ def register_routes(app, state, require_auth):
         return jsonify({"status": "ok", "text": text.strip(), "chars": len(text.strip())})
 
     @app.route("/describe", methods=["GET"])
+    @require_auth
     def route_describe():
         img = _screen_img(force=True)
         if img is None:

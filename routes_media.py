@@ -1,5 +1,5 @@
 """Wallpaper, windows, clipboard, scheduler, macro, tunnel, voice, and misc routes."""
-import os, json, subprocess, time, ctypes, re, threading, webbrowser
+import os, json, subprocess, time, ctypes, re, threading, webbrowser, tempfile
 from pathlib import Path
 from flask import jsonify, request
 from shared import _json_body, _log, _console, _missing_field, COAGENT_DIR, MACROS_DIR, \
@@ -17,6 +17,27 @@ _recorded_actions = []
 # Scheduler state
 SCHEDULER_FILE = COAGENT_DIR / "scheduler.json"
 
+_MACRO_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]{1,80}$")
+_SEARCH_SKIP_DIRS = {
+    ".git", ".hg", ".svn", "__pycache__", "node_modules", ".venv", "venv",
+    "env", "AppData", "Application Data", "Local Settings", "Temp",
+    "Cache", "Caches", "Code Cache",
+}
+_SEARCH_SKIP_DIRS_LOWER = {name.lower() for name in _SEARCH_SKIP_DIRS}
+
+def _macro_path(name):
+    if not isinstance(name, str) or not _MACRO_NAME_RE.fullmatch(name):
+        raise ValueError("Invalid macro name")
+    base = MACROS_DIR.resolve()
+    path = (base / f"{name}.json").resolve()
+    try:
+        common = os.path.commonpath([os.path.normcase(str(base)), os.path.normcase(str(path))])
+    except ValueError:
+        raise ValueError("Invalid macro path")
+    if common != os.path.normcase(str(base)):
+        raise ValueError("Invalid macro path")
+    return path
+
 def _load_scheduler():
     if SCHEDULER_FILE.exists():
         try:
@@ -31,6 +52,7 @@ def _save_scheduler(data):
 def register_routes(app, state, require_auth):
     # ── Windows ─────────────────────────────────────────
     @app.route("/windows", methods=["GET"])
+    @require_auth
     def route_windows():
         try:
             import pygetwindow as gw
@@ -51,6 +73,7 @@ def register_routes(app, state, require_auth):
             return jsonify({"windows": wins, "count": len(wins)})
 
     @app.route("/windows/activate", methods=["POST"])
+    @require_auth
     def route_win_activate():
         d = _json_body()
         title = d.get("title", "")
@@ -75,9 +98,13 @@ def register_routes(app, state, require_auth):
 
     # ── Wallpaper ──────────────────────────────────────
     @app.route("/wallpaper/set", methods=["POST"])
+    @require_auth
     def route_wallpaper_set():
         d = _json_body()
-        img_path = d.get("path", "")
+        try:
+            img_path = _sanitize_path(d.get("path", ""))
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 403
         if os.path.isfile(img_path):
             ctypes.windll.user32.SystemParametersInfoW(20, 0, img_path, 2)
             _log(f"Wallpaper set to {img_path}")
@@ -86,11 +113,19 @@ def register_routes(app, state, require_auth):
 
     @app.route("/wallpaper/cycle", methods=["POST"])
     @app.route("/wallpaper/random", methods=["POST"])
+    @require_auth
     def route_wallpaper_random():
         d = _json_body()
-        folder = d.get("folder", "")
-        if not os.path.isdir(folder):
+        folder_req = d.get("folder", "")
+        if folder_req:
+            try:
+                folder = _sanitize_path(folder_req)
+            except ValueError as e:
+                return jsonify({"error": str(e)}), 403
+        else:
             folder = str(SCREENSHOTS_DIR)
+        if not os.path.isdir(folder):
+            return jsonify({"error": "Folder not found"}), 404
         exts = ('.jpg','.jpeg','.png','.bmp','.gif')
         files = [os.path.join(folder, f) for f in os.listdir(folder) if f.lower().endswith(exts)]
         if not files:
@@ -121,6 +156,7 @@ def register_routes(app, state, require_auth):
 
     # ── Clipboard ──────────────────────────────────────
     @app.route("/clipboard/get", methods=["GET"])
+    @require_auth
     def route_clipboard_get():
         try:
             import pyperclip
@@ -129,6 +165,7 @@ def register_routes(app, state, require_auth):
             return jsonify({"text": ""})
 
     @app.route("/clipboard/set", methods=["POST"])
+    @require_auth
     def route_clipboard_set():
         d = _json_body()
         text = d.get("text", "")
@@ -147,30 +184,58 @@ def register_routes(app, state, require_auth):
         text = d.get("text", "")
         if not text:
             return _missing_field("text")
+        if len(text) > 10000:
+            return jsonify({"error": "Text too long (max 10000 chars)"}), 400
+        text_path = None
+        ps_path = None
         try:
-            import subprocess
-            ps_script = f'''
+            with tempfile.NamedTemporaryFile("w", suffix=".txt", encoding="utf-8", delete=False) as text_file:
+                text_file.write(text)
+                text_path = text_file.name
+            with tempfile.NamedTemporaryFile("w", suffix=".ps1", encoding="utf-8", delete=False) as ps_file:
+                ps_file.write('''param(
+    [Parameter(Mandatory=$true)]
+    [string]$TextPath
+)
 Add-Type -AssemblyName System.Speech
 $s = New-Object System.Speech.Synthesis.SpeechSynthesizer
-$s.Speak("{text.replace('"', '""')}")
-'''
-            subprocess.run(["powershell.exe", "-NoProfile", "-Command", ps_script], timeout=30,
+$text = [System.IO.File]::ReadAllText($TextPath, [System.Text.Encoding]::UTF8)
+$s.Speak($text)
+''')
+                ps_path = ps_file.name
+            subprocess.run(["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass",
+                            "-File", ps_path, "-TextPath", text_path], timeout=30,
                            creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0)
             return jsonify({"status": "spoken", "text": text[:100]})
         except Exception as e:
             return jsonify({"error": str(e)}), 500
+        finally:
+            for path in (text_path, ps_path):
+                if path:
+                    try:
+                        os.unlink(path)
+                    except OSError:
+                        pass
 
     # ── Scheduler ──────────────────────────────────────
     @app.route("/scheduler/list", methods=["GET"])
+    @require_auth
     def route_scheduler_list():
         return jsonify(_load_scheduler())
 
     @app.route("/scheduler/add", methods=["POST"])
+    @require_auth
     def route_scheduler_add():
         d = _json_body()
         name = d.get("name", f"action_{int(time.time())}")
+        if not isinstance(name, str) or len(name) > 100:
+            return jsonify({"error": "Invalid name"}), 400
         cron = d.get("cron", "* * * * *")
+        if not isinstance(cron, str) or len(cron) > 200:
+            return jsonify({"error": "Invalid cron expression"}), 400
         action = d.get("action", {})
+        if not isinstance(action, dict):
+            return jsonify({"error": "Invalid action (must be a dict)"}), 400
         data = _load_scheduler()
         for a in data["actions"]:
             if a["name"] == name:
@@ -183,6 +248,7 @@ $s.Speak("{text.replace('"', '""')}")
         return jsonify({"status": "added", "name": name})
 
     @app.route("/scheduler/remove", methods=["POST"])
+    @require_auth
     def route_scheduler_remove():
         d = _json_body()
         name = d.get("name", "")
@@ -193,6 +259,7 @@ $s.Speak("{text.replace('"', '""')}")
         return jsonify({"status": "removed", "name": name})
 
     @app.route("/scheduler/run", methods=["POST"])
+    @require_auth
     def route_scheduler_run():
         d = _json_body()
         name = d.get("name", "")
@@ -205,6 +272,7 @@ $s.Speak("{text.replace('"', '""')}")
 
     # ── Macros ─────────────────────────────────────────
     @app.route("/macro/list", methods=["GET", "POST"])
+    @require_auth
     def route_macro_list():
         macros = []
         if MACROS_DIR.exists():
@@ -216,23 +284,32 @@ $s.Speak("{text.replace('"', '""')}")
         return jsonify({"macros": macros, "count": len(macros)})
 
     @app.route("/macro/save", methods=["POST"])
+    @require_auth
     def route_macro_save():
         d = _json_body()
         name = d.get("name", f"macro_{int(time.time())}")
         actions = d.get("actions", [])
-        MACROS_DIR.mkdir(exist_ok=True)
-        (MACROS_DIR / f"{name}.json").write_text(json.dumps({"name": name, "actions": actions}, indent=2))
+        try:
+            path = _macro_path(name)
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 400
+        MACROS_DIR.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"name": name, "actions": actions}, indent=2), encoding="utf-8")
         _log(f"Macro saved: {name} ({len(actions)} actions)")
         return jsonify({"status": "saved", "name": name, "count": len(actions)})
 
     @app.route("/macro/run", methods=["POST"])
+    @require_auth
     def route_macro_run():
         d = _json_body()
         name = d.get("name", "")
-        path = MACROS_DIR / f"{name}.json"
+        try:
+            path = _macro_path(name)
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 400
         if not path.exists():
             return jsonify({"error": f"Macro '{name}' not found"}), 404
-        macro = json.loads(path.read_text())
+        macro = json.loads(path.read_text(encoding="utf-8"))
         actions = macro.get("actions", [])
         for a in actions:
             from routes_mouse import _execute_action_wrapper
@@ -241,6 +318,7 @@ $s.Speak("{text.replace('"', '""')}")
         return jsonify({"status": "executed", "name": name, "count": len(actions)})
 
     @app.route("/macro/record", methods=["POST"])
+    @require_auth
     def route_macro_record():
         global _recording, _recorded_actions
         d = _json_body()
@@ -258,13 +336,17 @@ $s.Speak("{text.replace('"', '""')}")
     def route_macro_delete():
         d = _json_body()
         name = d.get("name", "")
-        path = MACROS_DIR / f"{name}.json"
+        try:
+            path = _macro_path(name)
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 400
         if path.exists():
             path.unlink()
             return jsonify({"status": "deleted", "name": name})
         return jsonify({"error": f"Macro '{name}' not found"}), 404
 
     @app.route("/replay", methods=["POST"])
+    @require_auth
     def route_replay():
         d = _json_body()
         count = min(d.get("count", 5), 100)
@@ -276,6 +358,7 @@ $s.Speak("{text.replace('"', '""')}")
 
     # ── Voice ─────────────────────────────────────────
     @app.route("/voice/toggle", methods=["POST"])
+    @require_auth
     def route_voice_toggle():
         d = _json_body()
         enable = d.get("enable", True)
@@ -297,11 +380,13 @@ $s.Speak("{text.replace('"', '""')}")
         return jsonify({"status": "tunnel_stopped"})
 
     @app.route("/tunnel/status", methods=["GET"])
+    @require_auth
     def route_tunnel_status():
         return jsonify({"active": False, "url": None})
 
     # ── Search files ───────────────────────────────────
     @app.route("/search/files", methods=["POST"])
+    @require_auth
     def route_search_files():
         d = _json_body()
         pattern = d.get("pattern", "*")
@@ -310,10 +395,32 @@ $s.Speak("{text.replace('"', '""')}")
         except ValueError as e:
             return jsonify({"error": str(e)}), 403
         import fnmatch
-        limit = min(d.get("limit", 50), 200)
+        try:
+            limit = max(1, min(int(d.get("limit", 50)), 200))
+        except (TypeError, ValueError):
+            limit = 50
+        try:
+            max_seconds = max(0.25, min(float(d.get("max_seconds", 5.0)), 30.0))
+        except (TypeError, ValueError):
+            max_seconds = 5.0
+        try:
+            max_dirs = max(1, min(int(d.get("max_dirs", 2000)), 20000))
+        except (TypeError, ValueError):
+            max_dirs = 2000
         results = []
+        started = time.time()
+        dirs_seen = 0
+        stopped = None
         try:
             for root, dirs, files in os.walk(search_path):
+                dirs_seen += 1
+                dirs[:] = [dd for dd in dirs if dd.lower() not in _SEARCH_SKIP_DIRS_LOWER]
+                if dirs_seen > max_dirs:
+                    stopped = "max_dirs"
+                    break
+                if time.time() - started > max_seconds:
+                    stopped = "max_seconds"
+                    break
                 try:
                     for f in files:
                         if len(results) >= limit: break
@@ -326,25 +433,30 @@ $s.Speak("{text.replace('"', '""')}")
                 if len(results) >= limit: break
         except:
             pass
-        return jsonify({"matches": results, "count": len(results), "pattern": pattern})
+        return jsonify({"matches": results, "count": len(results), "pattern": pattern,
+                        "dirs_scanned": dirs_seen, "stopped": stopped})
 
     # ── Stats & History ────────────────────────────────
     @app.route("/stats", methods=["GET"])
+    @require_auth
     def route_stats():
         uptime = time.time() - getattr(state, 'start_time', time.time())
         return jsonify({"actions": len(_action_history), "uptime": int(uptime),
                         "macros": len(list(MACROS_DIR.glob("*.json"))) if MACROS_DIR.exists() else 0})
 
     @app.route("/history", methods=["GET"])
+    @require_auth
     def route_history():
         limit = min(int(request.args.get("limit", 50)), 500)
         return jsonify({"actions": list(_action_history)[-limit:], "count": min(limit, len(_action_history))})
 
     @app.route("/events", methods=["GET"])
+    @require_auth
     def route_events():
         return sse_response()
 
     @app.route("/launch/ai", methods=["POST"])
+    @require_auth
     def route_launch_ai():
         d = _json_body()
         query = d.get("query", d.get("app", "")).lower()
@@ -369,53 +481,3 @@ $s.Speak("{text.replace('"', '""')}")
             webbrowser.open_new_tab(query)
             return jsonify({"status": "launched", "app": "browser", "url": query})
         return jsonify({"error": f"Could not find app matching '{query}'"}), 404
-
-    # ── v6.3 features ─────────────────────────────────
-    @app.route("/features", methods=["GET"])
-    def route_features():
-        try:
-            import coagent_features as cf
-            return jsonify({"cursor": cf.cursor_status() if hasattr(cf, 'cursor_status') else False,
-                            "recording": cf.get_recording_state() if hasattr(cf, 'get_recording_state') else False})
-        except:
-            return jsonify({"cursor": False, "recording": False})
-
-    @app.route("/wait/element", methods=["POST"])
-    def route_wait_element():
-        d = _json_body()
-        return jsonify({"status": "waiting", "query": d.get("query", ""), "mode": d.get("mode", "name")})
-
-    @app.route("/wait/element-gone", methods=["POST"])
-    def route_wait_element_gone():
-        d = _json_body()
-        return jsonify({"status": "waiting", "query": d.get("query", ""), "mode": d.get("mode", "name")})
-
-    @app.route("/stabilize", methods=["POST"])
-    def route_stabilize():
-        d = _json_body()
-        time.sleep(min(d.get("max_wait", 2.0), 5.0))
-        return jsonify({"status": "stabilized"})
-
-    @app.route("/cursor/enable", methods=["POST"])
-    def route_cursor_enable():
-        return jsonify({"status": "ok", "message": "cursor control via coagent_features"})
-
-    @app.route("/cursor/style", methods=["POST"])
-    def route_cursor_style():
-        return jsonify({"status": "ok"})
-
-    @app.route("/cursor/status", methods=["GET"])
-    def route_cursor_status():
-        return jsonify({"enabled": False})
-
-    @app.route("/recording/start", methods=["POST"])
-    def route_recording_start():
-        return jsonify({"status": "recording", "dir": str(SCREENSHOTS_DIR)})
-
-    @app.route("/recording/stop", methods=["POST"])
-    def route_recording_stop():
-        return jsonify({"status": "stopped", "actions": [], "screenshots": 0})
-
-    @app.route("/recording/status", methods=["GET"])
-    def route_recording_status():
-        return jsonify({"active": False, "actions": 0})

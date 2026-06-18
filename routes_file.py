@@ -4,6 +4,8 @@ from pathlib import Path
 from flask import jsonify
 from shared import _json_body, _log, _missing_field, COAGENT_DIR, _sanitize_path, _sanitize_cmd
 
+_ALLOWED_DELETE_ROOTS = {Path(_sanitize_path(str(COAGENT_DIR))).resolve()}
+
 def register_routes(app, state, require_auth):
     @app.route("/file/list", methods=["POST"])
     @require_auth
@@ -72,6 +74,9 @@ def register_routes(app, state, require_auth):
         except ValueError as e:
             return jsonify({"error": str(e)}), 403
         try:
+            resolved = Path(path).resolve()
+            if resolved in _ALLOWED_DELETE_ROOTS or resolved == Path.home().resolve():
+                return jsonify({"error": "Refusing to delete an allowed root"}), 403
             if os.path.isdir(path):
                 import shutil
                 shutil.rmtree(path)
@@ -91,10 +96,14 @@ def register_routes(app, state, require_auth):
             if app_path.startswith("http"):
                 import webbrowser
                 webbrowser.open_new_tab(app_path)
-            elif app_path.endswith(".lnk") or app_path.endswith(".exe"):
+            elif ("/" not in app_path and "\\" not in app_path and ":" not in app_path
+                  and app_path.lower().endswith(".exe")):
                 subprocess.Popen([app_path], shell=False)
+            elif app_path.endswith(".lnk") or app_path.endswith(".exe"):
+                safe_path = _sanitize_path(app_path)
+                subprocess.Popen([safe_path], shell=False)
             else:
-                os.startfile(app_path)
+                os.startfile(_sanitize_path(app_path))
             _log(f"App launched: {app_path}")
             return jsonify({"status": "launched", "app": app_path})
         except Exception as e:
@@ -119,26 +128,31 @@ def register_routes(app, state, require_auth):
             return jsonify({"error": str(e)}), 500
 
     @app.route("/power/sleep", methods=["POST"])
+    @require_auth
     def route_power_sleep():
         subprocess.run(["rundll32.exe", "powrprof.dll,SetSuspendState", "0", "1", "0"], timeout=5)
         return jsonify({"status": "sleeping"})
 
     @app.route("/power/shutdown", methods=["POST"])
+    @require_auth
     def route_power_shutdown():
         subprocess.run(["shutdown", "/s", "/t", "10"], timeout=5)
         return jsonify({"status": "shutdown", "timeout": 10})
 
     @app.route("/power/restart", methods=["POST"])
+    @require_auth
     def route_power_restart():
         subprocess.run(["shutdown", "/r", "/t", "10"], timeout=5)
         return jsonify({"status": "restart", "timeout": 10})
 
     @app.route("/power/lock", methods=["POST"])
+    @require_auth
     def route_power_lock():
         ctypes.windll.user32.LockWorkStation()
         return jsonify({"status": "locked"})
 
     @app.route("/power/cancel", methods=["POST"])
+    @require_auth
     def route_power_cancel():
         subprocess.run(["shutdown", "/a"], timeout=5)
         return jsonify({"status": "cancelled"})
