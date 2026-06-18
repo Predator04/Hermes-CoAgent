@@ -1221,6 +1221,7 @@ AUTH_EXEMPT_PREFIXES = [
 AUTH_EXEMPT_PATHS = {
     "/", "/health", "/ping", "/version",
     "/monitors", "/describe", "/crop", "/clipboard", "/windows", "/voice", "/tunnel", "/power", "/scheduler", "/macros", "/search", "/emergency", "/replay",
+    "/mcp/test", "/mcp/", "/mcp",
     "/favicon.ico",
 }
 
@@ -1300,6 +1301,12 @@ DASHBOARD_HTML = (COAGENT_DIR / 'dashboard.html').read_text(encoding='utf-8')
 @app.route("/")
 def dashboard():
     return DASHBOARD_HTML, 200, {"Content-Type": "text/html; charset=utf-8"}
+
+@app.route("/mcp/test")
+@app.route("/mcp/")
+@app.route("/mcp")
+def route_mcp_test():
+    return jsonify({"status": "ok", "agent": "Hermes CoAgent v6.2", "mcp": True})
 
 # =========== REST API ROUTES ===========
 @app.route("/ping")
