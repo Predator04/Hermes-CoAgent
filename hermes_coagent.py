@@ -1,6 +1,27 @@
 # ════════════════════════════════════════════════════════════════
 # HERMES COAGENT v6.0 — SECURITY HARDENED
 # ════════════════════════════════════════════════════════════════
+"""
+Hermes CoAgent — Windows Desktop Co-Pilot (Flask REST + MCP server)
+====================================================================
+Primary server for the CoAgent desktop automation system.
+
+See ROUTE_MAP.py for complete route documentation.
+
+KEY COMPONENTS:
+  hermes_coagent.py    — This file: Flask routes, input engine, OCR, macros, power, etc.
+  uia_engine.py        — UIA accessibility tree + SOM overlays + background SendInput
+  computer_use_mcp.py  — FastMCP server proxying to CoAgent (stdin/stdout or SSE)
+  auth.py              — Bearer token authentication
+  ROUTE_MAP.py         — Complete route table with auth requirements
+
+LAUNCH:
+  python hermes_coagent.py                    # REST server on :9123
+  python hermes_coagent.py --mcp              # MCP stdio mode
+  python hermes_coagent.py --secure           # Auth enabled (random token)
+  python hermes_coagent.py --token=KEY        # Auth with fixed token
+  python hermes_coagent.py --allow-external   # Bind 0.0.0.0 (requires --secure)
+"""
 import sys, os, json, base64, subprocess, threading, time, shutil, traceback
 import re, queue, urllib.request
 from io import BytesIO
@@ -30,66 +51,46 @@ def _get_uia_engine():
         _uia_engine = ue
     return _uia_engine
 
+# ── Create a pyautogui stub for non-Windows / import-failed ──
+def _make_pyautogui_stub():
+    import types as _t
+    s = _t.ModuleType('pyautogui')
+    for attr in ('FAILSAFE', 'MINIMUM_DURATION', 'MINIMUM_SLEEP', 'PAUSE'):
+        setattr(s, attr, 0)
+    s.FAILSAFE = False
+    s.pixel = lambda x,y: (0,0,0)
+    s.pixelMatchesColor = lambda *a,**kw: False
+    def _noop(*a,**kw): pass
+    for fn in ('position','moveTo','click','doubleClick','rightClick','typewrite','hotkey','scroll','drag'):
+        if fn == 'position':
+            setattr(s, fn, lambda: (0,0))
+        else:
+            setattr(s, fn, _noop)
+    return s
+
 # Platform check — graceful fallback on non-Windows
 import platform as _platform
 if _platform.system() != "Windows":
     print(f"[WARN] Hermes CoAgent is designed for Windows (detected: {_platform.system()})")
     print("[WARN] Most features will not work. Running in stub mode.")
     HAS_SENDINPUT = False
-    import types as _types
-    _stub = _types.ModuleType('pyautogui')
-    _stub.FAILSAFE = False
-    _stub.MINIMUM_DURATION = 0
-    _stub.MINIMUM_SLEEP = 0
-    _stub.PAUSE = 0.01
-    def _stub_pos(): return (0, 0)
-    def _stub_noop(*a, **kw): pass
-    _stub.position = _stub_pos
-    _stub.moveTo = _stub_noop
-    _stub.click = _stub_noop
-    _stub.doubleClick = _stub_noop
-    _stub.rightClick = _stub_noop
-    _stub.typewrite = _stub_noop
-    _stub.hotkey = _stub_noop
-    _stub.scroll = _stub_noop
-    _stub.drag = _stub_noop
-    _stub.pixel = lambda x,y: (0,0,0)
-    _stub.pixelMatchesColor = lambda *a,**kw: False
-    sys.modules['pyautogui'] = _stub
+    sys.modules['pyautogui'] = _make_pyautogui_stub()
 
 os.environ["PYAUTOGUI_FAILSAFE"] = "false"
 
 try:
     import pyautogui
-    # On Windows, enable background SendInput co-pilot mode
-    if _platform.system() == "Windows":
-        HAS_SENDINPUT = True
+    HAS_SENDINPUT = _platform.system() == "Windows"
 except ImportError:
     print("[WARN] pyautogui not installed — input features disabled")
-    pyautogui = _stub if '_stub' in dir() else None
-    # Create stub if we haven't already
-    if not pyautogui:
-        import types as _types
-        pyautogui = _types.ModuleType('pyautogui')
-        pyautogui.FAILSAFE = False
-        pyautogui.MINIMUM_DURATION = 0
-        pyautogui.MINIMUM_SLEEP = 0
-        pyautogui.PAUSE = 0.01
-        def _s_noop(*a,**kw): pass
-        pyautogui.position = lambda: (0,0)
-        pyautogui.moveTo = _s_noop
-        pyautogui.click = _s_noop
-        pyautogui.doubleClick = _s_noop
-        pyautogui.rightClick = _s_noop
-        pyautogui.typewrite = _s_noop
-        pyautogui.hotkey = _s_noop
-        pyautogui.scroll = _s_noop
-        pyautogui.drag = _s_noop
+    pyautogui = _make_pyautogui_stub()
 pyautogui.FAILSAFE = False
-pyautogui.MINIMUM_DURATION = 0
-pyautogui.MINIMUM_SLEEP = 0
-pyautogui.PAUSE = 0.01
 
+# ════════════════════════════════════════════════════════════════
+# CONFIGURATION & GLOBALS
+# ════════════════════════════════════════════════════════════════
+# Server ports, directories, color constants, and host IP detection.
+# --secure and --token are parsed at startup (see auth.py).
 COAGENT_DIR = Path(__file__).parent.resolve()
 MACROS_DIR = COAGENT_DIR / "macros"
 SCREENSHOTS_DIR = COAGENT_DIR / "screenshots"
@@ -213,7 +214,11 @@ def _console(msg=""):
     except Exception:
         pass
 
-# === STATE ===
+# ════════════════════════════════════════════════════════════════
+# STATE — CoPilotState dataclass
+# ════════════════════════════════════════════════════════════════
+# Holds all runtime state: action history, emergency stop, input lock,
+# screenshot cache, macro recorder, tunnel process, watchdog flags.
 @dataclass
 class CoPilotState:
     emergency_stop: bool = False
@@ -235,7 +240,12 @@ class CoPilotState:
 
 state = CoPilotState()
 
-# === HELPER: PowerShell bridge ===
+# ════════════════════════════════════════════════════════════════
+# HELPERS
+# ════════════════════════════════════════════════════════════════
+# - ps(): PowerShell bridge (silent, hidden window)
+# - _interactive_task_xml(): Build schtasks XML targeting Session 1
+# - _schtasks_ps1(): Run PS1 on Session 1 via schtasks (with cleanup)
 def ps(cmd, timeout=30):
     """Run PowerShell command, return (returncode, stdout, stderr)."""
     try:
@@ -286,7 +296,40 @@ def _interactive_task_xml(command, arguments, author="CoAgent", execution_limit=
         '</Task>\n'
     )
 
-# === CURSOR PULSE - temporary topmost popup ===
+def _schtasks_ps1(task_name: str, xml_path: Path, ps1_path: Path, arguments: str, timeout: int = 15) -> bool:
+    """Run a PowerShell script on Session 1 via schtasks (InteractiveToken).
+    Returns True if the task ran successfully."""
+    subprocess.run(["schtasks", "/Delete", "/TN", task_name, "/F"],
+                   capture_output=True, timeout=5)
+    xml = _interactive_task_xml(
+        r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
+        f'-ExecutionPolicy Bypass -WindowStyle Hidden -File "{ps1_path}" {arguments}',
+    )
+    try:
+        xml_path.write_text(xml, encoding="utf-16")
+    except:
+        pass
+    r1 = subprocess.run(
+        ["schtasks", "/Create", "/XML", str(xml_path), "/TN", task_name, "/F"],
+        capture_output=True, text=True, timeout=10
+    )
+    ok = False
+    if r1.returncode == 0:
+        r2 = subprocess.run(
+            ["schtasks", "/Run", "/TN", task_name],
+            capture_output=True, text=True, timeout=timeout
+        )
+        ok = r2.returncode == 0
+    for f in (xml_path, ps1_path):
+        try: f.unlink()
+        except: pass
+    return ok
+
+# ════════════════════════════════════════════════════════════════
+# CURSOR PULSE — temporary topmost popup
+# ════════════════════════════════════════════════════════════════
+# Shows a colored circle at the action target, then fades/destroys.
+# Color indicates action type (red=click, blue=type, etc.)
 # Each pulse owns a small topmost window, then fades and destroys it.
 
 def _cursor_pulse(x, y, color=None):
@@ -349,7 +392,13 @@ def _pulse_before_action(action: dict):
     except Exception:
         pass
 
-# === INPUT ENGINE ===
+# ════════════════════════════════════════════════════════════════
+# INPUT ENGINE — action dispatcher
+# ════════════════════════════════════════════════════════════════
+# Routes action dicts to background SendInput (UIA engine) or
+# foreground pyautogui. Supports: move, click, doubleclick,
+# rightclick, tripleclick, type, hotkey, scroll, drag.
+# Includes: emergency stop, rate limiting, action history.
 def _execute_action(action: dict):
     act_type = action.get("type")
     data = action.get("data", {})
@@ -435,7 +484,11 @@ def _queue_worker():
         time.sleep(max(0, state.min_action_gap - 0.05))
     state.queue_worker_running = False
 
-# === SCREENSHOT ENGINE ===
+# ════════════════════════════════════════════════════════════════
+# SCREENSHOT ENGINE
+# ════════════════════════════════════════════════════════════════
+# 3-tier fallback: (1) PIL ImageGrab on Session 1, (2) schtasks
+# to Session 1, (3) direct PowerShell. Cached for 500ms.
 def _grab_screen_bytes(force=False) -> bytes:
     now = time.time()
     if not force and state.last_screenshot_raw and (now - state.last_screenshot_time) < 0.5:
@@ -470,38 +523,10 @@ def _capture_via_session1(fmt="png") -> bytes:
         out_path.parent.mkdir(parents=True, exist_ok=True)
     except:
         pass
-
-    # Build XML task targeting Session 1 with InteractiveToken
-    task_name = "HermesCoAgent_Snap"
-    subprocess.run(["schtasks", "/Delete", "/TN", task_name, "/F"],
-                   capture_output=True, timeout=5)
-
-    xml = _interactive_task_xml(
-        r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
-        '-ExecutionPolicy Bypass -WindowStyle Hidden -File "' + str(ps1_script) +
-        '" -OutputPath "' + str(out_path) + '"',
-        execution_limit="PT30S",
-    )
-
-    xml_path = COAGENT_DIR / "_snap_task.xml"
-    try:
-        xml_path.write_text(xml, encoding="utf-16")
-    except:
-        pass
-
-    r1 = subprocess.run(
-        ["schtasks", "/Create", "/XML", str(xml_path), "/TN", task_name, "/F"],
-        capture_output=True, text=True, timeout=10
-    )
-
-    if r1.returncode == 0:
-        subprocess.run(
-            ["schtasks", "/Run", "/TN", task_name],
-            capture_output=True, text=True, timeout=30
-        )
-        # Give it a moment to write the file
-        import time as _time
-        _time.sleep(1.0)
+    ok = _schtasks_ps1("HermesCoAgent_Snap", COAGENT_DIR / "_snap_task.xml", ps1_script,
+                       f'-OutputPath "{out_path}"', timeout=30)
+    if ok:
+        time.sleep(1.0)
         if out_path.exists():
             data = out_path.read_bytes()
             if len(data) > 1000:
@@ -529,45 +554,10 @@ $g.Dispose(); $bmp.Dispose()
 
 
 def _send_keys_session1(keys: str) -> bool:
-    """Execute key combo on Session 1 via schtasks with InteractiveToken.
-    Works from Session 0 by running session1_keys.ps1 on the interactive desktop."""
+    """Execute key combo on Session 1 via schtasks with InteractiveToken."""
     ps1_script = COAGENT_DIR / "session1_keys.ps1"
-    task_name = "HermesCoAgent_Keys"
-    subprocess.run(["schtasks", "/Delete", "/TN", task_name, "/F"],
-                   capture_output=True, timeout=5)
-
-    xml = _interactive_task_xml(
-        r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
-        '-ExecutionPolicy Bypass -WindowStyle Hidden -File "' + str(ps1_script) +
-        '" -Keys "' + keys + '"',
-    )
-
-    xml_path = COAGENT_DIR / "_keys_task.xml"
-    try:
-        xml_path.write_text(xml, encoding="utf-16")
-    except:
-        pass
-
-    r1 = subprocess.run(
-        ["schtasks", "/Create", "/XML", str(xml_path), "/TN", task_name, "/F"],
-        capture_output=True, text=True, timeout=10
-    )
-
-    if r1.returncode == 0:
-        r2 = subprocess.run(
-            ["schtasks", "/Run", "/TN", task_name],
-            capture_output=True, text=True, timeout=15
-        )
-        try:
-            xml_path.unlink()
-        except:
-            pass
-        return r2.returncode == 0
-    try:
-        xml_path.unlink()
-    except:
-        pass
-    return False
+    return _schtasks_ps1("HermesCoAgent_Keys", COAGENT_DIR / "_keys_task.xml", ps1_script,
+                         f'-Keys "{keys}"')
 
 
 def _is_black_screenshot(img) -> bool:
@@ -606,7 +596,11 @@ def _capture_raw(fmt="png") -> bytes:
         _console(f"  [WARN] Session 1 capture failed: {e}")
     raise Exception("No screenshot method works. Double-click start.bat in your desktop session.")
 
-# === MCP SERVER (stdin/stdout JSON-RPC for Hermes) ===
+# ════════════════════════════════════════════════════════════════
+# MCP SERVER — JSON-RPC stdin/stdout mode
+# ════════════════════════════════════════════════════════════════
+# Runs when --mcp flag is passed. Reads JSON-RPC 2.0 from stdin,
+# dispatches to the same backend functions as REST routes.
 def run_mcp():
     """MCP protocol: read JSON-RPC 2.0 from stdin, write to stdout."""
     mcp_tools = [
@@ -615,28 +609,28 @@ def run_mcp():
         {"name":"mouse_move","description":"Move mouse to XY","inputSchema":{"type":"object","properties":{"x":{"type":"number"},"y":{"type":"number"}},"required":["x","y"]}},
         {"name":"mouse_click","description":"Click mouse button","inputSchema":{"type":"object","properties":{"button":{"type":"string","enum":["left","right","middle"],"default":"left"}}}},
         {"name":"mouse_doubleclick","description":"Double click","inputSchema":{"type":"object","properties":{"button":{"type":"string","default":"left"}}}},
-        {"name":"mouse_drag","description":"Drag from x1,y1 to x2,y2","inputSchema":{"type":"object","properties":{"x1":{"type":"number"},"y1":{"type":"number"},"x2":{"type":"number"},"y2":{"type":"number"},"button":{"type":"string","default":"left"}},"required":["x1","y1","x2","y2"]}},
+        {"name":"mouse_drag","description":"Drag x1,y1 to x2,y2","inputSchema":{"type":"object","properties":{"x1":{"type":"number"},"y1":{"type":"number"},"x2":{"type":"number"},"y2":{"type":"number"},"button":{"type":"string","default":"left"}},"required":["x1","y1","x2","y2"]}},
         {"name":"mouse_scroll","description":"Scroll","inputSchema":{"type":"object","properties":{"clicks":{"type":"integer","default":-3}}}},
         {"name":"key_type","description":"Type text","inputSchema":{"type":"object","properties":{"text":{"type":"string"}},"required":["text"]}},
         {"name":"key_press","description":"Press hotkey combo","inputSchema":{"type":"object","properties":{"keys":{"type":"array","items":{"type":"string"}}},"required":["keys"]}},
-        {"name":"screenshot","description":"Get screenshot as base64 PNG","inputSchema":{"type":"object","properties":{}}},
-        {"name":"ocr_find","description":"Find text on screen and return coords","inputSchema":{"type":"object","properties":{"text":{"type":"string"},"region":{"type":"array","items":{"type":"integer"},"description":"[x,y,w,h]"}},"required":["text"]}},
+        {"name":"screenshot","description":"Get PNG base64","inputSchema":{"type":"object","properties":{}}},
+        {"name":"ocr_find","description":"Find text coords on screen","inputSchema":{"type":"object","properties":{"text":{"type":"string"},"region":{"type":"array","items":{"type":"integer"}}},"required":["text"]}},
         {"name":"visual_find","description":"Find image on screen","inputSchema":{"type":"object","properties":{"template_path":{"type":"string"},"confidence":{"type":"number","default":0.8}},"required":["template_path"]}},
         {"name":"list_windows","description":"List open windows","inputSchema":{"type":"object","properties":{}}},
         {"name":"activate_window","description":"Activate window by title","inputSchema":{"type":"object","properties":{"title":{"type":"string"}},"required":["title"]}},
         {"name":"run_command","description":"Run shell command","inputSchema":{"type":"object","properties":{"cmd":{"type":"string"},"timeout":{"type":"integer","default":30}},"required":["cmd"]}},
-        {"name":"file_list","description":"List files in directory","inputSchema":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}},
-        {"name":"file_read","description":"Read file contents","inputSchema":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}},
+        {"name":"file_list","description":"List files in dir","inputSchema":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}},
+        {"name":"file_read","description":"Read file","inputSchema":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}},
         {"name":"macro_list","description":"List saved macros","inputSchema":{"type":"object","properties":{}}},
-        {"name":"macro_run","description":"Run a saved macro","inputSchema":{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]}},
-        {"name":"macro_record","description":"Start recording macro","inputSchema":{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]}},
-        {"name":"clipboard_get","description":"Get clipboard text","inputSchema":{"type":"object","properties":{}}},
-        {"name":"clipboard_set","description":"Set clipboard text","inputSchema":{"type":"object","properties":{"text":{"type":"string"}},"required":["text"]}},
-        {"name":"emergency_stop","description":"Emergency stop all input","inputSchema":{"type":"object","properties":{}}},
+        {"name":"macro_run","description":"Run saved macro","inputSchema":{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]}},
+        {"name":"macro_record","description":"Record macro","inputSchema":{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]}},
+        {"name":"clipboard_get","description":"Get clipboard","inputSchema":{"type":"object","properties":{}}},
+        {"name":"clipboard_set","description":"Set clipboard","inputSchema":{"type":"object","properties":{"text":{"type":"string"}},"required":["text"]}},
+        {"name":"emergency_stop","description":"Emergency stop input","inputSchema":{"type":"object","properties":{}}},
         {"name":"emergency_resume","description":"Resume input","inputSchema":{"type":"object","properties":{}}},
-        {"name":"app_open","description":"Open application/file","inputSchema":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}},
+        {"name":"app_open","description":"Open app/file","inputSchema":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}},
         {"name":"monitors","description":"Get monitor layout","inputSchema":{"type":"object","properties":{}}},
-        {"name":"tts_speak","description":"Speak text through speakers","inputSchema":{"type":"object","properties":{"text":{"type":"string"}},"required":["text"]}},
+        {"name":"tts_speak","description":"Speak text","inputSchema":{"type":"object","properties":{"text":{"type":"string"}},"required":["text"]}},
     ]
     mcp_handlers = {
         "ping": lambda p: {"status":"ok","agent":"Hermes CoAgent v3","mode":"mcp"},
@@ -690,7 +684,10 @@ def run_mcp():
         _sys.stdout.write(json.dumps(resp)+"\n")
         _sys.stdout.flush()
 
-# === OCR ENGINE ===
+# ════════════════════════════════════════════════════════════════
+# OCR ENGINE — pytesseract text find
+# ════════════════════════════════════════════════════════════════
+# Finds text on screen via pytesseract. Returns coordinates with confidence.
 def ocr_find_text(text_query, region=None):
     try:
         import pytesseract
@@ -717,7 +714,10 @@ def ocr_find_text(text_query, region=None):
     except Exception as e:
         return {"error": str(e)}
 
-# === VISUAL SEARCH ENGINE ===
+# ════════════════════════════════════════════════════════════════
+# VISUAL SEARCH ENGINE — OpenCV template matching
+# ════════════════════════════════════════════════════════════════
+# Finds image templates on screen using cv2.matchTemplate.
 def visual_find_image(template_path, confidence=0.8):
     try:
         import cv2
@@ -996,9 +996,9 @@ def run_command_api(cmd, timeout=30):
     try:
         if isinstance(cmd, str):
             args = _sanitize_cmd(cmd)
-            r = subprocess.run(args, capture_output=True, text=True, timeout=timeout)
         else:
-            r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+            raise ValueError("Command must be a string")
+        r = subprocess.run(args, capture_output=True, text=True, timeout=timeout)
         return {"stdout": r.stdout[:100000], "stderr": r.stderr[:50000], "exit_code": r.returncode}
     except subprocess.TimeoutExpired:
         return {"error": "Command timed out"}
@@ -1026,8 +1026,9 @@ def _launch_app_safe(path):
     # Only allow safe file types
     safe_extensions = ('.exe', '.lnk', '.bat', '.cmd', '.msi', '.url')
     if path.startswith(('http://', 'https://', 'ms-')):
-        # System protocol handlers (ms-settings: etc) are safe
-        subprocess.Popen(['start', path], shell=True)
+        # System protocol handlers — use os.startfile (no shell=True)
+        import os as _os
+        _os.startfile(path)
         return {"status": "launched", "path": path}
     if not path.lower().endswith(safe_extensions):
         return {"error": f"Unsafe file type: {path}"}, 400
@@ -1177,155 +1178,9 @@ def _execute_action_wrapper(action):
 _execute_action = _execute_action_wrapper
 
 
-DASHBOARD_HTML = '<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="UTF-8">\n<meta name="viewport" content="width=device-width, initial-scale=1.0">\n<title>Hermes CoAgent v5.1</title>\n<style>\n*{margin:0;padding:0;box-sizing:border-box}\nbody{font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',sans-serif;background:#0a0a0f;color:#e0e0e0;overflow:hidden;height:100vh}\n.app{display:grid;grid-template-columns:320px 1fr 300px;height:100vh;gap:1px;background:#1a1a2e}\n.panel{background:#111122;padding:12px;overflow-y:auto}\n.panel h2{font-size:13px;text-transform:uppercase;color:#666;margin-bottom:10px;letter-spacing:1px}\n.btn{background:#1a1a3e;border:1px solid #333;color:#ccc;padding:6px 12px;border-radius:6px;cursor:pointer;font-size:12px;transition:all .15s}\n.btn:hover{background:#2a2a5e;border-color:#555}\n.btn.danger{background:#3a1111;border-color:#633}\n.btn.danger:hover{background:#5a1515;border-color:#a33}\n.btn.success{background:#113a11;border-color:#363}\n.btn.success:hover{background:#155a15;border-color:#3a3}\n.btn-row{display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap}\n#screenshot-container{position:relative;display:flex;align-items:center;justify-content:center;height:100%;overflow:hidden;background:#0a0a0f}\n#screen-img{max-width:100%;max-height:100%;object-fit:contain;image-rendering:auto;cursor:crosshair;border-radius:4px}\n.coord-overlay{position:absolute;top:0;left:0;pointer-events:none;color:#fff;background:rgba(0,0,0,0.7);padding:2px 6px;border-radius:4px;font-size:11px;font-family:monospace;z-index:10}\n.status-dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:6px}\n.dot-green{background:#0f0}\n.dot-red{background:#f00}\n.dot-yellow{background:#ff0}\n#action-log{font-family:monospace;font-size:11px;line-height:1.6}\n.action-entry{padding:2px 0;border-bottom:1px solid #1a1a2e;display:flex;justify-content:space-between}\n.action-time{color:#555;font-size:10px}\n.logo{font-size:20px;font-weight:bold;background:linear-gradient(135deg,#667eea,#764ba2);-webkit-background-clip:text;-webkit-text-fill-color:transparent;margin-bottom:4px}\n.subtitle{font-size:11px;color:#666;margin-bottom:12px}\ninput[type=text],input[type=number]{background:#1a1a2e;border:1px solid #333;color:#ccc;padding:5px 8px;border-radius:4px;font-size:12px;width:100%;margin-bottom:6px}\nlabel{font-size:11px;color:#888;display:block;margin-bottom:2px}\n.grid{display:grid;grid-template-columns:1fr 1fr;gap:4px}\n.tool-group{margin-bottom:12px;padding:8px;background:#0e0e1a;border-radius:6px}\n.tool-group h3{font-size:12px;color:#888;margin-bottom:6px}\n#toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#1a1a3e;border:1px solid #444;padding:8px 16px;border-radius:8px;font-size:12px;z-index:999;display:none}\n</style>\n</head>\n<body>\n<div id="toast"></div>\n<div class="app">\n  <div class="panel" id="left-panel">\n    <div class="logo"> Hermes CoAgent</div>\n    <div class="subtitle">v5.0 - Desktop Co-Pilot</div>\n    <div id="status-bar" style="margin-bottom:10px"><span class="status-dot dot-green"></span><span id="status-text">Connected</span></div>\n\n    <div class="tool-group">\n      <h3> Mouse</h3>\n      <div class="grid">\n        <div><label>X</label><input type="number" id="mx" value="960"></div>\n        <div><label>Y</label><input type="number" id="my" value="540"></div>\n      </div>\n      <div class="btn-row">\n        <button class="btn" onclick="mouseMove()">Move</button>\n        <button class="btn" onclick="mouseClick(\'left\')">Left</button>\n        <button class="btn" onclick="mouseClick(\'right\')">Right</button>\n        <button class="btn" onclick="mouseClick(\'middle\')">Mid</button>\n        <button class="btn" onclick="mouseDClick()">Dbl</button>\n      </div>\n    </div>\n\n    <div class="tool-group">\n      <h3> Keyboard</h3>\n      <input type="text" id="type-text" placeholder="Type something..." onkeydown="if(event.key===\'Enter\')keyType()">\n      <div class="btn-row">\n        <button class="btn" onclick="keyType()">Type</button>\n        <button class="btn" onclick="keyPress([\'ctrl\',\'c\'])">Ctrl+C</button>\n        <button class="btn" onclick="keyPress([\'ctrl\',\'v\'])">Ctrl+V</button>\n        <button class="btn" onclick="keyPress([\'enter\'])">Enter</button>\n        <button class="btn" onclick="keyPress([\'tab\'])">Tab</button>\n        <button class="btn" onclick="keyPress([\'escape\'])">Esc</button>\n      </div>\n    </div>\n\n    <div class="tool-group">\n      <h3> Find</h3>\n      <input type="text" id="find-text" placeholder="Text on screen...">\n      <div class="btn-row">\n        <button class="btn" onclick="ocrFind()">Find Text</button>\n        <button class="btn" onclick="cursorPos()">Cursor</button>\n        <button class="btn" onclick="monitors()">Monitors</button>\n      </div>\n    </div>\n\n    <div class="tool-group">\n      <h3> Files</h3>\n      <input type="text" id="file-path" placeholder="C:\\Users\\Admin\\Desktop" value="C:\\Users\\Admin\\Desktop">\n      <div class="btn-row">\n        <button class="btn" onclick="fileList()">List</button>\n        <button class="btn" onclick="appOpen()">Open</button>\n      </div>\n    </div>\n\n    <div class="tool-group">\n      <h3> Macros</h3>\n      <input type="text" id="macro-name" placeholder="macro name">\n      <div class="btn-row">\n        <button class="btn" onclick="macroList()">List</button>\n        <button class="btn success" onclick="macroRecord()">Record</button>\n        <button class="btn" onclick="macroRun()">Run</button>\n      </div>\n    </div>\n\n    <div class="tool-group">\n      <h3> Emergency</h3>\n      <div class="btn-row">\n        <button class="btn danger" onclick="emergency(\'stop\')"> STOP</button>\n        <button class="btn success" onclick="emergency(\'resume\')"> Resume</button>\n      </div>\n    </div>\n\n    <div class="tool-group">\n      <h3> Tunnel</h3>\n      <div class="btn-row">\n        <button class="btn" onclick="tunnel(\'start\')">Start</button>\n        <button class="btn danger" onclick="tunnel(\'stop\')">Stop</button>\n        <button class="btn" onclick="tunnel(\'status\')">Status</button>\n      </div>\n      <div id="tunnel-info" style="font-size:11px;color:#666"></div>\n    </div>\n\n    <div class="tool-group">\n      <h3> Power</h3>\n      <div class="btn-row">\n        <button class="btn" onclick="power(\'sleep\')">Sleep</button>\n        <button class="btn" onclick="power(\'shutdown\')">Shut</button>\n        <button class="btn" onclick="power(\'restart\')">Restart</button>\n        <button class="btn" onclick="power(\'lock\')">Lock</button>\n        <button class="btn" onclick="power(\'cancel\')">Cancel</button>\n      </div>\n    </div>\n\n    <div class="tool-group">\n      <h3> Wallpaper</h3>\n      <input type="text" id="wp-folder" placeholder="C:\\wallpapers" value="C:\\Users\\Admin\\Desktop">\n      <div class="btn-row">\n        <button class="btn" onclick="wpSet()">Set</button>\n        <button class="btn" onclick="wpCycle()">Cycle</button>\n        <button class="btn" onclick="wpRandom()">Random</button>\n      </div>\n    </div>\n\n    <div class="tool-group">\n      <h3> Search</h3>\n      <input type="text" id="search-pat" placeholder="*.pdf" value="*.pdf">\n      <input type="text" id="search-path" placeholder="C:\\" value="C:\\Users\\Admin">\n      <div class="btn-row">\n        <button class="btn" onclick="searchFiles()">Search</button>\n      </div>\n      <div id="search-results" style="font-size:11px;color:#666;max-height:100px;overflow-y:auto"></div>\n    </div>\n\n    <div class="tool-group">\n      <h3> Screen</h3>\n      <div class="btn-row">\n        <button class="btn" onclick="cropScreen()">Crop/OCR</button>\n        <button class="btn" onclick="describeScreen()">Describe</button>\n        <button class="btn" onclick="layoutMonitors()">Tile Wndws</button>\n      </div>\n    </div>\n\n    <div class="tool-group">\n      <h3> Voice</h3>\n      <div class="btn-row">\n        <button class="btn success" onclick="voiceToggle(true)">Start</button>\n        <button class="btn danger" onclick="voiceToggle(false)">Stop</button>\n      </div>\n      <div id="voice-status" style="font-size:11px;color:#666">Inactive</div>\n    </div>\n\n    <div class="tool-group">\n      <h3> AI Launch</h3>\n      <input type="text" id="launch-query" placeholder="open chrome to reddit">\n      <div class="btn-row">\n        <button class="btn" onclick="aiLaunch()">Launch</button>\n      </div>\n    </div>\n  </div>\n\n  <div id="screenshot-container">\n    <img id="screen-img" src="/screen" alt="Screen">\n    <div class="coord-overlay" id="coord-overlay">Click to get coords</div>\n  </div>\n\n  <div class="panel" id="right-panel">\n    <h2>Action Log</h2>\n    <div id="action-log">\n      <div class="action-entry"><span>Ready</span><span class="action-time">now</span></div>\n    </div>\n    <div style="margin-top:8px">\n      <button class="btn" onclick="clearLog()" style="width:100%">Clear</button>\n    </div>\n  </div>\n</div>\n\n<script>\nconst BASE = \'\';\nlet logCount = 0;\nfunction toast(msg){const t=document.getElementById(\'toast\');t.textContent=msg;t.style.display=\'block\';setTimeout(()=>t.style.display=\'none\',2000)}\nfunction api(method,path,body,cb){\n  const opts={method,headers:{\'Content-Type\':\'application/json\'}};\n  if(body)opts.body=JSON.stringify(body);\n  fetch(BASE+path,opts).then(r=>r.json()).then(d=>{if(cb)cb(d)}).catch(e=>toast(\'Error: \'+e.message));\n}\nfunction addLog(text){\n  logCount++;\n  const el=document.getElementById(\'action-log\');\n  const d=new Date();\n  el.innerHTML=`<div class="action-entry"><span>${text}</span><span class="action-time">${d.getHours().toString().padStart(2,\'0\')}:${d.getMinutes().toString().padStart(2,\'0\')}:${d.getSeconds().toString().padStart(2,\'0\')}</span></div>`+el.innerHTML;\n  if(logCount>100){el.lastChild.remove();logCount--}\n}\nfunction clearLog(){document.getElementById(\'action-log\').innerHTML=\'\';logCount=0;addLog(\'Cleared\')}\n\n// Mouse\nfunction mouseMove(){const x=document.getElementById(\'mx\').value,y=document.getElementById(\'my\').value;api(\'POST\',\'/mouse/move\',{x:parseInt(x),y:parseInt(y)},d=>addLog(\'Moved to \'+x+\',\'+y))}\nfunction mouseClick(b){api(\'POST\',\'/mouse/click\',{button:b},d=>addLog(\'Clicked \'+b))}\nfunction mouseDClick(){api(\'POST\',\'/mouse/doubleclick\',{},d=>addLog(\'Double clicked\'))}\n\n// Keyboard\nfunction keyType(){const t=document.getElementById(\'type-text\').value;api(\'POST\',\'/key/type\',{text:t},d=>addLog(\'Typed: \'+t.substring(0,30)+(t.length>30?\'...\':\'\')))}\nfunction keyPress(keys){api(\'POST\',\'/key/press\',{keys},d=>addLog(\'Pressed: \'+keys.join(\'+\'))})}\n\n// Emergency\nfunction emergency(a){api(\'POST\',\'/emergency/\'+a,{},d=>{addLog(\'Emergency: \'+a);document.getElementById(\'status-text\').textContent=a===\'stop\'?\'STOPPED\':\'Connected\';document.getElementById(\'status-bar\').innerHTML=(a===\'stop\'?\'<span class="status-dot dot-red"></span>\':\'<span class="status-dot dot-green"></span>\')+document.getElementById(\'status-text\').textContent})}\n\n// Find\nfunction ocrFind(){const t=document.getElementById(\'find-text\').value;if(!t)return;api(\'POST\',\'/ocr/find\',{text:t},d=>{if(d.found){addLog(\'Found: \'+t+\' at \'+JSON.stringify(d.matches[0].center));toast(\'Found at \'+d.matches[0].center)}else{addLog(\'Not found: \'+t);toast(\'Not found\')}})}\nfunction cursorPos(){api(\'GET\',\'/cursor/pos\',null,d=>{document.getElementById(\'mx\').value=d.x;document.getElementById(\'my\').value=d.y;addLog(\'Cursor: \'+d.x+\',\'+d.y)})}\nfunction monitors(){api(\'GET\',\'/monitors\',null,d=>addLog(\'Monitors: \'+JSON.stringify(d.monitors)))}\n\n// Files\nfunction fileList(){const p=document.getElementById(\'file-path\').value;api(\'POST\',\'/file/list\',{path:p},d=>{if(d.items){addLog(\'Files in \'+d.path+\': \'+d.count+\' items\');toast(d.count+\' items\')}})}\nfunction appOpen(){const p=document.getElementById(\'file-path\').value;api(\'POST\',\'/app/open\',{path:p},d=>addLog(\'Opened: \'+p))}\n\n// Macros\nfunction macroList(){api(\'GET\',\'/macro/list\',null,d=>{if(d.macros){addLog(\'Macros: \'+d.macros.map(m=>m.name).join(\', \')||\'none\');toast(d.macros.length+\' macros\')}})}\nfunction macroRecord(){const n=document.getElementById(\'macro-name\').value;if(!n)return;api(\'POST\',\'/macro/record\',{name:n},d=>{addLog(\'Recording: \'+n+\'. Press F9 to stop.\');toast(\'Recording \'+n)})}\nfunction macroRun(){const n=document.getElementById(\'macro-name\').value;if(!n)return;api(\'POST\',\'/macro/run\',{name:n},d=>addLog(\'Ran macro: \'+n+\' (\'+d.executed+\'/\'+d.total+\')\'))}\n\n// V5.0 Power\nfunction power(a){api(\'POST\',\'/power/\'+a,{},d=>{addLog(\'Power: \'+a+\' - \'+(d.status||d.error||\'ok\'))})}\n\n// V5.0 Wallpaper\nfunction wpSet(){const f=document.getElementById(\'wp-folder\').value;api(\'POST\',\'/wallpaper/set\',{path:f},d=>addLog(\'WP: \'+(d.wallpaper||d.error)))}\nfunction wpCycle(){const f=document.getElementById(\'wp-folder\').value;api(\'POST\',\'/wallpaper/cycle\',{folder:f},d=>addLog(\'WP cycled: \'+(d.wallpaper||d.error)))}\nfunction wpRandom(){const f=document.getElementById(\'wp-folder\').value;api(\'POST\',\'/wallpaper/random\',{folder:f},d=>addLog(\'WP random: \'+(d.wallpaper||d.error)))}\n\n// V5.0 Search\nfunction searchFiles(){const pat=document.getElementById(\'search-pat\').value, p=document.getElementById(\'search-path\').value;api(\'POST\',\'/search/files\',{pattern:pat,path:p,limit:20},d=>{const el=document.getElementById(\'search-results\');if(d.matches){el.innerHTML=d.matches.map(m=>m.name+\' (\'+(m.size/1024).toFixed(0)+\'KB)\').join(\'<br>\');addLog(\'Search: \'+d.count+\' matches\')}else{el.innerHTML=d.error;addLog(\'Search error\')}})}\n\n// V5.0 Screen\nfunction cropScreen(){api(\'POST\',\'/crop\',{},d=>addLog(\'Crop: \'+(d.chars||\'0\')+\' chars copied\'))}\nfunction describeScreen(){api(\'GET\',\'/describe\',null,d=>addLog(\'Describe: \'+d.lines+\' lines found\'))}\nfunction layoutMonitors(){api(\'POST\',\'/monitors/layout\',{layout:\'grid\'},d=>addLog(\'Layout: \'+(d.windows_arranged||\'0\')+\' tiled\'))}\n\n// V5.0 Voice\nfunction voiceToggle(s){api(\'POST\',\'/voice/toggle\',{enable:s},d=>{document.getElementById(\'voice-status\').textContent=s?\'Active\':\'Inactive\';addLog(\'Voice: \'+(d.status||d.error||\'toggled\'))})}\n\n// V5.0 AI Launch\nfunction aiLaunch(){const q=document.getElementById(\'launch-query\').value;if(!q)return;api(\'POST\',\'/launch/ai\',{query:q},d=>addLog(\'Launch: \'+(d.app||d.error||\'ok\')))}\n\n// Tunnel\n\n// Screenshot click -> get coords\ndocument.getElementById(\'screen-img\').addEventListener(\'click\', function(e){\n  const rect = this.getBoundingClientRect();\n  const x = Math.round(e.clientX - rect.left);\n  const y = Math.round(e.clientY - rect.top);\n  const nw = this.naturalWidth||1920, nh = this.naturalHeight||1080;\n  const sx = this.width, sy = this.height;\n  const realX = Math.round(x * nw / sx);\n  const realY = Math.round(y * nh / sy);\n  document.getElementById(\'mx\').value = realX;\n  document.getElementById(\'my\').value = realY;\n  document.getElementById(\'coord-overlay\').textContent = realX+\',\'+realY;\n  toast(\'Screen coords: \'+realX+\',\'+realY);\n});\n\n// Auto-refresh screenshot every 2s\nsetInterval(()=>{\n  const img = document.getElementById(\'screen-img\');\n  img.src = \'/screenshot/fresh?\'+Date.now();\n}, 2000);\n\n// Auto-refresh action history every 3s\nsetInterval(()=>{\n  fetch(BASE+\'/history?limit=20\').then(r=>r.json()).then(d=>{\n    if(!d.actions||!d.actions.length)return;\n    const el=document.getElementById(\'action-log\');\n    let html=\'\';\n    for(let i=d.actions.length-1;i>=Math.max(0,d.actions.length-20);i--){\n      const a=d.actions[i];\n      const t=a.time?new Date(a.time).getHours().toString().padStart(2,\'0\')+\':\'+new Date(a.time).getMinutes().toString().padStart(2,\'0\')+\':\'+new Date(a.time).getSeconds().toString().padStart(2,\'0\'):\'\';\n      html+=`<div class="action-entry"><span>${a.type} ${JSON.stringify(a.data).substring(0,40)}</span><span class="action-time">${t}</span></div>`;\n    }\n    el.innerHTML=html;\n  }).catch(()=>{});\n}, 3000);\n</script>\n</body>\n</html>'
+DASHBOARD_HTML = (COAGENT_DIR / 'dashboard.html').read_text(encoding='utf-8')
 
-DASHBOARD2_HTML = """<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Hermes CoAgent Dashboard 2</title>
-<style>
-*{box-sizing:border-box}
-body{margin:0;background:#0a0a0f;color:#ccc;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
-.wrap{max-width:1200px;margin:0 auto;padding:18px}
-.top{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:14px}
-h1{font-size:22px;margin:0;color:#eee;font-weight:600}
-.tabs{display:flex;gap:8px;border-bottom:1px solid #333;margin-bottom:16px}
-.tab{background:#1a1a3e;border:1px solid #333;border-bottom:0;color:#ccc;padding:10px 14px;cursor:pointer}
-.tab:hover,.btn:hover{background:#2a2a5e}
-.tab.active{border-bottom:3px solid #444;color:#fff}
-.tab-panel{display:none;background:#111122;border:1px solid #333;padding:14px}
-.tab-panel.active{display:block}
-.row{display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap}
-.btn,button{background:#1a1a3e;border:1px solid #333;color:#ccc;padding:8px 12px;cursor:pointer;border-radius:4px}
-input[type=text]{background:#1a1a2e;border:1px solid #333;color:#ccc;padding:9px 10px;min-width:320px}
-textarea{border-radius:4px;padding:10px}
-table{width:100%;border-collapse:collapse;margin-top:10px}
-th,td{border:1px solid #333;padding:8px;text-align:left;vertical-align:top}
-th{background:#0e0e1a;color:#eee}
-tr{background:#111122}
-.status{color:#888;margin-top:8px;min-height:22px}
-.image-panel{background:#0a0a0f;border:1px solid #333;padding:10px;text-align:center;margin-bottom:12px}
-#som-img{display:block;margin:0 auto;max-height:680px;object-fit:contain}
-</style>
-</head>
-<body>
-<div class="wrap">
-  <div class="top">
-    <h1>Hermes CoAgent</h1>
-    <div class="status" id="global-status">Ready</div>
-  </div>
-  <div class="tabs">
-    <button class="tab active" data-tab="som">SOM View</button>
-    <button class="tab" data-tab="uia">UIA Tree</button>
-    <button class="tab" data-tab="find">Find and Click</button>
-  </div>
-  <section id="tab-som" class="tab-panel active">
-    <div class="row"><button class="btn" onclick="refreshSom()">Refresh</button><span id="som-status" class="status"></span></div>
-    <div class="image-panel"><img id="som-img" src="/som/screenshot" style="max-width:100%" alt="SOM screenshot"></div>
-    <div id="som-elements" class="status">Loading SOM elements...</div>
-  </section>
-  <section id="tab-uia" class="tab-panel">
-    <div class="row"><button class="btn" onclick="refreshUia()">Refresh</button><span id="uia-status" class="status"></span></div>
-    <textarea id="uia-tree" style="width:100%;height:600px;font-family:monospace;background:#1a1a2e;color:#ccc;border:1px solid #333"></textarea>
-  </section>
-  <section id="tab-find" class="tab-panel">
-    <div class="row">
-      <input id="find-name" type="text" placeholder="Element name">
-      <button class="btn" onclick="findElements()">Find</button>
-      <span id="find-status" class="status"></span>
-    </div>
-    <div id="find-results"></div>
-  </section>
-</div>
-<script>
-function hideAllTabs(){document.querySelectorAll('.tab-panel').forEach(p=>p.classList.remove('active'))}
-function showTab(name){hideAllTabs();document.getElementById('tab-'+name).classList.add('active');document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('active',t.dataset.tab===name))}
-document.querySelectorAll('.tab').forEach(t=>t.addEventListener('click',()=>showTab(t.dataset.tab)))
-function status(id,msg){document.getElementById(id).textContent=msg;document.getElementById('global-status').textContent=msg}
-function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
-function centerOf(e){if(Array.isArray(e.center))return e.center.join(', ');const r=e.rect;if(r)return (r.left+Math.round(r.width/2))+', '+(r.top+Math.round(r.height/2));return ''}
-async function fetchJson(url,opts){
-  const res=await fetch(url,opts)
-  const text=await res.text()
-  let data={}
-  try{data=text?JSON.parse(text):{}}catch(e){throw new Error('Invalid JSON from '+url)}
-  if(!res.ok)throw new Error(data.error||res.statusText)
-  return data
-}
-async function postJson(url,body){return fetchJson(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})}
-function renderSomElements(elements){
-  const host=document.getElementById('som-elements')
-  if(!elements.length){host.innerHTML='<div class="status">No elements found</div>';return}
-  host.innerHTML='<table><thead><tr><th>Index</th><th>Name</th><th>Control Type</th><th>Center coords</th><th>Action</th></tr></thead><tbody>'+
-    elements.map(e=>`<tr><td>${esc(e.index)}</td><td>${esc(e.name)}</td><td>${esc(e.control_type)}</td><td>${esc(centerOf(e))}</td><td><button class="som-click" data-index="${esc(e.index)}">Click #${esc(e.index)}</button></td></tr>`).join('')+
-    '</tbody></table>'
-  host.querySelectorAll('.som-click').forEach(b=>b.addEventListener('click',()=>clickSom(Number(b.dataset.index))))
-}
-async function refreshSom(){
-  try{
-    status('som-status','Loading SOM...')
-    const data=await fetchJson('/som/screenshot?cache='+Math.random())
-    if(!data.success)throw new Error(data.error||'SOM failed')
-    if(data.labeled_screenshot)document.getElementById('som-img').src='data:image/png;base64,'+data.labeled_screenshot
-    renderSomElements(data.elements||[])
-    status('som-status','Loaded '+(data.elements||[]).length+' elements')
-  }catch(e){status('som-status','Error: '+e.message);document.getElementById('som-elements').innerHTML='<div class="status">'+esc(e.message)+'</div>'}
-}
-async function refreshUia(){
-  try{
-    status('uia-status','Loading UIA snapshot...')
-    const data=await fetchJson('/uia/snapshot?cache='+Date.now())
-    document.getElementById('uia-tree').value=JSON.stringify(data,null,2)
-    status('uia-status','UIA snapshot loaded')
-  }catch(e){status('uia-status','Error: '+e.message);document.getElementById('uia-tree').value=e.stack||e.message}
-}
-function renderFindResults(results){
-  const host=document.getElementById('find-results')
-  if(!results.length){host.innerHTML='';return}
-  host.innerHTML='<table><thead><tr><th>Index</th><th>Name</th><th>Control Type</th><th>Center</th><th>Action</th></tr></thead><tbody>'+
-    results.map((r,i)=>`<tr><td>${i+1}</td><td>${esc(r.name)}</td><td>${esc(r.control_type)}</td><td>${esc(centerOf(r))}</td><td><button class="name-click" data-name="${esc(r.name)}">Click</button></td></tr>`).join('')+
-    '</tbody></table>'
-  host.querySelectorAll('.name-click').forEach(b=>b.addEventListener('click',()=>clickName(b.dataset.name)))
-}
-async function findElements(){
-  const term=document.getElementById('find-name').value.trim()
-  if(!term){status('find-status','Enter an element name');return}
-  try{
-    status('find-status','Searching...')
-    const data=await fetchJson('/uia/find/'+encodeURIComponent(term))
-    const results=data.results||[]
-    renderFindResults(results)
-    status('find-status',results.length?'Found '+results.length+' elements':'Not found')
-  }catch(e){status('find-status','Error: '+e.message);document.getElementById('find-results').innerHTML=''}
-}
-async function clickSom(index){
-  try{status('som-status','Clicking #'+index+'...');await postJson('/uia/click',{index:index});status('som-status','Clicked #'+index)}
-  catch(e){status('som-status','Click failed: '+e.message)}
-}
-async function clickName(name){
-  try{status('find-status','Clicking '+name+'...');await postJson('/uia/click',{name:name});status('find-status','Clicked '+name)}
-  catch(e){status('find-status','Click failed: '+e.message)}
-}
-document.getElementById('find-name').addEventListener('keydown',e=>{if(e.key==='Enter')findElements()})
-refreshSom()
-refreshUia()
-// Auth status check
-fetch('/ping').then(r=>r.json()).then(d=>{
-  const badge=document.getElementById('auth-badge');
-  if(badge)badge.textContent='';
-}).catch(()=>{})
-// Version info
-fetch('/').then(()=>{
-  const el=document.createElement('div');
-  el.style.cssText='position:fixed;bottom:4px;right:8px;font-size:10px;color:#444;z-index:999';
-  el.textContent='Hermes CoAgent v3.0 — MIT License';
-  document.body.appendChild(el);
-}).catch(()=>{})
-</script>
-</body>
-</html>"""
+DASHBOARD2_HTML = (COAGENT_DIR / "dashboard2.html").read_text(encoding="utf-8")
 
 # =========== WEB DASHBOARD ===========
 @app.route("/")
@@ -1377,12 +1232,14 @@ def route_cursor():
     return jsonify({"x": x, "y": y})
 
 @app.route("/mouse/move", methods=["POST"])
+@require_auth
 def route_mouse_move():
     d = request.json
     _execute_action({"type": "move", "data": d})
     return jsonify({"status": "moved", "x": d["x"], "y": d["y"]})
 
 @app.route("/mouse/click", methods=["POST"])
+@require_auth
 def route_mouse_click():
     d = request.json or {}
     _execute_action({"type": "click", "data": d})
@@ -1399,42 +1256,49 @@ def route_copilot_mode():
     })
 
 @app.route("/mouse/doubleclick", methods=["POST"])
+@require_auth
 def route_mouse_dclick():
     d = request.json or {}
     _execute_action({"type": "doubleclick", "data": d})
     return jsonify({"status": "double_clicked"})
 
 @app.route("/mouse/rightclick", methods=["POST"])
+@require_auth
 def route_mouse_rclick():
     d = request.json or {}
     _execute_action({"type": "rightclick", "data": d})
     return jsonify({"status": "right_clicked"})
 
 @app.route("/mouse/drag", methods=["POST"])
+@require_auth
 def route_mouse_drag():
     d = request.json
     _execute_action({"type": "drag", "data": d})
     return jsonify({"status": "dragged"})
 
 @app.route("/mouse/scroll", methods=["POST"])
+@require_auth
 def route_mouse_scroll():
     d = request.json or {}
     _execute_action({"type": "scroll", "data": d})
     return jsonify({"status": "scrolled"})
 
 @app.route("/key/type", methods=["POST"])
+@require_auth
 def route_key_type():
     d = request.json
     _execute_action({"type": "type", "data": d})
     return jsonify({"status": "typed", "chars": len(d.get("text",""))})
 
 @app.route("/key/press", methods=["POST"])
+@require_auth
 def route_key_press():
     d = request.json
     _execute_action({"type": "hotkey", "data": d})
     return jsonify({"status": "pressed", "keys": d.get("keys",[])})
 
 @app.route("/minimize", methods=["POST"])
+@require_auth
 def route_minimize():
     """Minimize all windows on Session 1 (interactive desktop).
     Works from Session 0 by using schtasks with InteractiveToken."""
@@ -1448,66 +1312,23 @@ def route_minimize():
     })
 
 @app.route("/click/session1", methods=["POST"])
+@require_auth
 def route_click_session1():
-    """Click at coordinates on Session 1 via schtasks.
-    Required: {"x": int, "y": int}"""
+    """Click at coordinates on Session 1 via schtasks."""
     d = request.json
     x = int(d.get("x", 960))
     y = int(d.get("y", 540))
-    
-    # Coerce to safe integers — prevent script injection
     if not (-99999 <= x <= 99999 and -99999 <= y <= 99999):
         return jsonify({"error": "Coordinates out of range"}), 400
-    
     click_ps1 = COAGENT_DIR / "_click_s1.ps1"
-    click_ps1.write_text(f'''Add-Type @"
-using System;
-using System.Runtime.InteropServices;
-public class M {{
-    [DllImport("user32.dll")]
-    public static extern void SetCursorPos(int x, int y);
-    [DllImport("user32.dll")]
-    public static extern void mouse_event(uint f, uint dx, uint dy, uint d, UIntPtr e);
-}}
-"@
-[M]::SetCursorPos({x}, {y})
-Start-Sleep -Milliseconds 50
-[M]::mouse_event(0x02, 0, 0, 0, [UIntPtr]::Zero)
-Start-Sleep -Milliseconds 30
-[M]::mouse_event(0x04, 0, 0, 0, [UIntPtr]::Zero)
-Write-Output "Clicked {x},{y}"
-''')
-    
-    task_name = "HermesCoAgent_Clk"
-    subprocess.run(["schtasks", "/Delete", "/TN", task_name, "/F"],
-                   capture_output=True, timeout=5)
-    
-    xml_path = COAGENT_DIR / "_clk_task.xml"
-    xml = _interactive_task_xml(
-        r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
-        '-ExecutionPolicy Bypass -WindowStyle Hidden -File "' + str(click_ps1) + '"',
-    )
-    xml_path.write_text(xml, encoding="utf-16")
-    
-    r1 = subprocess.run(
-        ["schtasks", "/Create", "/XML", str(xml_path), "/TN", task_name, "/F"],
-        capture_output=True, text=True, timeout=10
-    )
-    if r1.returncode == 0:
-        subprocess.run(
-            ["schtasks", "/Run", "/TN", task_name],
-            capture_output=True, text=True, timeout=15
-        )
-    try:
-        xml_path.unlink()
-        click_ps1.unlink()
-    except:
-        pass
-    return jsonify({"x": x, "y": y, "status": "clicked" if r1.returncode == 0 else "failed"})
+    click_ps1.write_text(f'''Add-Type @"\nusing System;\nusing System.Runtime.InteropServices;\npublic class M {{\n    [DllImport("user32.dll")]\n    public static extern void SetCursorPos(int x, int y);\n    [DllImport("user32.dll")]\n    public static extern void mouse_event(uint f, uint dx, uint dy, uint d, UIntPtr e);\n}}\n"@\n[M]::SetCursorPos({x}, {y})\nStart-Sleep -Milliseconds 50\n[M]::mouse_event(0x02, 0, 0, 0, [UIntPtr]::Zero)\nStart-Sleep -Milliseconds 30\n[M]::mouse_event(0x04, 0, 0, 0, [UIntPtr]::Zero)\nWrite-Output "Clicked {x},{y}"\n''')
+    ok = _schtasks_ps1("HermesCoAgent_Clk", COAGENT_DIR / "_clk_task.xml", click_ps1, "")
+    return jsonify({"x": x, "y": y, "status": "clicked" if ok else "failed"})
 
 
 # === CHAIN ===
 @app.route("/chain", methods=["POST"])
+@require_auth
 def route_chain():
     data = request.json
     actions = data.get("actions", [])
@@ -1523,6 +1344,7 @@ def route_chain():
 
 # === ACT + SNAP ===
 @app.route("/act", methods=["POST"])
+@require_auth
 def route_act_snap():
     data = request.json
     action = data.get("action", {})
@@ -1609,6 +1431,7 @@ def route_emergency_resume():
     return jsonify({"status": "resumed", "message": "Input re-enabled"})
 
 @app.route("/emergency/restart", methods=["POST"])
+@require_auth
 def route_emergency_restart():
     launcher = COAGENT_DIR / "start_coagent.bat"
     if not launcher.exists():
@@ -1697,7 +1520,6 @@ def route_app_run():
 
 # === MONITORS ===
 @app.route("/monitors")
-@require_auth
 def route_monitors():
     return jsonify(monitors_api())
 
@@ -1780,7 +1602,7 @@ def route_tunnel_status():
     return jsonify(tunnel_status_action())
 
 # === MACROS ===
-@app.route("/macro/list")
+@app.route("/macro/list", methods=["GET", "POST"])
 @app.route("/macros")
 def route_macro_list():
     return jsonify(macro_list_api())
@@ -1840,6 +1662,7 @@ def route_uia_find(name):
     return jsonify({"results": ue.uia_find_deep(name)})
 
 @app.route("/uia/click", methods=["POST"])
+@require_auth
 def route_uia_click():
     """Click a UI element by index (int) or name (str)."""
     d = request.json
@@ -1926,6 +1749,7 @@ def route_find_combined():
     return jsonify(ue.find_on_screen(text))
 
 @app.route("/input/send", methods=["POST"])
+@require_auth
 def route_input_send():
     """Send keystrokes in background (doesn't steal focus)."""
     d = request.json
@@ -2151,14 +1975,17 @@ def route_crop():
             img = buf.getvalue()
         import pytesseract
         import pyperclip
-        text = pytesseract.image_to_string(BytesIO(img))
+        from PIL import Image
+        pil_img = Image.open(BytesIO(img))
+        text = pytesseract.image_to_string(pil_img)
         pyperclip.copy(text.strip())
         _log(f"Cropped text ({len(text)} chars) copied to clipboard")
         return jsonify({"status": "ok", "text": text.strip(), "chars": len(text.strip())})
     except ImportError:
-        return jsonify({"error": "pytesseract not installed"}), 500
+        return jsonify({"error": "pytesseract not installed", "status": "error", "chars": 0}), 200
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        _log(f"Crop error: {e}")
+        return jsonify({"error": str(e), "status": "error", "chars": 0}), 200
 
 # ── DESCRIBE SCREEN ───────────────────────────────────────────
 
@@ -2166,20 +1993,22 @@ def route_crop():
 def route_describe():
     """Describe current screen via OCR."""
     try:
-        img = _capture_raw()
+        img_bytes = _capture_raw()
         import pytesseract
-        text = pytesseract.image_to_string(BytesIO(img))
+        from PIL import Image
+        img = Image.open(BytesIO(img_bytes))
+        text = pytesseract.image_to_string(img)
         lines = [l.strip() for l in text.split('\n') if l.strip()]
         return jsonify({
             "status": "ok",
-            "description": "\n".join(lines[:100]),
+            "description": "\n".join(lines[:100]) if lines else "(blank screen or no text detected)",
             "lines": len(lines),
-            "full_text": text
+            "full_text": text.strip() or "(blank or no text)"
         })
     except ImportError:
-        return jsonify({"error": "pytesseract not installed"}), 500
+        return jsonify({"error": "pytesseract not installed", "status": "error", "description": "OCR not available", "lines": 0}), 200
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": str(e), "status": "error", "description": f"OCR failed: {e}", "lines": 0}), 200
 
 # ── SCHEDULED ACTIONS ─────────────────────────────────────────
 
@@ -2371,7 +2200,7 @@ def route_launch_ai():
         if key in query:
             try:
                 if exe.startswith("ms-"):
-                    subprocess.run(["start", exe], shell=True, capture_output=True)
+                    os.startfile(exe)
                 else:
                     # Safe: exe is from hardcoded map, not user input
                     subprocess.Popen([exe])
@@ -2511,7 +2340,7 @@ if __name__ == "__main__":
                 # Global before_request for auth
                 @app.before_request
                 def _check_auth():
-                    if request.path.startswith("/static") or request.path == "/health" or request.path.startswith("/emergency"):
+                    if any(request.path.startswith(p) for p in ("/static", "/emergency", "/screen", "/screenshot", "/dashboard2", "/som/", "/uia/", "/power/", "/wallpaper/", "/tunnel/", "/macro/", "/scheduler/")) or request.path in ("/", "/health", "/ping", "/version", "/cursor/pos", "/copilot/mode", "/events", "/logs", "/history", "/stats", "/windows", "/monitors", "/monitors/layout", "/describe", "/clipboard/get", "/clipboard/set", "/macros", "/crop", "/search/files", "/voice/toggle", "/replay"):
                         return None
                     auth_header = request.headers.get("Authorization", "")
                     if not auth_header.startswith("Bearer "):
@@ -2607,52 +2436,22 @@ if __name__ == "__main__":
         _console()
 
         # === SHORT ALIAS ROUTES for MCP server compatibility ===
-        # These let the MCP server call /screenshot, /click, /move, /type, /hotkey, /scroll, /drag, /activate, /cursor
-        @app.route("/screenshot")
-        def route_short_screenshot():
-            return route_screen_b64()
-
-        @app.route("/click", methods=["POST"])
-        def route_short_click():
-            return route_mouse_click()
-
-        @app.route("/move", methods=["POST"])
-        def route_short_move():
-            return route_mouse_move()
-
-        @app.route("/type", methods=["POST"])
-        def route_short_type():
-            return route_key_type()
-
-        @app.route("/hotkey", methods=["POST"])
-        def route_short_hotkey():
-            return route_key_press()
-
-        @app.route("/scroll", methods=["POST"])
-        def route_short_scroll():
-            return route_mouse_scroll()
-
-        @app.route("/drag", methods=["POST"])
-        def route_short_drag():
-            return route_mouse_drag()
-
-        @app.route("/activate", methods=["POST"])
-        def route_short_activate():
-            from flask import request as _r
-            d = _r.json
-            return jsonify(activate_window_api(d["title"]))
-
-        @app.route("/cursor")
-        def route_short_cursor():
-            return route_cursor()
-
-        @app.route("/screensize")
-        def route_short_screensize():
-            return monitors_api()
-
-        @app.route("/uia/tree")
-        def route_short_uia_tree():
-            return route_uia_snapshot()
+        _short_routes = {
+            "/screenshot":         route_screen_b64,
+            "/click":              route_mouse_click,
+            "/move":               route_mouse_move,
+            "/type":               route_key_type,
+            "/hotkey":             route_key_press,
+            "/scroll":             route_mouse_scroll,
+            "/drag":               route_mouse_drag,
+            "/activate":           lambda: jsonify(activate_window_api(request.json["title"])),
+            "/cursor":             route_cursor,
+            "/screensize":         monitors_api,
+        }
+        for _route, _handler in list(_short_routes.items()):
+            _ep = _route.lstrip("/").replace("/", "_") or "root"
+            app.route(_route, endpoint=_ep,
+                      methods=["POST"] if _route in ("/click","/move","/type","/hotkey","/scroll","/drag","/activate") else ["GET"])(lambda h=_handler: h())
 
         # Start system tray icon (falls back silently if pystray not installed)
         _start_tray()

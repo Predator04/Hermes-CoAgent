@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hermes CoAgent Dashboard 2</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#0a0a0f;color:#ccc;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+.wrap{max-width:1200px;margin:0 auto;padding:18px}
+.top{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:14px}
+h1{font-size:22px;margin:0;color:#eee;font-weight:600}
+.tabs{display:flex;gap:8px;border-bottom:1px solid #333;margin-bottom:16px}
+.tab{background:#1a1a3e;border:1px solid #333;border-bottom:0;color:#ccc;padding:10px 14px;cursor:pointer}
+.tab:hover,.btn:hover{background:#2a2a5e}
+.tab.active{border-bottom:3px solid #444;color:#fff}
+.tab-panel{display:none;background:#111122;border:1px solid #333;padding:14px}
+.tab-panel.active{display:block}
+.row{display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap}
+.btn,button{background:#1a1a3e;border:1px solid #333;color:#ccc;padding:8px 12px;cursor:pointer;border-radius:4px}
+input[type=text]{background:#1a1a2e;border:1px solid #333;color:#ccc;padding:9px 10px;min-width:320px}
+textarea{border-radius:4px;padding:10px}
+table{width:100%;border-collapse:collapse;margin-top:10px}
+th,td{border:1px solid #333;padding:8px;text-align:left;vertical-align:top}
+th{background:#0e0e1a;color:#eee}
+tr{background:#111122}
+.status{color:#888;margin-top:8px;min-height:22px}
+.image-panel{background:#0a0a0f;border:1px solid #333;padding:10px;text-align:center;margin-bottom:12px}
+#som-img{display:block;margin:0 auto;max-height:680px;object-fit:contain}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <h1>Hermes CoAgent</h1>
+    <div class="status" id="global-status">Ready</div>
+  </div>
+  <div class="tabs">
+    <button class="tab active" data-tab="som">SOM View</button>
+    <button class="tab" data-tab="uia">UIA Tree</button>
+    <button class="tab" data-tab="find">Find and Click</button>
+  </div>
+  <section id="tab-som" class="tab-panel active">
+    <div class="row"><button class="btn" onclick="refreshSom()">Refresh</button><span id="som-status" class="status"></span></div>
+    <div class="image-panel"><img id="som-img" src="/som/screenshot" style="max-width:100%" alt="SOM screenshot"></div>
+    <div id="som-elements" class="status">Loading SOM elements...</div>
+  </section>
+  <section id="tab-uia" class="tab-panel">
+    <div class="row"><button class="btn" onclick="refreshUia()">Refresh</button><span id="uia-status" class="status"></span></div>
+    <textarea id="uia-tree" style="width:100%;height:600px;font-family:monospace;background:#1a1a2e;color:#ccc;border:1px solid #333"></textarea>
+  </section>
+  <section id="tab-find" class="tab-panel">
+    <div class="row">
+      <input id="find-name" type="text" placeholder="Element name">
+      <button class="btn" onclick="findElements()">Find</button>
+      <span id="find-status" class="status"></span>
+    </div>
+    <div id="find-results"></div>
+  </section>
+</div>
+<script>
+function hideAllTabs(){document.querySelectorAll('.tab-panel').forEach(p=>p.classList.remove('active'))}
+function showTab(name){hideAllTabs();document.getElementById('tab-'+name).classList.add('active');document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('active',t.dataset.tab===name))}
+document.querySelectorAll('.tab').forEach(t=>t.addEventListener('click',()=>showTab(t.dataset.tab)))
+function status(id,msg){document.getElementById(id).textContent=msg;document.getElementById('global-status').textContent=msg}
+function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+function centerOf(e){if(Array.isArray(e.center))return e.center.join(', ');const r=e.rect;if(r)return (r.left+Math.round(r.width/2))+', '+(r.top+Math.round(r.height/2));return ''}
+async function fetchJson(url,opts){
+  const res=await fetch(url,opts)
+  const text=await res.text()
+  let data={}
+  try{data=text?JSON.parse(text):{}}catch(e){throw new Error('Invalid JSON from '+url)}
+  if(!res.ok)throw new Error(data.error||res.statusText)
+  return data
+}
+async function postJson(url,body){return fetchJson(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})}
+function renderSomElements(elements){
+  const host=document.getElementById('som-elements')
+  if(!elements.length){host.innerHTML='<div class="status">No elements found</div>';return}
+  host.innerHTML='<table><thead><tr><th>Index</th><th>Name</th><th>Control Type</th><th>Center coords</th><th>Action</th></tr></thead><tbody>'+
+    elements.map(e=>`<tr><td>${esc(e.index)}</td><td>${esc(e.name)}</td><td>${esc(e.control_type)}</td><td>${esc(centerOf(e))}</td><td><button class="som-click" data-index="${esc(e.index)}">Click #${esc(e.index)}</button></td></tr>`).join('')+
+    '</tbody></table>'
+  host.querySelectorAll('.som-click').forEach(b=>b.addEventListener('click',()=>clickSom(Number(b.dataset.index))))
+}
+async function refreshSom(){
+  try{
+    status('som-status','Loading SOM...')
+    const data=await fetchJson('/som/screenshot?cache='+Math.random())
+    if(!data.success)throw new Error(data.error||'SOM failed')
+    if(data.labeled_screenshot)document.getElementById('som-img').src='data:image/png;base64,'+data.labeled_screenshot
+    renderSomElements(data.elements||[])
+    status('som-status','Loaded '+(data.elements||[]).length+' elements')
+  }catch(e){status('som-status','Error: '+e.message);document.getElementById('som-elements').innerHTML='<div class="status">'+esc(e.message)+'</div>'}
+}
+async function refreshUia(){
+  try{
+    status('uia-status','Loading UIA snapshot...')
+    const data=await fetchJson('/uia/snapshot?cache='+Date.now())
+    document.getElementById('uia-tree').value=JSON.stringify(data,null,2)
+    status('uia-status','UIA snapshot loaded')
+  }catch(e){status('uia-status','Error: '+e.message);document.getElementById('uia-tree').value=e.stack||e.message}
+}
+function renderFindResults(results){
+  const host=document.getElementById('find-results')
+  if(!results.length){host.innerHTML='';return}
+  host.innerHTML='<table><thead><tr><th>Index</th><th>Name</th><th>Control Type</th><th>Center</th><th>Action</th></tr></thead><tbody>'+
+    results.map((r,i)=>`<tr><td>${i+1}</td><td>${esc(r.name)}</td><td>${esc(r.control_type)}</td><td>${esc(centerOf(r))}</td><td><button class="name-click" data-name="${esc(r.name)}">Click</button></td></tr>`).join('')+
+    '</tbody></table>'
+  host.querySelectorAll('.name-click').forEach(b=>b.addEventListener('click',()=>clickName(b.dataset.name)))
+}
+async function findElements(){
+  const term=document.getElementById('find-name').value.trim()
+  if(!term){status('find-status','Enter an element name');return}
+  try{
+    status('find-status','Searching...')
+    const data=await fetchJson('/uia/find/'+encodeURIComponent(term))
+    const results=data.results||[]
+    renderFindResults(results)
+    status('find-status',results.length?'Found '+results.length+' elements':'Not found')
+  }catch(e){status('find-status','Error: '+e.message);document.getElementById('find-results').innerHTML=''}
+}
+async function clickSom(index){
+  try{status('som-status','Clicking #'+index+'...');await postJson('/uia/click',{index:index});status('som-status','Clicked #'+index)}
+  catch(e){status('som-status','Click failed: '+e.message)}
+}
+async function clickName(name){
+  try{status('find-status','Clicking '+name+'...');await postJson('/uia/click',{name:name});status('find-status','Clicked '+name)}
+  catch(e){status('find-status','Click failed: '+e.message)}
+}
+document.getElementById('find-name').addEventListener('keydown',e=>{if(e.key==='Enter')findElements()})
+refreshSom()
+refreshUia()
+fetch('/ping').then(r=>r.json()).then(d=>{
+  const badge=document.getElementById('auth-badge');
+  if(badge)badge.textContent='';
+}).catch(()=>{})
+fetch('/').then(()=>{
+  const el=document.createElement('div');
+  el.style.cssText='position:fixed;bottom:4px;right:8px;font-size:10px;color:#444;z-index:999';
+  el.textContent='Hermes CoAgent v6.2';
+  document.body.appendChild(el);
+}).catch(()=>{})
+</script>
+</body>
+</html>

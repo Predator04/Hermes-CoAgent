@@ -1,6 +1,14 @@
 """
 Hermes CoAgent - Security module
-Token-based auth for CoAgent HTTP endpoints.
+==================================
+Token-based Bearer auth for CoAgent HTTP endpoints.
+
+Usage:
+  --secure            Generates a random 64-char hex token
+  --token=KEY         Uses a specific token (or HERMES_COAGENT_TOKEN env var)
+
+The @require_auth decorator wraps Flask route handlers.
+Uses secrets.compare_digest() for timing-safe comparison.
 """
 import os, sys, secrets, functools
 from flask import request, jsonify

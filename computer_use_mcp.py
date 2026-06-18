@@ -1,20 +1,34 @@
-#!/usr/bin/env python
+# ════════════════════════════════════════════════════════════════
+# HERMES COAGENT — Windows Computer Use MCP Server
+# ════════════════════════════════════════════════════════════════
 """
-Hermes CoAgent - Windows Computer Use MCP Server (Optimized v2.0)
-================================================================
-Fast-starting MCP server giving Hermes full desktop control:
-screenshots, UIA tree, click/type/scroll/hotkey, find, drag,
-and SOM overlays. All local — zero API costs.
+FastMCP server that proxies desktop control through CoAgent's REST API.
+Designed for Hermes Agent integration via stdio or SSE transport.
 
-Usage:
-  python computer_use_mcp.py                   # stdio MCP (default)
-  python computer_use_mcp.py --http            # HTTP SSE MCP server on :8000
-  python computer_use_mcp.py --test            # Run self-test
-  python computer_use_mcp.py --fast            # Lazy-load heavy deps
+Launched by Hermes as an MCP subprocess: all tools become available
+as MCP tools that Hermes can call directly.
 
-Config:
-  COAGENT_URL=http://localhost:9123            # CoAgent server
-  MCP_FAST=1                                   # Lazy-import mode via env
+COMPARISON with hermes_coagent.py --mcp:
+  This file (computer_use_mcp.py):
+    - Uses FastMCP SDK (async, structured)
+    - Proxies via HTTP to CoAgent server on :9123
+    - Supports --http mode (SSE on :8000)
+    - Has its own SOM overlay generation (no UIA engine needed)
+  
+  hermes_coagent.py --mcp:
+    - Inline JSON-RPC loop (no SDK)
+    - Direct function calls (no HTTP proxy)
+    - Shares the same process memory
+
+USAGE:
+  python computer_use_mcp.py                          # stdio MCP
+  python computer_use_mcp.py --http                   # HTTP SSE on :8000
+  python computer_use_mcp.py --test                   # Self-test
+  python computer_use_mcp.py --fast                   # Lazy-load deps
+
+CONFIG:
+  COAGENT_URL=http://localhost:9123  (default)
+  MCP_FAST=1                          Lazy-import mode
 """
 import sys, os, json, base64, io, time, asyncio
 from typing import Optional
@@ -166,10 +180,7 @@ async def ping() -> str:
 async def screenshot() -> str:
     """Get a raw screenshot (base64 PNG). No overlays."""
     data = _coagent_get("/screenshot", no_cache=True)
-    if not data or "error" in data:
-        if not _coagent_ensure_alive():
-            return json.dumps({"error": "CoAgent unreachable"})
-        data = _coagent_get("/screenshot", no_cache=True)
+    data = _coagent_get("/screenshot", no_cache=True) if not data or "error" in data else data
     return json.dumps(data or {"error": "no screenshot data"})
 
 @mcp.tool()
@@ -184,10 +195,7 @@ async def capture(mode: str = "som") -> str:
         data = _coagent_get("/uia/tree", no_cache=True)
         return json.dumps(data or {"error": "no UIA data"})
     data = _coagent_get("/screenshot", no_cache=True)
-    if not data or "error" in data:
-        if not _coagent_ensure_alive():
-            return json.dumps({"error": "CoAgent unreachable"})
-        data = _coagent_get("/screenshot", no_cache=True)
+    data = _coagent_get("/screenshot", no_cache=True) if not data or "error" in data else data
     if mode == "raw":
         return json.dumps(data or {"error": "no screenshot data"})
     # SOM mode — overlay elements on screenshot
@@ -273,10 +281,10 @@ async def click_element(index: int) -> str:
 @mcp.tool()
 async def double_click(x: int, y: int, button: str = "left") -> str:
     """Double-click at specific coordinates."""
-    await click(x, y, button)
+    r1 = await click(x, y, button)
     await asyncio.sleep(0.05)
-    result = _coagent_post("/click", {"x": x, "y": y, "button": button})
-    return json.dumps(result or {"error": "double click failed"})
+    r2 = _coagent_post("/click", {"x": x, "y": y, "button": button})
+    return json.dumps(r2 or {"error": "double click failed"})
 
 @mcp.tool()
 async def right_click(x: int, y: int) -> str:
@@ -522,7 +530,7 @@ async def launch_app(path: str) -> str:
         # Security: only allow safe file types, no shell=True
         safe_exts = ('.exe', '.lnk', '.bat', '.cmd', '.msi')
         if path.startswith(('http://', 'https://', 'ms-')):
-            subprocess.Popen(['start', path], shell=True)
+            os.startfile(path)
         elif path.lower().endswith(safe_exts):
             subprocess.Popen([path])
         else:

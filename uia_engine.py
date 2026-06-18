@@ -839,11 +839,11 @@ def send_scroll(clicks=-3):
         return {"success": False, "error": str(e)}
 
 def send_input(keys: list, hold_ms: int = 30):
-    """Compatibility wrapper for the server's background hotkey path."""
+    """Compatibility wrapper."""
     return send_input_background(keys, hold_ms)
 
 def send_keys(text: str):
-    """Compatibility wrapper for the server's background text path."""
+    """Compatibility wrapper."""
     return send_input_background(list(text))
 
 # ── Test / Diag ────────────────────────────────────────────────────────────
