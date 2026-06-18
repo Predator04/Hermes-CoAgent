@@ -1,4 +1,4 @@
-"""Hermes CoAgent v4 - UIA Engine
+"""Hermes CoAgent v7.0 — UIA Engine
 Windows UI Automation tree + SOM overlays + background SendInput.
 
 Provides:
@@ -213,8 +213,11 @@ try:
                         "name": "Desktop",
                         "children": []
                     }
+                    # v6.4: Per-window timeout — skip windows that take >3s to crawl
+                    _WINDOW_CRAWL_TIMEOUT = 3.0
                     for win in desktop.windows():
                         try:
+                            win_start = time.time()
                             win_info = {
                                 "control_type": win.element_info.control_type or "",
                                 "automation_id": win.element_info.automation_id or "",
@@ -223,8 +226,21 @@ try:
                                 "rect": _uia_element_rect(win),
                                 "enabled": True,
                                 "visible": True,
-                                "children": _get_children(win, max_depth=3)
+                                "children": []
                             }
+                            # Only crawl children if we haven't spent too long already
+                            if time.time() - win_start < _WINDOW_CRAWL_TIMEOUT:
+                                children_result = []
+                                _target_win = win
+                                def _crawl_window_children(w=_target_win):
+                                    try:
+                                        children_result.extend(_get_children(w, max_depth=2))
+                                    except:
+                                        pass
+                                ct = threading.Thread(target=_crawl_window_children, daemon=True)
+                                ct.start()
+                                ct.join(timeout=2.0)
+                                win_info["children"] = children_result
                             info["children"].append(win_info)
                         except:
                             pass

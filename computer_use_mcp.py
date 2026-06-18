@@ -1,5 +1,5 @@
 # ════════════════════════════════════════════════════════════════
-# HERMES COAGENT — Windows Computer Use MCP Server
+# HERMES COAGENT v7.0 — Windows Computer Use MCP Server
 # ════════════════════════════════════════════════════════════════
 """
 FastMCP server that proxies desktop control through CoAgent's REST API.
@@ -452,6 +452,98 @@ async def find_on_screen(text: str) -> str:
         "matches": matches
     })
 
+# ════════════════════════════════════════════════════════════════
+# v6.3: NEW FEATURES — Element Index, Stabilization, Recording, Cursor
+# ════════════════════════════════════════════════════════════════
+
+@mcp.tool()
+async def find_element_by_name(name: str) -> str:
+    """Find UIA elements by name/label. Returns list of matching elements."""
+    result = _coagent_post("/uia/element/find", {"query": name, "mode": "name"})
+    return json.dumps(result or {"error": "request failed"})
+
+@mcp.tool()
+async def click_element_by_name(name: str) -> str:
+    """Click a UI element by its name/label using UIA InvokePattern. More reliable
+    than pixel-based clicking — works on obscured windows."""
+    result = _coagent_post("/uia/element/click-by-name", {"name": name})
+    return json.dumps(result or {"error": "click by name failed"})
+
+@mcp.tool()
+async def click_element_by_index_mcp(index: int) -> str:
+    """Click the Nth interactable UIA element."""
+    result = _coagent_post("/uia/element/click-by-index", {"index": index})
+    return json.dumps(result or {"error": "click by index failed"})
+
+@mcp.tool()
+async def get_window_tree_ex() -> str:
+    """Get full structured UIA window tree with all interactable elements."""
+    result = _coagent_get("/uia/window-tree", no_cache=True)
+    return json.dumps(result or {"error": "no UIA data"})
+
+@mcp.tool()
+async def wait_for_element_mcp(query: str, mode: str = "name", timeout: float = 10.0) -> str:
+    """Wait until a UIA element matching query appears.
+    mode: 'name' | 'automation_id' | 'control_type'
+    Returns whether element was found and how long it took."""
+    result = _coagent_post("/wait/element", {"query": query, "mode": mode, "timeout": timeout})
+    return json.dumps(result or {"error": "wait failed"})
+
+@mcp.tool()
+async def wait_for_element_gone_mcp(query: str, mode: str = "name", timeout: float = 10.0) -> str:
+    """Wait until a UI element DISAPPEARS (loading spinner, dialog closing, etc)."""
+    result = _coagent_post("/wait/element-gone", {"query": query, "mode": mode, "timeout": timeout})
+    return json.dumps(result or {"error": "wait failed"})
+
+@mcp.tool()
+async def stabilize_desktop(max_wait: float = 5.0, min_stable: float = 0.5) -> str:
+    """Wait for the desktop UI to stop changing. Use before screenshot
+    to ensure you capture the final state after an action."""
+    result = _coagent_post("/stabilize", {"max_wait": max_wait, "min_stable": min_stable})
+    return json.dumps(result or {"error": "stabilize failed"})
+
+@mcp.tool()
+async def start_recording_mcp(output_dir: str = "", record_video: bool = False) -> str:
+    """Start recording action trajectories to disk for debugging.
+    Every action is saved with screenshot so you can replay later."""
+    data = {}
+    if output_dir:
+        data["dir"] = output_dir
+    data["video"] = record_video
+    result = _coagent_post("/recording/start", data)
+    return json.dumps(result or {"error": "start recording failed"})
+
+@mcp.tool()
+async def stop_recording_mcp() -> str:
+    """Stop trajectory recording and get session summary."""
+    result = _coagent_post("/recording/stop", {})
+    return json.dumps(result or {"error": "stop recording failed"})
+
+@mcp.tool()
+async def get_recording_status_mcp() -> str:
+    """Check if recording is active and get turn count."""
+    result = _coagent_get("/recording/status", no_cache=True)
+    return json.dumps(result or {"error": "status check failed"})
+
+@mcp.tool()
+async def set_agent_cursor(enabled: bool) -> str:
+    """Enable or disable the visual agent cursor overlay. When enabled,
+    an animated arrow shows where CoAgent is about to click."""
+    result = _coagent_post("/cursor/enable", {"enabled": enabled})
+    return json.dumps(result or {"error": "cursor toggle failed"})
+
+@mcp.tool()
+async def get_agent_cursor_state() -> str:
+    """Get current agent cursor overlay status."""
+    result = _coagent_get("/cursor/status", no_cache=True)
+    return json.dumps(result or {"error": "cursor status failed"})
+
+@mcp.tool()
+async def get_features_mcp() -> str:
+    """Get status of all v6.3 features (cursor, recording, etc)."""
+    result = _coagent_get("/features", no_cache=True)
+    return json.dumps(result or {"error": "features check failed"})
+
 # ── Chain actions ────────────────────────────────────────────────────────
 
 @mcp.tool()
@@ -567,7 +659,13 @@ if __name__ == "__main__":
         print(f"UIA: {'OK' if HAS_UIA else 'MISSING'}")
         print(f"Fast mode: {FAST_MODE}")
         sys.exit(0)
-    if "--http" in sys.argv:
+    if "--http" in sys.argv or "--sse" in sys.argv:
+        port = 8001
+        if "--port" in sys.argv:
+            idx = sys.argv.index("--port")
+            port = int(sys.argv[idx + 1])
+        print(f"[MCP] Running SSE server on port {port}")
         mcp.run(transport="sse")
     else:
+        print("[MCP] Running stdio MCP server")
         mcp.run(transport="stdio")

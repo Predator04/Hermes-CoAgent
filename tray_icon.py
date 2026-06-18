@@ -222,6 +222,17 @@ def _start_screenshot_server():
 
 
 def main():
+    # ── Singleton Mutex ── prevent duplicate tray icons ──
+    try:
+        import ctypes
+        _MUTEX_NAME = "HermesCoAgent_TrayMutex"
+        _MUTEX_HANDLE = ctypes.windll.kernel32.CreateMutexW(None, False, _MUTEX_NAME)
+        if ctypes.windll.kernel32.GetLastError() == 183:  # ERROR_ALREADY_EXISTS
+            _log("tray icon already running — singleton mutex, exiting")
+            return
+    except Exception:
+        pass  # non-Windows or ctypes issue, ignore
+
     try:
         img = _build_icon_image()
 
@@ -283,7 +294,7 @@ def main():
             Item("Quit CoAgent", on_quit),
         )
 
-        icon = pystray.Icon("HermesCoAgent", img, "Hermes CoAgent v6.2", menu)
+        icon = pystray.Icon("HermesCoAgent", img, "Hermes CoAgent v7.0", menu)
         _log(f"starting tray icon on {SERVER}")
 
         # Start screenshot server in a daemon thread

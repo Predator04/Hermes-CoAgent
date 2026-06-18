@@ -1,15 +1,14 @@
 @echo off
-REM Hermes CoAgent Launcher v6.0
-REM Requires Python 3.10+ with: flask pillow pyautogui pywinauto pytesseract pygetwindow pyperclip pystray
+REM Hermes CoAgent Launcher v7.0
+REM Only kills CoAgent processes, not other Python instances.
 cd /d "%~dp0"
 title CoAgent Launcher
 echo Killing stale CoAgent processes...
-taskkill /f /im python.exe 2>nul
-taskkill /f /im pythonw.exe 2>nul
-ping -n 4 127.0.0.1 >nul
+for /f "tokens=2" %%a in ('tasklist /fi "WINDOWTITLE eq Hermes*" 2^>nul ^| findstr python') do taskkill /pid %%a /f 2>nul
+for /f "tokens=2" %%a in ('tasklist /fi "IMAGENAME eq pythonw.exe" /fi "WINDOWTITLE eq *Tray*" 2^>nul ^| findstr pythonw') do taskkill /pid %%a /f 2>nul
+ping -n 3 127.0.0.1 >nul
 
 echo Detecting Python...
-REM Try common pythonw locations, fall back to python.exe
 set PYTHON=
 for %%p in (
     "%LOCALAPPDATA%\Programs\Python\Python313\pythonw.exe"
@@ -36,9 +35,7 @@ if not defined PYTHON (
 )
 
 echo Using: %PYTHON%
-echo Launching CoAgent with secure auth...
-echo To access from other devices, add --allow-external
+echo Launching CoAgent v7.0 with secure auth...
 start "" "%PYTHON%" "%~dp0hermes_coagent.py" --secure
-echo CoAgent started - look for purple 'C' in system tray
-echo Auth token will be shown in coagent_server.log
+echo CoAgent v7.0 started - look for purple 'C' in system tray
 ping -n 3 127.0.0.1 >nul
