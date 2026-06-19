@@ -137,35 +137,26 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_som_screenshot():
         """SOM overlay with numbered elements."""
+        from routes_ocr import _request_monitor
+        return _som_monitor_response(_request_monitor(0))
+
+    def _som_monitor_response(monitor_index=0):
         try:
-            from routes_ocr import _capture_raw
-            data = _capture_raw(force=True)
+            from routes_ocr import _capture_raw, _coerce_monitor_index
+            monitor_index = _coerce_monitor_index(monitor_index)
+            data = _capture_raw(force=True, monitor_index=monitor_index)
             if not data or not HAS_PIL:
-                return jsonify({"error": "No screenshot or PIL"}), 500
-            img = Image.open(BytesIO(data))
-            draw = ImageDraw.Draw(img)
-            snap = ue.uia_snapshot()
-            elements = []
-            if snap.get("success"):
-                idx = 1
-                for win in snap.get("tree", {}).get("children", []):
-                    r = win.get("rect")
-                    if r and all(k in r for k in ("left", "top", "width", "height")):
-                        x, y, w, h = r["left"], r["top"], r["width"], r["height"]
-                        if w >= 20 and h >= 20:
-                            cx, cy = x + w // 2, y + 8
-                            draw.ellipse([cx-10, cy-10, cx+10, cy+10], fill="red")
-                            draw.text((cx-4, cy-6), str(idx), fill="white")
-                            draw.rectangle([x, y, x+w, y+h], outline="red", width=2)
-                            elements.append({"index": idx, "name": win.get("name", ""),
-                                             "control_type": win.get("control_type", "Window"),
-                                             "x": cx, "y": cy, "width": w, "height": h})
-                            idx += 1
-            buf = BytesIO()
-            img.save(buf, format="PNG")
-            return jsonify({"labeled_screenshot": base64.b64encode(buf.getvalue()).decode(), "elements": elements})
+                return jsonify({"error": "No screenshot or PIL", "monitor_index": monitor_index}), 500
+            result = ue.som_overlay(data, monitor_index=monitor_index)
+            status = 200 if result.get("success", True) else 500
+            return jsonify(result), status
         except Exception as e:
             return jsonify({"error": str(e)}), 500
+
+    @app.route("/som/per-monitor/<int:monitor_id>", methods=["GET"])
+    @require_auth
+    def route_som_per_monitor(monitor_id):
+        return _som_monitor_response(monitor_id)
 
     @app.route("/som/image", methods=["GET"])
     @require_auth

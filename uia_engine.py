@@ -432,8 +432,25 @@ if "uia_find_deep" not in globals():
     def uia_find_deep(name: str) -> list:
         return [{"error": _uia_error or "UIA not available"}]
 
+def _som_monitor_bounds(monitor_index, fallback_size):
+    """Return monitor bounds used to convert absolute UIA coords to screenshot coords."""
+    try:
+        from routes_ocr import _coerce_monitor_index, _monitor_bounds
+        return dict(_monitor_bounds(_coerce_monitor_index(monitor_index)))
+    except:
+        try:
+            width, height = fallback_size
+        except:
+            width, height = 1920, 1080
+        try:
+            monitor_index = max(0, int(monitor_index))
+        except (TypeError, ValueError):
+            monitor_index = 0
+        return {"id": monitor_index, "name": "Monitor", "width": int(width), "height": int(height),
+                "left": 0, "top": 0, "is_primary": monitor_index in (0, 1)}
+
 # ── SOM Overlay (Set of Mark) ──────────────────────────────────────────────
-def som_overlay(screenshot_bytes: bytes) -> dict:
+def som_overlay(screenshot_bytes: bytes, monitor_index=0) -> dict:
     """Take screenshot + UIA snapshot, overlay numbered boxes on elements.
     Returns dict with:
       - labeled_screenshot: base64 PNG with numbers on each element
@@ -443,7 +460,19 @@ def som_overlay(screenshot_bytes: bytes) -> dict:
     try:
         from PIL import Image, ImageDraw, ImageFont
         img = Image.open(BytesIO(screenshot_bytes)).convert("RGBA")
-        
+        sw, sh = img.size
+        monitor_bounds = _som_monitor_bounds(monitor_index, img.size)
+        mon_left = int(monitor_bounds.get("left", 0))
+        mon_top = int(monitor_bounds.get("top", 0))
+        mon_width = int(monitor_bounds.get("width", sw))
+        mon_height = int(monitor_bounds.get("height", sh))
+        mon_right = mon_left + mon_width
+        mon_bottom = mon_top + mon_height
+        try:
+            monitor_index = max(0, int(monitor_bounds.get("id", monitor_index)))
+        except (TypeError, ValueError):
+            monitor_index = 0
+
         # Get UIA elements
         elements = []
         if UIA_READY:
@@ -454,20 +483,35 @@ def som_overlay(screenshot_bytes: bytes) -> dict:
                         return
                     rect = node.get("rect")
                     if rect and rect["width"] > 10 and rect["height"] > 10:
-                        elements.append({
-                            "name": node.get("name", ""),
-                            "control_type": node.get("control_type", ""),
-                            "automation_id": node.get("automation_id", ""),
-                            "bbox": [rect["left"], rect["top"], rect["width"], rect["height"]],
-                            "center": [rect["left"] + rect["width"]//2, rect["top"] + rect["height"]//2]
-                        })
+                        abs_x = int(rect["left"])
+                        abs_y = int(rect["top"])
+                        abs_w = int(rect["width"])
+                        abs_h = int(rect["height"])
+                        if (abs_x + abs_w > mon_left and abs_y + abs_h > mon_top
+                                and abs_x < mon_right and abs_y < mon_bottom):
+                            rel_x = abs_x - mon_left
+                            rel_y = abs_y - mon_top
+                            abs_center = [abs_x + abs_w // 2, abs_y + abs_h // 2]
+                            elements.append({
+                                "name": node.get("name", ""),
+                                "control_type": node.get("control_type", ""),
+                                "automation_id": node.get("automation_id", ""),
+                                "bbox": [rel_x, rel_y, abs_w, abs_h],
+                                "center": [abs_center[0] - mon_left, abs_center[1] - mon_top],
+                                "absolute_bbox": [abs_x, abs_y, abs_w, abs_h],
+                                "absolute_center": abs_center,
+                            })
                     for child in node.get("children", []):
                         flatten(child, depth+1)
                 flatten(snap.get("tree"))
         
         # Filter to reasonable elements (not too big, not too small)
-        sw, sh = img.size
-        elements = [e for e in elements if 20 < e["bbox"][2] < sw//2 and 20 < e["bbox"][3] < sh//2]
+        def visible_element(elem):
+            bx, by, bw, bh = elem["bbox"]
+            return (20 < bw < max(sw // 2, 21) and 20 < bh < max(sh // 2, 21)
+                    and bx + bw > 0 and by + bh > 0 and bx < sw and by < sh)
+
+        elements = [e for e in elements if visible_element(e)]
         elements = elements[:50]  # max 50
         
         # Overlay numbers
@@ -481,23 +525,38 @@ def som_overlay(screenshot_bytes: bytes) -> dict:
         for i, elem in enumerate(elements):
             bx, by, bw, bh = elem["bbox"]
             label = str(i+1)
+            draw_x1 = max(0, bx)
+            draw_y1 = max(0, by)
+            draw_x2 = min(sw - 1, bx + bw)
+            draw_y2 = min(sh - 1, by + bh)
+            if draw_x2 <= draw_x1 or draw_y2 <= draw_y1:
+                continue
             
             # Draw colored box
-            draw.rectangle([bx, by, bx+bw, by+bh], outline="#FF4444", width=2)
+            draw.rectangle([draw_x1, draw_y1, draw_x2, draw_y2], outline="#FF4444", width=2)
             
             # Draw label background
-            bbox = draw.textbbox((bx, by-18), label, font=font)
+            label_x = max(0, min(draw_x1, max(0, sw - 24)))
+            label_y = max(0, draw_y1 - 18)
+            bbox = draw.textbbox((label_x, label_y), label, font=font)
             draw.rectangle(bbox, fill="#FF4444")
             
             # Draw label text
-            draw.text((bx+2, by-18), label, fill="white", font=font)
+            draw.text((label_x+2, label_y), label, fill="white", font=font)
             
             labeled.append({
                 "index": i+1,
                 "name": elem["name"],
                 "control_type": elem["control_type"],
+                "automation_id": elem.get("automation_id", ""),
                 "bbox": elem["bbox"],
-                "center": elem["center"]
+                "center": elem["center"],
+                "absolute_bbox": elem["absolute_bbox"],
+                "absolute_center": elem["absolute_center"],
+                "x": elem["center"][0],
+                "y": elem["center"][1],
+                "width": elem["bbox"][2],
+                "height": elem["bbox"][3],
             })
         
         buf = BytesIO()
@@ -507,7 +566,9 @@ def som_overlay(screenshot_bytes: bytes) -> dict:
             "success": True,
             "labeled_screenshot": base64.b64encode(buf.getvalue()).decode(),
             "elements": labeled,
-            "total": len(labeled)
+            "total": len(labeled),
+            "monitor_index": monitor_index,
+            "monitor_bounds": monitor_bounds,
         }
     except Exception as e:
         return {"success": False, "error": str(e), "traceback": traceback.format_exc()}
@@ -550,9 +611,13 @@ def uia_som_bridge(screenshot_bytes: bytes) -> dict:
         bbox = elem.get("bbox")
         if not bbox:
             continue
-        ex, ey, ew, eh = bbox
-        e_center_x = ex + ew // 2
-        e_center_y = ey + eh // 2
+        absolute_center = elem.get("absolute_center")
+        if absolute_center:
+            e_center_x, e_center_y = absolute_center
+        else:
+            ex, ey, ew, eh = bbox
+            e_center_x = ex + ew // 2
+            e_center_y = ey + eh // 2
 
         # Scan UIA tree for element containing this center point
         if uia_tree:

@@ -138,13 +138,27 @@ def register_routes(app, state, require_auth):
 
     # ── Monitors ────────────────────────────────────────
     @app.route("/monitors", methods=["GET"])
+    @require_auth
     def monitors_api():
-        try:
-            import pyautogui
-            w, h = pyautogui.size()
-            return jsonify({"width": w, "height": h, "count": 1})
-        except:
-            return jsonify({"width": 1920, "height": 1080, "count": 1})
+        from routes_ocr import get_monitor_list
+        monitors = get_monitor_list()
+        physical = [m for m in monitors if m.get("id") != 0]
+        primary = next((m for m in monitors if m.get("is_primary")), monitors[0] if monitors else {})
+        return jsonify({
+            "width": primary.get("width", 1920),
+            "height": primary.get("height", 1080),
+            "count": len(physical) or len(monitors),
+            "monitors": monitors,
+            "primary": primary,
+        })
+
+    @app.route("/monitors/list", methods=["GET"])
+    @require_auth
+    def monitors_list_api():
+        from routes_ocr import get_monitor_list
+        monitors = get_monitor_list()
+        physical = [m for m in monitors if m.get("id") != 0]
+        return jsonify({"monitors": monitors, "count": len(physical) or len(monitors)})
 
     @app.route("/monitors/layout", methods=["POST"])
     @require_auth

@@ -243,6 +243,8 @@ from routes_uia import register_routes as reg_uia
 from routes_file import register_routes as reg_file
 from routes_media import register_routes as reg_media
 from routes_v63 import register_routes as reg_v63
+from routes_stream import register_routes as reg_stream
+from routes_process import register_routes as reg_process
 
 reg_mouse(app, state, require_auth)
 reg_ocr(app, state, require_auth)
@@ -250,6 +252,8 @@ reg_uia(app, state, require_auth)
 reg_file(app, state, require_auth)
 reg_media(app, state, require_auth)
 reg_v63(app, state, require_auth)
+reg_stream(app, state, require_auth)
+reg_process(app, state, require_auth)
 
 # ── Core routes (stay in main) ─────────────────────────────────
 @app.route("/", methods=["GET"])
@@ -258,7 +262,8 @@ def route_index():
                     "features": ["modular_routes", "sse", "sse_mcp", "health_watchdog",
                                  "thread_pool_4", "mss_dxgi", "uia_window_timeout",
                                  "log_rotation_5mb", "recording_cleanup",
-                                 "windows_ocr", "uia", "som", "waitress", "watchdog"]})
+                                 "windows_ocr", "uia", "som", "waitress", "watchdog",
+                                 "multi_monitor", "screen_streaming", "process_management"]})
 
 @app.route("/ping", methods=["GET"])
 def route_ping():
@@ -279,8 +284,10 @@ def route_version():
                                  "scheduler", "tunnel", "voice", "session_recording",
                                  "agent_cursor", "element_indexed_uia", "desktop_stabilization",
                                  "file_search", "clipboard", "tts", "rate_limit", "cors",
-                                 "security_headers"],
-                    "modules": ["mouse", "ocr", "uia", "file", "media", "v63"],
+                                 "security_headers", "multi_monitor", "screen_streaming",
+                                 "process_management"],
+                    "modules": ["mouse", "ocr", "uia", "file", "media", "v63",
+                                "stream", "process"],
                     "security": ["auth_token", "rate_limit", "input_sanitization",
                                  "cors_restricted", "security_headers"]})
 

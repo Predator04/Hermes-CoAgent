@@ -3,7 +3,7 @@ import io, base64, json, os, tempfile, subprocess, time, threading, hashlib
 import urllib.error, urllib.request
 from io import BytesIO
 from pathlib import Path
-from flask import Response, jsonify
+from flask import Response, jsonify, request
 from shared import _json_body, _log, _console, _missing_field, get_host_ip, COAGENT_DIR, SCREENSHOTS_DIR, TRAY_PORT
 
 # MSS for fast screenshots (DXGI)
@@ -22,8 +22,9 @@ _last_screenshot_raw = b""
 _last_screenshot_hash = None
 _screenshot_lock = threading.Lock()
 # v7.3: Pixel hash — skip capture if screen unchanged
-_PIXEL_HASH_CACHE = 0
+_PIXEL_HASH_CACHE = {}
 _PIXEL_HASH_LOCK = threading.Lock()
+_SCREENSHOT_CACHE = {}
 
 try:
     from PIL import Image
@@ -31,15 +32,67 @@ try:
 except ImportError:
     HAS_PIL = False
 
-def _grab_screen_mss(force=False):
-    """Capture the primary monitor via MSS and return PNG bytes."""
+def _coerce_monitor_index(monitor_index=0):
+    try:
+        return max(0, int(monitor_index))
+    except (TypeError, ValueError):
+        return 0
+
+def get_monitor_list():
+    """Return monitor metadata, using MSS when available."""
+    if _MSS_AVAILABLE:
+        try:
+            with _MSS_LOCK:
+                with mss.mss() as sct:
+                    monitors = []
+                    for idx, mon in enumerate(sct.monitors):
+                        monitors.append({
+                            "id": idx,
+                            "name": "All monitors" if idx == 0 else f"Monitor {idx}",
+                            "width": int(mon.get("width", 0)),
+                            "height": int(mon.get("height", 0)),
+                            "left": int(mon.get("left", 0)),
+                            "top": int(mon.get("top", 0)),
+                            "is_primary": idx == 1,
+                        })
+                    if monitors:
+                        return monitors
+        except Exception as e:
+            _log(f"MSS monitor enumeration failed: {type(e).__name__}: {e}")
+    try:
+        import pyautogui
+        w, h = pyautogui.size()
+        return [{"id": 0, "name": "Primary monitor", "width": int(w), "height": int(h),
+                 "left": 0, "top": 0, "is_primary": True}]
+    except Exception:
+        return [{"id": 0, "name": "Primary monitor", "width": 1920, "height": 1080,
+                 "left": 0, "top": 0, "is_primary": True}]
+
+def _monitor_bounds(monitor_index=0):
+    monitor_index = _coerce_monitor_index(monitor_index)
+    monitors = get_monitor_list()
+    for mon in monitors:
+        if mon.get("id") == monitor_index:
+            return mon
+    return monitors[0] if monitors else {"id": 0, "name": "Primary monitor", "width": 1920,
+                                         "height": 1080, "left": 0, "top": 0,
+                                         "is_primary": True}
+
+def _request_monitor(default=0):
+    return _coerce_monitor_index(request.args.get("monitor", default))
+
+def _grab_screen_mss(force=False, monitor_index=0):
+    """Capture a monitor via MSS and return PNG bytes."""
     global _last_screenshot_time, _PIXEL_HASH_CACHE
     if not _MSS_AVAILABLE or not HAS_PIL:
         return b""
+    monitor_index = _coerce_monitor_index(monitor_index)
     try:
         with _MSS_LOCK:
             with mss.mss() as sct:
-                mon = sct.monitors[1]
+                if monitor_index >= len(sct.monitors):
+                    monitor_index = 0
+                mon = sct.monitors[monitor_index]
                 sct_img = sct.grab(mon)
                 raw = sct_img.rgb
                 size = sct_img.size
@@ -52,10 +105,12 @@ def _grab_screen_mss(force=False):
             sample.extend(raw[base:base + 3])
         hash_val = hashlib.blake2b(bytes(sample), digest_size=8).digest()
         with _PIXEL_HASH_LOCK:
-            if not force and hash_val == _PIXEL_HASH_CACHE and _last_screenshot_raw:
+            cached = _SCREENSHOT_CACHE.get(monitor_index, {})
+            cached_raw = cached.get("raw", b"")
+            if not force and hash_val == _PIXEL_HASH_CACHE.get(monitor_index) and cached_raw:
                 _last_screenshot_time = time.time()
-                return _last_screenshot_raw
-            _PIXEL_HASH_CACHE = hash_val
+                return cached_raw
+            _PIXEL_HASH_CACHE[monitor_index] = hash_val
 
         pil_img = Image.frombytes("RGB", size, raw)
         buf = BytesIO()
@@ -65,21 +120,34 @@ def _grab_screen_mss(force=False):
         _log(f"MSS capture failed: {type(e).__name__}: {e}")
         return b""
 
-def _capture_raw(force=False):
+def _capture_raw(force=False, monitor_index=0):
     """Capture full screen as PNG bytes. Uses MSS (~5ms) then PIL fallback."""
     global _last_screenshot_time, _last_screenshot_raw, _PIXEL_HASH_CACHE
+    monitor_index = _coerce_monitor_index(monitor_index)
     now = time.time()
-    if not force and (now - _last_screenshot_time) < SCREENSHOT_CACHE_TTL and _last_screenshot_raw:
-        return _last_screenshot_raw
+    cached = _SCREENSHOT_CACHE.get(monitor_index, {})
+    if not force and cached.get("raw") and (now - cached.get("time", 0)) < SCREENSHOT_CACHE_TTL:
+        return cached["raw"]
     with _screenshot_lock:
-        if not force and (now - _last_screenshot_time) < SCREENSHOT_CACHE_TTL and _last_screenshot_raw:
-            return _last_screenshot_raw
+        cached = _SCREENSHOT_CACHE.get(monitor_index, {})
+        if not force and cached.get("raw") and (now - cached.get("time", 0)) < SCREENSHOT_CACHE_TTL:
+            return cached["raw"]
         # Method 0: MSS / DXGI-style fast capture before PIL ImageGrab fallback.
-        img_bytes = _grab_screen_mss(force=force)
+        img_bytes = _grab_screen_mss(force=force, monitor_index=monitor_index)
         if not img_bytes and HAS_PIL:
             try:
                 from PIL import ImageGrab
-                pil_img = ImageGrab.grab()
+                if monitor_index:
+                    bounds = _monitor_bounds(monitor_index)
+                    left = bounds.get("left", 0)
+                    top = bounds.get("top", 0)
+                    bbox = (left, top, left + bounds.get("width", 0), top + bounds.get("height", 0))
+                    pil_img = ImageGrab.grab(bbox=bbox)
+                else:
+                    try:
+                        pil_img = ImageGrab.grab(all_screens=True)
+                    except TypeError:
+                        pil_img = ImageGrab.grab()
                 buf = BytesIO()
                 pil_img.save(buf, format="PNG")
                 img_bytes = buf.getvalue()
@@ -88,11 +156,12 @@ def _capture_raw(force=False):
         if img_bytes:
             _last_screenshot_time = now
             _last_screenshot_raw = img_bytes
+            _SCREENSHOT_CACHE[monitor_index] = {"time": now, "raw": img_bytes}
         return img_bytes
 
-def _capture_jpeg(force=False, quality=85):
+def _capture_jpeg(force=False, quality=85, monitor_index=0):
     """Capture full screen as JPEG bytes."""
-    data = _capture_raw(force=force)
+    data = _capture_raw(force=force, monitor_index=monitor_index)
     if not data or not HAS_PIL:
         return b""
     try:
@@ -292,14 +361,24 @@ def register_routes(app, state, require_auth):
     @app.route("/screen", methods=["GET"])
     @require_auth
     def route_screen():
+        monitor_requested = "monitor" in request.args
+        monitor_index = _request_monitor(0)
+        if monitor_requested:
+            data = _capture_jpeg(force=True, monitor_index=monitor_index)
+            if data:
+                return Response(data, mimetype="image/jpeg", headers={
+                    "X-Capture-Method": "local-monitor",
+                    "X-Monitor-Index": str(monitor_index),
+                })
+            return jsonify({"error": "No screenshot", "monitor_index": monitor_index}), 500
         data, latency_ms, relay_error = _fetch_tray_relay_screen(timeout=2.0)
         if data:
             return Response(data, mimetype="image/jpeg", headers={
                 "X-Capture-Method": "tray-relay",
                 "X-Relay-Latency-Ms": str(latency_ms),
-            })
+        })
         _log(f"Tray relay screen unavailable; falling back to local capture: {relay_error}")
-        data = _capture_jpeg()
+        data = _capture_jpeg(monitor_index=monitor_index)
         if data:
             return Response(data, mimetype="image/jpeg", headers={
                 "X-Capture-Method": "local",
@@ -347,25 +426,37 @@ def register_routes(app, state, require_auth):
     @app.route("/screen/jpeg", methods=["GET"])
     @require_auth
     def route_screen_jpeg():
-        data = _capture_jpeg()
+        monitor_index = _request_monitor(0)
+        data = _capture_jpeg(monitor_index=monitor_index)
         if data:
-            return jsonify({"data": base64.b64encode(data).decode(), "format": "jpeg"})
+            payload = {"data": base64.b64encode(data).decode(), "format": "jpeg"}
+            if "monitor" in request.args:
+                payload["monitor_index"] = monitor_index
+            return jsonify(payload)
         return jsonify({"error": "No screenshot"}), 500
 
     @app.route("/screen/base64", methods=["GET"])
     @require_auth
     def route_screen_b64():
-        data = _capture_raw()
+        monitor_index = _request_monitor(0)
+        data = _capture_raw(monitor_index=monitor_index)
         if data:
-            return jsonify({"data": base64.b64encode(data).decode(), "format": "png"})
+            payload = {"data": base64.b64encode(data).decode(), "format": "png"}
+            if "monitor" in request.args:
+                payload["monitor_index"] = monitor_index
+            return jsonify(payload)
         return jsonify({"error": "No screenshot"}), 500
 
     @app.route("/screen/fresh", methods=["GET"])
     @require_auth
     def route_screen_fresh():
-        data = _capture_jpeg(force=True)
+        monitor_index = _request_monitor(0)
+        data = _capture_jpeg(force=True, monitor_index=monitor_index)
         if data:
-            return jsonify({"data": base64.b64encode(data).decode(), "format": "jpeg", "fresh": True})
+            payload = {"data": base64.b64encode(data).decode(), "format": "jpeg", "fresh": True}
+            if "monitor" in request.args:
+                payload["monitor_index"] = monitor_index
+            return jsonify(payload)
         return jsonify({"error": "No screenshot"}), 500
 
     @app.route("/screen/diag", methods=["GET"])
@@ -379,8 +470,10 @@ def register_routes(app, state, require_auth):
             sid = int(r.stdout.strip()) if r.stdout.strip() else 0
         except:
             pass
+        monitors = get_monitor_list()
         return jsonify({"mss": _MSS_AVAILABLE, "pil": HAS_PIL, "session": sid,
-                        "host": get_host_ip(), "winrt_runtime": _check_winrt_version()})
+                        "host": get_host_ip(), "winrt_runtime": _check_winrt_version(),
+                        "monitors": monitors, "monitor_count": len(monitors)})
 
     @app.route("/ocr/find", methods=["POST"])
     @require_auth
