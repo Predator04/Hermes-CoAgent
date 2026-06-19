@@ -128,7 +128,7 @@ ROUTE MAP (REST API):
 
 SECURITY:
   - Authentication via Bearer token (--secure, --token=KEY, or HERMES_COAGENT_TOKEN)
-  - In secure/token mode every route requires Authorization except /, /dashboard2, /ping, /version, /health, /favicon.ico
+  - In secure/token mode every route requires Authorization except /, /dashboard2, /ping, /version, /health, /favicon.ico, /mcp/test, /auth/token (preview)
   - Path traversal protection: _sanitize_path() restricts to USERPROFILE/TEMP/CoAgent
   - Command injection protection: _sanitize_cmd() blocks shell metacharacters
   - No shell=True anywhere — all subprocess calls use argument lists

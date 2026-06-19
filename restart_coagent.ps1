@@ -10,6 +10,19 @@ Get-Process -Name python* 2>$null | Where-Object {
 Start-Sleep -Seconds 2
 
 # Launch fresh with token+secure
-Start-Process -FilePath 'pythonw.exe' -ArgumentList "C:\Users\Admin\Desktop\Hermes CoAgent\hermes_coagent.py --secure --allow-external" -WindowStyle Hidden
+$pythonwCandidates = @(
+    "$env:LOCALAPPDATA\Programs\Python\Python313\pythonw.exe"
+    "$env:LOCALAPPDATA\Programs\Python\Python312\pythonw.exe"
+    "C:\Program Files\Python313\pythonw.exe"
+    "C:\Python313\pythonw.exe"
+)
+$pythonw = $pythonwCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+if (-not $pythonw) {
+    $cmd = Get-Command pythonw.exe -ErrorAction SilentlyContinue
+    if ($cmd) { $pythonw = $cmd.Source }
+}
+if (-not $pythonw) { throw "pythonw.exe not found" }
+$script = Join-Path $PSScriptRoot "hermes_coagent.py"
+Start-Process -FilePath $pythonw -ArgumentList "`"$script`" --secure --allow-external" -WindowStyle Hidden
 
 Write-Output 'Done'

@@ -73,17 +73,6 @@ app = Flask(__name__, static_folder=None)
 AUTH_EXEMPT_PREFIXES = (
     "/auth/",
     "/static/",
-    "/screen",
-    "/ocr",
-    "/visual",
-    "/crop",
-    "/describe",
-    "/uia",
-    "/som",
-    "/monitors",
-    "/stats",
-    "/history",
-    "/events",
 )
 AUTH_EXEMPT_PATHS = {
     "/",
@@ -94,22 +83,6 @@ AUTH_EXEMPT_PATHS = {
     "/version",
     "/favicon.ico",
     "/mcp/test",
-    "/logs",
-    "/screen",
-    "/screen/jpeg",
-    "/screen/base64",
-    "/screen/fresh",
-    "/screen/diag",
-    "/screen/probe",
-    "/monitors",
-    "/stats",
-    "/history",
-    "/events",
-    "/features",
-    "/cursor/status",
-    "/recording/status",
-    "/uia/diag",
-    "/som/cache/clear",
 }
 
 def _is_auth_exempt(path):
@@ -120,6 +93,7 @@ def _is_auth_exempt(path):
 @app.before_request
 def _auth_gate():
     if _is_auth_exempt(request.path):
+        g._auth_passed = True
         return None
     result = _require_auth(lambda: None)()
     if result is not None:

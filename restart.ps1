@@ -11,6 +11,19 @@ Start-Sleep -Seconds 3
 
 # Launch fresh
 cd "C:\Users\Admin\Desktop\Hermes CoAgent"
-Start-Process -FilePath pythonw.exe -ArgumentList "hermes_coagent.py --secure --allow-external" -WindowStyle Hidden -PassThru
+$pythonwCandidates = @(
+    "$env:LOCALAPPDATA\Programs\Python\Python313\pythonw.exe"
+    "$env:LOCALAPPDATA\Programs\Python\Python312\pythonw.exe"
+    "C:\Program Files\Python313\pythonw.exe"
+    "C:\Python313\pythonw.exe"
+)
+$pythonw = $pythonwCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+if (-not $pythonw) {
+    $cmd = Get-Command pythonw.exe -ErrorAction SilentlyContinue
+    if ($cmd) { $pythonw = $cmd.Source }
+}
+if (-not $pythonw) { throw "pythonw.exe not found" }
+$script = Join-Path (Get-Location) "hermes_coagent.py"
+Start-Process -FilePath $pythonw -ArgumentList "`"$script`" --secure --allow-external" -WindowStyle Hidden -PassThru
 
 Write-Output "DONE"

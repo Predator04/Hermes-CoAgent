@@ -7,7 +7,18 @@ $ErrorActionPreference = "Continue"
 
 # Auto-detect paths relative to this script
 $coagentDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$pythonw = "pythonw.exe"
+$pythonwCandidates = @(
+    "$env:LOCALAPPDATA\Programs\Python\Python313\pythonw.exe"
+    "$env:LOCALAPPDATA\Programs\Python\Python312\pythonw.exe"
+    "C:\Program Files\Python313\pythonw.exe"
+    "C:\Python313\pythonw.exe"
+)
+$pythonw = $pythonwCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+if (-not $pythonw) {
+    $cmd = Get-Command pythonw.exe -ErrorAction SilentlyContinue
+    if ($cmd) { $pythonw = $cmd.Source }
+}
+if (-not $pythonw) { throw "pythonw.exe not found" }
 $python = "python.exe"
 
 Write-Output "=========================================="
@@ -31,12 +42,12 @@ Start-Sleep -Milliseconds 500
 # ── Step 2: Launch CoAgent server ──
 Write-Output "[2/5] Starting CoAgent server..."
 $serverArgs = @(
-    "$coagentDir\\hermes_coagent.py"
+    "`"$coagentDir\\hermes_coagent.py`""
     "--secure"
     "--allow-external"
 )
 $env:MCP_FAST = "1"
-$serverProc = Start-Process -FilePath "pythonw.exe" -ArgumentList $serverArgs -WorkingDirectory $coagentDir -PassThru -WindowStyle Hidden -ErrorAction SilentlyContinue
+$serverProc = Start-Process -FilePath $pythonw -ArgumentList $serverArgs -WorkingDirectory $coagentDir -PassThru -WindowStyle Hidden -ErrorAction SilentlyContinue
 if (-not $serverProc) {
     # Fallback to python.exe if pythonw not found
     $serverProc = Start-Process -FilePath "python.exe" -ArgumentList $serverArgs -WorkingDirectory $coagentDir -PassThru -WindowStyle Hidden
@@ -54,7 +65,7 @@ $trayArgs = @(
     "9124"
 )
 try {
-    Start-Process -FilePath "pythonw.exe" -ArgumentList $trayArgs -WorkingDirectory $coagentDir -WindowStyle Hidden -ErrorAction Stop | Out-Null
+    Start-Process -FilePath $pythonw -ArgumentList $trayArgs -WorkingDirectory $coagentDir -WindowStyle Hidden -ErrorAction Stop | Out-Null
     Write-Output "  Tray launch requested with pythonw.exe"
 } catch {
     Write-Output "  Tray launch failed: $($_.Exception.Message)"
