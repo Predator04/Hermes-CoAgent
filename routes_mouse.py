@@ -195,6 +195,7 @@ def register_routes(app, state, require_auth):
         return _result_response(result)
 
     @app.route("/cursor/pos", methods=["GET"])
+    @require_auth
     def route_cursor():
         try:
             x, y = pyautogui.position()
@@ -203,8 +204,14 @@ def register_routes(app, state, require_auth):
             return jsonify({"x": 0, "y": 0})
 
     @app.route("/copilot/mode", methods=["GET"])
+    @require_auth
     def route_copilot_mode():
-        return jsonify({"mode": "background", "sendinput": True})
+        try:
+            from cua_bridge import cua_available
+            cua_ok = cua_available()
+        except Exception:
+            cua_ok = False
+        return jsonify({"mode": "background", "sendinput": True, "cua_available": cua_ok})
 
     @app.route("/input/send", methods=["POST"])
     @require_auth

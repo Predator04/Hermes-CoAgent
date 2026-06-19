@@ -1,5 +1,5 @@
 """Wallpaper, windows, clipboard, scheduler, macro, tunnel, voice, and misc routes."""
-import os, json, subprocess, time, ctypes, re, threading, webbrowser, tempfile
+import os, json, subprocess, time, ctypes, re, threading, webbrowser, tempfile, shutil
 from pathlib import Path
 from flask import jsonify, request
 from shared import _json_body, _log, _console, _missing_field, COAGENT_DIR, MACROS_DIR, \
@@ -18,12 +18,149 @@ _recorded_actions = []
 SCHEDULER_FILE = COAGENT_DIR / "scheduler.json"
 
 _MACRO_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]{1,80}$")
+_TUNNEL_URL_RE = re.compile(r"https?://[A-Za-z0-9][A-Za-z0-9._~:/?#@!$&'()*+,;=%-]*")
+_TUNNEL_PUBLIC_HOSTS = (
+    "trycloudflare.com",
+    "ngrok-free.app",
+    "ngrok.io",
+    "ngrok.app",
+    "ngrok.dev",
+)
+_TUNNEL_LOCK = threading.RLock()
+_TUNNEL_STATE = {
+    "process": None,
+    "method": None,
+    "url": None,
+    "port": None,
+    "started_at": None,
+    "exit_code": None,
+    "output": [],
+}
 _SEARCH_SKIP_DIRS = {
     ".git", ".hg", ".svn", "__pycache__", "node_modules", ".venv", "venv",
     "env", "AppData", "Application Data", "Local Settings", "Temp",
     "Cache", "Caches", "Code Cache",
 }
 _SEARCH_SKIP_DIRS_LOWER = {name.lower() for name in _SEARCH_SKIP_DIRS}
+
+def _tunnel_tools():
+    return {
+        "cloudflare": shutil.which("cloudflared") or shutil.which("cloudflared.exe"),
+        "ngrok": shutil.which("ngrok") or shutil.which("ngrok.exe"),
+    }
+
+def _coerce_tunnel_port(value):
+    try:
+        port = int(value)
+    except (TypeError, ValueError):
+        raise ValueError("Invalid tunnel port")
+    if port < 1 or port > 65535:
+        raise ValueError("Tunnel port must be between 1 and 65535")
+    return port
+
+def _extract_tunnel_url(text):
+    for match in _TUNNEL_URL_RE.findall(text or ""):
+        lowered = match.lower().rstrip(".,);]")
+        if lowered.startswith("http://127.") or lowered.startswith("http://localhost"):
+            continue
+        if any(host in lowered for host in _TUNNEL_PUBLIC_HOSTS):
+            return match.rstrip(".,);]")
+    return None
+
+def _append_tunnel_output(method, text):
+    line = (text or "").rstrip()
+    if not line:
+        return
+    try:
+        with TUNNEL_LOG.open("a", encoding="utf-8", errors="replace") as f:
+            f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} [{method}] {line}\n")
+    except Exception:
+        pass
+    url = _extract_tunnel_url(line)
+    with _TUNNEL_LOCK:
+        _TUNNEL_STATE["output"].append(line)
+        del _TUNNEL_STATE["output"][:-200]
+        if url:
+            _TUNNEL_STATE["url"] = url
+
+def _tunnel_reader(proc, method):
+    try:
+        if proc.stdout is not None:
+            for line in iter(proc.stdout.readline, ""):
+                if not line:
+                    break
+                _append_tunnel_output(method, line)
+    except Exception as e:
+        _append_tunnel_output(method, f"reader error: {type(e).__name__}: {e}")
+    finally:
+        try:
+            exit_code = proc.poll()
+        except Exception:
+            exit_code = None
+        with _TUNNEL_LOCK:
+            if _TUNNEL_STATE.get("process") is proc:
+                _TUNNEL_STATE["exit_code"] = exit_code
+
+def _tunnel_active_locked():
+    proc = _TUNNEL_STATE.get("process")
+    return bool(proc is not None and proc.poll() is None)
+
+def _tunnel_status_snapshot():
+    with _TUNNEL_LOCK:
+        active = _tunnel_active_locked()
+        started_at = _TUNNEL_STATE.get("started_at")
+        uptime = int(time.time() - started_at) if active and started_at else 0
+        proc = _TUNNEL_STATE.get("process")
+        exit_code = None if active or proc is None else proc.poll()
+        return {
+            "active": active,
+            "url": _TUNNEL_STATE.get("url") if active else None,
+            "method": _TUNNEL_STATE.get("method") if active else None,
+            "port": _TUNNEL_STATE.get("port") if active else None,
+            "uptime": uptime,
+            "pid": proc.pid if active and proc is not None else None,
+            "exit_code": exit_code,
+            "tools": {k: bool(v) for k, v in _tunnel_tools().items()},
+            "recent_output": list(_TUNNEL_STATE.get("output", []))[-10:],
+        }
+
+def _stop_tunnel_locked():
+    proc = _TUNNEL_STATE.get("process")
+    if proc is None:
+        return False
+    stopped = False
+    if proc.poll() is None:
+        try:
+            if os.name == "nt":
+                subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                               capture_output=True, text=True, timeout=8)
+            else:
+                proc.terminate()
+                proc.wait(timeout=8)
+            stopped = True
+        except Exception:
+            try:
+                proc.kill()
+                stopped = True
+            except Exception:
+                pass
+    _TUNNEL_STATE.update({
+        "process": None,
+        "method": None,
+        "url": None,
+        "port": None,
+        "started_at": None,
+        "exit_code": proc.poll(),
+        "output": [],
+    })
+    return stopped
+
+def _build_tunnel_command(method, exe, port):
+    if method == "cloudflare":
+        return [exe, "tunnel", "--url", f"http://127.0.0.1:{port}"]
+    if method == "ngrok":
+        return [exe, "http", str(port), "--log=stdout"]
+    raise ValueError("Unsupported tunnel method")
 
 def _macro_path(name):
     if not isinstance(name, str) or not _MACRO_NAME_RE.fullmatch(name):
@@ -384,19 +521,121 @@ $s.Speak($text)
     @require_auth
     def route_tunnel_start():
         d = _json_body()
-        port = d.get("port", SERVER_PORT)
-        _log(f"Tunnel request for port {port}")
-        return jsonify({"status": "tunnel_started", "port": port})
+        method = str(d.get("method", "cloudflare")).strip().lower()
+        if method not in {"cloudflare", "ngrok"}:
+            return jsonify({"error": "Unsupported tunnel method", "allowed": ["cloudflare", "ngrok"]}), 400
+        try:
+            port = _coerce_tunnel_port(d.get("port", SERVER_PORT))
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 400
+
+        tools = _tunnel_tools()
+        exe = tools.get(method)
+        if not exe:
+            _log(f"Tunnel start failed: {method} not found in PATH")
+            return jsonify({
+                "error": f"{method} not found in PATH",
+                "method": method,
+                "tools": {k: bool(v) for k, v in tools.items()},
+            }), 404
+
+        with _TUNNEL_LOCK:
+            if _tunnel_active_locked():
+                current = _tunnel_status_snapshot()
+                return jsonify({"status": "already_running", **current}), 200
+            _TUNNEL_STATE.update({
+                "process": None,
+                "method": method,
+                "url": None,
+                "port": port,
+                "started_at": time.time(),
+                "exit_code": None,
+                "output": [],
+            })
+
+        cmd = _build_tunnel_command(method, exe, port)
+        create_flags = subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                cwd=str(COAGENT_DIR),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                stdin=subprocess.DEVNULL,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                bufsize=1,
+                creationflags=create_flags,
+            )
+        except Exception as e:
+            with _TUNNEL_LOCK:
+                _TUNNEL_STATE.update({"process": None, "started_at": None, "exit_code": None})
+            _log(f"Tunnel start failed ({method}): {type(e).__name__}: {e}")
+            return jsonify({"error": str(e), "method": method}), 500
+
+        with _TUNNEL_LOCK:
+            _TUNNEL_STATE["process"] = proc
+        threading.Thread(target=_tunnel_reader, args=(proc, method), daemon=True,
+                         name=f"tunnel-{method}-reader").start()
+        _append_tunnel_output(method, "started: " + " ".join(cmd))
+
+        try:
+            wait_timeout = max(1.0, min(float(d.get("timeout", 20)), 60.0))
+        except (TypeError, ValueError):
+            return jsonify({"error": "Invalid tunnel timeout"}), 400
+        deadline = time.time() + wait_timeout
+        while time.time() < deadline:
+            with _TUNNEL_LOCK:
+                url = _TUNNEL_STATE.get("url")
+                active = _tunnel_active_locked()
+                recent = list(_TUNNEL_STATE.get("output", []))[-10:]
+            if url:
+                _log(f"Tunnel started: method={method} port={port} url={url}")
+                return jsonify({
+                    "status": "tunnel_started",
+                    "active": True,
+                    "method": method,
+                    "port": port,
+                    "url": url,
+                    "pid": proc.pid,
+                })
+            if not active:
+                exit_code = proc.poll()
+                _log(f"Tunnel exited before URL: method={method} exit={exit_code}")
+                return jsonify({
+                    "error": "Tunnel process exited before public URL was detected",
+                    "method": method,
+                    "port": port,
+                    "exit_code": exit_code,
+                    "recent_output": recent,
+                }), 502
+            time.sleep(0.25)
+
+        _log(f"Tunnel still starting: method={method} port={port} pid={proc.pid}")
+        return jsonify({
+            "error": "Timed out waiting for public tunnel URL",
+            "status": "starting",
+            "active": proc.poll() is None,
+            "method": method,
+            "port": port,
+            "pid": proc.pid,
+            "recent_output": _tunnel_status_snapshot()["recent_output"],
+        }), 504
 
     @app.route("/tunnel/stop", methods=["POST"])
     @require_auth
     def route_tunnel_stop():
-        return jsonify({"status": "tunnel_stopped"})
+        with _TUNNEL_LOCK:
+            was_active = _tunnel_active_locked()
+            stopped = _stop_tunnel_locked()
+        _log(f"Tunnel stop requested: was_active={was_active} stopped={stopped}")
+        return jsonify({"status": "tunnel_stopped", "was_active": was_active, "stopped": stopped})
 
     @app.route("/tunnel/status", methods=["GET"])
     @require_auth
     def route_tunnel_status():
-        return jsonify({"active": False, "url": None})
+        return jsonify(_tunnel_status_snapshot())
 
     # ── Search files ───────────────────────────────────
     @app.route("/search/files", methods=["POST"])

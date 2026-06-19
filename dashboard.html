@@ -1,1002 +1,910 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Hermes CoAgent</title>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hermes CoAgent Dashboard</title>
 <style>
-/* ═══════════════════════════════════════
-   HERMES COAGENT v7.0 — Dashboard
-   Cyber-gloss dark UI
-   ═══════════════════════════════════════ */
 :root {
-  --bg: #07070d;
-  --surface: rgba(18, 18, 38, 0.75);
-  --surface-hover: rgba(28, 28, 58, 0.85);
-  --border: rgba(102, 126, 234, 0.15);
-  --border-active: rgba(102, 126, 234, 0.4);
-  --accent: #667eea;
-  --accent2: #764ba2;
-  --text: #d0d0e0;
-  --text-dim: #6a6a8a;
-  --text-bright: #f0f0ff;
+  color-scheme: dark;
+  --bg: #090b0f;
+  --panel: #111720;
+  --panel-2: #151d28;
+  --line: #263241;
+  --line-soft: #1b2531;
+  --text: #e5edf6;
+  --muted: #8fa1b5;
+  --faint: #637489;
+  --accent: #38bdf8;
+  --ok: #22c55e;
+  --warn: #f59e0b;
   --danger: #ef4444;
-  --success: #22c55e;
-  --warn: #eab308;
-  --radius: 12px;
-  --radius-sm: 8px;
-  --shadow: 0 8px 32px rgba(0,0,0,0.4);
+  --button: #1b2735;
+  --button-hover: #243346;
+  --shadow: 0 12px 30px rgba(0, 0, 0, .24);
 }
-*{margin:0;padding:0;box-sizing:border-box}
-body{
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-  background: var(--bg);
-  color: var(--text);
+* { box-sizing: border-box; }
+html, body { margin: 0; min-height: 100%; background: var(--bg); color: var(--text); }
+body {
+  font-family: "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  letter-spacing: 0;
   overflow: hidden;
-  height: 100vh;
-  background-image:
-    radial-gradient(ellipse at 20% 50%, rgba(102,126,234,0.04) 0%, transparent 50%),
-    radial-gradient(ellipse at 80% 50%, rgba(118,75,162,0.04) 0%, transparent 50%);
 }
-/* ── Layout ────────────────────────────────── */
-.app{display:grid;grid-template-columns:300px 1fr 280px;height:100vh;gap:0}
-/* ── Panels ────────────────────────────────── */
-.panel{
-  background: var(--surface);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  border-right: 1px solid var(--border);
-  padding: 16px 12px;
-  overflow-y: auto;
-  scrollbar-width: thin;
-  scrollbar-color: rgba(102,126,234,0.2) transparent;
+button, input, select {
+  font: inherit;
 }
-.panel::-webkit-scrollbar{width:4px}
-.panel::-webkit-scrollbar-thumb{background:rgba(102,126,234,0.2);border-radius:4px}
-.panel:last-child{border-right:none;border-left:1px solid var(--border)}
-.panel h2{
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 1.5px;
-  color: var(--text-dim);
-  margin-bottom: 12px;
-  font-weight: 600;
-}
-/* ── Header ────────────────────────────────── */
-.header{
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 16px;
-  padding-bottom: 12px;
-  border-bottom: 1px solid var(--border);
-}
-.logo-wrap{display:flex;align-items:center;gap:10px}
-.logo-icon{
-  width: 32px;height: 32px;
-  background: linear-gradient(135deg, var(--accent), var(--accent2));
-  border-radius: 8px;
-  display: flex;align-items: center;justify-content: center;
-  font-size: 14px;font-weight: 800;color: #fff;
-}
-.logo-text{
-  font-size: 16px;font-weight: 700;
-  background: linear-gradient(135deg, var(--accent), var(--accent2));
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-}
-.subtitle{font-size: 10px;color: var(--text-dim);margin-top: -1px}
-.status-badge{
-  display: flex;align-items: center;gap: 6px;
-  font-size: 11px;padding: 4px 12px;
-  border-radius: 20px;background: rgba(34,197,94,0.1);
-  border: 1px solid rgba(34,197,94,0.2);
-}
-.status-badge .dot{width:6px;height:6px;border-radius:50%;background:var(--success);box-shadow:0 0 6px rgba(34,197,94,0.4)}
-.status-badge.stopped{background:rgba(239,68,68,0.1);border-color:rgba(239,68,68,0.2)}
-.status-badge.stopped .dot{background:var(--danger);box-shadow:0 0 6px rgba(239,68,68,0.4)}
-/* ── Toggle Switch ─────────────────────────── */
-.switch-wrap{
-  display: flex;align-items: center;justify-content: space-between;
-  margin-bottom: 14px;padding: 8px 12px;
-  background: rgba(102,126,234,0.06);
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border);
-}
-.switch-label{font-size:12px;font-weight:500;color:var(--text)}
-.switch-label small{color:var(--text-dim);font-size:10px;font-weight:400;display:block}
-.switch{position:relative;display:inline-block;width:40px;height:22px;flex-shrink:0}
-.switch input{opacity:0;width:0;height:0}
-.slider{
-  position:absolute;cursor:pointer;top:0;left:0;right:0;bottom:0;
-  background: #2a2a4a;transition:.3s;border-radius:22px;
-}
-.slider:before{
-  content:"";position:absolute;height:16px;width:16px;
-  left:3px;bottom:3px;background:#666;transition:.3s;border-radius:50%;
-}
-.switch input:checked+.slider{background:linear-gradient(135deg,var(--accent),var(--accent2))}
-.switch input:checked+.slider:before{transform:translateX(18px);background:#fff}
-/* ── Tool Groups ───────────────────────────── */
-.tool-group{
-  margin-bottom: 10px;
-  padding: 10px;
-  background: rgba(0,0,0,0.2);
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border);
-  transition: border-color .2s;
-}
-.tool-group:hover{border-color: var(--border-active)}
-.tool-group h3{
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 1px;
-  color: var(--text-dim);
-  margin-bottom: 8px;
-  font-weight: 600;
-  display: flex;align-items: center;gap: 6px;
-}
-.tool-group h3 .icon{font-size: 12px;opacity:0.6}
-/* ── Buttons ───────────────────────────────── */
-.btn{
-  background: rgba(102,126,234,0.08);
-  border: 1px solid rgba(102,126,234,0.15);
+button {
+  min-height: 32px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
   color: var(--text);
-  padding: 5px 12px;
-  border-radius: 6px;
-  cursor: pointer;
-  font-size: 11px;
-  font-weight: 500;
-  transition: all .15s ease;
-  white-space: nowrap;
-}
-.btn:hover{
-  background: rgba(102,126,234,0.18);
-  border-color: rgba(102,126,234,0.3);
-  transform: translateY(-1px);
-}
-.btn:active{transform:translateY(0);opacity:0.8}
-.btn.danger{background:rgba(239,68,68,0.12);border-color:rgba(239,68,68,0.2);color:#f87171}
-.btn.danger:hover{background:rgba(239,68,68,0.25);border-color:rgba(239,68,68,0.35)}
-.btn.success{background:rgba(34,197,94,0.1);border-color:rgba(34,197,94,0.2);color:#4ade80}
-.btn.success:hover{background:rgba(34,197,94,0.2);border-color:rgba(34,197,94,0.3)}
-.btn.warn{background:rgba(234,179,8,0.12);border-color:rgba(234,179,8,0.2);color:#facc15}
-.btn.warn:hover{background:rgba(234,179,8,0.25);border-color:rgba(234,179,8,0.35)}
-.btn.ghost{background:transparent;border-color:transparent;color:var(--text-dim)}
-.btn.ghost:hover{background:rgba(255,255,255,0.04);color:var(--text)}
-.btn-row{display:flex;gap:4px;margin-bottom:4px;flex-wrap:wrap}
-.btn-row:last-child{margin-bottom:0}
-/* ── Inputs ────────────────────────────────── */
-input[type=text],input[type=number],input[type=search]{
-  background: rgba(0,0,0,0.3);
-  border: 1px solid var(--border);
-  color: var(--text-bright);
+  background: var(--button);
   padding: 6px 10px;
+  cursor: pointer;
+}
+button:hover { background: var(--button-hover); border-color: #38506a; }
+button:disabled { cursor: not-allowed; opacity: .55; }
+button.danger { border-color: rgba(239, 68, 68, .45); color: #fecaca; background: rgba(127, 29, 29, .42); }
+button.warn { border-color: rgba(245, 158, 11, .45); color: #fde68a; background: rgba(120, 53, 15, .42); }
+button.ok { border-color: rgba(34, 197, 94, .42); color: #bbf7d0; background: rgba(20, 83, 45, .42); }
+select, input {
+  min-height: 32px;
+  border: 1px solid var(--line);
   border-radius: 6px;
-  font-size: 12px;
-  width: 100%;
-  margin-bottom: 6px;
-  transition: border-color .2s;
+  color: var(--text);
+  background: #0d141d;
+  padding: 5px 8px;
   outline: none;
 }
-input[type=text]:focus,input[type=number]:focus,input[type=search]:focus{
-  border-color: var(--accent);
-  box-shadow: 0 0 0 2px rgba(102,126,234,0.1);
+select:focus, input:focus { border-color: var(--accent); }
+.app {
+  height: 100vh;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
 }
-input::placeholder{color:#4a4a6a}
-.grid{display:grid;grid-template-columns:1fr 1fr;gap:4px}
-label{font-size:10px;color:var(--text-dim);display:block;margin-bottom:2px;font-weight:500}
-/* ── Screenshot ────────────────────────────── */
-#screen-area{
-  position:relative;
-  display:flex;align-items:center;justify-content:center;
-  height:100vh;overflow:hidden;
-  background: var(--bg);
+.topbar, .statusbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+  background: #0c1118;
 }
-#screen-img{
-  max-width:100%;max-height:100vh;
-  object-fit:contain;
-  cursor:crosshair;
-  border-radius: 4px;
-  transition: opacity .3s;
+.statusbar {
+  border-top: 1px solid var(--line);
+  border-bottom: 0;
+  color: var(--muted);
+  font-size: 12px;
+  flex-wrap: wrap;
 }
-#coord-overlay{
-  position:fixed;bottom:16px;left:50%;
-  transform:translateX(-50%);
-  color: var(--text-bright);
-  background: rgba(0,0,0,0.75);
-  backdrop-filter: blur(8px);
-  padding: 4px 14px;
-  border-radius: 20px;
-  font-size: 11px;
-  font-family: 'SF Mono', 'Cascadia Code', monospace;
-  border: 1px solid var(--border);
-  z-index: 10;
-  pointer-events: none;
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 210px;
+}
+.mark {
+  width: 28px;
+  height: 28px;
+  border: 1px solid #2d4358;
+  border-radius: 7px;
+  display: grid;
+  place-items: center;
+  color: var(--accent);
+  background: #101a25;
+  font-weight: 700;
+}
+.title { line-height: 1.1; }
+.title strong { display: block; font-size: 15px; }
+.title span { color: var(--muted); font-size: 12px; }
+.top-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  background: #0d141d;
   white-space: nowrap;
 }
-/* ── Action Log ────────────────────────────── */
-#action-log{font-size:11px;line-height:1.5;margin-bottom:8px}
-.action-entry{
-  padding: 4px 6px;
-  border-bottom: 1px solid rgba(102,126,234,0.06);
-  display: flex;justify-content: space-between;align-items: center;
-  border-radius: 4px;
-  transition: background .15s;
+.dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--faint);
 }
-.action-entry:hover{background:rgba(102,126,234,0.04)}
-.action-entry:first-child{background:rgba(102,126,234,0.06)}
-.action-text{color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:180px}
-.action-time{color:var(--text-dim);font-size:10px;font-family:monospace;flex-shrink:0;margin-left:6px}
-/* ── Toast ─────────────────────────────────── */
-#toast{
-  position:fixed;bottom:60px;left:50%;transform:translateX(-50%);
-  background: rgba(18,18,38,0.95);
-  backdrop-filter: blur(12px);
-  border: 1px solid var(--border-active);
-  padding: 10px 20px;
-  border-radius: 10px;
-  font-size: 12px;
-  color: var(--text-bright);
-  z-index: 999;
-  display:none;
+.dot.ok { background: var(--ok); }
+.dot.warn { background: var(--warn); }
+.dot.danger { background: var(--danger); }
+.main {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(420px, 1.45fr) minmax(360px, .9fr);
+  gap: 12px;
+  padding: 12px;
+  overflow: auto;
+}
+.left, .right {
+  min-height: 0;
+  display: grid;
+  gap: 12px;
+}
+.left { grid-template-rows: minmax(340px, 1fr) minmax(260px, .72fr); }
+.right { grid-template-rows: auto minmax(250px, .9fr) minmax(220px, .75fr); }
+.panel {
+  min-width: 0;
+  min-height: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
   box-shadow: var(--shadow);
-  pointer-events: none;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
-/* ── Advanced panel ────────────────────────── */
-.advanced{display:none}
-.advanced.show{display:block}
-.advanced .tool-group{opacity:0;animation:fadeIn .25s forwards}
-.advanced.show .tool-group{opacity:1}
-@keyframes fadeIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
-/* ── Search results ────────────────────────── */
-#search-results{
-  font-size:10px;color:var(--text-dim);
-  max-height:80px;overflow-y:auto;
-  margin-top:4px;
-  scrollbar-width:thin;
+.panel-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: space-between;
+  min-height: 44px;
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--line-soft);
+  background: var(--panel-2);
 }
-/* ── Section divider ───────────────────────── */
-.section-divider{
-  height: 1px;
-  background: linear-gradient(90deg, transparent, var(--border), transparent);
-  margin: 12px 0;
+.panel-head h2 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 650;
 }
-/* ── Responsive ────────────────────────── */
-@media(max-width:1200px){.app{grid-template-columns:280px 1fr 240px}}
-@media(max-width:768px){.app{grid-template-columns:1fr}.panel:first-child,.panel:last-child{position:fixed;top:0;height:100vh;z-index:100;width:320px;box-shadow:var(--shadow)}.panel:last-child{right:-320px;transition:right .3s}.panel:last-child.show{right:0}}
+.panel-tools {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+.panel-body {
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+  padding: 10px;
+}
+.screen-wrap {
+  min-height: 0;
+  flex: 1;
+  display: grid;
+  place-items: center;
+  background: #05070a;
+  position: relative;
+}
+#screenImg, #snapshotImg {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  display: block;
+}
+#screenImg { width: 100%; height: 100%; }
+.screen-state {
+  position: absolute;
+  left: 10px;
+  bottom: 10px;
+  padding: 5px 8px;
+  border: 1px solid rgba(38, 50, 65, .82);
+  border-radius: 6px;
+  color: var(--muted);
+  background: rgba(5, 7, 10, .78);
+  font-size: 12px;
+}
+.metric-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+.metric {
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  padding: 9px;
+  background: #0d141d;
+}
+.metric label {
+  display: flex;
+  justify-content: space-between;
+  color: var(--muted);
+  font-size: 12px;
+  margin-bottom: 7px;
+}
+.bar {
+  height: 8px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: #060a0f;
+  border: 1px solid #1d2835;
+}
+.bar span {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: var(--accent);
+}
+.bar span.warn { background: var(--warn); }
+.bar span.danger { background: var(--danger); }
+.quick-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 7px;
+  margin-top: 10px;
+}
+.split {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  min-height: 0;
+}
+.table-wrap {
+  overflow: auto;
+  min-height: 0;
+}
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+th, td {
+  padding: 7px 8px;
+  border-bottom: 1px solid var(--line-soft);
+  text-align: left;
+  vertical-align: middle;
+}
+th {
+  position: sticky;
+  top: 0;
+  background: #111923;
+  color: var(--muted);
+  font-weight: 650;
+  cursor: pointer;
+  user-select: none;
+}
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+td.actions { text-align: right; width: 70px; }
+tr:hover td { background: rgba(56, 189, 248, .04); }
+.mono { font-family: "Cascadia Code", Consolas, monospace; font-variant-numeric: tabular-nums; }
+.muted { color: var(--muted); }
+.log-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.45;
+  color: #c9d6e4;
+}
+.log-list li {
+  padding: 4px 0;
+  border-bottom: 1px solid rgba(38, 50, 65, .36);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.uia-tree {
+  font-size: 12px;
+  line-height: 1.35;
+}
+.uia-tree details {
+  border-left: 1px solid var(--line-soft);
+  margin-left: 8px;
+  padding-left: 8px;
+}
+.uia-tree summary {
+  cursor: pointer;
+  padding: 3px 0;
+  color: var(--text);
+}
+.uia-line {
+  color: var(--muted);
+  padding: 3px 0;
+  overflow-wrap: anywhere;
+}
+.snapshot-body {
+  min-height: 210px;
+  display: grid;
+  place-items: center;
+  background: #05070a;
+}
+.field-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.grow { flex: 1; min-width: 140px; }
+.small { font-size: 12px; }
+@media (max-width: 1100px) {
+  body { overflow: auto; }
+  .app { height: auto; min-height: 100vh; }
+  .main { grid-template-columns: 1fr; overflow: visible; }
+  .left, .right { grid-template-rows: auto; }
+  .screen-wrap { height: 54vh; min-height: 300px; }
+}
+@media (max-width: 720px) {
+  .topbar { align-items: flex-start; flex-direction: column; }
+  .top-actions { margin-left: 0; width: 100%; }
+  .main { padding: 8px; gap: 8px; }
+  .split, .metric-grid, .quick-grid { grid-template-columns: 1fr; }
+  .panel-tools { width: 100%; }
+  .panel-tools > * { flex: 1; }
+  th:nth-child(3), td:nth-child(3), th:nth-child(4), td:nth-child(4) { display: none; }
+}
 </style>
 </head>
 <body>
-<div id="toast"></div>
 <div class="app">
-  <!-- LEFT PANEL -->
-  <div class="panel" id="left-panel">
-    <div class="header">
-      <div class="logo-wrap">
-        <div class="logo-icon">C</div>
-        <div>
-          <div class="logo-text">CoAgent</div>
-          <div class="subtitle">Desktop Co-Pilot · v7.0</div>
-        </div>
-      </div>
-      <div class="status-badge" id="status-badge">
-        <span class="dot"></span><span id="status-text">Connected</span>
+  <header class="topbar">
+    <div class="brand">
+      <div class="mark">H</div>
+      <div class="title">
+        <strong>Hermes CoAgent</strong>
+        <span>Desktop control dashboard</span>
       </div>
     </div>
-
-    <!-- ADVANCED TOGGLE -->
-    <div class="switch-wrap">
-      <div class="switch-label">Advanced Mode <small>Show all controls</small></div>
-      <label class="switch"><input type="checkbox" id="adv-toggle"><span class="slider"></span></label>
+    <div class="top-actions">
+      <span class="pill"><span id="healthDot" class="dot"></span><span id="healthText">checking</span></span>
+      <span class="pill">Auth <span id="authState">none</span></span>
+      <span class="pill">Cursor <span id="cursorPos" class="mono">0, 0</span></span>
+      <span class="pill">Cua <span id="cuaState">checking</span></span>
     </div>
+  </header>
 
-    <!-- ── BASIC: Mouse ── -->
-    <div class="tool-group">
-      <h3><span class="icon">🖱</span> Mouse</h3>
-      <div class="grid">
-        <div><label>X</label><input type="number" id="mx" value="960" min="0" max="3840"></div>
-        <div><label>Y</label><input type="number" id="my" value="540" min="0" max="2160"></div>
-      </div>
-      <div class="btn-row">
-        <button class="btn" onclick="mouseMove()">Move</button>
-        <button class="btn" onclick="mouseClick('left')">🖱 Left</button>
-        <button class="btn" onclick="mouseClick('right')">Right</button>
-        <button class="btn ghost" onclick="getCursor()" title="Get cursor position">📍</button>
-      </div>
-      <div class="grid" style="margin-top:2px">
-        <div><label>Scroll</label><input type="number" id="scroll-clicks" value="3" min="-50" max="50"></div>
-        <div><button class="btn" onclick="mouseScroll()" style="margin-top:16px">Scroll</button></div>
-      </div>
-    </div>
-
-    <!-- ── BASIC: Keyboard ── -->
-    <div class="tool-group">
-      <h3><span class="icon">⌨</span> Keyboard</h3>
-      <input type="text" id="type-text" placeholder="Type something..." onkeydown="if(event.key==='Enter')keyType()">
-      <div class="btn-row">
-        <button class="btn success" onclick="keyType()">Type</button>
-        <button class="btn" onclick="keyPress(['ctrl','c'])">📋 Copy</button>
-        <button class="btn" onclick="keyPress(['ctrl','v'])">📋 Paste</button>
-        <button class="btn" onclick="keyPress(['enter'])">↵ Enter</button>
-      </div>
-    </div>
-
-    <!-- ── BASIC: Find & Cursor ── -->
-    <div class="tool-group">
-      <h3><span class="icon">🔍</span> Find on Screen</h3>
-      <input type="text" id="find-text" placeholder="Text to find..." onkeydown="if(event.key==='Enter')ocrFind()">
-      <div class="btn-row">
-        <button class="btn" onclick="ocrFind()">🔍 Find</button>
-        <button class="btn" onclick="describeScreen()">📄 OCR All</button>
-      </div>
-    </div>
-
-    <!-- ── BASIC: Emergency ── -->
-    <div class="tool-group" style="border-color: rgba(239,68,68,0.2)">
-      <h3><span class="icon">⚠️</span> Emergency</h3>
-      <div class="btn-row">
-        <button class="btn danger" onclick="emergency('stop')">⏹ STOP</button>
-        <button class="btn success" onclick="emergency('resume')">▶ Resume</button>
-        <button class="btn warn" onclick="emergency('restart')">🔄 Restart Server</button>
-      </div>
-    </div>
-
-    <!-- ── ADVANCED PANEL ── -->
-    <div id="advanced-panel" class="advanced">
-      <div class="section-divider"></div>
-
-      <div class="tool-group">
-        <h3><span class="icon">🖱</span> Mouse — Extended</h3>
-        <div class="btn-row">
-          <button class="btn" onclick="mouseClick('middle')">Mid Click</button>
-          <button class="btn" onclick="mouseDClick()">Double Click</button>
-          <button class="btn" onclick="mouseRClick()">Right Click</button>
-        </div>
-        <div class="grid">
-          <div><label>Drag from X</label><input type="number" id="dx1" value="960"></div>
-          <div><label>Y</label><input type="number" id="dy1" value="540"></div>
-          <div><label>To X</label><input type="number" id="dx2" value="1000"></div>
-          <div><label>Y</label><input type="number" id="dy2" value="580"></div>
-        </div>
-        <button class="btn" onclick="mouseDrag()" style="width:100%">↗ Drag</button>
-      </div>
-
-      <div class="tool-group">
-        <h3><span class="icon">⌨</span> Keyboard — Extended</h3>
-        <div class="btn-row">
-          <button class="btn" onclick="keyPress(['tab'])">⇥ Tab</button>
-          <button class="btn" onclick="keyPress(['escape'])">⎋ Esc</button>
-          <button class="btn" onclick="keyPress(['alt','tab'])">Alt+Tab</button>
-          <button class="btn" onclick="keyPress(['win','d'])">⊞ Win+D</button>
-        </div>
-        <div class="btn-row">
-          <button class="btn" onclick="keyPress(['ctrl','a'])">Ctrl+A</button>
-          <button class="btn" onclick="keyPress(['ctrl','s'])">Ctrl+S</button>
-          <button class="btn" onclick="keyPress(['ctrl','z'])">Ctrl+Z</button>
-          <button class="btn" onclick="keyPress(['alt','f4'])">Alt+F4</button>
-        </div>
-        <div class="grid">
-          <div>
-            <label>Send keys</label>
-            <input type="text" id="hotkey-input" placeholder="ctrl+shift+esc" onkeydown="if(event.key==='Enter')keyCustom()">
+  <main class="main">
+    <section class="left">
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Live Screen</h2>
+          <div class="panel-tools">
+            <select id="monitorSelect" title="Monitor"></select>
+            <button id="restartStream">Restart Stream</button>
+            <button id="snapshotBtn">Capture</button>
           </div>
-          <div><button class="btn" onclick="keyCustom()" style="margin-top:16px">Send</button></div>
         </div>
-      </div>
-
-      <div class="tool-group">
-        <h3><span class="icon">📁</span> Files & Apps</h3>
-        <input type="text" id="file-path" placeholder="C:\Path" value="C:\Users\Admin\Desktop">
-        <div class="btn-row">
-          <button class="btn" onclick="fileList()">📂 List</button>
-          <button class="btn success" onclick="appOpen()">🚀 Open</button>
-          <button class="btn warn" onclick="appRun()">⚡ Run Cmd</button>
+        <div class="screen-wrap">
+          <img id="screenImg" alt="Live desktop stream">
+          <div id="streamState" class="screen-state">stream idle</div>
         </div>
-        <div id="file-info" style="font-size:10px;color:var(--text-dim);margin-top:2px"></div>
-      </div>
+      </section>
 
-      <div class="tool-group">
-        <h3><span class="icon">📋</span> Clipboard</h3>
-        <div class="btn-row">
-          <button class="btn" onclick="clipboardGet()">📥 Get</button>
-          <button class="btn" onclick="clipboardSet()">📤 Set from below</button>
+      <section class="split">
+        <section class="panel">
+          <div class="panel-head">
+            <h2>UIA Tree</h2>
+            <div class="panel-tools">
+              <button id="uiaBtn">Refresh</button>
+            </div>
+          </div>
+          <div id="uiaTree" class="panel-body uia-tree muted">No snapshot loaded.</div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h2>Screenshot Viewer</h2>
+            <div class="panel-tools">
+              <button id="snapshotBtn2">Refresh</button>
+            </div>
+          </div>
+          <div class="panel-body snapshot-body">
+            <img id="snapshotImg" alt="Captured screenshot">
+          </div>
+        </section>
+      </section>
+    </section>
+
+    <section class="right">
+      <section class="panel">
+        <div class="panel-head">
+          <h2>System</h2>
+          <div class="panel-tools">
+            <button id="refreshSystem">Refresh</button>
+          </div>
         </div>
-        <input type="text" id="clip-text" placeholder="Text to set on clipboard...">
-        <div id="clip-display" style="font-size:10px;color:var(--text-dim);margin-top:2px;word-break:break-all"></div>
-      </div>
-
-      <div class="tool-group">
-        <h3><span class="icon">🎙</span> Voice</h3>
-        <div class="btn-row">
-          <button class="btn success" onclick="voiceToggle(true)">▶ Start</button>
-          <button class="btn danger" onclick="voiceToggle(false)">⏹ Stop</button>
-          <button class="btn" onclick="ttsSpeak()">🗣 Speak</button>
+        <div class="panel-body">
+          <div class="metric-grid">
+            <div class="metric">
+              <label><span>CPU</span><strong id="cpuText">0%</strong></label>
+              <div class="bar"><span id="cpuBar"></span></div>
+            </div>
+            <div class="metric">
+              <label><span>Memory</span><strong id="memText">0%</strong></label>
+              <div class="bar"><span id="memBar"></span></div>
+            </div>
+            <div class="metric">
+              <label><span>Disk C</span><strong id="diskText">0%</strong></label>
+              <div class="bar"><span id="diskBar"></span></div>
+            </div>
+          </div>
+          <div class="quick-grid">
+            <button data-power="sleep">Sleep</button>
+            <button class="warn" data-power="restart">Restart</button>
+            <button class="danger" data-power="shutdown">Shutdown</button>
+            <button data-power="lock">Lock</button>
+            <button class="danger" id="emergencyStop">Emergency Stop</button>
+            <button class="ok" id="emergencyResume">Resume</button>
+          </div>
         </div>
-        <div id="voice-status-text" style="font-size:10px;color:var(--text-dim)">Inactive</div>
-        <input type="text" id="tts-text" placeholder="Text to speak..." style="margin-top:4px">
-      </div>
+      </section>
 
-      <div class="tool-group">
-        <h3><span class="icon">🤖</span> AI Launch</h3>
-        <div class="btn-row">
-          <input type="text" id="launch-query" placeholder='e.g. "open chrome to reddit"' style="margin-bottom:0;flex:1" onkeydown="if(event.key==='Enter')aiLaunch()">
-          <button class="btn success" onclick="aiLaunch()">Go</button>
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Processes</h2>
+          <div class="panel-tools">
+            <input id="processFilter" class="grow" type="search" placeholder="Filter">
+            <button id="refreshProcesses">Refresh</button>
+          </div>
         </div>
-      </div>
-
-      <div class="tool-group">
-        <h3><span class="icon">🔎</span> Search Files</h3>
-        <div class="grid">
-          <div><label>Pattern</label><input type="text" id="search-pat" value="*.pdf" placeholder="*.py"></div>
-          <div><label>In</label><input type="text" id="search-path" value="C:\Users\Admin" placeholder="C:\"></div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th data-sort="name">Name</th>
+                <th class="num" data-sort="pid">PID</th>
+                <th class="num" data-sort="cpu_percent">CPU</th>
+                <th class="num" data-sort="memory_mb">Memory</th>
+                <th class="actions">Action</th>
+              </tr>
+            </thead>
+            <tbody id="processRows"></tbody>
+          </table>
         </div>
-        <button class="btn" onclick="searchFiles()" style="width:100%">Search</button>
-        <div id="search-results"></div>
-      </div>
+      </section>
 
-      <div class="tool-group">
-        <h3><span class="icon">🌄</span> Wallpaper</h3>
-        <input type="text" id="wp-folder" placeholder="C:\wallpapers" value="C:\Users\Admin\Desktop">
-        <div class="btn-row">
-          <button class="btn" onclick="wpSet()">Set</button>
-          <button class="btn" onclick="wpCycle()">Cycle</button>
-          <button class="btn" onclick="wpRandom()">Random</button>
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Action Log</h2>
+          <div class="panel-tools">
+            <button id="refreshLogs">Refresh</button>
+          </div>
         </div>
-        <div id="wp-status" style="font-size:10px;color:var(--text-dim)"></div>
-      </div>
-
-      <div class="tool-group">
-        <h3><span class="icon">🔌</span> Tunnel</h3>
-        <div class="btn-row">
-          <button class="btn success" onclick="tunnelCtrl('start')">▶ Start</button>
-          <button class="btn danger" onclick="tunnelCtrl('stop')">⏹ Stop</button>
-          <button class="btn" onclick="tunnelCtrl('status')">📊 Status</button>
+        <div class="panel-body">
+          <ul id="logList" class="log-list"></ul>
         </div>
-        <div id="tunnel-info" style="font-size:10px;color:var(--text-dim)"></div>
-      </div>
+      </section>
+    </section>
+  </main>
 
-      <div class="tool-group">
-        <h3><span class="icon">🔋</span> Power</h3>
-        <div class="btn-row">
-          <button class="btn" onclick="powerCtrl('lock')">🔒 Lock</button>
-          <button class="btn warn" onclick="powerCtrl('sleep')">😴 Sleep</button>
-          <button class="btn danger" onclick="powerCtrl('restart')">🔄 Restart</button>
-          <button class="btn danger" onclick="powerCtrl('shutdown')">⏻ Shutdown</button>
-        </div>
-        <button class="btn ghost" onclick="powerCtrl('cancel')" style="width:100%">Cancel Shutdown</button>
-      </div>
-
-      <div class="tool-group">
-        <h3><span class="icon">📅</span> Scheduler</h3>
-        <button class="btn" onclick="schedulerList()" style="width:100%">📋 List Actions</button>
-        <div id="scheduler-info" style="font-size:10px;color:var(--text-dim);margin-top:2px"></div>
-      </div>
-
-      <div class="tool-group">
-        <h3><span class="icon">🔧</span> Macros</h3>
-        <input type="text" id="macro-name" placeholder="Macro name...">
-        <div class="btn-row">
-          <button class="btn" onclick="macroList()">📋 List</button>
-          <button class="btn success" onclick="macroRecord()">⏺ Record</button>
-          <button class="btn" onclick="macroRun()">▶ Run</button>
-        </div>
-        <div id="macro-info" style="font-size:10px;color:var(--text-dim)"></div>
-      </div>
-
-      <div class="tool-group">
-        <h3><span class="icon">🪟</span> Windows</h3>
-        <div class="btn-row">
-          <button class="btn" onclick="winList()">📋 List Windows</button>
-          <button class="btn" onclick="winMinimize()">📉 Minimize All</button>
-          <button class="btn" onclick="tileWindows()">📐 Tile</button>
-        </div>
-        <input type="text" id="win-title" placeholder="Window title to activate...">
-        <button class="btn" onclick="winActivate()" style="width:100%">Activate</button>
-        <div id="win-info" style="font-size:10px;color:var(--text-dim);margin-top:2px;max-height:60px;overflow-y:auto"></div>
-      </div>
-
-      <div class="tool-group">
-        <h3><span class="icon">🛠</span> Tools</h3>
-        <div class="btn-row">
-          <button class="btn" onclick="cropScreen()">✂️ Crop & OCR</button>
-          <button class="btn" onclick="clearLog()">🧹 Clear Log</button>
-          <button class="btn" onclick="toggleScreenshotRefresh()">⏸ Auto-Refresh</button>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- CENTER: SCREENSHOT -->
-  <div id="screen-area">
-    <img id="screen-img" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==" alt="Screen">
-    <div id="coord-overlay">Click for coordinates</div>
-  </div>
-
-  <!-- RIGHT PANEL: ACTION LOG -->
-  <div class="panel">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-      <h2 style="margin-bottom:0">Action Log</h2>
-      <button class="btn ghost" onclick="clearLog()" style="font-size:10px;padding:2px 8px">Clear</button>
-    </div>
-    <div id="action-log">
-      <div class="action-entry"><span class="action-text">Ready</span><span class="action-time">now</span></div>
-    </div>
-  </div>
+  <footer class="statusbar">
+    <span>Version <span id="versionText">unknown</span></span>
+    <span>Build <span id="buildText">unknown</span></span>
+    <span>Uptime <span id="uptimeText">0s</span></span>
+    <span>Status <span id="statusText">loading</span></span>
+    <span>Screen <span id="frameText">0 frames</span></span>
+  </footer>
 </div>
 
 <script>
-const BASE = '';
-let logCount = 0;
-let autoRefresh = true;
-let autoRefreshTimer = null;
-let authToken = '';
-let screenObjectUrl = null;
+(() => {
+  "use strict";
 
-try {
-  const params = new URLSearchParams(window.location.search);
-  authToken = params.get('token') || localStorage.getItem('hermes_auth_token') || '';
-  if (params.get('token')) {
-    localStorage.setItem('hermes_auth_token', authToken);
-    params.delete('token');
-    const clean = window.location.pathname + (params.toString() ? '?' + params.toString() : '') + window.location.hash;
-    history.replaceState(null, '', clean);
+  const params = new URLSearchParams(location.search);
+  const queryToken = params.get("token") || "";
+  if (queryToken) localStorage.setItem("hermes_token", queryToken);
+  const token = queryToken || localStorage.getItem("hermes_token") || "";
+  const state = {
+    monitor: "0",
+    processes: [],
+    sortKey: "memory_mb",
+    sortDir: -1,
+    screenAbort: null,
+    frameCount: 0
+  };
+
+  const $ = (id) => document.getElementById(id);
+
+  function setText(id, value) {
+    const el = $(id);
+    if (el) el.textContent = value;
   }
-} catch (_) {}
 
-function authHeaders(json=true){
-  const headers = {};
-  if(json) headers['Content-Type'] = 'application/json';
-  if(authToken) headers['Authorization'] = 'Bearer ' + authToken;
-  return headers;
-}
-
-function toast(msg){
-  const t=document.getElementById('toast');
-  t.textContent=msg;
-  t.style.display='block';
-  clearTimeout(t._hide);
-  t._hide=setTimeout(()=>t.style.display='none', 2500);
-}
-
-function api(method, path, body, cb){
-  const opts={method, headers:authHeaders(true)};
-  if(body) opts.body=JSON.stringify(body);
-  fetch(BASE+path, opts)
-    .then(r=>r.json().then(d=>({status:r.status, data:d})).catch(()=>({status:r.status, data:{}})))
-    .then(({status, data})=>{
-      if(status===401||status===403) toast('🔒 Auth required — re-launch with token');
-      if(cb) cb(data);
-    })
-    .catch(e=>toast('⚠ Error: '+e.message));
-}
-
-function apiText(method, path, body, cb){
-  const opts={method, headers:authHeaders(false)};
-  if(body) opts.body=body;
-  fetch(BASE+path, opts)
-    .then(r=>r.text().then(t=>{if(cb) cb(t)}))
-    .catch(e=>toast('Error: '+e.message));
-}
-
-function addLog(text, err){
-  logCount++;
-  const el=document.getElementById('action-log');
-  const d=new Date();
-  const ts=d.getHours().toString().padStart(2,'0')+':'+d.getMinutes().toString().padStart(2,'0')+':'+d.getSeconds().toString().padStart(2,'0');
-  const entry=document.createElement('div');
-  entry.className='action-entry';
-  const textSpan=document.createElement('span');
-  textSpan.className='action-text';
-  textSpan.textContent=(err?'⚠ ':'')+text;
-  const timeSpan=document.createElement('span');
-  timeSpan.className='action-time';
-  timeSpan.textContent=ts;
-  entry.append(textSpan,timeSpan);
-  el.prepend(entry);
-  if(logCount>100){el.lastChild.remove();logCount--}
-}
-
-function clearLog(){
-  document.getElementById('action-log').replaceChildren();
-  logCount=0;
-  addLog('Cleared');
-}
-
-// ── ADVANCED TOGGLE ──
-document.getElementById('adv-toggle').addEventListener('change', function(){
-  document.getElementById('advanced-panel').classList.toggle('show', this.checked);
-});
-
-// ── SCREENSHOT CLICK → COORDS ──
-document.getElementById('screen-img').addEventListener('click', function(e){
-  const rect=this.getBoundingClientRect();
-  const ox=Math.round(e.clientX-rect.left), oy=Math.round(e.clientY-rect.top);
-  const nw=this.naturalWidth||1920, nh=this.naturalHeight||1080;
-  const sx=this.width||rect.width, sy=this.height||rect.height;
-  const rx=Math.round(ox*nw/sx), ry=Math.round(oy*nh/sy);
-  document.getElementById('mx').value=rx;
-  document.getElementById('my').value=ry;
-  document.getElementById('coord-overlay').textContent='📍 '+rx+', '+ry;
-  toast('Coords: '+rx+', '+ry);
-});
-
-// ── MOUSE ──
-function mouseMove(){
-  const x=document.getElementById('mx').value, y=document.getElementById('my').value;
-  api('POST','/mouse/move',{x:parseInt(x),y:parseInt(y)},d=>addLog('Mouse → '+x+','+y));
-}
-function mouseClick(b){
-  api('POST','/mouse/click',{button:b},d=>addLog('Click: '+b));
-}
-function mouseScroll(){
-  const c=document.getElementById('scroll-clicks').value;
-  api('POST','/mouse/scroll',{clicks:parseInt(c)},d=>addLog('Scroll: '+c));
-}
-function mouseDClick(){api('POST','/mouse/doubleclick',{},d=>addLog('Double-click'))}
-function mouseRClick(){api('POST','/mouse/rightclick',{},d=>addLog('Right-click'))}
-function mouseDrag(){
-  const x1=document.getElementById('dx1').value,y1=document.getElementById('dy1').value;
-  const x2=document.getElementById('dx2').value,y2=document.getElementById('dy2').value;
-  api('POST','/mouse/drag',{x1:parseInt(x1),y1:parseInt(y1),x2:parseInt(x2),y2:parseInt(y2)},d=>addLog('Drag: '+x1+','+y1+'→'+x2+','+y2));
-}
-function getCursor(){
-  api('GET','/cursor/pos',null,d=>{
-    if(d.x!==undefined){document.getElementById('mx').value=d.x;document.getElementById('my').value=d.y;addLog('📍 Cursor: '+d.x+','+d.y)}
-    else addLog('Cursor: '+JSON.stringify(d), true);
-  });
-}
-
-// ── KEYBOARD ──
-function keyType(){
-  const t=document.getElementById('type-text').value;
-  if(!t){toast('Nothing to type');return}
-  api('POST','/key/type',{text:t},d=>addLog('Typed: '+t.substring(0,30)+(t.length>30?'...':'')));
-}
-function keyPress(keys){
-  api('POST','/key/press',{keys},d=>addLog('Pressed: '+keys.join('+')));
-}
-function keyCustom(){
-  const raw=document.getElementById('hotkey-input').value.trim();
-  if(!raw)return;
-  const keys=raw.split('+').map(k=>k.trim().toLowerCase());
-  api('POST','/key/press',{keys},d=>addLog('Hotkey: '+keys.join('+')));
-}
-
-// ── EMERGENCY ──
-function emergency(a){
-  api('POST','/emergency/'+a,{},d=>{
-    addLog('⚠ Emergency: '+a);
-    const badge=document.getElementById('status-badge');
-    const txt=document.getElementById('status-text');
-    if(a==='stop'){
-      txt.textContent='STOPPED';
-      badge.className='status-badge stopped';
-    }else{
-      txt.textContent='Connected';
-      badge.className='status-badge';
-    }
-  });
-}
-
-// ── FIND / OCR ──
-function ocrFind(){
-  const t=document.getElementById('find-text').value;
-  if(!t)return;
-  api('POST','/ocr/find',{text:t},d=>{
-    if(d.found&&d.matches&&d.matches.length){
-      const m=d.matches[0];
-      addLog('🔍 Found "'+t+'" at '+JSON.stringify(m.center||m));
-      toast('Found at '+JSON.stringify(m.center||m));
-    }else{
-      addLog('🔍 Not found: "'+t+'"', true);
-      toast('Not found');
-    }
-  });
-}
-function describeScreen(){
-  api('GET','/describe',null,d=>{
-    const chars = d.full_text ? d.full_text.length : (d.lines || 0);
-    addLog('📄 OCR: '+(d.lines||0)+' lines, '+(d.full_text?d.full_text.length:0)+' chars');
-    toast('OCR: '+(d.description||'').substring(0,60)+'...');
-  });
-}
-
-// ── FILES ──
-function fileList(){
-  const p=document.getElementById('file-path').value;
-  api('POST','/file/list',{path:p},d=>{
-    if(d.error){addLog('📁 Error: '+d.error,true);document.getElementById('file-info').textContent='Error: '+d.error}
-    else{
-      addLog('📁 Listed: '+(d.count||d.items?.length||'?')+' items');
-      document.getElementById('file-info').textContent=(d.count||0)+' items'+(d.items?': '+d.items.slice(0,5).map(i=>i.name).join(', ')+(d.items.length>5?'...'+((d.count||d.items.length)-5)+' more':''):'');
-    }
-  });
-}
-function appOpen(){
-  const p=document.getElementById('file-path').value;
-  api('POST','/app/open',{path:p},d=>{
-    addLog('🚀 Opened: '+p);
-    document.getElementById('file-info').textContent=d.error?'Error: '+d.error:'Opened';
-  });
-}
-function appRun(){
-  const p=document.getElementById('file-path').value;
-  api('POST','/app/run',{cmd:p},d=>{
-    addLog('⚡ Ran: '+p);
-    document.getElementById('file-info').textContent=d.error?'Error: '+d.error:'Executed';
-  });
-}
-
-// ── CLIPBOARD ──
-function clipboardGet(){
-  api('GET','/clipboard/get',null,d=>{
-    if(d.text){
-      document.getElementById('clip-text').value=d.text;
-      document.getElementById('clip-display').textContent='📋 Copied: '+d.text.substring(0,80)+(d.text.length>80?'...':'');
-      addLog('📋 Got clipboard');
-    }
-  });
-}
-function clipboardSet(){
-  const t=document.getElementById('clip-text').value;
-  if(!t)return;
-  api('POST','/clipboard/set',{text:t},d=>{
-    addLog('📋 Set clipboard');
-    document.getElementById('clip-display').textContent='Set: '+t.substring(0,50);
-  });
-}
-
-// ── VOICE ──
-function voiceToggle(s){
-  api('POST','/voice/toggle',{enable:s},d=>{
-    const el=document.getElementById('voice-status-text');
-    el.textContent=s?'🎙 Active':'Inactive';
-    el.style.color=s?'var(--success)':'var(--text-dim)';
-    addLog('🎙 Voice: '+(s?'Started':'Stopped'));
-  });
-}
-function ttsSpeak(){
-  const t=document.getElementById('tts-text').value;
-  if(!t)return;
-  api('POST','/tts/speak',{text:t},d=>addLog('🗣 TTS: "'+t.substring(0,20)+'"'));
-}
-
-// ── AI LAUNCH ──
-function aiLaunch(){
-  const q=document.getElementById('launch-query').value;
-  if(!q)return;
-  api('POST','/launch/ai',{query:q},d=>{
-    addLog('🤖 AI Launch: '+(d.app||d.error||'done'));
-    document.getElementById('launch-query').value='';
-  });
-}
-
-// ── SEARCH ──
-function searchFiles(){
-  const pat=document.getElementById('search-pat').value;
-  const p=document.getElementById('search-path').value;
-  api('POST','/search/files',{pattern:pat,path:p,limit:20},d=>{
-    const el=document.getElementById('search-results');
-    if(d.matches&&d.matches.length){
-      const nodes=d.matches.slice(0,20).map(m=>{
-        const row=document.createElement('div');
-        row.textContent='📄 '+(m.name||m.path||'?')+' '+(m.size?'('+(m.size/1024).toFixed(0)+'KB)':'');
-        return row;
-      });
-      el.replaceChildren(...nodes);
-      addLog('🔎 Search: '+d.count+' matches');
-    }else{
-      el.textContent=d.error||'No matches';
-      addLog('🔎 Search: '+(d.error||'0 matches'));
-    }
-  });
-}
-
-// ── WALLPAPER ──
-function wpSet(){
-  const f=document.getElementById('wp-folder').value;
-  api('POST','/wallpaper/set',{path:f},d=>{
-    const el=document.getElementById('wp-status');
-    el.textContent=d.wallpaper||d.error||'Set';
-    addLog('🌄 WP set: '+(d.wallpaper||'done'));
-  });
-}
-function wpCycle(){
-  const f=document.getElementById('wp-folder').value;
-  api('POST','/wallpaper/cycle',{folder:f},d=>{
-    document.getElementById('wp-status').textContent=d.wallpaper||d.error||'Cycled';
-    addLog('🌄 WP cycled');
-  });
-}
-function wpRandom(){
-  const f=document.getElementById('wp-folder').value;
-  api('POST','/wallpaper/random',{folder:f},d=>{
-    document.getElementById('wp-status').textContent=d.wallpaper||d.error||'Random';
-    addLog('🌄 WP random');
-  });
-}
-
-// ── TUNNEL ──
-function tunnelCtrl(a){
-  api(a==='status'?'GET':'POST','/tunnel/'+a,a==='status'?null:{},d=>{
-    const el=document.getElementById('tunnel-info');
-    const txt=a==='start'?'▶ Started':a==='stop'?'⏹ Stopped':'📊 '+(d.url||d.status||JSON.stringify(d));
-    el.textContent=txt;
-    addLog('🔌 Tunnel: '+a+(d.url?' — '+d.url:''));
-  });
-}
-
-// ── POWER ──
-function powerCtrl(a){
-  if(['shutdown','restart'].includes(a) && !confirm('Are you sure you want to '+a+' the PC?')) return;
-  api('POST','/power/'+a,{},d=>{
-    addLog('🔋 Power: '+a+' — '+(d.status||d.error||'ok'));
-    toast('Power: '+a);
-  });
-}
-
-// ── SCHEDULER ──
-function schedulerList(){
-  api('GET','/scheduler/list',null,d=>{
-    const c=d.actions?d.actions.length:0;
-    document.getElementById('scheduler-info').textContent=c+' action'+(c!==1?'s':'');
-    addLog('📅 Scheduler: '+c+' actions');
-  });
-}
-
-// ── MACROS ──
-function macroList(){
-  api('GET','/macro/list',null,d=>{
-    if(d.macros&&d.macros.length){
-      const names=d.macros.map(m=>m.name).join(', ');
-      document.getElementById('macro-info').textContent=names;
-      addLog('🔧 Macros: '+names);
-    }else{
-      document.getElementById('macro-info').textContent='No macros saved';
-      addLog('🔧 No macros');
-    }
-  });
-}
-function macroRecord(){
-  const n=document.getElementById('macro-name').value;
-  if(!n)return;
-  api('POST','/macro/record',{name:n},d=>{
-    document.getElementById('macro-info').textContent='Recording "'+n+'" — press F9 to stop';
-    addLog('🔧 Recording: '+n);
-  });
-}
-function macroRun(){
-  const n=document.getElementById('macro-name').value;
-  if(!n)return;
-  api('POST','/macro/run',{name:n},d=>{
-    document.getElementById('macro-info').textContent='Ran: '+n+' ('+(d.executed||0)+'/'+(d.total||0)+')';
-    addLog('🔧 Ran macro: '+n);
-  });
-}
-
-// ── WINDOWS ──
-function winList(){
-  api('GET','/windows',null,d=>{
-    if(d.windows&&d.windows.length){
-      const el=document.getElementById('win-info');
-      const nodes=d.windows.slice(0,10).map(w=>{
-        const row=document.createElement('div');
-        row.textContent='🪟 '+(w.title||'?');
-        return row;
-      });
-      if(d.windows.length>10){
-        const more=document.createElement('div');
-        more.textContent='+'+(d.windows.length-10)+' more';
-        nodes.push(more);
-      }
-      el.replaceChildren(...nodes);
-      addLog('🪟 Windows: '+d.windows.length+' open');
-    }else{
-      addLog('🪟 '+(d.error||'No windows'),true);
-    }
-  });
-}
-function winActivate(){
-  const t=document.getElementById('win-title').value;
-  if(!t)return;
-  api('POST','/windows/activate',{title:t},d=>addLog('🪟 Activated: '+t));
-}
-function winMinimize(){
-  api('POST','/minimize',{},d=>addLog('📉 Minimized all'));
-}
-function tileWindows(){
-  api('POST','/monitors/layout',{layout:'grid'},d=>{
-    addLog('📐 Tiled: '+(d.windows_arranged||d.error||'ok'));
-  });
-}
-
-// ── CROP ──
-function cropScreen(){
-  api('POST','/crop',{},d=>addLog('✂️ Cropped: '+(d.chars||'0')+' chars'));
-}
-
-// ── SCREENSHOT AUTO-REFRESH ──
-function toggleScreenshotRefresh(){
-  autoRefresh=!autoRefresh;
-  const el=document.querySelector('.tool-group:last-child .btn:last-child');
-  if(autoRefresh){
-    el.textContent='▶ Auto-Refresh';
-    el.className='btn';
-    startAutoRefresh();
-  }else{
-    el.textContent='⏸ Auto-Refresh';
-    el.className='btn warn';
-    stopAutoRefresh();
+  function headers(json) {
+    const h = {};
+    if (token) h.Authorization = "Bearer " + token;
+    if (json) h["Content-Type"] = "application/json";
+    return h;
   }
-}
 
-function refreshScreenshot(){
-  fetch(BASE+'/screenshot/fresh?'+Date.now(), {headers:authHeaders(false)})
-    .then(r=>{
-      if(r.status===401||r.status===403){
-        toast('🔒 Auth required — add ?token=...');
-        throw new Error('auth required');
+  async function api(path, options = {}) {
+    const method = options.method || "GET";
+    const body = options.body === undefined ? undefined : JSON.stringify(options.body);
+    const res = await fetch(path, { method, headers: headers(body !== undefined), body });
+    const type = res.headers.get("content-type") || "";
+    const data = type.includes("application/json") ? await res.json() : await res.text();
+    if (!res.ok) {
+      const msg = typeof data === "string" ? data : (data.error || JSON.stringify(data));
+      throw new Error(msg);
+    }
+    return data;
+  }
+
+  function addLocalLog(text) {
+    const list = $("logList");
+    const li = document.createElement("li");
+    li.textContent = new Date().toLocaleTimeString() + " " + text;
+    list.prepend(li);
+    while (list.children.length > 80) list.lastChild.remove();
+  }
+
+  function formatUptime(seconds) {
+    seconds = Math.max(0, Number(seconds) || 0);
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    const s = Math.floor(seconds % 60);
+    if (h) return h + "h " + m + "m";
+    if (m) return m + "m " + s + "s";
+    return s + "s";
+  }
+
+  function percent(value) {
+    return Math.max(0, Math.min(100, Number(value) || 0));
+  }
+
+  function setBar(name, value) {
+    const p = percent(value);
+    const bar = $(name + "Bar");
+    const text = $(name + "Text");
+    if (!bar || !text) return;
+    bar.style.width = p.toFixed(0) + "%";
+    bar.className = p >= 90 ? "danger" : (p >= 75 ? "warn" : "");
+    text.textContent = p.toFixed(0) + "%";
+  }
+
+  function setHealth(kind, text) {
+    const dot = $("healthDot");
+    dot.className = "dot " + kind;
+    setText("healthText", text);
+    setText("statusText", text);
+  }
+
+  async function loadVersion() {
+    try {
+      const data = await api("/version");
+      setText("versionText", data.version || "unknown");
+      setText("buildText", data.build || "unknown");
+    } catch (err) {
+      setText("versionText", "error");
+    }
+  }
+
+  async function ping() {
+    try {
+      const data = await api("/ping");
+      setHealth("ok", "running");
+      setText("uptimeText", formatUptime(data.uptime));
+    } catch (err) {
+      setHealth("danger", "offline");
+    }
+  }
+
+  async function loadCua() {
+    try {
+      const data = await api("/cua/status");
+      setText("cuaState", data.available ? "available" : "offline");
+    } catch (err) {
+      setText("cuaState", "error");
+    }
+  }
+
+  async function loadCursor() {
+    try {
+      const data = await api("/cursor/pos");
+      setText("cursorPos", (data.x ?? 0) + ", " + (data.y ?? 0));
+    } catch (err) {
+      setText("cursorPos", "blocked");
+    }
+  }
+
+  async function loadMonitors() {
+    const select = $("monitorSelect");
+    select.innerHTML = "";
+    try {
+      const data = await api("/monitors/list");
+      const monitors = data.monitors || [];
+      if (!monitors.length) throw new Error("No monitors returned");
+      monitors.forEach((m, i) => {
+        const opt = document.createElement("option");
+        opt.value = String(m.id ?? m.index ?? i);
+        const name = m.name || ("Monitor " + opt.value);
+        const size = (m.width && m.height) ? (" " + m.width + "x" + m.height) : "";
+        opt.textContent = name + size + (m.is_primary ? " primary" : "");
+        select.appendChild(opt);
+      });
+      state.monitor = select.value || "0";
+    } catch (err) {
+      const opt = document.createElement("option");
+      opt.value = "0";
+      opt.textContent = "Primary monitor";
+      select.appendChild(opt);
+      state.monitor = "0";
+    }
+  }
+
+  function parseSseBlock(block) {
+    let event = "message";
+    const data = [];
+    block.split(/\r?\n/).forEach((line) => {
+      if (!line || line.startsWith(":")) return;
+      const idx = line.indexOf(":");
+      const field = idx >= 0 ? line.slice(0, idx) : line;
+      const value = idx >= 0 ? line.slice(idx + 1).replace(/^ /, "") : "";
+      if (field === "event") event = value;
+      if (field === "data") data.push(value);
+    });
+    return { event, data: data.join("\n") };
+  }
+
+  async function startScreenStream() {
+    if (state.screenAbort) state.screenAbort.abort();
+    state.screenAbort = new AbortController();
+    const signal = state.screenAbort.signal;
+    const url = "/events/screen?monitor=" + encodeURIComponent(state.monitor) + "&quality=72";
+    $("streamState").textContent = "connecting";
+    try {
+      const res = await fetch(url, { headers: headers(false), signal });
+      if (!res.ok || !res.body) throw new Error("stream status " + res.status);
+      $("streamState").textContent = "streaming";
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      while (true) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+        buffer += decoder.decode(chunk.value, { stream: true });
+        const parts = buffer.split(/\r?\n\r?\n/);
+        buffer = parts.pop() || "";
+        for (const part of parts) {
+          const msg = parseSseBlock(part);
+          if (msg.event !== "screen" || !msg.data) continue;
+          const payload = JSON.parse(msg.data);
+          if (payload.data) {
+            $("screenImg").src = "data:image/jpeg;base64," + payload.data;
+            state.frameCount += 1;
+            setText("frameText", state.frameCount + " frames");
+          }
+        }
       }
-      if(!r.ok) throw new Error('screenshot '+r.status);
-      return r.blob();
-    })
-    .then(blob=>{
-      if(screenObjectUrl) URL.revokeObjectURL(screenObjectUrl);
-      screenObjectUrl=URL.createObjectURL(blob);
-      document.getElementById('screen-img').src=screenObjectUrl;
-    })
-    .catch(e=>addLog('Screenshot: '+e.message, true));
-}
+    } catch (err) {
+      if (signal.aborted) return;
+      $("streamState").textContent = "stream error";
+      addLocalLog("screen stream error: " + err.message);
+      setTimeout(() => startScreenStream(), 1800);
+    }
+  }
 
-function startAutoRefresh(){
-  stopAutoRefresh();
-  refreshScreenshot();
-  autoRefreshTimer=setInterval(()=>{
-    refreshScreenshot();
-  }, 2000);
-}
-
-function stopAutoRefresh(){
-  if(autoRefreshTimer){clearInterval(autoRefreshTimer);autoRefreshTimer=null;}
-}
-
-// ── HISTORY POLL ──
-function pollHistory(){
-  fetch(BASE+'/history?limit=20', {headers:authHeaders(false)})
-    .then(r=>r.json())
-    .then(d=>{
-      if(!d.actions||!d.actions.length)return;
-      const el=document.getElementById('action-log');
-      const nodes=[];
-      const actions=[...d.actions].reverse();
-      for(let i=Math.max(0,actions.length-20);i<actions.length;i++){
-        const a=actions[i];
-        const t=a.time?(()=>{const d2=new Date(a.time);return d2.getHours().toString().padStart(2,'0')+':'+d2.getMinutes().toString().padStart(2,'0')+':'+d2.getSeconds().toString().padStart(2,'0')})():'';
-        const label=typeof a.type==='string'?a.type:'action';
-        const dataStr=typeof a.data==='object'?JSON.stringify(a.data).substring(0,35):(String(a.data||'').substring(0,35));
-        const entry=document.createElement('div');
-        entry.className='action-entry';
-        const textSpan=document.createElement('span');
-        textSpan.className='action-text';
-        textSpan.textContent=label+' '+dataStr;
-        const timeSpan=document.createElement('span');
-        timeSpan.className='action-time';
-        timeSpan.textContent=t;
-        entry.append(textSpan,timeSpan);
-        nodes.push(entry);
+  async function captureSnapshot() {
+    try {
+      const data = await api("/screen/fresh?monitor=" + encodeURIComponent(state.monitor));
+      if (data.data) {
+        $("snapshotImg").src = "data:image/jpeg;base64," + data.data;
+        addLocalLog("screenshot captured");
       }
-      el.replaceChildren(...nodes);
-      logCount=nodes.length;
-    })
-    .catch(()=>{});
-}
+    } catch (err) {
+      addLocalLog("screenshot failed: " + err.message);
+    }
+  }
 
-// ── INIT ──
-startAutoRefresh();
-setInterval(pollHistory, 3000);
-setTimeout(()=>addLog('Dashboard ready'), 500);
+  async function loadResources() {
+    try {
+      const data = await api("/process/resources");
+      setBar("cpu", data.cpu_percent);
+      setBar("mem", data.memory && data.memory.used_percent);
+      setBar("disk", data.disk && data.disk.used_percent);
+    } catch (err) {
+      addLocalLog("resources failed: " + err.message);
+    }
+  }
+
+  function renderProcesses() {
+    const filter = $("processFilter").value.trim().toLowerCase();
+    const tbody = $("processRows");
+    tbody.innerHTML = "";
+    const rows = state.processes
+      .filter((p) => !filter || String(p.name || "").toLowerCase().includes(filter) || String(p.pid).includes(filter))
+      .sort((a, b) => {
+        const av = a[state.sortKey];
+        const bv = b[state.sortKey];
+        if (typeof av === "number" && typeof bv === "number") return (av - bv) * state.sortDir;
+        return String(av || "").localeCompare(String(bv || "")) * state.sortDir;
+      })
+      .slice(0, 80);
+    rows.forEach((p) => {
+      const tr = document.createElement("tr");
+      const cells = [
+        { text: p.name || "", cls: "" },
+        { text: p.pid, cls: "num mono" },
+        { text: Number(p.cpu_percent || 0).toFixed(1), cls: "num mono" },
+        { text: Number(p.memory_mb || 0).toFixed(1), cls: "num mono" }
+      ];
+      cells.forEach((cell) => {
+        const td = document.createElement("td");
+        td.className = cell.cls;
+        td.textContent = cell.text;
+        tr.appendChild(td);
+      });
+      const action = document.createElement("td");
+      action.className = "actions";
+      const btn = document.createElement("button");
+      btn.className = "danger";
+      btn.textContent = "Kill";
+      btn.addEventListener("click", () => killProcess(p));
+      action.appendChild(btn);
+      tr.appendChild(action);
+      tbody.appendChild(tr);
+    });
+  }
+
+  async function loadProcesses() {
+    try {
+      const data = await api("/process/list?limit=250");
+      state.processes = data.processes || [];
+      renderProcesses();
+    } catch (err) {
+      addLocalLog("process list failed: " + err.message);
+    }
+  }
+
+  async function killProcess(proc) {
+    const label = (proc.name || "process") + " pid " + proc.pid;
+    if (!confirm("Kill " + label + "?")) return;
+    try {
+      await api("/process/kill", { method: "POST", body: { pid: proc.pid, confirm: true } });
+      addLocalLog("killed " + label);
+      await loadProcesses();
+    } catch (err) {
+      addLocalLog("kill failed: " + err.message);
+    }
+  }
+
+  function nodeLabel(node) {
+    if (node === null) return "null";
+    if (typeof node !== "object") return String(node);
+    const parts = [];
+    if (node.name) parts.push(node.name);
+    if (node.control_type) parts.push(node.control_type);
+    if (node.class_name) parts.push(node.class_name);
+    if (node.pid) parts.push("pid " + node.pid);
+    if (node.rect) {
+      const r = node.rect;
+      parts.push([r.left ?? r.x, r.top ?? r.y, r.width, r.height].filter((v) => v !== undefined).join(","));
+    }
+    return parts.filter(Boolean).join(" | ") || "node";
+  }
+
+  function renderNode(node, depth = 0) {
+    const children = Array.isArray(node && node.children) ? node.children : [];
+    if (children.length) {
+      const details = document.createElement("details");
+      details.open = depth < 1;
+      const summary = document.createElement("summary");
+      summary.textContent = nodeLabel(node) + " (" + children.length + ")";
+      details.appendChild(summary);
+      children.slice(0, 400).forEach((child) => details.appendChild(renderNode(child, depth + 1)));
+      if (children.length > 400) {
+        const extra = document.createElement("div");
+        extra.className = "uia-line";
+        extra.textContent = "... " + (children.length - 400) + " more";
+        details.appendChild(extra);
+      }
+      return details;
+    }
+    const line = document.createElement("div");
+    line.className = "uia-line";
+    line.textContent = nodeLabel(node);
+    return line;
+  }
+
+  async function loadUia() {
+    const root = $("uiaTree");
+    root.textContent = "Loading...";
+    try {
+      const data = await api("/uia/tree");
+      root.innerHTML = "";
+      root.appendChild(renderNode(data));
+      addLocalLog("UIA tree loaded");
+    } catch (err) {
+      root.textContent = "UIA error: " + err.message;
+      addLocalLog("UIA failed: " + err.message);
+    }
+  }
+
+  async function loadLogs() {
+    try {
+      const data = await api("/logs?format=json&lines=80");
+      const list = $("logList");
+      list.innerHTML = "";
+      (data.lines || []).slice(-80).reverse().forEach((line) => {
+        const li = document.createElement("li");
+        li.textContent = line;
+        list.appendChild(li);
+      });
+    } catch (err) {
+      addLocalLog("log refresh failed: " + err.message);
+    }
+  }
+
+  async function powerAction(action) {
+    if (["restart", "shutdown", "sleep"].includes(action) && !confirm(action + " this computer?")) return;
+    try {
+      await api("/power/" + action, { method: "POST", body: {} });
+      addLocalLog("power action: " + action);
+    } catch (err) {
+      addLocalLog("power action failed: " + err.message);
+    }
+  }
+
+  async function emergency(action) {
+    try {
+      await api("/emergency/" + action, { method: "POST", body: {} });
+      addLocalLog("emergency " + action);
+    } catch (err) {
+      addLocalLog("emergency failed: " + err.message);
+    }
+  }
+
+  function bindEvents() {
+    $("monitorSelect").addEventListener("change", (e) => {
+      state.monitor = e.target.value;
+      state.frameCount = 0;
+      startScreenStream();
+    });
+    $("restartStream").addEventListener("click", startScreenStream);
+    $("snapshotBtn").addEventListener("click", captureSnapshot);
+    $("snapshotBtn2").addEventListener("click", captureSnapshot);
+    $("refreshSystem").addEventListener("click", loadResources);
+    $("refreshProcesses").addEventListener("click", loadProcesses);
+    $("refreshLogs").addEventListener("click", loadLogs);
+    $("uiaBtn").addEventListener("click", loadUia);
+    $("processFilter").addEventListener("input", renderProcesses);
+    document.querySelectorAll("[data-power]").forEach((btn) => {
+      btn.addEventListener("click", () => powerAction(btn.dataset.power));
+    });
+    $("emergencyStop").addEventListener("click", () => emergency("stop"));
+    $("emergencyResume").addEventListener("click", () => emergency("resume"));
+    document.querySelectorAll("th[data-sort]").forEach((th) => {
+      th.addEventListener("click", () => {
+        const key = th.dataset.sort;
+        if (state.sortKey === key) state.sortDir *= -1;
+        else {
+          state.sortKey = key;
+          state.sortDir = key === "name" ? 1 : -1;
+        }
+        renderProcesses();
+      });
+    });
+  }
+
+  async function init() {
+    setText("authState", token ? "token" : "missing");
+    bindEvents();
+    await Promise.allSettled([loadVersion(), loadMonitors(), ping(), loadCua()]);
+    startScreenStream();
+    captureSnapshot();
+    loadResources();
+    loadProcesses();
+    loadLogs();
+    loadCursor();
+    setInterval(ping, 5000);
+    setInterval(loadCursor, 1000);
+    setInterval(loadResources, 5000);
+    setInterval(loadProcesses, 7000);
+    setInterval(loadLogs, 4000);
+    setInterval(loadCua, 15000);
+  }
+
+  init();
+})();
 </script>
 </body>
 </html>

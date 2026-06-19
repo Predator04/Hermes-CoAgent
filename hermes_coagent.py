@@ -236,6 +236,114 @@ class CoPilotState:
 
 state = CoPilotState()
 
+# Auto-healing watchdog state
+_WATCHDOG_INTERVAL = 60
+_WATCHDOG_FAILURE_THRESHOLD = 3
+_WATCHDOG_LOCK = threading.Lock()
+_WATCHDOG_THREAD = None
+_WATCHDOG_STATE = {
+    "enabled": False,
+    "healthy": True,
+    "last_check": None,
+    "last_status_code": None,
+    "failures": 0,
+    "consecutive_failures": 0,
+    "last_error": None,
+    "started_at": None,
+    "last_restart": None,
+    "restart_attempts": 0,
+    "interval_seconds": _WATCHDOG_INTERVAL,
+    "failure_threshold": _WATCHDOG_FAILURE_THRESHOLD,
+    "url": None,
+}
+
+def _watchdog_update(**updates):
+    with _WATCHDOG_LOCK:
+        _WATCHDOG_STATE.update(updates)
+
+def _watchdog_ping(port):
+    try:
+        import urllib.request
+        url = f"http://127.0.0.1:{port}/health"
+        with urllib.request.urlopen(url, timeout=10) as resp:
+            status = getattr(resp, "status", 200)
+            return 200 <= status < 300, None, status
+    except Exception as e:
+        return False, f"{type(e).__name__}: {e}", None
+
+def _ps_quote(value):
+    return "'" + str(value).replace("'", "''") + "'"
+
+def _restart_from_watchdog():
+    with _WATCHDOG_LOCK:
+        _WATCHDOG_STATE["restart_attempts"] += 1
+        _WATCHDOG_STATE["last_restart"] = datetime.now().isoformat(timespec="seconds")
+    _log("[WATCHDOG] Failure threshold reached; restarting CoAgent")
+    create_flags = subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0
+    script = str(Path(__file__).resolve())
+    args = [script] + sys.argv[1:]
+    arg_string = subprocess.list2cmdline(args)
+    ps_cmd = (
+        "Start-Sleep -Seconds 2; "
+        f"Start-Process -FilePath {_ps_quote(sys.executable)} "
+        f"-ArgumentList {_ps_quote(arg_string)} "
+        f"-WorkingDirectory {_ps_quote(str(COAGENT_DIR))} "
+        "-WindowStyle Hidden"
+    )
+    try:
+        subprocess.Popen(
+            ["powershell.exe", "-NoProfile", "-WindowStyle", "Hidden", "-Command", ps_cmd],
+            cwd=str(COAGENT_DIR),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=create_flags,
+        )
+    except Exception as e:
+        _watchdog_update(last_error=f"restart failed: {type(e).__name__}: {e}")
+        _log(f"[WATCHDOG] Restart launch failed: {type(e).__name__}: {e}")
+        return
+    time.sleep(1)
+    os._exit(75)
+
+def _watchdog_loop(port):
+    url = f"http://127.0.0.1:{port}/health"
+    _watchdog_update(enabled=True, started_at=time.time(), url=url)
+    _log(f"[WATCHDOG] Started; checking {url} every {_WATCHDOG_INTERVAL}s")
+    time.sleep(10)
+    while True:
+        ok, error, status_code = _watchdog_ping(port)
+        now = datetime.now().isoformat(timespec="seconds")
+        with _WATCHDOG_LOCK:
+            _WATCHDOG_STATE["last_check"] = now
+            _WATCHDOG_STATE["last_status_code"] = status_code
+            if ok:
+                _WATCHDOG_STATE["healthy"] = True
+                _WATCHDOG_STATE["consecutive_failures"] = 0
+                _WATCHDOG_STATE["last_error"] = None
+                failures = 0
+            else:
+                _WATCHDOG_STATE["healthy"] = False
+                _WATCHDOG_STATE["failures"] += 1
+                _WATCHDOG_STATE["consecutive_failures"] += 1
+                _WATCHDOG_STATE["last_error"] = error
+                failures = _WATCHDOG_STATE["consecutive_failures"]
+        if ok:
+            _log(f"[WATCHDOG] Health check OK status={status_code}")
+        else:
+            _log(f"[WATCHDOG] Health check failed ({failures}/{_WATCHDOG_FAILURE_THRESHOLD}): {error}")
+            if failures >= _WATCHDOG_FAILURE_THRESHOLD:
+                _restart_from_watchdog()
+                return
+        time.sleep(_WATCHDOG_INTERVAL)
+
+def _start_watchdog(port):
+    global _WATCHDOG_THREAD
+    with _WATCHDOG_LOCK:
+        if _WATCHDOG_THREAD and _WATCHDOG_THREAD.is_alive():
+            return
+        _WATCHDOG_THREAD = threading.Thread(target=_watchdog_loop, args=(port,), name="watchdog", daemon=True)
+        _WATCHDOG_THREAD.start()
+
 # ── Register route modules ─────────────────────────────────────
 from routes_mouse import register_routes as reg_mouse
 from routes_ocr import register_routes as reg_ocr
@@ -245,6 +353,9 @@ from routes_media import register_routes as reg_media
 from routes_v63 import register_routes as reg_v63
 from routes_stream import register_routes as reg_stream
 from routes_process import register_routes as reg_process
+from routes_voice import register_routes as reg_voice
+from routes_cua import register_routes as reg_cua
+from routes_copilot import register_routes as reg_copilot
 
 reg_mouse(app, state, require_auth)
 reg_ocr(app, state, require_auth)
@@ -254,16 +365,14 @@ reg_media(app, state, require_auth)
 reg_v63(app, state, require_auth)
 reg_stream(app, state, require_auth)
 reg_process(app, state, require_auth)
+reg_voice(app, state, require_auth)
+reg_cua(app, state, require_auth)
+reg_copilot(app, state, require_auth)
 
 # ── Core routes (stay in main) ─────────────────────────────────
 @app.route("/", methods=["GET"])
 def route_index():
-    return jsonify({"agent": AGENT_NAME, "version": VERSION, "status": "running",
-                    "features": ["modular_routes", "sse", "sse_mcp", "health_watchdog",
-                                 "thread_pool_4", "mss_dxgi", "uia_window_timeout",
-                                 "log_rotation_5mb", "recording_cleanup",
-                                 "windows_ocr", "uia", "som", "waitress", "watchdog",
-                                 "multi_monitor", "screen_streaming", "process_management"]})
+    return route_dashboard2()
 
 @app.route("/ping", methods=["GET"])
 def route_ping():
@@ -273,6 +382,16 @@ def route_ping():
 @app.route("/health", methods=["GET"])
 def route_health():
     return jsonify({"status": "ok", "agent": AGENT_NAME, "version": VERSION})
+
+@app.route("/watchdog/status", methods=["GET"])
+@require_auth
+def route_watchdog_status():
+    with _WATCHDOG_LOCK:
+        payload = dict(_WATCHDOG_STATE)
+    payload["uptime"] = int(time.time() - state.start_time)
+    payload["watchdog_uptime"] = int(time.time() - payload["started_at"]) if payload.get("started_at") else 0
+    payload["thread_alive"] = bool(_WATCHDOG_THREAD and _WATCHDOG_THREAD.is_alive())
+    return jsonify(payload)
 
 @app.route("/version", methods=["GET"])
 def route_version():
@@ -285,9 +404,11 @@ def route_version():
                                  "agent_cursor", "element_indexed_uia", "desktop_stabilization",
                                  "file_search", "clipboard", "tts", "rate_limit", "cors",
                                  "security_headers", "multi_monitor", "screen_streaming",
-                                 "process_management"],
+                                 "process_management", "voice_commands", "auto_healing_watchdog",
+                                 "cua_driver", "operator_dashboard", "remote_tunnel",
+                                 "ai_copilot"],
                     "modules": ["mouse", "ocr", "uia", "file", "media", "v63",
-                                "stream", "process"],
+                                "stream", "process", "voice", "cua", "copilot"],
                     "security": ["auth_token", "rate_limit", "input_sanitization",
                                  "cors_restricted", "security_headers"]})
 
@@ -411,10 +532,12 @@ def route_logs():
         try:
             with SERVER_LOG.open("r", encoding="utf-8", errors="replace") as f:
                 last_n = "".join(deque(f, maxlen=limit))
+            if request.args.get("format") == "json" or "application/json" in request.headers.get("Accept", ""):
+                return jsonify({"lines": last_n.splitlines(), "text": last_n, "count": len(last_n.splitlines())})
             return Response(f"<pre>{escape(last_n)}</pre>", mimetype="text/html")
         except:
             return jsonify({"error": "Cannot read log"}), 500
-    return jsonify({"log": "No log file"})
+    return jsonify({"lines": [], "text": "", "count": 0, "log": "No log file"})
 
 # ── Main ──────────────────────────────────────────────────────
 if __name__ == "__main__":
@@ -452,7 +575,7 @@ if __name__ == "__main__":
         _console("  Auth: disabled")
 
     _console(f"  Server: http://{bind_host}:{port}/")
-    _console(f"  Modules: mouse ocr uia file media v63")
+    _console(f"  Modules: mouse ocr uia file media v63 stream process voice cua copilot")
     _console()
 
     # Pre-warm UIA engine
@@ -470,6 +593,9 @@ if __name__ == "__main__":
 
     # Start tray icon
     _start_tray()
+
+    # Start auto-healing watchdog
+    _start_watchdog(port)
 
     # v7.3: Waitress WSGI server
     _console(f"  [OK] Waitress WSGI on http://{bind_host}:{port}/")

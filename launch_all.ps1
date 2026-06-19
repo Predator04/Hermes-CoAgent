@@ -27,11 +27,11 @@ Write-Output "=========================================="
 Write-Output "Workspace: $coagentDir"
 
 # ── Step 1: Kill stale CoAgent processes ──
-Write-Output "[1/5] Cleaning stale processes..."
+Write-Output "[1/6] Cleaning stale processes..."
 Get-Process -Name "python*" -ErrorAction SilentlyContinue | ForEach-Object {
     try {
         $cmdLine = (Get-CimInstance Win32_Process -Filter "ProcessId = $($_.Id)").CommandLine
-        if ($cmdLine -match "hermes_coagent" -or $cmdLine -match "coagent_tray") {
+        if ($cmdLine -match "hermes_coagent" -or $cmdLine -match "coagent_tray" -or $cmdLine -match "tray_icon.py" -or $cmdLine -match "screenshot_relay.py") {
             Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue
             Write-Output "  Killed PID $($_.Id)"
         }
@@ -40,7 +40,7 @@ Get-Process -Name "python*" -ErrorAction SilentlyContinue | ForEach-Object {
 Start-Sleep -Milliseconds 500
 
 # ── Step 2: Launch CoAgent server ──
-Write-Output "[2/5] Starting CoAgent server..."
+Write-Output "[2/6] Starting CoAgent server..."
 $serverArgs = @(
     "`"$coagentDir\\hermes_coagent.py`""
     "--secure"
@@ -57,7 +57,7 @@ Write-Output "  Server PID: $($serverProc.Id)"
 Start-Sleep -Seconds 2
 
 # ── Step 3: Launch tray icon on Session 1 ──
-Write-Output "[3/5] Launching tray icon..."
+Write-Output "[3/6] Launching tray icon..."
 $trayScript = Join-Path $coagentDir "tray_icon.py"
 $trayArgs = @(
     "`"$trayScript`""
@@ -71,8 +71,33 @@ try {
     Write-Output "  Tray launch failed: $($_.Exception.Message)"
 }
 
-# ── Step 4: Verify server is running ──
-Write-Output "[4/5] Verifying server..."
+# --- Step 4: Ensure screenshot relay ---
+Write-Output "[4/6] Ensuring screenshot relay..."
+Start-Sleep -Seconds 1
+$relayOk = $false
+try {
+    $relay = Invoke-WebRequest -Uri "http://127.0.0.1:9124/health" -UseBasicParsing -TimeoutSec 2 -ErrorAction Stop
+    $relayOk = ($relay.StatusCode -eq 200)
+} catch {}
+if ($relayOk) {
+    Write-Output "  Screenshot relay OK (port 9124)"
+} else {
+    $relayScript = Join-Path $coagentDir "screenshot_relay.py"
+    if (Test-Path $relayScript) {
+        $relayArgs = @("`"$relayScript`"")
+        try {
+            Start-Process -FilePath $pythonw -ArgumentList $relayArgs -WorkingDirectory $coagentDir -WindowStyle Hidden -ErrorAction Stop | Out-Null
+            Write-Output "  Screenshot relay fallback launched"
+        } catch {
+            Write-Output "  Screenshot relay launch failed: $($_.Exception.Message)"
+        }
+    } else {
+        Write-Output "  screenshot_relay.py not found"
+    }
+}
+
+# ── Step 5: Verify server is running ──
+Write-Output "[5/6] Verifying server..."
 Start-Sleep -Seconds 2
 try {
     $ping = Invoke-WebRequest -Uri "http://127.0.0.1:9123/ping" -UseBasicParsing -TimeoutSec 5 -ErrorAction SilentlyContinue
@@ -83,8 +108,8 @@ try {
     Write-Output "  ⚠️  Server not responding yet - check coagent_server.log"
 }
 
-# ── Step 5: Done ──
-Write-Output "[5/5] Launch complete!"
+# ── Step 6: Done ──
+Write-Output "[6/6] Launch complete!"
 Write-Output ""
 Write-Output "  Dashboard: http://localhost:9123/"
 Write-Output "  Dashboard2: http://localhost:9123/dashboard2"
