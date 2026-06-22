@@ -9,7 +9,7 @@ from pathlib import Path
 
 from flask import jsonify
 
-from shared import COAGENT_DIR, _json_body
+from shared import COAGENT_DIR, _json_body, _log
 
 
 PLUGINS_DIR = COAGENT_DIR / "plugins"
@@ -99,6 +99,26 @@ def _remove_endpoints(app, endpoints):
         pass
 
 
+def _audit_plugin_endpoints(app, plugin_name, endpoints):
+    rows = []
+    unauthenticated = []
+    for endpoint in endpoints:
+        view_func = app.view_functions.get(endpoint)
+        auth_wrapped = bool(getattr(view_func, "_hermes_auth_wrapped", False))
+        rules = sorted(str(rule) for rule in app.url_map.iter_rules() if rule.endpoint == endpoint)
+        auth_status = "require_auth" if auth_wrapped else "missing_require_auth_marker"
+        rows.append({
+            "endpoint": endpoint,
+            "rules": rules,
+            "auth_status": auth_status,
+        })
+        _log(f"[plugins] {plugin_name} endpoint={endpoint} routes={rules} auth_status={auth_status}")
+        if not auth_wrapped:
+            unauthenticated.append(endpoint)
+            _log(f"[plugins] WARNING: {plugin_name} endpoint {endpoint} lacks require_auth protection")
+    return rows, unauthenticated
+
+
 def _load_plugin(app, state, require_auth, name):
     safe, path = _plugin_path(name)
     if not path.exists():
@@ -123,6 +143,7 @@ def _load_plugin(app, state, require_auth, name):
     finally:
         app._got_first_request = got_first_request
     endpoints = sorted(set(app.view_functions.keys()) - before_endpoints)
+    endpoint_auth, unauthenticated = _audit_plugin_endpoints(app, safe, endpoints)
     loaded_at = time.strftime("%Y-%m-%dT%H:%M:%S")
     PLUGINS[safe] = (module, loaded_at)
     PLUGIN_ENDPOINTS[safe] = endpoints
@@ -133,6 +154,8 @@ def _load_plugin(app, state, require_auth, name):
         "loaded_at": loaded_at,
         "loaded_git_hash": _repo_hash(),
         "endpoints": endpoints,
+        "endpoint_auth": endpoint_auth,
+        "unauthenticated_endpoints": unauthenticated,
     }
     return info
 

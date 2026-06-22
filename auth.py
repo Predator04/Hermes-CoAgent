@@ -12,12 +12,13 @@ Features:
 Token is saved to COAGENT_DIR/.token on first --secure launch.
 Subsequent --secure launches read the saved token.
 """
-import os, sys, secrets, functools
+import os, sys, secrets, functools, hashlib
 from flask import request, jsonify
 from pathlib import Path
 
 AUTH_TOKEN = None
 AUTH_ENABLED = False
+SETUP_REQUIRED = False
 COAGENT_DIR = None
 
 
@@ -39,14 +40,25 @@ def _save_token(token):
     tp = _token_path()
     if tp:
         tp.write_text(token, encoding="utf-8")
+        try:
+            os.chmod(tp, 0o600)
+        except OSError:
+            pass
         old_suffix = tp.with_suffix(".token_tok")
         if old_suffix.exists():
             old_suffix.unlink()
 
 
+def _token_from_password(password):
+    salt = secrets.token_hex(16)
+    material = f"{salt}:{password}".encode("utf-8")
+    return hashlib.sha256(material).hexdigest()
+
+
 def init_auth(port=9123, coag_dir=None):
-    global AUTH_TOKEN, AUTH_ENABLED, COAGENT_DIR
+    global AUTH_TOKEN, AUTH_ENABLED, SETUP_REQUIRED, COAGENT_DIR
     COAGENT_DIR = coag_dir
+    SETUP_REQUIRED = False
     if COAGENT_DIR:
         old_suffix = COAGENT_DIR / ".token_tok"
         if old_suffix.exists():
@@ -66,8 +78,11 @@ def init_auth(port=9123, coag_dir=None):
             if saved:
                 token = saved
             else:
-                token = secrets.token_hex(32)
-                _save_token(token)
+                SETUP_REQUIRED = True
+                AUTH_ENABLED = False
+                AUTH_TOKEN = None
+                print("[Auth] First time? POST /setup with {'password':'yourpassword'}")
+                return
         else:
             _save_token(token)
         AUTH_ENABLED = True
@@ -77,13 +92,7 @@ def init_auth(port=9123, coag_dir=None):
         AUTH_TOKEN = token
 
     if AUTH_ENABLED:
-        pre = token[:16]
-        suf = token[-8:]
-        auth_type = "Secure mode" if "--secure" in sys.argv else "Token auth"
-        print(f"[Auth] {auth_type} enabled - token: {pre}...{suf}")
-        print(f"[Auth]   Use header: Authorization: Bearer {pre}...{suf}")
-        if _token_path() and _token_path().exists():
-            print(f"[Auth]   Token saved to {_token_path()}")
+        print("[Auth] Auth enabled")
         return
 
     print("[Auth] WARNING: No authentication configured!")
@@ -96,21 +105,55 @@ def require_auth(f):
     @functools.wraps(f)
     def wrapper(*args, **kwargs):
         if not AUTH_ENABLED:
+            if SETUP_REQUIRED:
+                return jsonify({"error": "Setup required", "setup": "/setup"}), 403
             return f(*args, **kwargs)
         auth_header = request.headers.get("Authorization", "")
         if not auth_header.startswith("Bearer "):
             return jsonify({"error": "Unauthorized - provide Bearer token"}), 401
         provided = auth_header[7:]
-        if not secrets.compare_digest(provided, AUTH_TOKEN):
+        if not secrets.compare_digest(provided, AUTH_TOKEN or ""):
             return jsonify({"error": "Invalid token"}), 403
         return f(*args, **kwargs)
+    wrapper._hermes_auth_wrapped = True
     return wrapper
 
 
 def register_auth_routes(app):
     """Register /auth/token endpoints for viewing/regenerating the token."""
 
+    @app.route("/setup-status", methods=["GET"])
+    def setup_status():
+        configured = bool(_load_token())
+        return jsonify({
+            "configured": configured,
+            "auth": AUTH_ENABLED,
+            "setup_required": SETUP_REQUIRED,
+        })
+
+    @app.route("/setup", methods=["POST"])
+    def setup_first_boot():
+        """Configure the first token from a user-chosen password."""
+        global AUTH_TOKEN, AUTH_ENABLED, SETUP_REQUIRED
+        if _load_token():
+            return jsonify({"error": "Already configured"}), 403
+        data = request.get_json(silent=True) or {}
+        password = data.get("password")
+        if not isinstance(password, str) or not password:
+            return jsonify({"error": "password is required"}), 400
+        token = _token_from_password(password)
+        _save_token(token)
+        AUTH_TOKEN = token
+        AUTH_ENABLED = True
+        SETUP_REQUIRED = False
+        return jsonify({
+            "status": "configured",
+            "token": token,
+            "message": "Save this token - it won't be shown again",
+        })
+
     @app.route("/auth/token", methods=["GET"])
+    @require_auth
     def auth_token_info():
         """Show current token status (never leaks full token)."""
         if not AUTH_ENABLED:
@@ -121,7 +164,6 @@ def register_auth_routes(app):
             "auth": True,
             "token_preview": f"{pre}...{suf}",
             "saved": _token_path().exists() if _token_path() else False,
-            "token_path": str(_token_path()) if _token_path() else None,
         })
 
 
@@ -171,6 +213,7 @@ def register_auth_routes(app):
         return jsonify({'error': 'Token file is empty'}), 500
 
     @app.route("/auth/token", methods=["POST"])
+    @require_auth
     def auth_token_regen():
         """Regenerate token. Requires current token in Authorization header."""
         global AUTH_TOKEN

@@ -85,6 +85,14 @@ Hermes CoAgent is a Flask-based Windows desktop automation server. Provides REST
 - Working dir: `C:\Users\Admin\Desktop\Hermes CoAgent\`
 - Token: `YOUR_TOKEN_HERE`
 
+## Security
+
+- Auth is enabled with `--secure`, `--token=TOKEN`, or the `HERMES_COAGENT_TOKEN` environment variable.
+- First-time secure setup: launch with `--secure` on localhost, then `POST /setup` with `{"password":"yourpassword"}`. The response returns the Bearer token once.
+- Send `Authorization: Bearer <token>` to all control and data endpoints. Bootstrap/status endpoints are limited to `/`, `/health`, `/ping`, `/version`, `/favicon.ico`, `/setup`, and `/setup-status`.
+- The token is stored in `.token`; `.token` and `.token_*` are gitignored and the git commit route enforces that before staging.
+- Port 9123 controls the desktop and must not be exposed to the internet. Use `--allow-external` only on trusted local networks with auth enabled.
+
 ## Requirements
 - Core deps: `flask`, `waitress`, `mss`, `pywinauto`, `psutil`
 - v7.6 deps: `dxcam`, `playwright`, `google-api-python-client`, `google-auth-oauthlib`, `win11toast`

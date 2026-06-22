@@ -15,7 +15,31 @@ from shared import SERVER_LOG
 deps_bp = Blueprint("deps", __name__)
 
 PACKAGE_RE = re.compile(r"^[A-Za-z0-9_.\-\[\],=<>!~]+$")
+PACKAGE_NAME_RE = re.compile(r"^\s*([A-Za-z0-9_.-]+)")
 NO_MODULE_RE = re.compile(r"No module named ['\"]([^'\"]+)['\"]")
+
+ALLOWED_PACKAGES = {
+    "flask",
+    "waitress",
+    "mss",
+    "pywinauto",
+    "pytesseract",
+    "pillow",
+    "pyautogui",
+    "pygetwindow",
+    "pyperclip",
+    "pystray",
+    "psutil",
+    "dxcam",
+    "playwright",
+    "google-api-python-client",
+    "google-auth-oauthlib",
+    "google-auth-httplib2",
+    "win11toast",
+    "flask-sock",
+    "opencv-python",
+    "numpy",
+}
 
 TRACKED_DEPS = [
     {"module": "flask", "package": "flask"},
@@ -52,6 +76,19 @@ def _auth_blueprint(bp, require_auth):
 
 def _valid_package(package):
     return isinstance(package, str) and 1 <= len(package) <= 160 and PACKAGE_RE.fullmatch(package)
+
+
+def _package_name(package):
+    if not isinstance(package, str):
+        return ""
+    match = PACKAGE_NAME_RE.match(package)
+    if not match:
+        return ""
+    return match.group(1).lower().replace("_", "-")
+
+
+def _allowed_package(package):
+    return _package_name(package) in ALLOWED_PACKAGES
 
 
 def _package_for_module(module_name):
@@ -103,6 +140,8 @@ def _check_module(module_name, package=None):
 def _pip_install(package):
     if not _valid_package(package):
         raise ValueError("Invalid package spec")
+    if not _allowed_package(package):
+        raise ValueError("Package is not in the allowed install list")
     return subprocess.run(
         [sys.executable, "-m", "pip", "install", package],
         capture_output=True,
@@ -151,6 +190,8 @@ def route_deps_install():
     package = data.get("package")
     if not _valid_package(package):
         return _error("package must be a valid pip package spec")
+    if not _allowed_package(package):
+        return _error("package is not in the allowed install list", package=package)
     try:
         result = _pip_install(package)
         return jsonify({
@@ -205,6 +246,8 @@ def route_deps_auto():
     results = []
     for module in missing[:10]:
         package = _package_for_module(module)
+        if not _allowed_package(package):
+            return _error("auto-install package is not in the allowed install list", package=package, module=module)
         try:
             result = _pip_install(package)
             results.append({

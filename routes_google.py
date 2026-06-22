@@ -1,6 +1,7 @@
 """Google Workspace routes using the Google API Python client."""
 
 import base64
+import os
 from datetime import datetime, timezone
 from email.mime.text import MIMEText
 from pathlib import Path
@@ -8,7 +9,7 @@ from pathlib import Path
 from flask import Blueprint, jsonify
 
 from routes_bypass import _json_payload
-from shared import COAGENT_DIR
+from shared import COAGENT_DIR, _log
 
 
 google_bp = Blueprint("google", __name__)
@@ -64,6 +65,22 @@ def _load_google_libs():
         )
 
 
+def _save_oauth_token(creds):
+    TOKEN_FILE.parent.mkdir(parents=True, exist_ok=True)
+    if not TOKEN_FILE.exists():
+        TOKEN_FILE.touch(mode=0o600)
+    try:
+        os.chmod(TOKEN_FILE, 0o600)
+    except OSError:
+        pass
+    TOKEN_FILE.write_text(creds.to_json(), encoding="utf-8")
+    try:
+        os.chmod(TOKEN_FILE, 0o600)
+    except OSError:
+        pass
+    _log("OAuth token saved with restricted permissions")
+
+
 def _credentials():
     if not CREDENTIALS_FILE.exists():
         return None, _not_configured("google_credentials.json not found")
@@ -79,7 +96,7 @@ def _credentials():
         if not creds or not creds.valid:
             flow = InstalledAppFlow.from_client_secrets_file(str(CREDENTIALS_FILE), SCOPES)
             creds = flow.run_local_server(host="127.0.0.1", port=0)
-        TOKEN_FILE.write_text(creds.to_json(), encoding="utf-8")
+        _save_oauth_token(creds)
         return creds, None
     except Exception as e:
         return None, _not_configured(e)

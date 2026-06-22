@@ -3,14 +3,36 @@ Full right-click menu + screenshot relay + UIA relay + screenshot cache.
 Launched as pythonw subprocess by hermes_coagent.py.
 v3.0: JPEG support (?format=jpeg), screenshot cache (200ms), UIA relay (/uia/tree)
 """
-import sys, os, json, traceback, urllib.request, threading, webbrowser, time
+import sys, os, json, traceback, urllib.request, threading, webbrowser, time, secrets
 from urllib.parse import urlparse
 from datetime import datetime
 from pathlib import Path
 from io import BytesIO
 
-PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 9123
-TRAY_PORT = int(sys.argv[2]) if len(sys.argv) > 2 else 9124
+def _arg_value(name):
+    for i, arg in enumerate(sys.argv):
+        if arg == name and i + 1 < len(sys.argv):
+            return sys.argv[i + 1]
+        if arg.startswith(name + "="):
+            return arg.split("=", 1)[1]
+    return ""
+
+
+def _positional_int(index, default):
+    positional = [arg for arg in sys.argv[1:] if not arg.startswith("--")]
+    try:
+        return int(positional[index])
+    except (IndexError, TypeError, ValueError):
+        return default
+
+
+PORT = _positional_int(0, 9123)
+TRAY_PORT = _positional_int(1, 9124)
+REQUIRED_TOKEN = (
+    _arg_value("--token")
+    or os.environ.get("COAGENT_TOKEN", "")
+    or os.environ.get("HERMES_COAGENT_TOKEN", "")
+)
 SERVER = f"http://127.0.0.1:{PORT}"
 SCRIPT_DIR = Path(__file__).parent.resolve()
 LOG_FILE = SCRIPT_DIR / "tray_icon.log"
@@ -31,12 +53,25 @@ def _log(message):
 def _api(path, method="POST", body=None):
     try:
         data = json.dumps(body).encode() if body else None
+        headers = {"Content-Type": "application/json"} if body else {}
+        if REQUIRED_TOKEN:
+            headers["Authorization"] = f"Bearer {REQUIRED_TOKEN}"
         req = urllib.request.Request(SERVER + path,
-            data=data, headers={"Content-Type": "application/json"} if body else {},
+            data=data, headers=headers,
             method=method)
         urllib.request.urlopen(req, timeout=2)
     except:
         pass
+
+
+def _is_local_origin(origin):
+    if not origin:
+        return False
+    try:
+        parsed = urlparse(origin)
+        return parsed.hostname in {"localhost", "127.0.0.1", "::1"}
+    except Exception:
+        return False
 
 def _load_icon_font():
     from PIL import ImageFont
@@ -111,21 +146,49 @@ def _start_screenshot_server():
         allow_reuse_address = True
 
     class ScreenHandler(http.server.BaseHTTPRequestHandler):
+        def _send_cors_headers(self):
+            origin = self.headers.get("Origin", "")
+            if _is_local_origin(origin):
+                self.send_header("Access-Control-Allow-Origin", origin)
+                self.send_header("Access-Control-Allow-Headers", "Authorization, Content-Type")
+                self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
+                self.send_header("Vary", "Origin")
+
+        def _is_authorized(self):
+            if not REQUIRED_TOKEN:
+                return False
+            auth_header = self.headers.get("Authorization", "")
+            if not auth_header.startswith("Bearer "):
+                return False
+            return secrets.compare_digest(auth_header[7:], REQUIRED_TOKEN)
+
+        def _requires_auth(self, path):
+            return path in {"/screen", "/uia/tree", "/cache/info", "/cache/clear"}
+
         def _send_body(self, data, status=200, content_type="application/json", extra_headers=None):
             self.send_response(status)
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(data)))
-            self.send_header("Access-Control-Allow-Origin", "*")
+            self._send_cors_headers()
             self.send_header("Cache-Control", "no-store")
             for key, value in (extra_headers or {}).items():
                 self.send_header(key, value)
             self.end_headers()
             self.wfile.write(data)
 
+        def do_OPTIONS(self):
+            self.send_response(204)
+            self._send_cors_headers()
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+
         def do_GET(self):
             global _last_screenshot, _last_screenshot_time, _last_screenshot_key, _SCREENSHOT_CACHE_TTL
             try:
                 parsed = urlparse(self.path)
+                if self._requires_auth(parsed.path) and not self._is_authorized():
+                    self._send_body(b'{"error":"unauthorized"}', status=401)
+                    return
                 if parsed.path == "/screen":
                     data = _capture_screenshot_impl(jpeg=True, quality=85)
                     self._send_body(data, content_type="image/jpeg", extra_headers={"X-Format": "jpeg"})

@@ -42,6 +42,7 @@ try:
             ap = getattr(g, '_auth_passed', False)
             if ap: return f(*args, **kwargs)
             return _require_auth(f)(*args, **kwargs)
+        wrapper._hermes_auth_wrapped = True
         return wrapper
 except Exception as e:
     print(f"[FATAL] auth.py failed to import; refusing to start unprotected: {e}", file=sys.stderr)
@@ -155,20 +156,16 @@ def _reset_endpoint_health_window_if_needed():
 
 # ── v7.3: Security middleware ───────────────────────────────────
 AUTH_EXEMPT_PREFIXES = (
-    "/auth/",
     "/static/",
 )
 AUTH_EXEMPT_PATHS = {
     "/",
-    "/dashboard2",
-    "/index.html",
     "/health",
     "/ping",
     "/version",
     "/favicon.ico",
-    "/dashboard",
-    "/remote",
-    "/mcp/test",
+    "/setup",
+    "/setup-status",
 }
 
 def _is_auth_exempt(path):
@@ -279,7 +276,7 @@ def _check_rate_limit() -> bool:
 
 @app.before_request
 def _rate_limit():
-    if request.path in AUTH_EXEMPT_PATHS or request.path.startswith("/auth/"):
+    if request.path in AUTH_EXEMPT_PATHS:
         return None
     if not _check_rate_limit():
         return jsonify({"error": "Too many requests",
@@ -763,8 +760,11 @@ def _start_tray():
             _console("  [INFO] Tray icon skipped: pythonw.exe not found")
             return
         task_name = "HermesCoAgent_Tray"
-        tray_args = f'"{tray_script}" {SERVER_PORT} {TRAY_PORT}'
-        tray_cmd = f'"{pyw}" {tray_args}'
+        tray_argv = [str(tray_script), str(SERVER_PORT), str(TRAY_PORT)]
+        if _auth.AUTH_TOKEN:
+            tray_argv.append(f"--token={_auth.AUTH_TOKEN}")
+        tray_args = subprocess.list2cmdline(tray_argv)
+        tray_cmd = subprocess.list2cmdline([pyw, *tray_argv])
         create_flags = subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0
         subprocess.run(["schtasks", "/Delete", "/TN", task_name, "/F"],
                        capture_output=True, timeout=5, creationflags=create_flags)

@@ -15,6 +15,7 @@ import os
 import threading
 import time
 import base64
+import tempfile
 from io import BytesIO
 from pathlib import Path
 from datetime import datetime
@@ -382,25 +383,118 @@ _RECORDING_LOCK = threading.Lock()
 _RECORDING_VIDEO = False
 
 _MAX_KEEP_SESSIONS = 10
+_COAGENT_DIR = Path(__file__).resolve().parent
+_RECORDING_SAFE_ROOTS = (
+    (_COAGENT_DIR / "recordings").resolve(),
+    (Path(tempfile.gettempdir()) / "coagent_recordings").resolve(),
+)
+_FILE_ATTRIBUTE_REPARSE_POINT = 0x0400
+
+
+def _recording_warn(message: str):
+    try:
+        from shared import _log
+        _log(message)
+    except Exception:
+        try:
+            print(message)
+        except Exception:
+            pass
+
+
+def _is_relative_to(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+        return True
+    except ValueError:
+        return False
+
+
+def _safe_root_for(path: Path) -> Optional[Path]:
+    for root in _RECORDING_SAFE_ROOTS:
+        if _is_relative_to(path, root):
+            return root
+    return None
+
+
+def _is_reparse_point(path: Path) -> bool:
+    if os.name != "nt" or not path.exists():
+        return False
+    try:
+        attrs = ctypes.windll.kernel32.GetFileAttributesW(str(path))
+        return attrs != -1 and bool(attrs & _FILE_ATTRIBUTE_REPARSE_POINT)
+    except Exception:
+        return False
+
+
+def _path_has_unsafe_component(path: Path, root: Path) -> bool:
+    try:
+        rel = path.relative_to(root)
+    except ValueError:
+        return True
+    current = root
+    if current.exists() and (current.is_symlink() or _is_reparse_point(current)):
+        return True
+    for part in rel.parts:
+        current = current / part
+        if current.exists() and (current.is_symlink() or _is_reparse_point(current)):
+            return True
+    return False
+
+
+def _resolve_recording_root(output_dir: str = None) -> Path:
+    default_root = _RECORDING_SAFE_ROOTS[0]
+    if output_dir:
+        requested = Path(str(output_dir)).expanduser()
+        raw_candidate = requested if requested.is_absolute() else default_root / requested
+    else:
+        raw_candidate = default_root
+    resolved = raw_candidate.resolve(strict=False)
+    root = _safe_root_for(resolved)
+    if root is None:
+        safe = ", ".join(str(p) for p in _RECORDING_SAFE_ROOTS)
+        raise ValueError(f"recording directory must be under one of: {safe}")
+    if _path_has_unsafe_component(raw_candidate, root) or _path_has_unsafe_component(resolved, root):
+        raise ValueError("recording directory contains a symlink or reparse point")
+    resolved.mkdir(parents=True, exist_ok=True)
+    if _path_has_unsafe_component(raw_candidate, root) or _path_has_unsafe_component(resolved, root):
+        raise ValueError("recording directory contains a symlink or reparse point")
+    return resolved
 
 def _cleanup_old_sessions(rec_dir: Path, max_keep: int = 10):
     """Delete oldest session directories beyond max_keep."""
     try:
+        rec_dir = rec_dir.resolve(strict=False)
+        root = _safe_root_for(rec_dir)
+        if root is None or _path_has_unsafe_component(rec_dir, root):
+            _recording_warn(f"Recording cleanup skipped suspicious path: {rec_dir}")
+            return
         if not rec_dir.exists():
             return
-        sessions = sorted(rec_dir.glob("session_*"), key=lambda p: p.stat().st_mtime if p.exists() else 0)
+        sessions = []
+        for path in rec_dir.glob("session_*"):
+            if path.is_symlink() or _is_reparse_point(path):
+                _recording_warn(f"Recording cleanup skipped suspicious session path: {path}")
+                continue
+            if path.is_dir():
+                sessions.append(path)
+        sessions = sorted(sessions, key=lambda p: p.stat().st_mtime if p.exists() else 0)
         while len(sessions) > max_keep:
             oldest = sessions.pop(0)
+            if not _is_relative_to(oldest.resolve(strict=False), root) or _path_has_unsafe_component(oldest, root):
+                _recording_warn(f"Recording cleanup skipped suspicious session path: {oldest}")
+                continue
             import shutil
             shutil.rmtree(oldest, ignore_errors=True)
-    except Exception:
+    except Exception as e:
+        _recording_warn(f"Recording cleanup skipped after error: {type(e).__name__}: {e}")
         pass
 
 def start_recording(output_dir: str = None, record_video: bool = False) -> dict:
     """Start recording action trajectories.
     
     Args:
-        output_dir: Directory to save recordings (default: ~/Desktop/CoAgent_Recordings)
+        output_dir: Directory to save recordings under a safe recording root.
         record_video: Also record screen video (requires ffmpeg)
         
     Returns:
@@ -412,10 +506,11 @@ def start_recording(output_dir: str = None, record_video: bool = False) -> dict:
         if _RECORDING_ACTIVE:
             return {"status": "already_active", "dir": str(_RECORDING_DIR)}
         
-        if output_dir:
-            rec_dir = Path(output_dir)
-        else:
-            rec_dir = Path.home() / "Desktop" / "CoAgent_Recordings"
+        try:
+            rec_dir = _resolve_recording_root(output_dir)
+        except ValueError as e:
+            _recording_warn(f"Recording start rejected suspicious path: {output_dir!r}: {e}")
+            return {"status": "error", "error": str(e)}
         
         # Create timestamped session folder
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")

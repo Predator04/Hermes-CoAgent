@@ -32,7 +32,7 @@ CONFIG:
   COAGENT_TOKEN=... or HERMES_COAGENT_TOKEN=...  Bearer token for --secure CoAgent
   MCP_FAST=1                          Lazy-import mode
 """
-import sys, os, json, base64, io, time, asyncio
+import sys, os, json, base64, io, time, asyncio, secrets
 from typing import Optional
 
 FAST_MODE = os.environ.get("MCP_FAST", "") or "--fast" in sys.argv
@@ -174,6 +174,69 @@ def _coagent_ensure_alive():
         if result and "error" not in result:
             return True
     return False
+
+
+class _SSEAuthMiddleware:
+    """ASGI middleware that requires Bearer auth for FastMCP SSE HTTP traffic."""
+
+    def __init__(self, app, token: str):
+        self.app = app
+        self.token = token
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") == "http" and scope.get("method") != "OPTIONS":
+            headers = {
+                key.decode("latin1").lower(): value.decode("latin1")
+                for key, value in scope.get("headers", [])
+            }
+            auth_header = headers.get("authorization", "")
+            provided = auth_header[7:] if auth_header.startswith("Bearer ") else ""
+            if not provided or not secrets.compare_digest(provided, self.token):
+                body = b'{"error":"unauthorized"}'
+                await send({
+                    "type": "http.response.start",
+                    "status": 401,
+                    "headers": [
+                        (b"content-type", b"application/json"),
+                        (b"content-length", str(len(body)).encode("ascii")),
+                        (b"cache-control", b"no-store"),
+                    ],
+                })
+                await send({"type": "http.response.body", "body": body})
+                return
+        await self.app(scope, receive, send)
+
+
+def _install_sse_auth_middleware(token: str) -> bool:
+    for attr in ("sse_app", "streamable_http_app"):
+        factory = getattr(mcp, attr, None)
+        if not callable(factory):
+            continue
+
+        def wrapped_factory(*args, _factory=factory, **kwargs):
+            return _SSEAuthMiddleware(_factory(*args, **kwargs), token)
+
+        setattr(mcp, attr, wrapped_factory)
+        return True
+    return False
+
+
+def _run_sse_server(host: str, port: int):
+    if not COAGENT_TOKEN:
+        print("[MCP] ERROR: SSE mode requires COAGENT_TOKEN or HERMES_COAGENT_TOKEN for Bearer auth.")
+        sys.exit(1)
+    app_factory = getattr(mcp, "sse_app", None)
+    if callable(app_factory):
+        try:
+            import uvicorn
+            uvicorn.run(_SSEAuthMiddleware(app_factory(), COAGENT_TOKEN), host=host, port=port)
+            return
+        except ImportError:
+            pass
+    if not _install_sse_auth_middleware(COAGENT_TOKEN):
+        print("[MCP] ERROR: FastMCP SSE auth hook unavailable; refusing to start unauthenticated SSE.")
+        sys.exit(1)
+    mcp.run(transport="sse", host=host, port=port)
 
 # ── FastMCP Server ───────────────────────────────────────────────────────
 mcp = FastMCP(
@@ -665,8 +728,12 @@ if __name__ == "__main__":
         if "--port" in sys.argv:
             idx = sys.argv.index("--port")
             port = int(sys.argv[idx + 1])
-        print(f"[MCP] Running SSE server on port {port}")
-        mcp.run(transport="sse", host="0.0.0.0", port=port)
+        host = "127.0.0.1"
+        if "--allow-external" in sys.argv:
+            host = "0.0.0.0"
+            print("[MCP] WARNING: Binding SSE externally on 0.0.0.0. Require Bearer auth and expose only on trusted networks.")
+        print(f"[MCP] Running SSE server on {host}:{port}")
+        _run_sse_server(host=host, port=port)
     else:
         print("[MCP] Running stdio MCP server")
         mcp.run(transport="stdio")

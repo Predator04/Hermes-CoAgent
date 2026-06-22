@@ -331,7 +331,7 @@ def _fetch_tray_relay_screen(timeout=2.0):
         try:
             req = urllib.request.Request(
                 f"http://127.0.0.1:{TRAY_PORT}{path}",
-                headers={"Accept": "image/jpeg"},
+                headers=_tray_relay_headers(),
             )
             with urllib.request.urlopen(req, timeout=remaining) as resp:
                 data = resp.read()
@@ -345,6 +345,21 @@ def _fetch_tray_relay_screen(timeout=2.0):
             errors.append(f"{path}: {type(e).__name__}: {e}")
     latency_ms = round((time.perf_counter() - start) * 1000, 1)
     return b"", latency_ms, "; ".join(errors) or "relay unavailable"
+
+
+def _tray_relay_headers():
+    headers = {"Accept": "image/jpeg"}
+    token = ""
+    try:
+        import auth as _auth_mod
+        if getattr(_auth_mod, "AUTH_ENABLED", False):
+            token = getattr(_auth_mod, "AUTH_TOKEN", "") or ""
+    except Exception:
+        token = ""
+    token = token or os.environ.get("COAGENT_TOKEN", "") or os.environ.get("HERMES_COAGENT_TOKEN", "")
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    return headers
 
 def _probe_tray_relay(timeout=2.0):
     """Check tray relay health without fetching a full screenshot."""

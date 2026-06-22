@@ -53,26 +53,50 @@ def _is_no_changes(result):
     return "nothing to commit" in text or "no changes added to commit" in text
 
 
+def _ensure_token_gitignored():
+    ignore_path = COAGENT_DIR / ".gitignore"
+    required = [".token", ".token_*"]
+    if ignore_path.exists():
+        text = ignore_path.read_text(encoding="utf-8", errors="replace")
+        lines = text.splitlines()
+    else:
+        text = ""
+        lines = []
+    present = {line.strip() for line in lines}
+    missing = [entry for entry in required if entry not in present]
+    if missing:
+        prefix = "" if not text or text.endswith(("\n", "\r")) else "\n"
+        ignore_path.write_text(text + prefix + "\n".join(missing) + "\n", encoding="utf-8")
+    return {"path": str(ignore_path), "added": missing}
+
+
 def _commit(message=None):
     global _LAST_COMMIT, _LAST_ERROR
     stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     message = str(message).strip() if message else f"auto: {stamp}"
+    try:
+        gitignore_result = _ensure_token_gitignored()
+    except Exception as e:
+        error = {"error": str(e), "type": type(e).__name__}
+        with _LOCK:
+            _LAST_ERROR = error
+        return {"status": "gitignore_failed", "gitignore": error}, 500
     add_result = _run_git(["add", "."], timeout=120)
     if not add_result["ok"]:
         with _LOCK:
             _LAST_ERROR = add_result
-        return {"status": "add_failed", "add": add_result}, 500
+        return {"status": "add_failed", "gitignore": gitignore_result, "add": add_result}, 500
     commit_result = _run_git(["commit", "-m", message], timeout=120)
     if commit_result["ok"]:
         with _LOCK:
             _LAST_COMMIT = {"message": message, "time": time.time(), "result": commit_result}
             _LAST_ERROR = None
-        return {"status": "committed", "message": message, "add": add_result, "commit": commit_result}, 200
+        return {"status": "committed", "message": message, "gitignore": gitignore_result, "add": add_result, "commit": commit_result}, 200
     if _is_no_changes(commit_result):
-        return {"status": "no_changes", "message": message, "add": add_result, "commit": commit_result}, 200
+        return {"status": "no_changes", "message": message, "gitignore": gitignore_result, "add": add_result, "commit": commit_result}, 200
     with _LOCK:
         _LAST_ERROR = commit_result
-    return {"status": "commit_failed", "message": message, "add": add_result, "commit": commit_result}, 500
+    return {"status": "commit_failed", "message": message, "gitignore": gitignore_result, "add": add_result, "commit": commit_result}, 500
 
 
 def _auto_loop():
