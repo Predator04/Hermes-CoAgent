@@ -7,11 +7,86 @@ adversarial augmentation, and blacklist scanning tools.
 All routes under /bypass/
 """
 
-import base64, json, random, re, string, urllib.request, urllib.error
+import base64, json, math, random, re, unicodedata
 from flask import Blueprint, request, jsonify
 
 # ── Blueprint ──────────────────────────────────────────────────
 bypass_bp = Blueprint("bypass", __name__)
+
+MAX_TEXT_CHARS = 100 * 1024
+
+
+def _json_payload() -> dict:
+    """Return a JSON object payload; malformed or non-object JSON becomes {}."""
+    data = request.get_json(force=True, silent=True)
+    return data if isinstance(data, dict) else {}
+
+
+def _error(message: str, status: int = 400, **extra):
+    payload = {"error": message}
+    payload.update(extra)
+    return jsonify(payload), status
+
+
+def _get_text(data: dict):
+    text = data.get("text", "")
+    if not isinstance(text, str):
+        return None, _error("text must be a string")
+    if text == "":
+        return None, _error("text field required")
+    if len(text) > MAX_TEXT_CHARS:
+        return None, _error("text too large", 413, max_chars=MAX_TEXT_CHARS)
+    return text, None
+
+
+def _clamp_float(value, default: float, minimum: float, maximum: float, field: str):
+    if value is None:
+        value = default
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None, _error(f"{field} must be a number")
+    if not math.isfinite(number):
+        return None, _error(f"{field} must be finite")
+    return min(maximum, max(minimum, number)), None
+
+
+def _clamp_int(value, default: int, minimum: int, maximum: int, field: str):
+    if value is None:
+        value = default
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return None, _error(f"{field} must be an integer")
+    return min(maximum, max(minimum, number)), None
+
+
+def _as_bool(value, default: bool = True) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"1", "true", "yes", "on"}:
+            return True
+        if lowered in {"0", "false", "no", "off"}:
+            return False
+    return bool(value)
+
+
+def _get_template(data: dict):
+    template = data.get("template", "boundary_inversion")
+    if not isinstance(template, str):
+        return None, _error("template must be a string")
+    if template not in PREFILL_TEMPLATES:
+        return None, _error(f"Unknown template. Options: {list(PREFILL_TEMPLATES.keys())}")
+    return template, None
+
+
+def _json_for_single_quoted_cli(payload: dict) -> str:
+    # Avoid raw single quotes so generated copy/paste examples do not break shells.
+    return json.dumps(payload, ensure_ascii=True, separators=(",", ":")).replace("'", "\\u0027")
 
 # ── L33TSPEAK MAPS ────────────────────────────────────────────
 LEET = {
@@ -44,13 +119,54 @@ LEET = {
 }
 
 # Unicode homoglyph blocks (full chars, not just ASCII substitutes)
+def _safe_chr(codepoint: int, fallback: str) -> str:
+    try:
+        ch = chr(codepoint)
+    except (TypeError, ValueError):
+        return fallback
+    return fallback if unicodedata.category(ch) == "Cn" else ch
+
+
+def _fullwidth_char(c: str) -> str:
+    if c == " ":
+        return "\u3000"
+    if 0x21 <= ord(c) <= 0x7E:
+        return _safe_chr(ord(c) + 0xFEE0, c)
+    return c
+
+
+def _math_alpha(c: str, upper_start: int, lower_start: int,
+                upper_special=None, lower_special=None) -> str:
+    upper_special = upper_special or {}
+    lower_special = lower_special or {}
+    if "A" <= c <= "Z":
+        if c in upper_special:
+            return upper_special[c]
+        return _safe_chr(upper_start + ord(c) - ord("A"), c)
+    if "a" <= c <= "z":
+        if c in lower_special:
+            return lower_special[c]
+        return _safe_chr(lower_start + ord(c) - ord("a"), c)
+    return c
+
+
+_FRAKTUR_UPPER_SPECIAL = {
+    "C": "\u212D", "H": "\u210C", "I": "\u2111",
+    "R": "\u211C", "Z": "\u2128",
+}
+_DOUBLE_STRUCK_UPPER_SPECIAL = {
+    "C": "\u2102", "H": "\u210D", "N": "\u2115",
+    "P": "\u2119", "Q": "\u211A", "R": "\u211D",
+    "Z": "\u2124",
+}
+
 HOMOGLYPH_BLOCKS = {
-    "fullwidth": lambda c: chr(0xFF00 + ord(c) - 0x20) if 0x20 <= ord(c) <= 0x7E else c,
-    "math_bold": lambda c: chr(0x1D400 + ord(c) - 0x41) if "A" <= c <= "Z" else (chr(0x1D41A + ord(c) - 0x61) if "a" <= c <= "z" else c),
-    "math_mono": lambda c: chr(0x1D670 + ord(c) - 0x41) if "A" <= c <= "Z" else (chr(0x1D68A + ord(c) - 0x61) if "a" <= c <= "z" else c),
-    "math_sans": lambda c: chr(0x1D5A0 + ord(c) - 0x41) if "A" <= c <= "Z" else (chr(0x1D5BA + ord(c) - 0x61) if "a" <= c <= "z" else c),
-    "fraktur": lambda c: chr(0x1D504 + ord(c) - 0x41) if "A" <= c <= "Z" else (chr(0x1D51E + ord(c) - 0x61) if "a" <= c <= "z" else c),
-    "double_struck": lambda c: chr(0x1D538 + ord(c) - 0x41) if "A" <= c <= "Z" else (chr(0x1D552 + ord(c) - 0x61) if "a" <= c <= "z" else c),
+    "fullwidth": _fullwidth_char,
+    "math_bold": lambda c: _math_alpha(c, 0x1D400, 0x1D41A),
+    "math_mono": lambda c: _math_alpha(c, 0x1D670, 0x1D68A),
+    "math_sans": lambda c: _math_alpha(c, 0x1D5A0, 0x1D5BA),
+    "fraktur": lambda c: _math_alpha(c, 0x1D504, 0x1D51E, _FRAKTUR_UPPER_SPECIAL),
+    "double_struck": lambda c: _math_alpha(c, 0x1D538, 0x1D552, _DOUBLE_STRUCK_UPPER_SPECIAL),
 }
 
 # Zero-width / invisible characters for padding
@@ -93,6 +209,26 @@ FILTER_TRIGGERS = [
     "GODMODE", "DEVELOPER MODE", "DAN",
 ]
 
+_TRIGGER_PATTERNS = [
+    (word, re.compile(r"\b" + re.escape(word) + r"\b", re.IGNORECASE))
+    for word in sorted(FILTER_TRIGGERS, key=len, reverse=True)
+]
+
+
+def _trigger_matches(text: str):
+    candidates = []
+    for word, pattern in _TRIGGER_PATTERNS:
+        for match in pattern.finditer(text):
+            start, end = match.span()
+            candidates.append((start, end, word))
+
+    selected = []
+    for start, end, word in sorted(candidates, key=lambda item: (item[0], -(item[1] - item[0]))):
+        if any(start < used_end and end > used_start for used_start, used_end, _ in selected):
+            continue
+        selected.append((start, end, word))
+    return sorted(selected, key=lambda item: item[0])
+
 
 # ── 1. LEETSPEAK ENCODER ──────────────────────────────────────
 def _leet_encode(text: str, intensity: float = 0.5, use_cyrillic: bool = True) -> str:
@@ -107,7 +243,7 @@ def _leet_encode(text: str, intensity: float = 0.5, use_cyrillic: bool = True) -
             options = LEET[ch]
             if not use_cyrillic:
                 # Filter to ASCII-only leet
-                options = [o for o in options if ord(o) < 128]
+                options = [o for o in options if all(ord(part) < 128 for part in o)]
             if options:
                 result.append(random.choice(options))
                 continue
@@ -277,38 +413,24 @@ def _adversarial_augment(text: str) -> dict:
 # ── 7. BLACKLIST SCANNER ──────────────────────────────────────
 def _scan_blacklist(text: str) -> dict:
     """Scan text for known filter-triggering words."""
-    text_lower = text.lower()
     matches = []
-    for word in FILTER_TRIGGERS:
-        # Case-insensitive match as standalone word
-        for m in re.finditer(r'\b' + re.escape(word) + r'\b', text_lower):
-            start, end = m.start(), m.end()
-            # Get original case span
-            orig_word = text[start:end]
-            context_start = max(0, start - 30)
-            context_end = min(len(text), end + 30)
-            context = text[context_start:context_end]
-            matches.append({
-                "word": orig_word,
-                "position": [start, end],
-                "context": context,
-                "severity": "high" if len(word) <= 6 else "medium"
-            })
-
-    # Deduplicate overlapping matches
-    unique = []
-    seen_spans = set()
-    for m in sorted(matches, key=lambda x: x["position"][0]):
-        span = (m["position"][0], m["position"][1])
-        if span not in seen_spans:
-            seen_spans.add(span)
-            unique.append(m)
+    for start, end, word in _trigger_matches(text):
+        orig_word = text[start:end]
+        context_start = max(0, start - 30)
+        context_end = min(len(text), end + 30)
+        context = text[context_start:context_end]
+        matches.append({
+            "word": orig_word,
+            "position": [start, end],
+            "context": context,
+            "severity": "high" if len(word.replace(" ", "")) <= 6 else "medium"
+        })
 
     return {
-        "total_matches": len(unique),
-        "matches": unique,
-        "clean": len(unique) == 0,
-        "suggestion": "Use /bypass/clean to auto-obfuscate" if unique else "Looks clean"
+        "total_matches": len(matches),
+        "matches": matches,
+        "clean": len(matches) == 0,
+        "suggestion": "Use /bypass/clean to auto-obfuscate" if matches else "Looks clean"
     }
 
 
@@ -318,33 +440,31 @@ def _auto_clean(text: str) -> dict:
     Scan for filter triggers and auto-obfuscate ONLY those words.
     Keeps non-trigger text intact.
     """
-    text_lower = text.lower()
     replacements = []
     cleaned = text
 
-    for word in sorted(FILTER_TRIGGERS, key=len, reverse=True):
-        # Find occurrences
-        for m in re.finditer(r'\b' + re.escape(word) + r'\b', text_lower):
-            orig = m.group()
-            start, end = m.start(), m.end()
+    for start, end, _word in reversed(_trigger_matches(text)):
+        orig = text[start:end]
 
-            # Leet-encode just this word
-            encoded = _leet_encode(orig, intensity=0.8, use_cyrillic=True)
+        # Leet-encode just this word
+        encoded = _leet_encode(orig, intensity=0.8, use_cyrillic=True)
 
-            # Mixed case randomization
-            mixed = "".join(
-                c.upper() if random.random() < 0.4 else c
-                for c in orig
-            )
+        # Mixed case randomization
+        mixed = "".join(
+            c.upper() if random.random() < 0.4 else c
+            for c in orig
+        )
 
-            # Pick randomly between encoded, mixed-case, or encoded+mixed
-            choice = random.choice([encoded, mixed, encoded.upper(), encoded.lower()])
-            replacements.append({
-                "original": orig,
-                "replacement": choice,
-                "position": [start, end]
-            })
-            cleaned = cleaned[:start] + choice + cleaned[end:]
+        # Pick randomly between encoded, mixed-case, or encoded+mixed
+        choice = random.choice([encoded, mixed, encoded.upper(), encoded.lower()])
+        replacements.append({
+            "original": orig,
+            "replacement": choice,
+            "position": [start, end]
+        })
+        cleaned = cleaned[:start] + choice + cleaned[end:]
+
+    replacements.reverse()
 
     return {
         "original": text,
@@ -359,12 +479,14 @@ def _auto_clean(text: str) -> dict:
 @bypass_bp.route("/bypass/leetspeak", methods=["POST"])
 def route_leetspeak():
     """Apply leetspeak encoding to text."""
-    data = request.get_json(force=True, silent=True) or {}
-    text = data.get("text", "")
-    intensity = min(1.0, max(0.0, float(data.get("intensity", 0.5))))
-    use_cyrillic = data.get("use_cyrillic", True)
-    if not text:
-        return jsonify({"error": "text field required"}), 400
+    data = _json_payload()
+    text, error = _get_text(data)
+    if error:
+        return error
+    intensity, error = _clamp_float(data.get("intensity"), 0.5, 0.0, 1.0, "intensity")
+    if error:
+        return error
+    use_cyrillic = _as_bool(data.get("use_cyrillic"), True)
     return jsonify({
         "original": text,
         "encoded": _leet_encode(text, intensity, use_cyrillic),
@@ -376,13 +498,15 @@ def route_leetspeak():
 @bypass_bp.route("/bypass/homoglyph", methods=["POST"])
 def route_homoglyph():
     """Encode text with Unicode homoglyph block."""
-    data = request.get_json(force=True, silent=True) or {}
-    text = data.get("text", "")
+    data = _json_payload()
+    text, error = _get_text(data)
+    if error:
+        return error
     block = data.get("block", "fullwidth")
-    if not text:
-        return jsonify({"error": "text field required"}), 400
+    if not isinstance(block, str):
+        return _error("block must be a string")
     if block not in HOMOGLYPH_BLOCKS:
-        return jsonify({"error": f"Unknown block. Options: {list(HOMOGLYPH_BLOCKS.keys())}"}), 400
+        return _error(f"Unknown block. Options: {list(HOMOGLYPH_BLOCKS.keys())}")
     return jsonify({
         "original": text,
         "block": block,
@@ -393,11 +517,13 @@ def route_homoglyph():
 @bypass_bp.route("/bypass/zero-width", methods=["POST"])
 def route_zero_width():
     """Inject zero-width characters into text."""
-    data = request.get_json(force=True, silent=True) or {}
-    text = data.get("text", "")
-    frequency = min(1.0, max(0.0, float(data.get("frequency", 0.3))))
-    if not text:
-        return jsonify({"error": "text field required"}), 400
+    data = _json_payload()
+    text, error = _get_text(data)
+    if error:
+        return error
+    frequency, error = _clamp_float(data.get("frequency"), 0.3, 0.0, 1.0, "frequency")
+    if error:
+        return error
     return jsonify({
         "original": text,
         "encoded": _inject_zero_width(text, frequency),
@@ -408,11 +534,13 @@ def route_zero_width():
 @bypass_bp.route("/bypass/parseltongue", methods=["POST"])
 def route_parseltongue():
     """Multi-pass obfuscation (leetspeak + homoglyph + cyrillic + base64)."""
-    data = request.get_json(force=True, silent=True) or {}
-    text = data.get("text", "")
-    passes = min(5, max(1, int(data.get("passes", 3))))
-    if not text:
-        return jsonify({"error": "text field required"}), 400
+    data = _json_payload()
+    text, error = _get_text(data)
+    if error:
+        return error
+    passes, error = _clamp_int(data.get("passes"), 3, 1, 5, "passes")
+    if error:
+        return error
     return jsonify(_parseltongue_encode(text, passes))
 
 
@@ -424,13 +552,13 @@ def route_prefill():
             "templates": {k: {"name": v["name"], "description": v["description"]}
                          for k, v in PREFILL_TEMPLATES.items()}
         })
-    data = request.get_json(force=True, silent=True) or {}
-    text = data.get("text", "")
-    template = data.get("template", "boundary_inversion")
-    if not text:
-        return jsonify({"error": "text field required"}), 400
-    if template not in PREFILL_TEMPLATES:
-        return jsonify({"error": f"Unknown template. Options: {list(PREFILL_TEMPLATES.keys())}"}), 400
+    data = _json_payload()
+    text, error = _get_text(data)
+    if error:
+        return error
+    template, error = _get_template(data)
+    if error:
+        return error
     return jsonify({
         "template": template,
         "template_name": PREFILL_TEMPLATES[template]["name"],
@@ -442,30 +570,30 @@ def route_prefill():
 @bypass_bp.route("/bypass/adversarial", methods=["POST"])
 def route_adversarial():
     """Generate adversarial variants of input text."""
-    data = request.get_json(force=True, silent=True) or {}
-    text = data.get("text", "")
-    if not text:
-        return jsonify({"error": "text field required"}), 400
+    data = _json_payload()
+    text, error = _get_text(data)
+    if error:
+        return error
     return jsonify(_adversarial_augment(text))
 
 
 @bypass_bp.route("/bypass/scan", methods=["POST"])
 def route_scan():
     """Scan text for known filter trigger words."""
-    data = request.get_json(force=True, silent=True) or {}
-    text = data.get("text", "")
-    if not text:
-        return jsonify({"error": "text field required"}), 400
+    data = _json_payload()
+    text, error = _get_text(data)
+    if error:
+        return error
     return jsonify(_scan_blacklist(text))
 
 
 @bypass_bp.route("/bypass/clean", methods=["POST"])
 def route_clean():
     """Auto-obfuscate only the filter-triggering words in text."""
-    data = request.get_json(force=True, silent=True) or {}
-    text = data.get("text", "")
-    if not text:
-        return jsonify({"error": "text field required"}), 400
+    data = _json_payload()
+    text, error = _get_text(data)
+    if error:
+        return error
     return jsonify(_auto_clean(text))
 
 
@@ -475,11 +603,19 @@ def route_all():
     One-shot: scan + clean + prefill + parseltongue all in one call.
     Returns every encoded variant so you can pick the best one.
     """
-    data = request.get_json(force=True, silent=True) or {}
-    text = data.get("text", "")
-    template = data.get("template", "boundary_inversion")
-    if not text:
-        return jsonify({"error": "text field required"}), 400
+    data = _json_payload()
+    text, error = _get_text(data)
+    if error:
+        return error
+    template, error = _get_template(data)
+    if error:
+        return error
+    scan_payload = _json_for_single_quoted_cli({"text": text[:80]})
+    leet_payload = _json_for_single_quoted_cli({
+        "text": f"{text[:50]}...",
+        "intensity": 0.7,
+        "use_cyrillic": True,
+    })
     return jsonify({
         "original": text,
         "scan": _scan_blacklist(text),
@@ -491,8 +627,8 @@ def route_all():
             "wrapped": _build_prefill(template, text)
         },
         "cli": {
-            "scan_check": f"curl -s -X POST http://localhost:9123/bypass/scan -H 'Content-Type: application/json' -d '{json.dumps({'text': text[:80]})}' | jq",
-            "encode_leetspeak": f"curl -s -X POST http://localhost:9123/bypass/leetspeak -H 'Content-Type: application/json' -d '{{\"text\":\"{text[:50]}...\",\"intensity\":0.7,\"use_cyrillic\":true}}' | jq",
+            "scan_check": f"curl -s -X POST http://localhost:9123/bypass/scan -H 'Content-Type: application/json' -d '{scan_payload}' | jq",
+            "encode_leetspeak": f"curl -s -X POST http://localhost:9123/bypass/leetspeak -H 'Content-Type: application/json' -d '{leet_payload}' | jq",
         }
     })
 
