@@ -6,7 +6,7 @@
 param(
     [string]$CoAgentDir = "C:\Users\Admin\Desktop\Hermes CoAgent",
     [string]$PythonPath = "C:\Program Files\Python312\python.exe",
-    [string]$Token = "YOUR_TOKEN_HERE",
+    [string]$Token = "",
     [int]$Port = 9123,
     [string]$LogFile = "C:\Windows\Temp\coagent_watchdog.log"
 )
@@ -15,6 +15,22 @@ function Write-Log {
     param([string]$Message)
     $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
     "$timestamp | $Message" | Out-File -FilePath $LogFile -Append -Encoding utf8
+}
+
+function Resolve-CoAgentToken {
+    param([string]$ExplicitToken)
+    if (-not [string]::IsNullOrWhiteSpace($ExplicitToken)) {
+        return $ExplicitToken.Trim()
+    }
+    if (-not [string]::IsNullOrWhiteSpace($env:HERMES_COAGENT_TOKEN)) {
+        return $env:HERMES_COAGENT_TOKEN.Trim()
+    }
+    $tokenPath = Join-Path $CoAgentDir ".token"
+    $fileToken = Get-Content $tokenPath -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not [string]::IsNullOrWhiteSpace($fileToken)) {
+        return ([string]$fileToken).Trim()
+    }
+    return ""
 }
 
 function Test-CoAgentAlive {
@@ -43,6 +59,12 @@ function Get-CoAgentPid {
 }
 
 Function Start-CoAgent {
+    $resolvedToken = Resolve-CoAgentToken -ExplicitToken $Token
+    if ([string]::IsNullOrWhiteSpace($resolvedToken)) {
+        Write-Log "No CoAgent token found in parameter, HERMES_COAGENT_TOKEN, or $CoAgentDir\.token. Refusing external launch."
+        return
+    }
+
     # Write a temp batch file with no spaces in path
     $tempBat = "C:\Windows\Temp\coagent_launch.bat"
     $pythonExe = "C:\Program Files\Python312\python.exe"
@@ -50,7 +72,7 @@ Function Start-CoAgent {
     @"
 @echo off
 cd /d "$CoAgentDir"
-start "" "$pythonExe" "$coagentPy" --token=$Token --allow-external
+start "" "$pythonExe" "$coagentPy" "--token=$resolvedToken" --allow-external
 "@ | Out-File -FilePath $tempBat -Encoding ASCII -Force
 
     # Create and run a one-shot interactive task (Session 1)

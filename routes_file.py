@@ -6,6 +6,23 @@ from shared import _json_body, _log, _missing_field, COAGENT_DIR, _sanitize_path
 from routes_config import backup_file
 
 _ALLOWED_DELETE_ROOTS = {Path(_sanitize_path(str(COAGENT_DIR))).resolve()}
+_HOME_DIR = Path.home().resolve()
+_PROTECTED_DELETE_DIRS = {
+    _HOME_DIR,
+    _HOME_DIR / "Desktop",
+    _HOME_DIR / "Documents",
+    _HOME_DIR / "Downloads",
+    _HOME_DIR / "Pictures",
+    _HOME_DIR / "Music",
+    _HOME_DIR / "Videos",
+    Path(_sanitize_path(str(COAGENT_DIR))).resolve(),
+}
+
+
+def _is_protected_delete_path(path):
+    resolved = Path(path).resolve()
+    protected = {p.resolve() for p in _PROTECTED_DELETE_DIRS}
+    return resolved in protected
 
 def register_routes(app, state, require_auth):
     @app.route("/file/list", methods=["POST"])
@@ -77,10 +94,12 @@ def register_routes(app, state, require_auth):
             return jsonify({"error": str(e)}), 403
         try:
             resolved = Path(path).resolve()
-            if resolved in _ALLOWED_DELETE_ROOTS or resolved == Path.home().resolve():
-                return jsonify({"error": "Refusing to delete an allowed root"}), 403
+            if _is_protected_delete_path(resolved):
+                return jsonify({"error": "Refusing to delete a protected directory", "path": str(resolved)}), 403
             backup_path = backup_file(path)
             if os.path.isdir(path):
+                if d.get("confirm") is not True:
+                    return jsonify({"error": "Directory deletion requires confirm: true", "path": str(resolved)}), 400
                 import shutil
                 shutil.rmtree(path)
             else:

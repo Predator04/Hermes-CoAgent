@@ -167,11 +167,30 @@ AUTH_EXEMPT_PATHS = {
     "/setup",
     "/setup-status",
 }
+_CORS_ALLOWED_ORIGINS = {
+    "http://localhost:9123",
+    "http://127.0.0.1:9123",
+    "http://172.21.192.1:9123",
+}
+app.config["AUTH_EXEMPT_PREFIXES"] = AUTH_EXEMPT_PREFIXES
+app.config["AUTH_EXEMPT_PATHS"] = AUTH_EXEMPT_PATHS
 
 def _is_auth_exempt(path):
     if path in AUTH_EXEMPT_PATHS:
         return True
     return any(path.startswith(prefix) for prefix in AUTH_EXEMPT_PREFIXES)
+
+@app.before_request
+def _cors_preflight():
+    if request.method == "OPTIONS":
+        resp = jsonify({"status": "ok"})
+        origin = request.headers.get("Origin", "")
+        if origin in _CORS_ALLOWED_ORIGINS:
+            resp.headers["Access-Control-Allow-Origin"] = origin
+            resp.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+            resp.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
+            resp.headers["Access-Control-Max-Age"] = "86400"
+        return resp
 
 @app.before_request
 def _auth_gate():
@@ -196,11 +215,7 @@ def _security_headers(response):
 @app.after_request
 def _cors_headers(response):
     origin = request.headers.get("Origin", "")
-    allow = {
-        "http://localhost:9123", "http://127.0.0.1:9123",
-        "http://172.21.192.1:9123",
-    }
-    if origin in allow:
+    if origin in _CORS_ALLOWED_ORIGINS:
         response.headers["Access-Control-Allow-Origin"] = origin
         response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
         response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
@@ -216,19 +231,6 @@ def _record_endpoint_health(response):
     except Exception:
         pass
     return response
-
-@app.before_request
-def _cors_preflight():
-    if request.method == "OPTIONS":
-        resp = jsonify({"status": "ok"})
-        origin = request.headers.get("Origin", "")
-        if origin in {"http://localhost:9123", "http://127.0.0.1:9123",
-                       "http://172.21.192.1:9123"}:
-            resp.headers["Access-Control-Allow-Origin"] = origin
-            resp.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
-            resp.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
-            resp.headers["Access-Control-Max-Age"] = "86400"
-        return resp
 
 # ── v7.3: Request body size enforcement ──────────────────────
 _MAX_BODY_SIZE = 16 * 1024 * 1024  # 16 MB
@@ -574,6 +576,7 @@ from routes_phone import register_routes as reg_phone
 from routes_webrtc import register_routes as reg_webrtc
 from routes_plugins import register_routes as reg_plugins
 from routes_palmreject import register_routes as reg_palmreject
+from routes_agent import register_routes as reg_agent
 
 reg_mouse(app, state, require_auth)
 reg_ocr(app, state, require_auth)
@@ -603,6 +606,7 @@ reg_phone(app, state, require_auth)
 reg_webrtc(app, state, require_auth)
 reg_plugins(app, state, require_auth)
 reg_palmreject(app, state, require_auth)
+reg_agent(app, state, require_auth)
 reg_mcp(app, state, require_auth)
 state.backup_file = backup_file
 
@@ -680,12 +684,13 @@ def route_version():
                                  "recorder", "mcp_server", "git_backup",
                                  "dashboard", "obsidian", "wake_on_lan",
                                  "phone_bridge", "remote_desktop",
-                                 "plugin_system", "palm_rejection"],
+                                 "plugin_system", "palm_rejection",
+                                 "agent", "agent_gateway"],
                     "modules": ["mouse", "ocr", "uia", "file", "media", "v63",
                                 "stream", "process", "voice", "cua", "copilot",
                                 "bypass", "toast", "deps", "config", "browser", "google", "logs",
                                 "recorder", "mcp", "git", "dashboard", "obsidian", "wol",
-                                "phone", "webrtc", "plugins", "palmreject"],
+                                "phone", "webrtc", "plugins", "palmreject", "agent"],
                     "security": ["auth_token", "rate_limit", "input_sanitization",
                                  "cors_restricted", "security_headers"]})
 
@@ -855,7 +860,9 @@ if __name__ == "__main__":
         _console("  Auth: disabled")
 
     _console(f"  Server: http://{bind_host}:{port}/")
-    _console(f"  Modules: mouse ocr uia file media v63 stream process voice cua copilot buddy bypass toast deps config browser google logs recorder mcp git dashboard obsidian wol phone webrtc plugins palmreject")
+    _console(f"  Modules: mouse ocr uia file media v63 stream process voice cua copilot buddy bypass toast deps config browser google logs recorder mcp git dashboard obsidian wol phone webrtc plugins palmreject agent")
+    gateway = getattr(state, "agent_gateway", {})
+    _console(f"  Agent Gateway: default={gateway.get('default_agent') or 'none'}")
     _console()
 
     # Pre-warm UIA engine

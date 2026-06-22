@@ -6,14 +6,14 @@ import time
 from flask import Response, request, stream_with_context
 
 
-CSP = "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'"
+CSP = "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'"
 
 REMOTE_HTML = r"""<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'">
 <title>Hermes Remote</title>
 <style>
 body{margin:0;background:#101216;color:#eef2f6;font:14px system-ui,Segoe UI,Arial,sans-serif}header{height:48px;display:flex;align-items:center;justify-content:space-between;padding:0 14px;background:#171b23;border-bottom:1px solid #303744}.wrap{height:calc(100vh - 48px);display:grid;place-items:center;padding:10px}img{max-width:100%;max-height:100%;background:#050608;border:1px solid #303744;border-radius:6px;cursor:crosshair}.muted{color:#9aa5b1}button{background:#2f7df6;color:white;border:0;border-radius:5px;padding:7px 10px}
@@ -22,9 +22,9 @@ body{margin:0;background:#101216;color:#eef2f6;font:14px system-ui,Segoe UI,Aria
 <body>
 <header><strong>Hermes Remote</strong><span class="muted" id="state">connecting</span><button id="shot">Frame</button></header>
 <div class="wrap"><img id="screen" alt="remote desktop"></div>
-<!-- localStorage token storage is acceptable for this local-only desktop control tool; CSP prevents injected scripts from reading it. -->
+<!-- sessionStorage keeps URL-provided tokens scoped to the current tab. -->
 <script>
-const params=new URLSearchParams(location.search);const queryToken=params.get("token")||"";if(queryToken)localStorage.setItem("hermes_token",queryToken);const token=queryToken||localStorage.getItem("hermes_token")||"";
+const params=new URLSearchParams(location.search);const queryToken=params.get("token")||"";if(queryToken){sessionStorage.setItem("hermes_token",queryToken);params.delete("token");const cleanUrl=location.pathname+(params.toString()?"?"+params.toString():"")+location.hash;history.replaceState(null,document.title,cleanUrl)}const token=queryToken||sessionStorage.getItem("hermes_token")||"";
 function headers(json=false){const h={};if(token)h.Authorization="Bearer "+token;if(json)h["Content-Type"]="application/json";return h}
 async function frame(){const r=await fetch("/screen/jpeg?ts="+Date.now(),{headers:headers(false)});if(!r.ok)throw new Error("screen "+r.status);const b=await r.blob();const img=document.getElementById("screen");const old=img.src;img.src=URL.createObjectURL(b);if(old)URL.revokeObjectURL(old);document.getElementById("state").textContent="polling 172.21.192.1:9123"}
 document.getElementById("shot").onclick=()=>frame().catch(e=>document.getElementById("state").textContent=e.message);

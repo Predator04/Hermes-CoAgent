@@ -9,7 +9,7 @@ Hermes CoAgent is a Flask-based Windows desktop automation server. Provides REST
 - Launch: `C:\Program Files\Python312\python.exe hermes_coagent.py --token=TOKEN --allow-external`
 - Python: `C:\Program Files\Python312\python.exe`
 - Working dir: `C:\Users\Admin\Desktop\Hermes CoAgent\`
-- Token: `YOUR_TOKEN_HERE`
+- Token: `<YOUR_TOKEN_HERE>`
 - Health: `GET /health`
 - Version: `GET /version`
 - Dashboard: `GET /`
@@ -39,6 +39,18 @@ Hermes CoAgent is a Flask-based Windows desktop automation server. Provides REST
 | 🎙️ Voice | `routes_voice.py` | voice command recognition, speech-to-text |
 | 🧑‍🤝‍🧑 Ember Buddy | `routes_buddy.py` | Ember desktop companion |
 | 🔓 Bypass Toolkit | `routes_bypass.py` | 9 endpoints: leetspeak, homoglyph, zero-width, parseltongue, prefill templates, adversarial variants, trigger-word scan, auto-clean, one-shot all |
+
+### Agent Gateway
+| Module | File | Endpoints |
+|--------|------|-----------|
+| Agent Gateway | `routes_agent.py` | `GET /agent/status`, `POST /agent/exec`, `POST /agent/audit`, `POST /agent/plan`, `POST /agent/implement` |
+
+- `POST /agent/exec` accepts `prompt`, optional `agent` (`codex`, `claude`, `gemini`, `opencode`), optional `model`, `timeout`, and `workdir`; it runs the selected allowlisted CLI and returns output, exit code, duration, modified files, and `log_id`.
+- `GET /agent/status` returns detected agent availability, versions, command paths, and the default agent.
+- `POST /agent/audit` accepts `paths`, `focus` (`security`, `quality`, `all`), and optional agent settings; it runs a focused code audit prompt.
+- `POST /agent/plan` accepts `task`, optional `context`, and optional agent settings; it returns an implementation plan without requesting file edits.
+- `POST /agent/implement` accepts `task`, optional `context`, and optional agent settings; it asks the selected agent to apply required changes and reports modified files.
+- `GET /agent/logs` lists recent JSON execution logs from `agent_logs/`.
 
 ### New in v7.6
 | Module | File | Endpoints |
@@ -83,7 +95,7 @@ Hermes CoAgent is a Flask-based Windows desktop automation server. Provides REST
 - **Manual launch**: `C:\Program Files\Python312\python.exe hermes_coagent.py --token=TOKEN --allow-external`
 - Python 3.12.9 at `C:\Program Files\Python312\python.exe`
 - Working dir: `C:\Users\Admin\Desktop\Hermes CoAgent\`
-- Token: `YOUR_TOKEN_HERE`
+- Token: `<YOUR_TOKEN_HERE>`
 
 ## Security
 

@@ -491,8 +491,13 @@ tr:hover td { background: rgba(56, 189, 248, .04); }
 
   const params = new URLSearchParams(location.search);
   const queryToken = params.get("token") || "";
-  if (queryToken) localStorage.setItem("hermes_token", queryToken);
-  const token = queryToken || localStorage.getItem("hermes_token") || "";
+  if (queryToken) {
+    sessionStorage.setItem("hermes_token", queryToken);
+    params.delete("token");
+    const cleanUrl = location.pathname + (params.toString() ? "?" + params.toString() : "") + location.hash;
+    history.replaceState(null, document.title, cleanUrl);
+  }
+  const token = queryToken || sessionStorage.getItem("hermes_token") || "";
   const state = {
     monitor: "0",
     processes: [],

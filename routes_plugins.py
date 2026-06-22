@@ -19,6 +19,10 @@ PLUGINS = {}
 PLUGIN_ENDPOINTS = {}
 
 
+class PluginSecurityError(RuntimeError):
+    pass
+
+
 def _error(message, status=400, **extra):
     payload = {"error": message}
     payload.update(extra)
@@ -99,24 +103,52 @@ def _remove_endpoints(app, endpoints):
         pass
 
 
+def _route_overlaps_prefix(route, prefixes):
+    route = str(route)
+    route_base = route.rstrip("/")
+    for prefix in prefixes:
+        prefix = str(prefix or "")
+        if not prefix:
+            continue
+        prefix_base = prefix.rstrip("/")
+        if route == prefix_base or route.startswith(prefix) or prefix.startswith(route_base + "/"):
+            return prefix
+    return None
+
+
 def _audit_plugin_endpoints(app, plugin_name, endpoints):
     rows = []
     unauthenticated = []
+    exempt_overlaps = []
+    auth_exempt_prefixes = tuple(app.config.get("AUTH_EXEMPT_PREFIXES", ()))
     for endpoint in endpoints:
         view_func = app.view_functions.get(endpoint)
         auth_wrapped = bool(getattr(view_func, "_hermes_auth_wrapped", False))
-        rules = sorted(str(rule) for rule in app.url_map.iter_rules() if rule.endpoint == endpoint)
+        rule_objs = sorted((rule for rule in app.url_map.iter_rules() if rule.endpoint == endpoint), key=lambda rule: str(rule))
+        rules = [str(rule) for rule in rule_objs]
         auth_status = "require_auth" if auth_wrapped else "missing_require_auth_marker"
+        overlap_prefixes = sorted({
+            prefix
+            for rule in rule_objs
+            for prefix in [_route_overlaps_prefix(str(rule), auth_exempt_prefixes)]
+            if prefix
+        })
+        if overlap_prefixes:
+            auth_status = "overlaps_auth_exempt_prefix"
+            exempt_overlaps.append({"endpoint": endpoint, "rules": rules, "prefixes": overlap_prefixes})
         rows.append({
             "endpoint": endpoint,
             "rules": rules,
             "auth_status": auth_status,
+            "auth_exempt_prefixes": overlap_prefixes,
         })
         _log(f"[plugins] {plugin_name} endpoint={endpoint} routes={rules} auth_status={auth_status}")
         if not auth_wrapped:
             unauthenticated.append(endpoint)
-            _log(f"[plugins] WARNING: {plugin_name} endpoint {endpoint} lacks require_auth protection")
-    return rows, unauthenticated
+            _log(f"[plugins] ERROR: {plugin_name} endpoint {endpoint} lacks require_auth protection")
+        if overlap_prefixes:
+            _log(f"[plugins] ERROR: {plugin_name} endpoint {endpoint} overlaps auth-exempt prefixes {overlap_prefixes}")
+    return rows, unauthenticated, exempt_overlaps
 
 
 def _load_plugin(app, state, require_auth, name):
@@ -143,7 +175,18 @@ def _load_plugin(app, state, require_auth, name):
     finally:
         app._got_first_request = got_first_request
     endpoints = sorted(set(app.view_functions.keys()) - before_endpoints)
-    endpoint_auth, unauthenticated = _audit_plugin_endpoints(app, safe, endpoints)
+    endpoint_auth, unauthenticated, exempt_overlaps = _audit_plugin_endpoints(app, safe, endpoints)
+    if unauthenticated or exempt_overlaps:
+        _remove_endpoints(app, endpoints)
+        sys.modules.pop(module_name, None)
+        raise PluginSecurityError(
+            "plugin security audit failed",
+            {
+                "unauthenticated_endpoints": unauthenticated,
+                "auth_exempt_overlaps": exempt_overlaps,
+                "endpoint_auth": endpoint_auth,
+            },
+        )
     loaded_at = time.strftime("%Y-%m-%dT%H:%M:%S")
     PLUGINS[safe] = (module, loaded_at)
     PLUGIN_ENDPOINTS[safe] = endpoints
@@ -200,6 +243,9 @@ def register_routes(app, state, require_auth):
                 info = _load_plugin(app, state, require_auth, name)
             except FileNotFoundError as e:
                 return _error("plugin not found", 404, file=str(e))
+            except PluginSecurityError as e:
+                details = e.args[1] if len(e.args) > 1 and isinstance(e.args[1], dict) else {}
+                return _error(str(e.args[0]), 400, **details)
             except Exception as e:
                 return jsonify({"error": str(e), "type": type(e).__name__}), 500
         return jsonify({"status": "loaded", "plugin": info})

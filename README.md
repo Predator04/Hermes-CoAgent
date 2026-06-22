@@ -124,7 +124,7 @@ Trigger words: 77 words in `data/trigger_words.txt`. Max text: 100 KiB.
 
 ```bash
 # Examples
-TOKEN=YOUR_TOKEN_HERE
+TOKEN=<YOUR_TOKEN_HERE>
 BASE=http://127.0.0.1:9123
 
 # Scan for trigger words
@@ -183,11 +183,30 @@ hermes_coagent.py          — Main server (268 lines coordinator)
 
 | Flag | Effect |
 |------|--------|
-| `--secure` | Random 64-char Bearer token |
-| `--token=KEY` | Use your own token |
-| `--allow-external` | Bind `0.0.0.0` (LAN access) |
+| `--secure` | Enable Bearer auth using the saved `.token` file or first-time setup |
+| `--token=KEY` | Enable Bearer auth with a provided token and save it to `.token` |
+| `HERMES_COAGENT_TOKEN` | Enable Bearer auth from an environment variable |
+| `--allow-external` | Bind `0.0.0.0` for LAN access; requires auth |
 
-**Always use `--secure --allow-external` for network access.**
+First-time setup:
+
+```bash
+python hermes_coagent.py --secure
+curl -s -X POST http://127.0.0.1:9123/setup \
+  -H "Content-Type: application/json" \
+  -d "{\"password\":\"yourpassword\"}"
+```
+
+The setup response returns the Bearer token once. Save it and send it on control/data requests:
+
+```bash
+curl -s http://127.0.0.1:9123/uia/tree \
+  -H "Authorization: Bearer <token>"
+```
+
+All control and data endpoints require `Authorization: Bearer <token>`. Bootstrap/status endpoints are limited to `/`, `/health`, `/ping`, `/version`, `/favicon.ico`, `/setup`, and `/setup-status`.
+
+The token file is `.token`; `.token` and `.token_*` are gitignored, and the git commit route enforces that before staging. Port 9123 controls the desktop and should never be exposed to the internet. Use `--allow-external` only on trusted local networks with auth enabled.
 
 ---
 

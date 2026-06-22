@@ -3,14 +3,14 @@
 from flask import Response
 
 
-CSP = "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'"
+CSP = "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'"
 
 DASHBOARD_HTML = r"""<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'">
 <title>Hermes CoAgent Dashboard</title>
 <style>
 :root{color-scheme:dark;--bg:#111318;--panel:#181c24;--panel2:#202632;--text:#f2f5f8;--muted:#9aa5b1;--ok:#42d392;--bad:#ff6b6b;--line:#303846}
@@ -36,9 +36,9 @@ pre{white-space:pre-wrap;overflow:auto;max-height:390px;margin:0;background:#090
 <section class="wide"><h2>Endpoint Health</h2><div class="body" id="health"></div></section>
 <section class="wide"><h2>Logs</h2><div class="body"><div class="log-tools"><input id="filter" placeholder="Search logs"><button id="refresh">Refresh</button></div><pre id="logs"></pre></div></section>
 </main>
-<!-- localStorage token storage is acceptable for this local-only desktop control tool; CSP prevents injected scripts from reading it. -->
+<!-- sessionStorage keeps URL-provided tokens scoped to the current tab. -->
 <script>
-const params=new URLSearchParams(location.search);const queryToken=params.get("token")||"";if(queryToken)localStorage.setItem("hermes_token",queryToken);const token=queryToken||localStorage.getItem("hermes_token")||"";
+const params=new URLSearchParams(location.search);const queryToken=params.get("token")||"";if(queryToken){sessionStorage.setItem("hermes_token",queryToken);params.delete("token");const cleanUrl=location.pathname+(params.toString()?"?"+params.toString():"")+location.hash;history.replaceState(null,document.title,cleanUrl)}const token=queryToken||sessionStorage.getItem("hermes_token")||"";
 function headers(json=false){const h={};if(token)h.Authorization="Bearer "+token;if(json)h["Content-Type"]="application/json";return h}
 async function getJson(path){const r=await fetch(path,{headers:headers(false)});if(!r.ok)throw new Error(path+" "+r.status);return await r.json()}
 function setSummary(ok,text){document.getElementById("dot").className="dot"+(ok?" ok":"");document.getElementById("summary").textContent=text}

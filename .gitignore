@@ -6,6 +6,7 @@ macros/
 screen_temp*.png
 test_mcp*.py
 *.log
+agent_logs/
 .codex_path
 *.bat
 *.vbs
