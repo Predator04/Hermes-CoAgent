@@ -10,6 +10,7 @@ agent_logs/
 .codex_path
 *.bat
 *.vbs
-.token
+*.token
 .token_*
+telegram_config.json
 nul

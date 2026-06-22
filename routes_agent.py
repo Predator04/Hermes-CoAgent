@@ -17,6 +17,20 @@ from flask import Blueprint, Response, jsonify, request, stream_with_context
 from shared import COAGENT_DIR, _console, _log
 
 
+def _userprofile():
+    return os.environ.get("USERPROFILE") or os.environ.get("HOME") or "C:\\Users\\Default"
+
+
+def _resolve_npm_paths(name):
+    """Resolve known paths for npm-installed CLI tools."""
+    userprofile = _userprofile()
+    return (
+        Path(userprofile) / "AppData/Roaming/npm" / f"{name}.cmd",
+        Path(userprofile) / "AppData/Roaming/npm" / f"{name}.exe",
+        Path(userprofile) / "AppData/Roaming/npm" / name,
+    )
+
+
 agent_bp = Blueprint("agent_gateway", __name__)
 
 MAX_PROMPT_CHARS = 100 * 1024
@@ -74,11 +88,7 @@ AGENT_SPECS = {
     "codex": AgentSpec(
         name="codex",
         binaries=("codex",),
-        known_paths=(
-            r"C:\Users\Admin\AppData\Roaming\npm\codex.cmd",
-            r"C:\Users\Admin\AppData\Roaming\npm\codex.exe",
-            r"C:\Users\Admin\AppData\Roaming\npm\codex",
-        ),
+        known_paths=_resolve_npm_paths("codex"),
         supports_stdin=True,
         base_args=("exec",),
         read_only_args=("--sandbox", "read-only"),
@@ -87,11 +97,7 @@ AGENT_SPECS = {
     "claude": AgentSpec(
         name="claude",
         binaries=("claude",),
-        known_paths=(
-            r"C:\Users\Admin\.local\bin\claude.exe",
-            r"C:\Users\Admin\AppData\Roaming\npm\claude.cmd",
-            r"C:\Users\Admin\AppData\Roaming\npm\claude.exe",
-        ),
+        known_paths=(str(Path(_userprofile()) / ".local" / "bin" / "claude.exe"),) + _resolve_npm_paths("claude"),
         supports_stdin=False,
         prompt_prefix_args=("-p",),
         read_only_args=("--permission-mode", "plan", "--disallowedTools", "Edit,Write,MultiEdit,NotebookEdit"),
@@ -100,21 +106,14 @@ AGENT_SPECS = {
     "gemini": AgentSpec(
         name="gemini",
         binaries=("gemini",),
-        known_paths=(
-            r"C:\Users\Admin\AppData\Roaming\npm\gemini.cmd",
-            r"C:\Users\Admin\AppData\Roaming\npm\gemini.exe",
-        ),
+        known_paths=_resolve_npm_paths("gemini"),
         supports_stdin=True,
         model_flag="--model",
     ),
     "opencode": AgentSpec(
         name="opencode",
         binaries=("opencode",),
-        known_paths=(
-            r"C:\Users\Admin\AppData\Roaming\npm\opencode.cmd",
-            r"C:\Users\Admin\AppData\Roaming\npm\opencode.exe",
-            r"C:\Users\Admin\.local\bin\opencode.exe",
-        ),
+        known_paths=_resolve_npm_paths("opencode") + (str(Path(_userprofile()) / ".local" / "bin" / "opencode.exe"),),
         supports_stdin=False,
         base_args=("run",),
         model_flag="--model",

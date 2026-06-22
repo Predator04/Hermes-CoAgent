@@ -12,7 +12,11 @@ from flask import jsonify
 from shared import _json_body
 
 
-DEFAULT_VAULT = r"C:\Users\Admin\Desktop\Obsidian"
+DEFAULT_VAULT = os.path.join(
+    os.environ.get("USERPROFILE") or os.environ.get("HOME") or "C:\\Users\\Default",
+    "Desktop",
+    "Obsidian",
+)
 REST_URL = os.environ.get("OBSIDIAN_REST_URL", "http://127.0.0.1:27123").rstrip("/")
 REST_TOKEN = os.environ.get("OBSIDIAN_REST_API_KEY", "")
 

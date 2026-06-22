@@ -2,24 +2,73 @@
 Hermes CoAgent - Security module
 ==================================
 Token-based Bearer auth for CoAgent HTTP endpoints.
+CSRF protection for browser-based requests.
 
 Features:
   --secure            Generates & persists a random 64-char hex token
   --token=KEY         Uses a specific token (or HERMES_COAGENT_TOKEN env var)
   GET /auth/token     Returns current token info (view/regen)
   POST /auth/token    Regenerates token (requires current token)
+  GET /csrf-token     Returns a CSRF token for browser forms
 
 Token is saved to COAGENT_DIR/.token on first --secure launch.
 Subsequent --secure launches read the saved token.
 """
-import os, sys, secrets, functools, hashlib
-from flask import request, jsonify
+import os, sys, secrets, functools, hashlib, time
+from flask import jsonify, request
 from pathlib import Path
 
 AUTH_TOKEN = None
 AUTH_ENABLED = False
 SETUP_REQUIRED = False
 COAGENT_DIR = None
+
+# CSRF token store — maps token_hash -> expiry timestamp
+_CSRF_TOKENS: dict[str, float] = {}
+_CSRF_CLEANUP_INTERVAL = 300  # seconds between stale cleanup
+_CSRF_TTL = 3600  # 1 hour
+
+
+def csrf_token_store():
+    """Get or initialize the CSRF token store, cleaning stale entries."""
+    global _CSRF_TOKENS
+    now = time.time()
+    stale = [k for k, v in list(_CSRF_TOKENS.items()) if v < now]
+    for k in stale:
+        _CSRF_TOKENS.pop(k, None)
+    token = secrets.token_urlsafe(32)
+    _CSRF_TOKENS[hashlib.sha256(token.encode()).hexdigest()] = now + _CSRF_TTL
+    return token
+
+
+def csrf_check():
+    """Check CSRF token from X-CSRF-Token header."""
+    token = request.headers.get("X-CSRF-Token") or ""
+    if not token:
+        return False
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
+    if token_hash in _CSRF_TOKENS and _CSRF_TOKENS[token_hash] > time.time():
+        _CSRF_TOKENS.pop(token_hash, None)  # Single-use
+        return True
+    return False
+
+
+def csrf_protect(f):
+    """Decorator for CSRF-sensitive endpoints. Checks X-CSRF-Token header."""
+    @functools.wraps(f)
+    def wrapper(*args, **kwargs):
+        # GET/HEAD/OPTIONS are safe
+        if request.method in ("GET", "HEAD", "OPTIONS"):
+            return f(*args, **kwargs)
+        # Allow Bearer token auth (already protects CSRF)
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer ") and AUTH_TOKEN:
+            return f(*args, **kwargs)
+        # CSRF token check
+        if csrf_check():
+            return f(*args, **kwargs)
+        return jsonify({"error": "CSRF token required or missing. Provide X-CSRF-Token header."}), 403
+    return wrapper
 
 
 def _token_path():
@@ -237,3 +286,10 @@ def register_auth_routes(app):
             "token": new_token,
             "token_preview": f"{pre}...{suf}",
         })
+
+    @app.route("/csrf-token", methods=["GET"])
+    @require_auth
+    def route_csrf_token():
+        """Return a CSRF token for browser-based form submissions."""
+        token = csrf_token_store()
+        return jsonify({"csrf_token": token})

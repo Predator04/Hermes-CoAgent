@@ -16,7 +16,8 @@ from pathlib import Path
 
 
 DEFAULT_CUA_EXE = Path(
-    r"C:\Users\Admin\AppData\Local\Programs\Cua\cua-driver\bin\cua-driver.exe"
+    os.environ.get("USERPROFILE") or os.environ.get("HOME") or "C:\\Users\\Default",
+    "AppData/Local/Programs/Cua/cua-driver/bin/cua-driver.exe",
 )
 
 

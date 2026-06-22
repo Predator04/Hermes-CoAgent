@@ -11,9 +11,13 @@ import time
 from pathlib import Path
 
 
-SPEC_CUA_EXE = Path(r"C:\Users\Admin\AppData\Local\cua\cua-driver.exe")
-PROGRAMS_CUA_EXE = Path(r"C:\Users\Admin\AppData\Local\Programs\Cua\cua-driver\bin\cua-driver.exe")
-PACKAGE_ROOT = Path(r"C:\Users\Admin\.cua-driver\packages\releases")
+def _userprofile():
+    return os.environ.get("USERPROFILE") or os.environ.get("HOME") or "C:\\Users\\Default"
+
+
+SPEC_CUA_EXE = Path(_userprofile()) / "AppData/Local/cua/cua-driver.exe"
+PROGRAMS_CUA_EXE = Path(_userprofile()) / "AppData/Local/Programs/Cua/cua-driver/bin/cua-driver.exe"
+PACKAGE_ROOT = Path(_userprofile()) / ".cua-driver/packages/releases"
 
 _TOOL_RE = re.compile(r"^[A-Za-z0-9_:-]+$")
 _STATUS_CACHE = {"ts": 0.0, "available": False, "detail": {}}

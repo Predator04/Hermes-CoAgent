@@ -440,6 +440,28 @@ tr:hover td { background: rgba(56, 189, 248, .04); }
 
       <section class="panel">
         <div class="panel-head">
+          <h2>Telegram Relay</h2>
+          <div class="panel-tools">
+            <button id="refreshTelegram">Refresh</button>
+          </div>
+        </div>
+        <div class="panel-body">
+          <div id="telegramStatus" class="small muted">Loading...</div>
+          <div class="field-row" style="margin-top:8px">
+            <input id="tgTokenInput" class="grow" type="password" placeholder="Bot Token">
+            <input id="tgChatIdInput" class="grow" type="text" placeholder="Chat ID">
+          </div>
+          <div class="field-row" style="margin-top:6px">
+            <button id="tgSaveBtn" class="ok">Save &amp; Test</button>
+            <button id="tgTestBtn">Test Message</button>
+            <button id="tgClearBtn" class="danger">Clear</button>
+            <span id="tgResult" class="small muted"></span>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
           <h2>Processes</h2>
           <div class="panel-tools">
             <input id="processFilter" class="grow" type="search" placeholder="Filter">
@@ -888,6 +910,80 @@ tr:hover td { background: rgba(56, 189, 248, .04); }
         renderProcesses();
       });
     });
+
+    // Telegram relay
+    $("refreshTelegram").addEventListener("click", loadTelegramConfig);
+    $("tgSaveBtn").addEventListener("click", saveTelegramConfig);
+    $("tgTestBtn").addEventListener("click", testTelegram);
+    $("tgClearBtn").addEventListener("click", clearTelegram);
+  }
+
+  async function loadTelegramConfig() {
+    try {
+      const data = await api("/telegram/config");
+      const status = $("telegramStatus");
+      if (data.configured) {
+        status.innerHTML = "✅ Bot: " + (data.bot_token || "***") + " | Chat: " + (data.target_chat_id || data.chat_id || "?");
+        $("tgTokenInput").value = "";
+        $("tgChatIdInput").value = data.target_chat_id || data.chat_id || "";
+      } else {
+        status.textContent = "⏹ Not configured. Enter token + chat ID and click Save.";
+        $("tgTokenInput").value = "";
+        $("tgChatIdInput").value = "";
+      }
+    } catch (err) {
+      $("telegramStatus").textContent = "❌ " + err.message;
+    }
+  }
+
+  async function saveTelegramConfig() {
+    const bot_token = $("tgTokenInput").value.trim();
+    const chat_id = $("tgChatIdInput").value.trim();
+    if (!bot_token || !chat_id) {
+      $("tgResult").textContent = "❌ Both fields required";
+      return;
+    }
+    $("tgSaveBtn").disabled = true;
+    $("tgResult").textContent = "Testing...";
+    try {
+      const data = await api("/telegram/configure", { method: "POST", body: { bot_token, chat_id } });
+      $("tgResult").textContent = "✅ " + (data.status || "saved");
+      loadTelegramConfig();
+    } catch (err) {
+      $("tgResult").textContent = "❌ " + err.message;
+    }
+    $("tgSaveBtn").disabled = false;
+  }
+
+  async function testTelegram() {
+    const chat_id = $("tgChatIdInput").value.trim();
+    if (!chat_id) {
+      $("tgResult").textContent = "❌ Enter a chat ID first";
+      return;
+    }
+    $("tgTestBtn").disabled = true;
+    $("tgResult").textContent = "Sending test...";
+    try {
+      const data = await api("/telegram/register-chat", { method: "POST", body: { chat_id } });
+      $("tgResult").textContent = "✅ " + (data.status || "registered");
+      loadTelegramConfig();
+    } catch (err) {
+      $("tgResult").textContent = "❌ " + err.message;
+    }
+    $("tgTestBtn").disabled = false;
+  }
+
+  async function clearTelegram() {
+    if (!confirm("Clear Telegram config?")) return;
+    $("tgClearBtn").disabled = true;
+    try {
+      await api("/telegram/clear", { method: "POST" });
+      $("tgResult").textContent = "✅ Cleared";
+      loadTelegramConfig();
+    } catch (err) {
+      $("tgResult").textContent = "❌ " + err.message;
+    }
+    $("tgClearBtn").disabled = false;
   }
 
   async function init() {
@@ -900,6 +996,7 @@ tr:hover td { background: rgba(56, 189, 248, .04); }
     loadProcesses();
     loadLogs();
     loadCursor();
+    loadTelegramConfig();
     setInterval(ping, 5000);
     setInterval(loadCursor, 1000);
     setInterval(loadResources, 5000);

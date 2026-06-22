@@ -584,6 +584,7 @@ from routes_webrtc import register_routes as reg_webrtc
 from routes_plugins import register_routes as reg_plugins
 from routes_palmreject import register_routes as reg_palmreject
 from routes_agent import register_routes as reg_agent
+from routes_telegram import register_routes as reg_telegram
 
 reg_mouse(app, state, require_auth)
 reg_ocr(app, state, require_auth)
@@ -614,6 +615,7 @@ reg_webrtc(app, state, require_auth)
 reg_plugins(app, state, require_auth)
 reg_palmreject(app, state, require_auth)
 reg_agent(app, state, require_auth)
+reg_telegram(app, state, require_auth)
 reg_mcp(app, state, require_auth)
 state.backup_file = backup_file
 
@@ -762,8 +764,6 @@ def _start_tray():
             _console("  [INFO] tray_icon.py not found, skip tray icon")
             return
         pyw_candidates = [
-            r"C:\Users\Admin\AppData\Local\Programs\Python\Python313\pythonw.exe",
-            r"C:\Users\Admin\AppData\Local\Programs\Python\Python312\pythonw.exe",
             str(Path(sys.executable).with_name("pythonw.exe")),
             which("pythonw.exe"),
         ]
