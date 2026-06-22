@@ -166,6 +166,8 @@ AUTH_EXEMPT_PATHS = {
     "/ping",
     "/version",
     "/favicon.ico",
+    "/dashboard",
+    "/remote",
     "/mcp/test",
 }
 
@@ -565,6 +567,16 @@ from routes_config import register_routes as reg_config, backup_file
 from routes_browser import register_routes as reg_browser
 from routes_google import register_routes as reg_google
 from routes_logs import register_routes as reg_logs
+from routes_recorder import register_routes as reg_recorder
+from routes_mcp import register_routes as reg_mcp
+from routes_git import register_routes as reg_git
+from routes_dashboard import register_routes as reg_dashboard
+from routes_obsidian import register_routes as reg_obsidian
+from routes_wol import register_routes as reg_wol
+from routes_phone import register_routes as reg_phone
+from routes_webrtc import register_routes as reg_webrtc
+from routes_plugins import register_routes as reg_plugins
+from routes_palmreject import register_routes as reg_palmreject
 
 reg_mouse(app, state, require_auth)
 reg_ocr(app, state, require_auth)
@@ -585,6 +597,16 @@ reg_config(app, state, require_auth)
 reg_browser(app, state, require_auth)
 reg_google(app, state, require_auth)
 reg_logs(app, state, require_auth)
+reg_recorder(app, state, require_auth)
+reg_git(app, state, require_auth)
+reg_dashboard(app, state, require_auth)
+reg_obsidian(app, state, require_auth)
+reg_wol(app, state, require_auth)
+reg_phone(app, state, require_auth)
+reg_webrtc(app, state, require_auth)
+reg_plugins(app, state, require_auth)
+reg_palmreject(app, state, require_auth)
+reg_mcp(app, state, require_auth)
 state.backup_file = backup_file
 
 # ── Core routes (stay in main) ─────────────────────────────────
@@ -657,10 +679,16 @@ def route_version():
                                  "memory_leak_watchdog", "smart_click_retry",
                                  "toast_notifications", "dependency_manager",
                                  "config_backups", "browser_control",
-                                 "google_workspace", "log_analyzer"],
+                                 "google_workspace", "log_analyzer",
+                                 "recorder", "mcp_server", "git_backup",
+                                 "dashboard", "obsidian", "wake_on_lan",
+                                 "phone_bridge", "remote_desktop",
+                                 "plugin_system", "palm_rejection"],
                     "modules": ["mouse", "ocr", "uia", "file", "media", "v63",
                                 "stream", "process", "voice", "cua", "copilot",
-                                "bypass", "toast", "deps", "config", "browser", "google", "logs"],
+                                "bypass", "toast", "deps", "config", "browser", "google", "logs",
+                                "recorder", "mcp", "git", "dashboard", "obsidian", "wol",
+                                "phone", "webrtc", "plugins", "palmreject"],
                     "security": ["auth_token", "rate_limit", "input_sanitization",
                                  "cors_restricted", "security_headers"]})
 
@@ -827,7 +855,7 @@ if __name__ == "__main__":
         _console("  Auth: disabled")
 
     _console(f"  Server: http://{bind_host}:{port}/")
-    _console(f"  Modules: mouse ocr uia file media v63 stream process voice cua copilot buddy bypass toast deps config browser google logs")
+    _console(f"  Modules: mouse ocr uia file media v63 stream process voice cua copilot buddy bypass toast deps config browser google logs recorder mcp git dashboard obsidian wol phone webrtc plugins palmreject")
     _console()
 
     # Pre-warm UIA engine
