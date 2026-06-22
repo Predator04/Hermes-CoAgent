@@ -9,11 +9,57 @@ All routes under /bypass/
 
 import base64, json, math, random, re, unicodedata
 from flask import Blueprint, request, jsonify
+from pathlib import Path
 
 # ── Blueprint ──────────────────────────────────────────────────
 bypass_bp = Blueprint("bypass", __name__)
 
 MAX_TEXT_CHARS = 100 * 1024
+
+# Load trigger words from data file (fallback to hardcoded list)
+_DATA_DIR = Path(__file__).resolve().parent / "data"
+_TRIGGER_FILE = _DATA_DIR / "trigger_words.txt"
+
+FILTER_TRIGGERS = None
+if _TRIGGER_FILE.exists():
+    try:
+        raw = _TRIGGER_FILE.read_text(encoding="utf-8").strip()
+        FILTER_TRIGGERS = sorted(
+            dict.fromkeys(w.strip() for w in raw.split("\n") if w.strip()),
+            key=str.casefold,
+        )
+    except Exception:
+        FILTER_TRIGGERS = None
+
+if not FILTER_TRIGGERS:
+    # Fallback hardcoded list
+    FILTER_TRIGGERS = [
+        "hack", "hacker", "hacking", "crack", "cracking", "cracked",
+        "exploit", "exploits", "vulnerability", "malware", "virus",
+        "ransomware", "trojan", "backdoor", "rootkit",
+        "jailbreak", "jailbroken", "jailbreaking",
+        "bypass", "bypassing", "circumvent", "circumvention",
+        "injection", "inject", "payload",
+        "unauthorized", "unrestricted", "uncensored",
+        "illegal", "stolen", "fraud", "scam",
+        "ddos", "botnet", "mitm", "keylogger",
+        "spoof", "spoofing", "phishing",
+        "darknet", "dark web", "deep web",
+        "password", "credentials", "bruteforce", "brute force",
+        "0day", "zero-day", "zeroday",
+        "nsfw", "porn", "xxx", "hentai", "sex", "sexual",
+        "nude", "naked", "explicit", "obscene",
+        "suicide", "self-harm", "self harm",
+        "drugs", "cocaine", "heroin", "meth", "weapon",
+        "bomb", "explosive", "terrorist", "terrorism",
+        "END OF INPUT", "START OF INPUT", "SYSTEM OVERRIDE",
+        "GODMODE", "DEVELOPER MODE", "DAN",
+    ]
+
+_TRIGGER_PATTERNS = [
+    (word, re.compile(r"\b" + re.escape(word) + r"\b", re.IGNORECASE))
+    for word in sorted(FILTER_TRIGGERS, key=len, reverse=True)
+]
 
 
 def _json_payload() -> dict:
@@ -42,9 +88,11 @@ def _get_text(data: dict):
 def _clamp_float(value, default: float, minimum: float, maximum: float, field: str):
     if value is None:
         value = default
+    if isinstance(value, str):
+        return None, _error(f"{field} must be a number")
     try:
         number = float(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None, _error(f"{field} must be a number")
     if not math.isfinite(number):
         return None, _error(f"{field} must be finite")
@@ -54,10 +102,15 @@ def _clamp_float(value, default: float, minimum: float, maximum: float, field: s
 def _clamp_int(value, default: int, minimum: int, maximum: int, field: str):
     if value is None:
         value = default
-    try:
-        number = int(value)
-    except (TypeError, ValueError):
+    if isinstance(value, str):
         return None, _error(f"{field} must be an integer")
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None, _error(f"{field} must be an integer")
+    if not math.isfinite(numeric):
+        return None, _error(f"{field} must be finite")
+    number = int(numeric)
     return min(maximum, max(minimum, number)), None
 
 
@@ -184,35 +237,6 @@ ZERO_WIDTH = [
     "\uFEFF",  # ZERO WIDTH NO-BREAK SPACE
 ]
 
-# High-risk filter keywords — words likely to trigger content filters
-FILTER_TRIGGERS = [
-    "hack", "hacker", "hacking", "crack", "cracking", "cracked",
-    "exploit", "exploits", "vulnerability", "malware", "virus",
-    "ransomware", "trojan", "backdoor", "rootkit",
-    "jailbreak", "jailbroken", "jailbreaking",
-    "bypass", "bypassing", "circumvent", "circumvention",
-    "injection", "inject", "payload",
-    "unauthorized", "unrestricted", "uncensored",
-    "illegal", "stolen", "fraud", "scam",
-    "ddos", "botnet", "mitm", "keylogger",
-    "spoof", "spoofing", "phishing",
-    "darknet", "dark web", "deep web",
-    "password", "credentials", "bruteforce", "brute force",
-    "0day", "zero-day", "zeroday",
-    "nsfw", "porn", "xxx", "hentai", "sex", "sexual",
-    "nude", "naked", "explicit", "obscene",
-    "suicide", "self-harm", "self harm",
-    "drugs", "cocaine", "heroin", "meth", "weapon",
-    "bomb", "explosive", "terrorist", "terrorism",
-    # Boundary inversion tokens
-    "END OF INPUT", "START OF INPUT", "SYSTEM OVERRIDE",
-    "GODMODE", "DEVELOPER MODE", "DAN",
-]
-
-_TRIGGER_PATTERNS = [
-    (word, re.compile(r"\b" + re.escape(word) + r"\b", re.IGNORECASE))
-    for word in sorted(FILTER_TRIGGERS, key=len, reverse=True)
-]
 
 
 def _trigger_matches(text: str):

@@ -1,0 +1,77 @@
+0day
+backdoor
+bomb
+botnet
+brute force
+bruteforce
+bypass
+bypassing
+circumvent
+circumvention
+cocaine
+crack
+cracked
+cracking
+credentials
+DAN
+dark web
+darknet
+ddos
+deep web
+DEVELOPER MODE
+drugs
+END OF INPUT
+explicit
+exploit
+exploits
+explosive
+fraud
+GODMODE
+hack
+hacker
+hacking
+hentai
+heroin
+illegal
+inject
+injection
+jailbreak
+jailbreaking
+jailbroken
+keylogger
+malware
+meth
+mitm
+naked
+nsfw
+nude
+obscene
+password
+payload
+phishing
+porn
+ransomware
+rootkit
+scam
+self harm
+self-harm
+sex
+sexual
+spoof
+spoofing
+START OF INPUT
+stolen
+suicide
+SYSTEM OVERRIDE
+terrorism
+terrorist
+trojan
+unauthorized
+uncensored
+unrestricted
+virus
+vulnerability
+weapon
+xxx
+zero-day
+zeroday

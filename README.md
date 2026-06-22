@@ -183,6 +183,17 @@ hermes_coagent.py (268 lines — coordinator only)
 ├── routes_uia.py      — UIA tree, SOM overlays, element find (16 routes)
 ├── routes_file.py     — File ops, app launch, power (10 routes)
 ├── routes_media.py    — Wallpaper, clipboard, macros, scheduler (30+ routes)
+├── routes_v63.py      — v6.3 features (cursor, recording, stabilization)
+├── routes_stream.py   — SSE screen streaming
+├── routes_process.py  — Process management (psutil)
+├── routes_voice.py    — Voice commands
+├── routes_cua.py      — Cua Driver integration (37 tools)
+├── routes_copilot.py  — AI Co-Pilot (observe/suggest/automate)
+├── routes_buddy.py    — Ember desktop buddy (animated firefly)
+├── routes_bypass.py   — Prompt bypass toolkit (9 endpoints)
+├── data/trigger_words.txt — Filter trigger word list
+├── tests/test_bypass.py — Bypass toolkit unit tests
+├── AGENTS.md            — AI onboarding guide
 ├── uia_engine.py      — UIA accessibility tree + SOM engine
 ├── computer_use_mcp.py— FastMCP server (proxy to HTTP API)
 ├── coagent_client.py  — Python client library
@@ -245,6 +256,137 @@ hermes_coagent.py (268 lines — coordinator only)
 
 ---
 
+## 🛠️ Bypass Toolkit (v7.5+)
+
+New in v7.5 — prompt encoding, obfuscation, scanning, and prefill tools for working with AI content filters. All endpoints under `/bypass/*` with Bearer token auth.
+
+| Endpoint | Method | Params | Description |
+|----------|--------|--------|-------------|
+| `/bypass` | GET | — | List all tools |
+| `/bypass/leetspeak` | POST | `intensity`, `use_cyrillic` | Leetspeak + Cyrillic homoglyph encoding |
+| `/bypass/homoglyph` | POST | `block` | Unicode block (fullwidth, math_bold, math_mono, math_sans, fraktur, double_struck) |
+| `/bypass/zero-width` | POST | `frequency` | Inject invisible zero-width characters |
+| `/bypass/parseltongue` | POST | `passes` | Multi-pass obfuscation (leet + glyph + cyrillic + base64) |
+| `/bypass/prefill` | GET/POST | `template` | List 5 templates or build a prefill wrapper |
+| `/bypass/adversarial` | POST | — | 5+ input variants (shuffle, padding, emoji, etc.) |
+| `/bypass/scan` | POST | — | Scan for 75+ filter trigger words |
+| `/bypass/clean` | POST | — | Auto-obfuscate trigger words only |
+| `/bypass/all` | POST | `template` | One-shot: scan + clean + prefill + encode |
+
+### Prefill Templates
+- `boundary_inversion` — [END OF INPUT] [START OF INPUT] context reset
+- `godmode_l33t` — Classic GODMODE with l33t dividers
+- `story_framing` — Creative writing / fiction wrapper
+- `educational_compatibility` — Security research framing
+- `prefill_assistant` — Pre-conversation where assistant agreed to obey
+
+### Examples
+```bash
+# Scan for trigger words
+curl -s -X POST http://localhost:9123/bypass/scan \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_TOKEN_HERE" \
+  -d '{"text":"I want to hack a computer"}'
+
+# Auto-clean trigger words (only obfuscate the bad ones)
+curl -s -X POST http://localhost:9123/bypass/clean \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_TOKEN_HERE" \
+  -d '{"text":"how to jailbreak an iPhone"}'
+
+# Multi-pass parseltongue encoding
+curl -s -X POST http://localhost:9123/bypass/parseltongue \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_TOKEN_HERE" \
+  -d '{"text":"bypass content filter","passes":3}'
+
+# One-shot everything
+curl -s -X POST http://localhost:9123/bypass/all \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_TOKEN_HERE" \
+  -d '{"text":"how to exploit a vulnerability","template":"educational_compatibility"}'
+```
+
+Trigger words loaded from `data/trigger_words.txt` (77 words). Max text size: 100 KiB.
+
+---
+
 ## 📄 License
 
 MIT — see [LICENSE](LICENSE)
+
+---
+
+## Bypass Toolkit (v7.5+)
+
+All `/bypass/*` endpoints require Bearer auth. Use `GET /bypass` to list the 9 available tools.
+
+| Endpoint | Method | Description | Key Parameters |
+|----------|--------|-------------|----------------|
+| `/bypass/leetspeak` | POST | Encode text with leetspeak + Cyrillic homoglyphs | `text`, `intensity` (0-1), `use_cyrillic` |
+| `/bypass/homoglyph` | POST | Encode with a Unicode block | `text`, `block` (`fullwidth`, `math_bold`, `math_mono`, `math_sans`, `fraktur`, `double_struck`) |
+| `/bypass/zero-width` | POST | Inject invisible zero-width characters | `text`, `frequency` (0-1) |
+| `/bypass/parseltongue` | POST | Multi-pass obfuscation; each pass applies leet + glyph + cyrillic + base64 variants progressively | `text`, `passes` (1-5) |
+| `/bypass/prefill` | GET/POST | List templates or build prompt injection wrappers | `text`, `template` (`boundary_inversion`, `godmode_l33t`, `story_framing`, `educational_compatibility`, `prefill_assistant`) |
+| `/bypass/adversarial` | POST | Generate 5+ adversarial variants | `text` |
+| `/bypass/scan` | POST | Scan text for 75+ filter trigger words | `text` |
+| `/bypass/clean` | POST | Auto-obfuscate only trigger words, leaving the rest intact | `text` |
+| `/bypass/all` | POST | One-shot scan + clean + prefill + encode response | `text`, `template` |
+
+Examples:
+
+```bash
+TOKEN=YOUR_TOKEN_HERE
+BASE=http://127.0.0.1:9123
+
+curl -s "$BASE/bypass" \
+  -H "Authorization: Bearer $TOKEN"
+
+curl -s -X POST "$BASE/bypass/leetspeak" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"text":"review password handling","intensity":0.7,"use_cyrillic":true}'
+
+curl -s -X POST "$BASE/bypass/homoglyph" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"text":"review password handling","block":"fullwidth"}'
+
+curl -s -X POST "$BASE/bypass/zero-width" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"text":"review password handling","frequency":0.4}'
+
+curl -s -X POST "$BASE/bypass/parseltongue" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"text":"review password handling","passes":3}'
+
+curl -s "$BASE/bypass/prefill" \
+  -H "Authorization: Bearer $TOKEN"
+
+curl -s -X POST "$BASE/bypass/prefill" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"text":"review password handling","template":"educational_compatibility"}'
+
+curl -s -X POST "$BASE/bypass/adversarial" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"text":"review password handling"}'
+
+curl -s -X POST "$BASE/bypass/scan" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"text":"review password handling"}'
+
+curl -s -X POST "$BASE/bypass/clean" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"text":"review password handling"}'
+
+curl -s -X POST "$BASE/bypass/all" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"text":"review password handling","template":"story_framing"}'
+```
