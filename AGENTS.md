@@ -72,10 +72,20 @@ Hermes CoAgent is a Flask-based Windows desktop automation server. Provides REST
 - Tests: `tests/` using Flask test client
 - Bypass trigger words: `data/trigger_words.txt`
 
-## Deployment
+## Deployment / Self-Healing
 
-- Launched via `clean_start_coagent.ps1` (in `C:\Windows\Temp`)
+- **Watchdog** (`coagent_watchdog.ps1`): PowerShell script runs every 60s via scheduled task `HermesCoAgent-Watchdog`
+  - Detects dead/unresponsive CoAgent (HTTP ping + process check)
+  - Launches CoAgent on Session 1 interactive desktop via `schtasks /IT /RL HIGHEST`
+  - Also monitors screenshot relay (port 9124), restarts if down
+  - Logs to `C:\Windows\Temp\coagent_watchdog.log`
+- **Install**: Run `install_watchdog.ps1` as Admin (copies script to `C:\Windows\Temp\` for reliable schtasks invocation)
+- **Manual launch**: `C:\Program Files\Python312\python.exe hermes_coagent.py --token=TOKEN --allow-external`
 - Python 3.12.9 at `C:\Program Files\Python312\python.exe`
+- Working dir: `C:\Users\Admin\Desktop\Hermes CoAgent\`
+- Token: `YOUR_TOKEN_HERE`
+
+## Requirements
 - Core deps: `flask`, `waitress`, `mss`, `pywinauto`, `psutil`
 - v7.6 deps: `dxcam`, `playwright`, `google-api-python-client`, `google-auth-oauthlib`, `win11toast`
 
