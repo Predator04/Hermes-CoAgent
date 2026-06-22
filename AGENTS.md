@@ -2,83 +2,86 @@
 
 ## Project Overview
 
-Hermes CoAgent is a Flask-based Windows desktop automation server. It provides REST endpoints for controlling the Windows desktop programmatically: mouse, keyboard, OCR, UIA, file operations, window management, and more. It runs on port 9123, with auth via Bearer token.
+Hermes CoAgent is a Flask-based Windows desktop automation server. Provides REST endpoints for desktop control: mouse, keyboard, OCR, UIA, screenshots, file ops, window management, notifications, browser automation, Google Workspace, and more. Runs on port 9123 behind Bearer token auth.
 
 ## Getting Started
 
 - Launch: `C:\Program Files\Python312\python.exe hermes_coagent.py --token=TOKEN --allow-external`
-- Python path: `C:\Program Files\Python312\python.exe`
-- Working directory: `C:\Users\Admin\Desktop\Hermes CoAgent\`
+- Python: `C:\Program Files\Python312\python.exe`
+- Working dir: `C:\Users\Admin\Desktop\Hermes CoAgent\`
 - Token: `YOUR_TOKEN_HERE`
-- Health check: `GET http://127.0.0.1:9123/health`
-- Version: `GET http://127.0.0.1:9123/version`
-- Dashboard: `GET http://127.0.0.1:9123/`
+- Health: `GET /health`
+- Version: `GET /version`
+- Dashboard: `GET /`
 
-## Architecture
+## Architecture (v7.6)
 
-- Main file: `hermes_coagent.py` (auth, CORS, rate limiting, watchdog, route registration)
-- Route modules in the same directory:
-  - `routes_mouse.py` - mouse/keyboard/chain/emergency
-  - `routes_ocr.py` - screenshots/OCR/crop/describe
-  - `routes_uia.py` - UIA tree/SOM overlays/element find
-  - `routes_file.py` - file ops/app launch/power management
-  - `routes_media.py` - wallpaper/windows/clipboard/macros/scheduler/voice/tunnel
-  - `routes_v63.py` - v6.3 feature routes (cursor/recording/stabilization)
-  - `routes_stream.py` - SSE screen streaming
-  - `routes_process.py` - process management (psutil)
-  - `routes_voice.py` - voice commands
-  - `routes_cua.py` - Cua Driver integration (37 tools)
-  - `routes_copilot.py` - AI Co-Pilot (observe/suggest/automate)
-  - `routes_buddy.py` - Ember desktop buddy
-  - `routes_bypass.py` - prompt bypass toolkit (see below)
-- `shared.py` - shared utilities (version, logging, paths)
+- **`hermes_coagent.py`** — Main server: auth, CORS, rate limiting, watchdog, endpoint health tracker, route registration, module loading
+- **Route modules** in same directory:
 
-## Bypass Toolkit (`routes_bypass.py`)
+### Core Desktop Control
+| Module | File | Endpoints |
+|--------|------|-----------|
+| 🖱️ Mouse/Keyboard | `routes_mouse.py` | click, move, scroll, drag, type, key combo, chain actions, emergency stop, smart click (with retry on unchanged screen) |
+| 📸 OCR/Screenshots | `routes_ocr.py` | capture, screenshot, crop, OCR, describe, find text, FallbackChain (DXCam → MSS → PIL → Win32 → PowerShell relay) |
+| 🏗️ UIA | `routes_uia.py` | UIA tree, SOM overlays, element find by name/ID/control type, accelerated regions, window management |
+| 🎬 Media/Windows | `routes_media.py` | wallpaper, window list/activate/move/resize, clipboard, macros, scheduler, tunneling (cloudflare/ngrok), voice |
+| ⚙️ Process | `routes_process.py` | list, start, kill, CPU/memory stats |
+| 📁 File Ops | `routes_file.py` | read, write, delete, download, app launch, power management (shutdown/restart/lock/sleep) |
+| 🔌 Cua Driver | `routes_cua.py` | 37 Cua Driver tools: accessibility tree, window state, click, type, scroll, drag, element index |
+| 🎥 Stream | `routes_stream.py` | SSE screen streaming |
+| 📦 v6.3 Features | `routes_v63.py` | cursor overlay, element-indexed UIA, desktop stabilization, session recording |
 
-All endpoints: `POST` to `/bypass/*` with JSON body `{"text": "..."}`, auth required.
+### AI & Automation
+| Module | File | Endpoints |
+|--------|------|-----------|
+| 🤖 AI Co-Pilot | `routes_copilot.py` | observe (screenshot+OCR), suggest actions, automate UI flows |
+| 🎙️ Voice | `routes_voice.py` | voice command recognition, speech-to-text |
+| 🧑‍🤝‍🧑 Ember Buddy | `routes_buddy.py` | Ember desktop companion |
+| 🔓 Bypass Toolkit | `routes_bypass.py` | 9 endpoints: leetspeak, homoglyph, zero-width, parseltongue, prefill templates, adversarial variants, trigger-word scan, auto-clean, one-shot all |
 
-1. `/bypass/leetspeak` - Encode text with leetspeak + Cyrillic homoglyphs
-   Params: `intensity` (0-1), `use_cyrillic` (bool)
+### New in v7.6
+| Module | File | Endpoints |
+|--------|------|-----------|
+| 🍞 Toast Notifications | `routes_toast.py` | `POST /toast/show` — native Windows toast via win11toast. `POST /toast/input` — input-prompting toast |
+| 🌐 Browser (Playwright) | `routes_browser.py` | `POST /browser/navigate`, `/click`, `/fill`, `/extract`, `/screenshot`, `/evaluate` — full Playwright browser automation |
+| 📧 Google Workspace | `routes_google.py` | `POST /google/gmail/list`, `/gmail/send`, `/calendar/events`, `/calendar/create` — Gmail + Calendar |
+| 📝 Log Analyzer | `routes_logs.py` | `POST /logs/analyze` — scan error logs, frequency stats, smart suggestions |
+| 💾 Config Manager | `routes_config.py` | `GET /config/backups`, `POST /config/rollback` — auto-backup config files, rollback history |
+| 📦 Deps Manager | `routes_deps.py` | `GET /deps` — check installed deps. `POST /deps/install` — install specific. `POST /deps/auto` — auto-detect missing from logs + install |
+| 📷 DXCam Screenshot | (in `routes_ocr.py`) | GPU-accelerated 240fps capture via FallbackChain. Lazy init — won't crash from Session 0 |
+| 🔗 Fallback Chains | `shared_fallbacks.py` | `FallbackChain` class — try N methods in order, report which succeeded |
 
-2. `/bypass/homoglyph` - Encode with Unicode block
-   Params: `block` (`fullwidth`, `math_bold`, `math_mono`, `math_sans`, `fraktur`, `double_struck`)
-
-3. `/bypass/zero-width` - Inject invisible zero-width characters
-   Params: `frequency` (0-1)
-
-4. `/bypass/parseltongue` - Multi-pass obfuscation (3-5 passes)
-   Params: `passes` (1-5)
-   Each pass applies leet + glyph + cyrillic + base64 variants progressively.
-
-5. `/bypass/prefill` - Build prompt injection wrappers
-   Params: `template` (`boundary_inversion`, `godmode_l33t`, `story_framing`, `educational_compatibility`, `prefill_assistant`)
-   `GET /bypass/prefill` lists available templates.
-
-6. `/bypass/adversarial` - Generate 5+ adversarial variants
-   Returns: `word_shuffle`, `padded`, `punctuation_shifted`, `emoji_injected`, `zero_width_dense`
-
-7. `/bypass/scan` - Scan text for 75+ filter trigger words
-   Returns: `total_matches`, `matches[]` (`word`, `position`, `context`, `severity`), `clean` bool
-
-8. `/bypass/clean` - Auto-obfuscate only trigger words
-   Replaces trigger words with leet/mixed-case variants, leaves rest intact.
-
-9. `/bypass/all` - One-shot: scan + clean + prefill + encode
-   Returns everything in one call.
+### Health & Self-Healing
+| Feature | Location | Behavior |
+|---------|----------|----------|
+| 🩺 Endpoint Health Tracker | `hermes_coagent.py` | Tracks ok/fail per endpoint, rolling 5-min windows, success rates |
+| 🔄 Auto-Restart | background thread | If >50% fail rate on 3+ endpoints → restarts CoAgent |
+| 💾 Config Backups | `routes_config.py` | Auto-backup `config.json` and `.env` before writes, keeps 20 versions |
+| 🔁 Screenshot Fallback | `routes_ocr.py` | DXCam → MSS → PIL → Win32 API → PowerShell relay — 5 methods deep |
+| 📈 Memory Leak Detect | Watchdog in `hermes_coagent.py` | Tracks RSS growth — warns if >100MB/5min, auto-restarts if >150MB |
+| 📦 Auto-Deps | `routes_deps.py` | Scans error logs, detects missing packages, auto-installs |
+| 🔗 Fallback Chains | `shared_fallbacks.py` | Generic pattern: try method A, if fails try B, etc. with timing |
 
 ## Coding Standards
 
 - Flask Blueprints with `register_routes(app, state, require_auth)` pattern
-- Auth handled by global `before_request` in `hermes_coagent.py`
-- Use `_json_payload()` + `_get_text()` helpers for route validation
-- Auto-clamp floats/ints with `_clamp_float()` / `_clamp_int()`
-- Max text size: 100 KiB per request
-- Max passes: 5
-- Trigger words in `data/trigger_words.txt`
-- Tests in `tests/` using Flask test client
+- Auth: global `before_request` in `hermes_coagent.py`
+- Route helpers: `_json_payload()`, `_get_text()`, `_clamp_float()`, `_clamp_int()`
+- Max text: 100 KiB per request
+- Tests: `tests/` using Flask test client
+- Bypass trigger words: `data/trigger_words.txt`
 
 ## Deployment
 
-- CoAgent launched via `clean_start_coagent.ps1` (in `C:\Windows\Temp`)
-- Uses Python 3.12.9 at `C:\Program Files\Python312\python.exe`
-- All deps: `flask`, `waitress`, `mss`, `pywinauto`, `psutil`
+- Launched via `clean_start_coagent.ps1` (in `C:\Windows\Temp`)
+- Python 3.12.9 at `C:\Program Files\Python312\python.exe`
+- Core deps: `flask`, `waitress`, `mss`, `pywinauto`, `psutil`
+- v7.6 deps: `dxcam`, `playwright`, `google-api-python-client`, `google-auth-oauthlib`, `win11toast`
+
+## API Notes
+
+- All endpoints behind `require_auth` unless in AUTH_EXEMPT_PATHS/AUTH_EXEMPT_PREFIXES
+- `POST` endpoints generally expect `application/json`
+- See `README.md` and route module docstrings for full endpoint details
+- v7.5b → v7.6: Added 14 new endpoints across 6 new modules + health tracker + fallback chain
