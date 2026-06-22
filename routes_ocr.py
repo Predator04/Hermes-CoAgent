@@ -5,6 +5,7 @@ from io import BytesIO
 from pathlib import Path
 from flask import Response, jsonify, request
 from shared import _json_body, _log, _console, _missing_field, get_host_ip, COAGENT_DIR, SCREENSHOTS_DIR, TRAY_PORT
+from shared_fallbacks import FallbackChain
 
 # MSS for fast screenshots (DXGI)
 _MSS_AVAILABLE = False
@@ -15,12 +16,23 @@ try:
 except ImportError:
     pass
 
+try:
+    import dxcam
+    HAS_DXCAM = True
+except ImportError:
+    dxcam = None
+    HAS_DXCAM = False
+
+_DXCAM_LOCK = threading.Lock()
+_DXCAM_CAMERAS = {}
+
 # Screenshot cache
 SCREENSHOT_CACHE_TTL = 2.0
 _last_screenshot_time = 0.0
 _last_screenshot_raw = b""
 _last_screenshot_hash = None
 _screenshot_lock = threading.Lock()
+_LAST_CAPTURE_METHOD = {}
 # v7.3: Pixel hash — skip capture if screen unchanged
 _PIXEL_HASH_CACHE = {}
 _PIXEL_HASH_LOCK = threading.Lock()
@@ -120,8 +132,143 @@ def _grab_screen_mss(force=False, monitor_index=0):
         _log(f"MSS capture failed: {type(e).__name__}: {e}")
         return b""
 
+def _screenshot_dxcam(force=False, monitor_index=0):
+    """Capture via DXCam and return JPEG bytes, or None on failure."""
+    if not HAS_DXCAM or not HAS_PIL:
+        return None
+    monitor_index = _coerce_monitor_index(monitor_index)
+    output_idx = max(0, monitor_index - 1)
+    try:
+        with _DXCAM_LOCK:
+            camera = _DXCAM_CAMERAS.get(output_idx)
+            if camera is None:
+                camera = dxcam.create(output_idx=output_idx, output_color="RGB")
+                _DXCAM_CAMERAS[output_idx] = camera
+            frame = camera.grab()
+        if frame is None:
+            return None
+        img = Image.fromarray(frame)
+        buf = BytesIO()
+        img.convert("RGB").save(buf, format="JPEG", quality=85)
+        return buf.getvalue()
+    except Exception as e:
+        _log(f"DXCam capture failed: {type(e).__name__}: {e}")
+        return None
+
+def _screenshot_mss(force=False, monitor_index=0):
+    data = _grab_screen_mss(force=force, monitor_index=monitor_index)
+    return data or None
+
+def _screenshot_pil(force=False, monitor_index=0):
+    if not HAS_PIL:
+        return None
+    try:
+        from PIL import ImageGrab
+        monitor_index = _coerce_monitor_index(monitor_index)
+        if monitor_index:
+            bounds = _monitor_bounds(monitor_index)
+            left = bounds.get("left", 0)
+            top = bounds.get("top", 0)
+            bbox = (left, top, left + bounds.get("width", 0), top + bounds.get("height", 0))
+            pil_img = ImageGrab.grab(bbox=bbox)
+        else:
+            try:
+                pil_img = ImageGrab.grab(all_screens=True)
+            except TypeError:
+                pil_img = ImageGrab.grab()
+        buf = BytesIO()
+        pil_img.save(buf, format="PNG")
+        return buf.getvalue()
+    except Exception as e:
+        _log(f"PIL capture failed: {type(e).__name__}: {e}")
+        return None
+
+def _screenshot_win32(force=False, monitor_index=0):
+    if not HAS_PIL:
+        return None
+    hwnd = hwnd_dc = src_dc = mem_dc = bitmap = None
+    try:
+        import win32con
+        import win32gui
+        import win32ui
+
+        bounds = _monitor_bounds(monitor_index)
+        left = int(bounds.get("left", 0))
+        top = int(bounds.get("top", 0))
+        width = int(bounds.get("width", 0)) or 1920
+        height = int(bounds.get("height", 0)) or 1080
+        hwnd = win32gui.GetDesktopWindow()
+        hwnd_dc = win32gui.GetWindowDC(hwnd)
+        src_dc = win32ui.CreateDCFromHandle(hwnd_dc)
+        mem_dc = src_dc.CreateCompatibleDC()
+        bitmap = win32ui.CreateBitmap()
+        bitmap.CreateCompatibleBitmap(src_dc, width, height)
+        mem_dc.SelectObject(bitmap)
+        mem_dc.BitBlt((0, 0), (width, height), src_dc, (left, top), win32con.SRCCOPY)
+        bmp_info = bitmap.GetInfo()
+        bmp_bits = bitmap.GetBitmapBits(True)
+        img = Image.frombuffer(
+            "RGB",
+            (bmp_info["bmWidth"], bmp_info["bmHeight"]),
+            bmp_bits,
+            "raw",
+            "BGRX",
+            0,
+            1,
+        )
+        buf = BytesIO()
+        img.save(buf, format="PNG")
+        return buf.getvalue()
+    except Exception as e:
+        _log(f"Win32 capture failed: {type(e).__name__}: {e}")
+        return None
+    finally:
+        try:
+            if bitmap is not None:
+                win32gui.DeleteObject(bitmap.GetHandle())
+        except Exception:
+            pass
+        try:
+            if mem_dc is not None:
+                mem_dc.DeleteDC()
+        except Exception:
+            pass
+        try:
+            if src_dc is not None:
+                src_dc.DeleteDC()
+        except Exception:
+            pass
+        try:
+            if hwnd and hwnd_dc:
+                win32gui.ReleaseDC(hwnd, hwnd_dc)
+        except Exception:
+            pass
+
+def _screenshot_relay(force=False, monitor_index=0):
+    data, _latency_ms, relay_error = _fetch_tray_relay_screen(timeout=2.0)
+    if data:
+        return data
+    if relay_error:
+        _log(f"PowerShell relay capture failed: {relay_error}")
+    return None
+
+def _ensure_png_bytes(data):
+    if not data:
+        return b""
+    if data.startswith(b"\x89PNG"):
+        return data
+    if not HAS_PIL:
+        return data
+    try:
+        img = Image.open(BytesIO(data))
+        buf = BytesIO()
+        img.save(buf, format="PNG")
+        return buf.getvalue()
+    except Exception:
+        return data
+
 def _capture_raw(force=False, monitor_index=0):
-    """Capture full screen as PNG bytes. Uses MSS (~5ms) then PIL fallback."""
+    """Capture full screen as PNG bytes through the configured fallback chain."""
     global _last_screenshot_time, _last_screenshot_raw, _PIXEL_HASH_CACHE
     monitor_index = _coerce_monitor_index(monitor_index)
     now = time.time()
@@ -132,31 +279,26 @@ def _capture_raw(force=False, monitor_index=0):
         cached = _SCREENSHOT_CACHE.get(monitor_index, {})
         if not force and cached.get("raw") and (now - cached.get("time", 0)) < SCREENSHOT_CACHE_TTL:
             return cached["raw"]
-        # Method 0: MSS / DXGI-style fast capture before PIL ImageGrab fallback.
-        img_bytes = _grab_screen_mss(force=force, monitor_index=monitor_index)
-        if not img_bytes and HAS_PIL:
-            try:
-                from PIL import ImageGrab
-                if monitor_index:
-                    bounds = _monitor_bounds(monitor_index)
-                    left = bounds.get("left", 0)
-                    top = bounds.get("top", 0)
-                    bbox = (left, top, left + bounds.get("width", 0), top + bounds.get("height", 0))
-                    pil_img = ImageGrab.grab(bbox=bbox)
-                else:
-                    try:
-                        pil_img = ImageGrab.grab(all_screens=True)
-                    except TypeError:
-                        pil_img = ImageGrab.grab()
-                buf = BytesIO()
-                pil_img.save(buf, format="PNG")
-                img_bytes = buf.getvalue()
-            except:
-                pass
+        screenshot_chain = FallbackChain("screenshot")
+        screenshot_chain.add_method("dxcam", _screenshot_dxcam, force, monitor_index)
+        screenshot_chain.add_method("mss", _screenshot_mss, force, monitor_index)
+        screenshot_chain.add_method("pil", _screenshot_pil, force, monitor_index)
+        screenshot_chain.add_method("win32", _screenshot_win32, force, monitor_index)
+        screenshot_chain.add_method("powershell_relay", _screenshot_relay, force, monitor_index)
+        try:
+            img_bytes = _ensure_png_bytes(screenshot_chain.execute())
+            _LAST_CAPTURE_METHOD[monitor_index] = screenshot_chain.last_success
+        except Exception as e:
+            _log(f"Screenshot fallback chain failed: {type(e).__name__}: {e}")
+            img_bytes = b""
         if img_bytes:
             _last_screenshot_time = now
             _last_screenshot_raw = img_bytes
-            _SCREENSHOT_CACHE[monitor_index] = {"time": now, "raw": img_bytes}
+            _SCREENSHOT_CACHE[monitor_index] = {
+                "time": now,
+                "raw": img_bytes,
+                "method": _LAST_CAPTURE_METHOD.get(monitor_index),
+            }
         return img_bytes
 
 def _capture_jpeg(force=False, quality=85, monitor_index=0):
@@ -363,28 +505,14 @@ def register_routes(app, state, require_auth):
     def route_screen():
         monitor_requested = "monitor" in request.args
         monitor_index = _request_monitor(0)
-        if monitor_requested:
-            data = _capture_jpeg(force=True, monitor_index=monitor_index)
-            if data:
-                return Response(data, mimetype="image/jpeg", headers={
-                    "X-Capture-Method": "local-monitor",
-                    "X-Monitor-Index": str(monitor_index),
-                })
-            return jsonify({"error": "No screenshot", "monitor_index": monitor_index}), 500
-        data, latency_ms, relay_error = _fetch_tray_relay_screen(timeout=2.0)
+        data = _capture_jpeg(force=True, monitor_index=monitor_index)
         if data:
+            method = (_LAST_CAPTURE_METHOD.get(monitor_index) or "unknown").replace("_", "-")
             return Response(data, mimetype="image/jpeg", headers={
-                "X-Capture-Method": "tray-relay",
-                "X-Relay-Latency-Ms": str(latency_ms),
-        })
-        _log(f"Tray relay screen unavailable; falling back to local capture: {relay_error}")
-        data = _capture_jpeg(monitor_index=monitor_index)
-        if data:
-            return Response(data, mimetype="image/jpeg", headers={
-                "X-Capture-Method": "local",
-                "X-Relay-Error": (relay_error or "")[:200],
+                "X-Capture-Method": method,
+                "X-Monitor-Index": str(monitor_index) if monitor_requested else "0",
             })
-        return jsonify({"error": "No screenshot"}), 500
+        return jsonify({"error": "No screenshot", "monitor_index": monitor_index}), 500
 
     @app.route("/screen/probe", methods=["GET"])
     @require_auth
@@ -405,6 +533,7 @@ def register_routes(app, state, require_auth):
             local["latency_ms"] = round((time.perf_counter() - start) * 1000, 1)
             local["bytes"] = len(data) if data else 0
             local["available"] = bool(data)
+            local["method"] = _LAST_CAPTURE_METHOD.get(0)
             if not data:
                 local["error"] = "local capture returned no bytes"
         except Exception as e:
@@ -471,9 +600,10 @@ def register_routes(app, state, require_auth):
         except:
             pass
         monitors = get_monitor_list()
-        return jsonify({"mss": _MSS_AVAILABLE, "pil": HAS_PIL, "session": sid,
+        return jsonify({"dxcam": HAS_DXCAM, "mss": _MSS_AVAILABLE, "pil": HAS_PIL, "session": sid,
                         "host": get_host_ip(), "winrt_runtime": _check_winrt_version(),
-                        "monitors": monitors, "monitor_count": len(monitors)})
+                        "monitors": monitors, "monitor_count": len(monitors),
+                        "last_capture_method": dict(_LAST_CAPTURE_METHOD)})
 
     @app.route("/ocr/find", methods=["POST"])
     @require_auth

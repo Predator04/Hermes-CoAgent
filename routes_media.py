@@ -5,6 +5,7 @@ from flask import jsonify, request
 from shared import _json_body, _log, _console, _missing_field, COAGENT_DIR, MACROS_DIR, \
     SCREENSHOTS_DIR, TUNNEL_LOG, TRAY_LOG, SERVER_LOG, SERVER_PORT, TRAY_PORT, \
     _sanitize_path, _sanitize_cmd, _interactive_task_xml, sse_broadcast, sse_response
+from routes_config import backup_file
 
 # In-memory action history (shared with main)
 _action_history = []
@@ -184,6 +185,7 @@ def _load_scheduler():
     return {"actions": []}
 
 def _save_scheduler(data):
+    backup_file(SCHEDULER_FILE)
     SCHEDULER_FILE.write_text(json.dumps(data, indent=2))
 
 def register_routes(app, state, require_auth):
@@ -445,9 +447,10 @@ $s.Speak($text)
         except ValueError as e:
             return jsonify({"error": str(e)}), 400
         MACROS_DIR.mkdir(parents=True, exist_ok=True)
+        backup_path = backup_file(path)
         path.write_text(json.dumps({"name": name, "actions": actions}, indent=2), encoding="utf-8")
         _log(f"Macro saved: {name} ({len(actions)} actions)")
-        return jsonify({"status": "saved", "name": name, "count": len(actions)})
+        return jsonify({"status": "saved", "name": name, "count": len(actions), "backup": backup_path})
 
     @app.route("/macro/run", methods=["POST"])
     @require_auth
@@ -492,8 +495,9 @@ $s.Speak($text)
         except ValueError as e:
             return jsonify({"error": str(e)}), 400
         if path.exists():
+            backup_path = backup_file(path)
             path.unlink()
-            return jsonify({"status": "deleted", "name": name})
+            return jsonify({"status": "deleted", "name": name, "backup": backup_path})
         return jsonify({"error": f"Macro '{name}' not found"}), 404
 
     @app.route("/replay", methods=["POST"])

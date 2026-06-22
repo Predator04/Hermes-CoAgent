@@ -3,6 +3,7 @@ import os, subprocess, ctypes
 from pathlib import Path
 from flask import jsonify
 from shared import _json_body, _log, _missing_field, COAGENT_DIR, _sanitize_path, _sanitize_cmd
+from routes_config import backup_file
 
 _ALLOWED_DELETE_ROOTS = {Path(_sanitize_path(str(COAGENT_DIR))).resolve()}
 
@@ -58,10 +59,11 @@ def register_routes(app, state, require_auth):
         content = d.get("content", "")
         try:
             os.makedirs(os.path.dirname(path), exist_ok=True)
+            backup_path = backup_file(path)
             with open(path, "w", encoding="utf-8") as f:
                 f.write(content)
             _log(f"File written: {path} ({len(content)} chars)")
-            return jsonify({"status": "ok", "path": path, "size": len(content)})
+            return jsonify({"status": "ok", "path": path, "size": len(content), "backup": backup_path})
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
@@ -77,13 +79,14 @@ def register_routes(app, state, require_auth):
             resolved = Path(path).resolve()
             if resolved in _ALLOWED_DELETE_ROOTS or resolved == Path.home().resolve():
                 return jsonify({"error": "Refusing to delete an allowed root"}), 403
+            backup_path = backup_file(path)
             if os.path.isdir(path):
                 import shutil
                 shutil.rmtree(path)
             else:
                 os.remove(path)
             _log(f"File deleted: {path}")
-            return jsonify({"status": "ok", "path": path})
+            return jsonify({"status": "ok", "path": path, "backup": backup_path})
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 

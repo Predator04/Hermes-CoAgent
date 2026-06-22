@@ -358,6 +358,12 @@ from routes_cua import register_routes as reg_cua
 from routes_copilot import register_routes as reg_copilot
 from routes_buddy import register_routes as reg_buddy
 from routes_bypass import register_routes as reg_bypass
+from routes_toast import register_routes as reg_toast
+from routes_deps import register_routes as reg_deps
+from routes_config import register_routes as reg_config
+from routes_browser import register_routes as reg_browser
+from routes_google import register_routes as reg_google
+from routes_logs import register_routes as reg_logs
 
 reg_mouse(app, state, require_auth)
 reg_ocr(app, state, require_auth)
@@ -372,6 +378,12 @@ reg_cua(app, state, require_auth)
 reg_copilot(app, state, require_auth)
 reg_buddy(app, state, require_auth)
 reg_bypass(app, state, require_auth)
+reg_toast(app, state, require_auth)
+reg_deps(app, state, require_auth)
+reg_config(app, state, require_auth)
+reg_browser(app, state, require_auth)
+reg_google(app, state, require_auth)
+reg_logs(app, state, require_auth)
 
 # ── Core routes (stay in main) ─────────────────────────────────
 @app.route("/", methods=["GET"])
@@ -412,7 +424,8 @@ def route_version():
                                  "cua_driver", "operator_dashboard", "remote_tunnel",
                                  "ai_copilot", "bypass_toolkit"],
                     "modules": ["mouse", "ocr", "uia", "file", "media", "v63",
-                                "stream", "process", "voice", "cua", "copilot", "bypass"],
+                                "stream", "process", "voice", "cua", "copilot",
+                                "bypass", "toast", "deps", "config", "browser", "google", "logs"],
                     "security": ["auth_token", "rate_limit", "input_sanitization",
                                  "cors_restricted", "security_headers"]})
 
@@ -579,7 +592,7 @@ if __name__ == "__main__":
         _console("  Auth: disabled")
 
     _console(f"  Server: http://{bind_host}:{port}/")
-    _console(f"  Modules: mouse ocr uia file media v63 stream process voice cua copilot buddy bypass")
+    _console(f"  Modules: mouse ocr uia file media v63 stream process voice cua copilot buddy bypass toast deps config browser google logs")
     _console()
 
     # Pre-warm UIA engine

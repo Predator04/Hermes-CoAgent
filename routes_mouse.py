@@ -1,5 +1,5 @@
 """Mouse, keyboard, input, and action-chain routes."""
-import threading, time, json, ctypes
+import threading, time, json, ctypes, hashlib
 from flask import jsonify, g
 from shared import _json_body, _log, _console, _missing_field, _result_response, COAGENT_DIR, SCREENSHOTS_DIR, _interactive_task_xml
 
@@ -18,6 +18,80 @@ except ImportError:
 PULSE_DEFAULT_COLOR = 0x00FF00
 PULSE_ACTION_COLORS = {"click": 0xFF4400, "doubleclick": 0xFF4400, "rightclick": 0xFF4400,
                        "type": 0x4488FF, "hotkey": 0xFF00FF, "scroll": 0xFFFF00, "drag": 0xFFAA00}
+
+def _as_bool(value, default=True):
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"1", "true", "yes", "on"}:
+            return True
+        if lowered in {"0", "false", "no", "off"}:
+            return False
+    return bool(value)
+
+def _screen_hash():
+    try:
+        from routes_ocr import _capture_raw
+        data = _capture_raw(force=True)
+        if not data:
+            return None
+        return hashlib.blake2b(data, digest_size=16).hexdigest()
+    except Exception as e:
+        _log(f"Click retry screenshot hash failed: {type(e).__name__}: {e}")
+        return None
+
+def _response_failed(result):
+    if isinstance(result, tuple):
+        try:
+            return int(result[1]) >= 400
+        except Exception:
+            return False
+    status_code = getattr(result, "status_code", 200)
+    try:
+        return int(status_code) >= 400
+    except Exception:
+        return False
+
+def _mouse_click_with_retry(x, y, button="left", background=True, state=None):
+    offsets = [(0, 0), (10, 10), (-10, -10), (20, 20), (-20, -20), (0, 15), (0, -15)]
+    attempts = []
+    baseline_hash = _screen_hash()
+    for index, (dx, dy) in enumerate(offsets):
+        cx, cy = x + dx, y + dy
+        result = _mouse_action("click", cx, cy, button, background, state)
+        if _response_failed(result):
+            return result
+        time.sleep(0.3)
+        after_hash = _screen_hash()
+        changed = bool(baseline_hash and after_hash and baseline_hash != after_hash)
+        attempts.append({
+            "position": [cx, cy],
+            "changed": changed,
+            "screenshot_compared": bool(baseline_hash and after_hash),
+        })
+        if changed or not (baseline_hash and after_hash):
+            return jsonify({
+                "status": "ok",
+                "clicked": True,
+                "action": "click",
+                "retries": index,
+                "final_position": [cx, cy],
+                "attempts": attempts,
+            })
+        baseline_hash = after_hash
+    final = attempts[-1]["position"] if attempts else [x, y]
+    return jsonify({
+        "status": "ok",
+        "clicked": True,
+        "action": "click",
+        "retries": max(0, len(attempts) - 1),
+        "final_position": final,
+        "attempts": attempts,
+        "warning": "Screen appeared unchanged after all retry positions",
+    })
 
 def _background_sendinput(action, x, y, button="left"):
     """Send input without stealing focus using SendInput."""
@@ -107,8 +181,19 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_mouse_click():
         d = _json_body()
+        retry = _as_bool(d.get("retry"), True)
+        if retry:
+            return _mouse_click_with_retry(int(d.get("x", 0)), int(d.get("y", 0)),
+                                           d.get("button", "left"), d.get("background", True), state)
         return _mouse_action("click", int(d.get("x", 0)), int(d.get("y", 0)),
                              d.get("button", "left"), d.get("background", True), state)
+
+    @app.route("/mouse/click/smart", methods=["POST"])
+    @require_auth
+    def route_mouse_click_smart():
+        d = _json_body()
+        return _mouse_click_with_retry(int(d.get("x", 0)), int(d.get("y", 0)),
+                                       d.get("button", "left"), d.get("background", True), state)
 
     @app.route("/mouse/dblclick", methods=["POST"])
     @require_auth
