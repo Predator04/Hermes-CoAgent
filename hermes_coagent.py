@@ -67,6 +67,90 @@ import waitress
 
 app = Flask(__name__, static_folder=None)
 
+ENDPOINT_HEALTH = {}
+_ENDPOINT_HEALTH_LOCK = threading.Lock()
+_ENDPOINT_HEALTH_THREAD = None
+_ENDPOINT_HEALTH_INTERVAL = 60
+_ENDPOINT_HEALTH_WINDOW_STARTED = time.time()
+
+def record_endpoint_health(path: str, ok: bool, error: str = ""):
+    now = time.time()
+    with _ENDPOINT_HEALTH_LOCK:
+        entry = ENDPOINT_HEALTH.setdefault(path, {
+            "ok": 0,
+            "fail": 0,
+            "total": 0,
+            "last_5min_ok": 0,
+            "last_5min_fail": 0,
+            "last_error": "",
+            "last_time": now,
+        })
+        entry["total"] += 1
+        if ok:
+            entry["ok"] += 1
+            entry["last_5min_ok"] += 1
+        else:
+            entry["fail"] += 1
+            entry["last_5min_fail"] += 1
+            if error:
+                entry["last_error"] = error
+        entry["last_time"] = now
+
+def _endpoint_health_snapshot():
+    with _ENDPOINT_HEALTH_LOCK:
+        rows = {}
+        for path, entry in ENDPOINT_HEALTH.items():
+            total = int(entry.get("total", 0))
+            ok_count = int(entry.get("ok", 0))
+            fail_count = int(entry.get("fail", 0))
+            window_total = int(entry.get("last_5min_ok", 0)) + int(entry.get("last_5min_fail", 0))
+            rows[path] = {
+                **entry,
+                "success_rate_pct": round((ok_count / total) * 100, 2) if total else None,
+                "failure_rate_pct": round((fail_count / total) * 100, 2) if total else None,
+                "last_5min_success_rate_pct": round((entry.get("last_5min_ok", 0) / window_total) * 100, 2)
+                if window_total else None,
+                "last_5min_failure_rate_pct": round((entry.get("last_5min_fail", 0) / window_total) * 100, 2)
+                if window_total else None,
+            }
+    return rows
+
+def _endpoint_average_success_rate():
+    with _ENDPOINT_HEALTH_LOCK:
+        ok_count = sum(int(e.get("ok", 0)) for e in ENDPOINT_HEALTH.values())
+        total = sum(int(e.get("total", 0)) for e in ENDPOINT_HEALTH.values())
+    if total < 5:
+        return None
+    return round((ok_count / total) * 100, 2)
+
+def _endpoint_failing_last_window():
+    failing = []
+    with _ENDPOINT_HEALTH_LOCK:
+        for path, entry in ENDPOINT_HEALTH.items():
+            ok_count = int(entry.get("last_5min_ok", 0))
+            fail_count = int(entry.get("last_5min_fail", 0))
+            total = ok_count + fail_count
+            if total and (fail_count / total) > 0.5:
+                failing.append({
+                    "path": path,
+                    "ok": ok_count,
+                    "fail": fail_count,
+                    "failure_rate_pct": round((fail_count / total) * 100, 2),
+                    "last_error": entry.get("last_error", ""),
+                })
+    return failing
+
+def _reset_endpoint_health_window_if_needed():
+    global _ENDPOINT_HEALTH_WINDOW_STARTED
+    now = time.time()
+    if now - _ENDPOINT_HEALTH_WINDOW_STARTED < 300:
+        return
+    with _ENDPOINT_HEALTH_LOCK:
+        for entry in ENDPOINT_HEALTH.values():
+            entry["last_5min_ok"] = 0
+            entry["last_5min_fail"] = 0
+        _ENDPOINT_HEALTH_WINDOW_STARTED = now
+
 # ── v7.3: Single-source version ────────────────────────────────
 
 # ── v7.3: Security middleware ───────────────────────────────────
@@ -122,6 +206,16 @@ def _cors_headers(response):
         response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
         response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
         response.headers["Access-Control-Max-Age"] = "86400"
+    return response
+
+@app.after_request
+def _record_endpoint_health(response):
+    try:
+        if request.method != "OPTIONS":
+            ok = response.status_code < 500
+            record_endpoint_health(request.path, ok, "" if ok else f"HTTP {response.status_code}")
+    except Exception:
+        pass
     return response
 
 @app.before_request
@@ -255,7 +349,64 @@ _WATCHDOG_STATE = {
     "interval_seconds": _WATCHDOG_INTERVAL,
     "failure_threshold": _WATCHDOG_FAILURE_THRESHOLD,
     "url": None,
+    "endpoint_average_success_rate": None,
+    "endpoint_low_success_checks": 0,
+    "memory_growth_mb_5min": 0.0,
 }
+
+try:
+    import psutil as _psutil
+except ImportError:
+    _psutil = None
+
+_MEMORY_LOCK = threading.Lock()
+_MEMORY_SAMPLES = deque(maxlen=12)
+_MEMORY_STATE = {
+    "psutil": _psutil is not None,
+    "current_rss": 0,
+    "current_rss_mb": 0.0,
+    "peak_rss": 0,
+    "peak_rss_mb": 0.0,
+    "growth_mb_5min": 0.0,
+    "growth_rate_mb_per_hour": 0.0,
+    "samples": [],
+}
+
+def _sample_memory():
+    if _psutil is None:
+        return dict(_MEMORY_STATE)
+    now = time.time()
+    try:
+        rss = int(_psutil.Process(os.getpid()).memory_info().rss)
+    except Exception as e:
+        with _MEMORY_LOCK:
+            _MEMORY_STATE["error"] = f"{type(e).__name__}: {e}"
+            return dict(_MEMORY_STATE)
+    with _MEMORY_LOCK:
+        _MEMORY_SAMPLES.append({"time": now, "rss": rss, "rss_mb": round(rss / (1024 * 1024), 2)})
+        samples = list(_MEMORY_SAMPLES)
+        peak = max((sample["rss"] for sample in samples), default=rss)
+        window = [sample for sample in samples if now - sample["time"] <= 300]
+        if len(window) >= 2:
+            first = window[0]
+            last = window[-1]
+            elapsed = max(1.0, last["time"] - first["time"])
+            growth_mb = (last["rss"] - first["rss"]) / (1024 * 1024)
+            growth_rate = growth_mb * (3600 / elapsed)
+        else:
+            growth_mb = 0.0
+            growth_rate = 0.0
+        _MEMORY_STATE.update({
+            "psutil": True,
+            "current_rss": rss,
+            "current_rss_mb": round(rss / (1024 * 1024), 2),
+            "peak_rss": peak,
+            "peak_rss_mb": round(peak / (1024 * 1024), 2),
+            "growth_mb_5min": round(growth_mb, 2),
+            "growth_rate_mb_per_hour": round(growth_rate, 2),
+            "samples": samples,
+        })
+        return dict(_MEMORY_STATE)
 
 def _watchdog_update(**updates):
     with _WATCHDOG_LOCK:
@@ -305,6 +456,34 @@ def _restart_from_watchdog():
     time.sleep(1)
     os._exit(75)
 
+def _endpoint_health_loop():
+    _log(f"[ENDPOINT_HEALTH] Started; checking every {_ENDPOINT_HEALTH_INTERVAL}s")
+    time.sleep(_ENDPOINT_HEALTH_INTERVAL)
+    while True:
+        failing = _endpoint_failing_last_window()
+        if failing:
+            summary = ", ".join(
+                f"{item['path']}={item['failure_rate_pct']}%" for item in failing[:10]
+            )
+            _log(f"[ENDPOINT_HEALTH] High endpoint failure rate: {summary}")
+        if len(failing) > 3:
+            _log("[ENDPOINT_HEALTH] More than 3 endpoints are failing >50%; restarting CoAgent")
+            _restart_from_watchdog()
+            return
+        _reset_endpoint_health_window_if_needed()
+        time.sleep(_ENDPOINT_HEALTH_INTERVAL)
+
+def _start_endpoint_health_monitor():
+    global _ENDPOINT_HEALTH_THREAD
+    if _ENDPOINT_HEALTH_THREAD and _ENDPOINT_HEALTH_THREAD.is_alive():
+        return
+    _ENDPOINT_HEALTH_THREAD = threading.Thread(
+        target=_endpoint_health_loop,
+        name="endpoint-health",
+        daemon=True,
+    )
+    _ENDPOINT_HEALTH_THREAD.start()
+
 def _watchdog_loop(port):
     url = f"http://127.0.0.1:{port}/health"
     _watchdog_update(enabled=True, started_at=time.time(), url=url)
@@ -334,6 +513,28 @@ def _watchdog_loop(port):
             if failures >= _WATCHDOG_FAILURE_THRESHOLD:
                 _restart_from_watchdog()
                 return
+        average_success = _endpoint_average_success_rate()
+        memory_state = _sample_memory()
+        with _WATCHDOG_LOCK:
+            _WATCHDOG_STATE["endpoint_average_success_rate"] = average_success
+            if average_success is not None and average_success < 60:
+                _WATCHDOG_STATE["endpoint_low_success_checks"] += 1
+            else:
+                _WATCHDOG_STATE["endpoint_low_success_checks"] = 0
+            low_success_checks = _WATCHDOG_STATE["endpoint_low_success_checks"]
+            _WATCHDOG_STATE["memory_growth_mb_5min"] = memory_state.get("growth_mb_5min", 0.0)
+        if average_success is not None and average_success < 60:
+            _log(f"[WATCHDOG] Endpoint average success low: {average_success}% ({low_success_checks}/2)")
+            if low_success_checks >= 2:
+                _restart_from_watchdog()
+                return
+        growth_mb = float(memory_state.get("growth_mb_5min") or 0.0)
+        if growth_mb > 100:
+            _log(f"[WATCHDOG] Memory growth warning: {growth_mb:.2f} MB in 5 minutes")
+            if growth_mb > 150:
+                _log("[WATCHDOG] Memory growth exceeded restart threshold")
+                _restart_from_watchdog()
+                return
         time.sleep(_WATCHDOG_INTERVAL)
 
 def _start_watchdog(port):
@@ -360,7 +561,7 @@ from routes_buddy import register_routes as reg_buddy
 from routes_bypass import register_routes as reg_bypass
 from routes_toast import register_routes as reg_toast
 from routes_deps import register_routes as reg_deps
-from routes_config import register_routes as reg_config
+from routes_config import register_routes as reg_config, backup_file
 from routes_browser import register_routes as reg_browser
 from routes_google import register_routes as reg_google
 from routes_logs import register_routes as reg_logs
@@ -384,6 +585,7 @@ reg_config(app, state, require_auth)
 reg_browser(app, state, require_auth)
 reg_google(app, state, require_auth)
 reg_logs(app, state, require_auth)
+state.backup_file = backup_file
 
 # ── Core routes (stay in main) ─────────────────────────────────
 @app.route("/", methods=["GET"])
@@ -398,6 +600,34 @@ def route_ping():
 @app.route("/health", methods=["GET"])
 def route_health():
     return jsonify({"status": "ok", "agent": AGENT_NAME, "version": VERSION})
+
+@app.route("/health/endpoints", methods=["GET"])
+@require_auth
+def route_health_endpoints():
+    stats = _endpoint_health_snapshot()
+    return jsonify({
+        "endpoints": stats,
+        "count": len(stats),
+        "average_success_rate_pct": _endpoint_average_success_rate(),
+        "window_started": _ENDPOINT_HEALTH_WINDOW_STARTED,
+    })
+
+@app.route("/health/endpoints/reset", methods=["POST"])
+@require_auth
+def route_health_endpoints_reset():
+    global _ENDPOINT_HEALTH_WINDOW_STARTED
+    with _ENDPOINT_HEALTH_LOCK:
+        ENDPOINT_HEALTH.clear()
+        _ENDPOINT_HEALTH_WINDOW_STARTED = time.time()
+    return jsonify({"status": "reset"})
+
+@app.route("/health/memory", methods=["GET"])
+@require_auth
+def route_health_memory():
+    with _MEMORY_LOCK:
+        payload = dict(_MEMORY_STATE)
+    payload["watchdog_thread_alive"] = bool(_WATCHDOG_THREAD and _WATCHDOG_THREAD.is_alive())
+    return jsonify(payload)
 
 @app.route("/watchdog/status", methods=["GET"])
 @require_auth
@@ -422,7 +652,12 @@ def route_version():
                                  "security_headers", "multi_monitor", "screen_streaming",
                                  "process_management", "voice_commands", "auto_healing_watchdog",
                                  "cua_driver", "operator_dashboard", "remote_tunnel",
-                                 "ai_copilot", "bypass_toolkit"],
+                                 "ai_copilot", "bypass_toolkit", "dxcam_capture",
+                                 "fallback_chains", "endpoint_health_tracker",
+                                 "memory_leak_watchdog", "smart_click_retry",
+                                 "toast_notifications", "dependency_manager",
+                                 "config_backups", "browser_control",
+                                 "google_workspace", "log_analyzer"],
                     "modules": ["mouse", "ocr", "uia", "file", "media", "v63",
                                 "stream", "process", "voice", "cua", "copilot",
                                 "bypass", "toast", "deps", "config", "browser", "google", "logs"],
