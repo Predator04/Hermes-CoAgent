@@ -356,6 +356,8 @@ from routes_process import register_routes as reg_process
 from routes_voice import register_routes as reg_voice
 from routes_cua import register_routes as reg_cua
 from routes_copilot import register_routes as reg_copilot
+from routes_buddy import register_routes as reg_buddy
+from routes_bypass import register_routes as reg_bypass
 
 reg_mouse(app, state, require_auth)
 reg_ocr(app, state, require_auth)
@@ -368,6 +370,8 @@ reg_process(app, state, require_auth)
 reg_voice(app, state, require_auth)
 reg_cua(app, state, require_auth)
 reg_copilot(app, state, require_auth)
+reg_buddy(app, state, require_auth)
+reg_bypass(app, state, require_auth)
 
 # ── Core routes (stay in main) ─────────────────────────────────
 @app.route("/", methods=["GET"])
@@ -575,7 +579,7 @@ if __name__ == "__main__":
         _console("  Auth: disabled")
 
     _console(f"  Server: http://{bind_host}:{port}/")
-    _console(f"  Modules: mouse ocr uia file media v63 stream process voice cua copilot")
+    _console(f"  Modules: mouse ocr uia file media v63 stream process voice cua copilot buddy bypass")
     _console()
 
     # Pre-warm UIA engine
