@@ -26,7 +26,7 @@ TRACKED_DEPS = [
     {"module": "PIL", "package": "pillow"},
     {"module": "pyautogui", "package": "pyautogui"},
     {"module": "win11toast", "package": "win11toast"},
-    {"module": "dxcam", "package": "dxcam"},
+    {"module": "dxcam", "package": "dxcam", "lazy": True},
     {"module": "playwright", "package": "playwright"},
     {"module": "googleapiclient", "package": "google-api-python-client"},
     {"module": "google_auth_oauthlib", "package": "google-auth-oauthlib"},
@@ -62,7 +62,24 @@ def _package_for_module(module_name):
     return root.replace("_", "-")
 
 
+def _is_lazy(module_name):
+    for dep in TRACKED_DEPS:
+        if dep.get("lazy") and (dep["module"] == module_name or dep["module"].split(".", 1)[0] == module_name.split(".", 1)[0]):
+            return True
+    return False
+
+
 def _check_module(module_name, package=None):
+    if _is_lazy(module_name):
+        # Lazy modules: check if pip package exists without importing
+        pkg_name = package or module_name.split(".", 1)[0].replace("_", "-")
+        try:
+            version = metadata.version(pkg_name)
+            return {"module": module_name, "package": pkg_name, "installed": True, "version": version, "lazy": True}
+        except metadata.PackageNotFoundError:
+            return {"module": module_name, "package": pkg_name, "installed": False, "version": None, "lazy": True}
+        except Exception:
+            pass
     try:
         importlib.import_module(module_name)
         installed = True

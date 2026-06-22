@@ -16,12 +16,9 @@ try:
 except ImportError:
     pass
 
-try:
-    import dxcam
-    HAS_DXCAM = True
-except ImportError:
-    dxcam = None
-    HAS_DXCAM = False
+# DXCam — fully lazy import (crashes from Session 0)
+_DXCAM_MODULE = None
+HAS_DXCAM = False
 
 _DXCAM_LOCK = threading.Lock()
 _DXCAM_CAMERAS = {}
@@ -134,7 +131,17 @@ def _grab_screen_mss(force=False, monitor_index=0):
 
 def _screenshot_dxcam(force=False, monitor_index=0):
     """Capture via DXCam and return JPEG bytes, or None on failure."""
-    if not HAS_DXCAM or not HAS_PIL:
+    global HAS_DXCAM, _DXCAM_MODULE
+    if not HAS_DXCAM and _DXCAM_MODULE is None:
+        try:
+            import dxcam as m
+            _DXCAM_MODULE = m
+            HAS_DXCAM = True
+        except:
+            # DXCam crashes from Session 0 (no GPU access)
+            _DXCAM_MODULE = "__failed__"
+            return None
+    if _DXCAM_MODULE in (None, "__failed__") or not HAS_PIL:
         return None
     monitor_index = _coerce_monitor_index(monitor_index)
     output_idx = max(0, monitor_index - 1)
@@ -142,7 +149,7 @@ def _screenshot_dxcam(force=False, monitor_index=0):
         with _DXCAM_LOCK:
             camera = _DXCAM_CAMERAS.get(output_idx)
             if camera is None:
-                camera = dxcam.create(output_idx=output_idx, output_color="RGB")
+                camera = _DXCAM_MODULE.create(output_idx=output_idx, output_color="RGB")
                 _DXCAM_CAMERAS[output_idx] = camera
             frame = camera.grab()
         if frame is None:
