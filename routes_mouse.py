@@ -1,6 +1,6 @@
 """Mouse, keyboard, input, and action-chain routes."""
 import threading, time, json, ctypes, hashlib
-from flask import jsonify, g
+from flask import jsonify
 from shared import _json_body, _log, _console, _missing_field, _result_response, COAGENT_DIR, SCREENSHOTS_DIR, _interactive_task_xml
 
 try:
@@ -55,6 +55,42 @@ def _response_failed(result):
     except Exception:
         return False
 
+def _result_payload(result):
+    response = result
+    status_code = getattr(result, "status_code", 200)
+    if isinstance(result, tuple):
+        response = result[0]
+        if len(result) > 1:
+            status_code = result[1]
+    try:
+        status_code = int(status_code)
+    except Exception:
+        status_code = 200
+    if hasattr(response, "get_json"):
+        payload = response.get_json(silent=True)
+    elif hasattr(response, "json"):
+        payload = response.json
+    else:
+        payload = response
+    if isinstance(payload, (dict, list, str, int, float, bool)) or payload is None:
+        return payload, status_code
+    return str(payload), status_code
+
+def _record_action(action_type, data, result=None):
+    try:
+        import coagent_features as cf
+        recorder = getattr(cf, "record_action", None)
+        if recorder:
+            recorder(action_type, data, result)
+    except Exception as e:
+        _log(f"Session recording failed for {action_type}: {type(e).__name__}: {e}")
+
+def _set_cursor_pos(x, y):
+    if hasattr(ctypes, "windll"):
+        ctypes.windll.user32.SetCursorPos(int(x), int(y))
+        return
+    pyautogui.moveTo(int(x), int(y))
+
 def _mouse_click_with_retry(x, y, button="left", background=True, state=None):
     offsets = [(0, 0), (10, 10), (-10, -10), (20, 20), (-20, -20), (0, 15), (0, -15)]
     attempts = []
@@ -95,6 +131,8 @@ def _mouse_click_with_retry(x, y, button="left", background=True, state=None):
 
 def _background_sendinput(action, x, y, button="left"):
     """Send input without stealing focus using SendInput."""
+    if action == "move":
+        return _set_cursor_pos(x, y)
     if not hasattr(ctypes, 'windll'):
         return pyautogui.click(x, y, button=button)
     try:
@@ -121,7 +159,13 @@ def _mouse_action(action, x, y, button="left", background=True, state=None):
         gap = now - (state.last_action_time if state else 0)
         if gap < (state.min_action_gap if state else 0.05):
             time.sleep((state.min_action_gap if state else 0.05) - gap)
-        ctypes.windll.user32.SetCursorPos(x, y)
+        _set_cursor_pos(x, y)
+        if action == "move":
+            if state: state.last_action_time = time.time()
+            payload = {"status": "ok", "action": action, "x": x, "y": y}
+            _log(f"Mouse {action} ({x},{y}) button={button} bg={background}")
+            _record_action(action, {"x": x, "y": y, "button": button, "background": background}, payload)
+            return jsonify(payload)
         time.sleep(0.02)
         if background:
             _background_sendinput(action, x, y, button)
@@ -129,7 +173,9 @@ def _mouse_action(action, x, y, button="left", background=True, state=None):
             getattr(pyautogui, action)(x, y) if action in ("click", "doubleClick", "rightClick") else pyautogui.click(x, y, button=button)
         if state: state.last_action_time = time.time()
     _log(f"Mouse {action} ({x},{y}) button={button} bg={background}")
-    return jsonify({"status": "ok", "action": action, "x": x, "y": y})
+    payload = {"status": "ok", "action": action, "x": x, "y": y}
+    _record_action(action, {"x": x, "y": y, "button": button, "background": background}, payload)
+    return jsonify(payload)
 
 def _execute_action_wrapper(action, state=None):
     """Execute a stored action dict."""
@@ -145,7 +191,7 @@ def _execute_action_wrapper(action, state=None):
     elif typ == "hotkey":
         return _key_action("hotkey", action.get("keys", []), state)
     elif typ == "scroll":
-        return _mouse_action("scroll", 0, action.get("clicks", -3), "left", True, state)
+        return _scroll_action(action.get("clicks", -3), state)
     return jsonify({"error": f"Unknown action type: {typ}"}), 400
 
 def _key_action(action, data, state=None):
@@ -160,14 +206,24 @@ def _key_action(action, data, state=None):
             else:
                 pyautogui.write(str(data))
         _log(f"Key {action}: {data}")
-        return jsonify({"status": "ok", "action": action})
+        payload = {"status": "ok", "action": action}
+        record_data = {"text": str(data)} if action == "type" else {"keys": data if isinstance(data, list) else str(data)}
+        _record_action(action, record_data, payload)
+        return jsonify(payload)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-def _limit_arg(name, default, maximum):
-    try: v = int(g.get(name, 0))
-    except: v = default
-    return max(0, min(v, maximum))
+def _scroll_action(clicks, state=None):
+    if state and state.emergency_stop:
+        return jsonify({"error": "Emergency stop engaged"}), 503
+    try:
+        amount = int(clicks)
+        pyautogui.scroll(amount)
+        payload = {"status": "ok", "clicks": amount}
+        _record_action("scroll", {"clicks": amount}, payload)
+        return jsonify(payload)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 def register_routes(app, state, require_auth):
     @app.route("/mouse/move", methods=["POST"])
@@ -232,7 +288,9 @@ def register_routes(app, state, require_auth):
             else:
                 pyautogui.drag(x2 - x1, y2 - y1, button=d.get("button", "left"))
             _log(f"Drag ({x1},{y1})->({x2},{y2})")
-            return jsonify({"status": "ok", "x1": x1, "y1": y1, "x2": x2, "y2": y2})
+            payload = {"status": "ok", "x1": x1, "y1": y1, "x2": x2, "y2": y2}
+            _record_action("drag", {"x1": x1, "y1": y1, "x2": x2, "y2": y2, "button": d.get("button", "left"), "background": bg}, payload)
+            return jsonify(payload)
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
@@ -240,11 +298,7 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_mouse_scroll():
         d = _json_body()
-        try:
-            pyautogui.scroll(int(d.get("clicks", -3)))
-            return jsonify({"status": "ok", "clicks": d.get("clicks", -3)})
-        except Exception as e:
-            return jsonify({"error": str(e)}), 500
+        return _scroll_action(d.get("clicks", -3), state)
 
     @app.route("/key/type", methods=["POST"])
     @require_auth
@@ -266,7 +320,10 @@ def register_routes(app, state, require_auth):
         results = []
         for a in actions:
             r = _execute_action_wrapper(a, state)
-            results.append(r[0].json if hasattr(r[0], 'json') else r)
+            payload, status_code = _result_payload(r)
+            if status_code >= 400 and isinstance(payload, dict):
+                payload = {**payload, "status_code": status_code}
+            results.append(payload)
         return jsonify({"status": "ok", "count": len(results), "results": results})
 
     @app.route("/act", methods=["POST"])

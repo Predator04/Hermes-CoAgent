@@ -21,7 +21,7 @@ LAUNCH:
   python hermes_coagent.py --token=KEY        # Auth with fixed token
   python hermes_coagent.py --allow-external   # Bind 0.0.0.0 (requires --secure)
 """
-import sys, os, json, subprocess, threading, time, ctypes, traceback
+import sys, os, subprocess, threading, time, ctypes, traceback
 from collections import deque
 from datetime import datetime
 from html import escape
@@ -59,11 +59,11 @@ else:
 os.environ["PYAUTOGUI_FAILSAFE"] = "false"
 
 # ── Shared utilities ──────────────────────────────────────────
-from shared import COAGENT_DIR, SERVER_PORT, TRAY_PORT, SERVER_LOG, _console, _log, _json_body
+from shared import COAGENT_DIR, SERVER_PORT, TRAY_PORT, SERVER_LOG, _console, _log
 from shared import VERSION, AGENT_NAME, BUILD
 
 # ── Flask setup ────────────────────────────────────────────────
-from flask import Flask, request, jsonify, send_file, Response, g
+from flask import Flask, request, jsonify, Response, g
 import waitress
 
 app = Flask(__name__, static_folder=None)
@@ -309,14 +309,21 @@ def _h_exc(e):
 
 # v6.4: Singleton mutex
 _MUTEX_NAME = "HermesCoAgent_Instance"
-try:
-    _MUTEX_HANDLE = ctypes.windll.kernel32.CreateMutexW(None, False, _MUTEX_NAME)
-    if ctypes.windll.kernel32.GetLastError() == 183:
-        _console("[FATAL] Another CoAgent instance is already running. Killing old instance...")
-        subprocess.run(["taskkill", "/IM", "pythonw.exe", "/FI", "WINDOWTITLE eq *Hermes*"],
-                       capture_output=True, timeout=5)
-        time.sleep(1)
-except: pass
+_MUTEX_HANDLE = None
+
+def _create_singleton_mutex():
+    global _MUTEX_HANDLE
+    try:
+        if not hasattr(ctypes, "windll"):
+            return
+        _MUTEX_HANDLE = ctypes.windll.kernel32.CreateMutexW(None, False, _MUTEX_NAME)
+        if ctypes.windll.kernel32.GetLastError() == 183:
+            _console("[FATAL] Another CoAgent instance is already running. Killing old instance...")
+            subprocess.run(["taskkill", "/IM", "pythonw.exe", "/FI", "WINDOWTITLE eq *Hermes*"],
+                           capture_output=True, timeout=5)
+            time.sleep(1)
+    except Exception:
+        pass
 
 # ── State ──────────────────────────────────────────────────────
 @dataclass
@@ -826,6 +833,7 @@ def route_logs():
 
 # ── Main ──────────────────────────────────────────────────────
 if __name__ == "__main__":
+    _create_singleton_mutex()
     _console("╔════════════════════════════════════════════════╗")
     _console(f"║     {AGENT_NAME} v{VERSION} — MODULAR REFACTOR   ║")
     _console("╚════════════════════════════════════════════════╝")
@@ -883,6 +891,7 @@ if __name__ == "__main__":
 
     # Start auto-healing watchdog
     _start_watchdog(port)
+    _start_endpoint_health_monitor()
 
     # v7.3: Waitress WSGI server
     _console(f"  [OK] Waitress WSGI on http://{bind_host}:{port}/")

@@ -17,6 +17,7 @@ _recorded_actions = []
 
 # Scheduler state
 SCHEDULER_FILE = COAGENT_DIR / "scheduler.json"
+_SCHEDULER_LOCK = threading.Lock()
 
 _MACRO_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]{1,80}$")
 _TUNNEL_URL_RE = re.compile(r"https?://[A-Za-z0-9][A-Za-z0-9._~:/?#@!$&'()*+,;=%-]*")
@@ -187,6 +188,9 @@ def _load_scheduler():
 def _save_scheduler(data):
     backup_file(SCHEDULER_FILE)
     SCHEDULER_FILE.write_text(json.dumps(data, indent=2))
+
+def _scheduler_busy_response():
+    return jsonify({"error": "Scheduler file is busy"}), 409
 
 def register_routes(app, state, require_auth):
     # ── Windows ─────────────────────────────────────────
@@ -374,7 +378,12 @@ $s.Speak($text)
     @app.route("/scheduler/list", methods=["GET"])
     @require_auth
     def route_scheduler_list():
-        return jsonify(_load_scheduler())
+        if not _SCHEDULER_LOCK.acquire(blocking=False):
+            return _scheduler_busy_response()
+        try:
+            return jsonify(_load_scheduler())
+        finally:
+            _SCHEDULER_LOCK.release()
 
     @app.route("/scheduler/add", methods=["POST"])
     @require_auth
@@ -389,38 +398,53 @@ $s.Speak($text)
         action = d.get("action", {})
         if not isinstance(action, dict):
             return jsonify({"error": "Invalid action (must be a dict)"}), 400
-        data = _load_scheduler()
-        for a in data["actions"]:
-            if a["name"] == name:
-                a["cron"] = cron; a["action"] = action; a["updated"] = time.time()
-                _save_scheduler(data)
-                return jsonify({"status": "updated", "name": name})
-        data["actions"].append({"name": name, "cron": cron, "action": action, "created": time.time()})
-        _save_scheduler(data)
-        _log(f"Scheduler: added '{name}' at {cron}")
-        return jsonify({"status": "added", "name": name})
+        if not _SCHEDULER_LOCK.acquire(blocking=False):
+            return _scheduler_busy_response()
+        try:
+            data = _load_scheduler()
+            for a in data["actions"]:
+                if a["name"] == name:
+                    a["cron"] = cron; a["action"] = action; a["updated"] = time.time()
+                    _save_scheduler(data)
+                    return jsonify({"status": "updated", "name": name})
+            data["actions"].append({"name": name, "cron": cron, "action": action, "created": time.time()})
+            _save_scheduler(data)
+            _log(f"Scheduler: added '{name}' at {cron}")
+            return jsonify({"status": "added", "name": name})
+        finally:
+            _SCHEDULER_LOCK.release()
 
     @app.route("/scheduler/remove", methods=["POST"])
     @require_auth
     def route_scheduler_remove():
         d = _json_body()
         name = d.get("name", "")
-        data = _load_scheduler()
-        data["actions"] = [a for a in data["actions"] if a["name"] != name]
-        _save_scheduler(data)
-        _log(f"Scheduler: removed '{name}'")
-        return jsonify({"status": "removed", "name": name})
+        if not _SCHEDULER_LOCK.acquire(blocking=False):
+            return _scheduler_busy_response()
+        try:
+            data = _load_scheduler()
+            data["actions"] = [a for a in data["actions"] if a["name"] != name]
+            _save_scheduler(data)
+            _log(f"Scheduler: removed '{name}'")
+            return jsonify({"status": "removed", "name": name})
+        finally:
+            _SCHEDULER_LOCK.release()
 
     @app.route("/scheduler/run", methods=["POST"])
     @require_auth
     def route_scheduler_run():
         d = _json_body()
         name = d.get("name", "")
-        data = _load_scheduler()
-        for a in data["actions"]:
-            if a["name"] == name:
-                _log(f"Scheduler: ran '{name}'")
-                return jsonify({"status": "executed", "name": name})
+        if not _SCHEDULER_LOCK.acquire(blocking=False):
+            return _scheduler_busy_response()
+        try:
+            data = _load_scheduler()
+            for a in data["actions"]:
+                if a["name"] == name:
+                    _log(f"Scheduler: ran '{name}'")
+                    return jsonify({"status": "executed", "name": name})
+        finally:
+            _SCHEDULER_LOCK.release()
         return jsonify({"error": f"Action '{name}' not found"}), 404
 
     # ── Macros ─────────────────────────────────────────
@@ -532,6 +556,10 @@ $s.Speak($text)
             port = _coerce_tunnel_port(d.get("port", SERVER_PORT))
         except ValueError as e:
             return jsonify({"error": str(e)}), 400
+        try:
+            wait_timeout = max(1.0, min(float(d.get("timeout", 20)), 60.0))
+        except (TypeError, ValueError):
+            return jsonify({"error": "Invalid tunnel timeout"}), 400
 
         tools = _tunnel_tools()
         exe = tools.get(method)
@@ -584,10 +612,6 @@ $s.Speak($text)
                          name=f"tunnel-{method}-reader").start()
         _append_tunnel_output(method, "started: " + " ".join(cmd))
 
-        try:
-            wait_timeout = max(1.0, min(float(d.get("timeout", 20)), 60.0))
-        except (TypeError, ValueError):
-            return jsonify({"error": "Invalid tunnel timeout"}), 400
         deadline = time.time() + wait_timeout
         while time.time() < deadline:
             with _TUNNEL_LOCK:

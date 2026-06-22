@@ -15,11 +15,6 @@ _SUBSCRIBERS = []
 _SUBSCRIBERS_LOCK = threading.Lock()
 
 
-def _json_payload():
-    data = request.get_json(force=True, silent=True)
-    return data if isinstance(data, dict) else {}
-
-
 def _jsonrpc_result(request_id, result):
     return {"jsonrpc": "2.0", "id": request_id, "result": result}
 

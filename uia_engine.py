@@ -68,33 +68,6 @@ def _get_stable_id(elem) -> int:
                 del _ELEMENT_TRACKER[k]
         return eid
 
-# v5.1: Accelerated regions — track which screen areas change most often
-_ACCEL_REGIONS = {}  # region_key -> {change_count, stable_count, priority}
-_ACCEL_LOCK = threading.Lock()
-def _mark_region_changed(region_key: str):
-    """Mark a screen region as having changed."""
-    with _ACCEL_LOCK:
-        if region_key not in _ACCEL_REGIONS:
-            _ACCEL_REGIONS[region_key] = {"change_count": 0, "stable_count": 0, "priority": 0}
-        _ACCEL_REGIONS[region_key]["change_count"] += 1
-        _ACCEL_REGIONS[region_key]["stable_count"] = 0
-        _ACCEL_REGIONS[region_key]["priority"] = min(100, _ACCEL_REGIONS[region_key]["change_count"] * 2)
-
-def _mark_region_stable(region_key: str):
-    """Mark a screen region as unchanged."""
-    with _ACCEL_LOCK:
-        if region_key not in _ACCEL_REGIONS:
-            _ACCEL_REGIONS[region_key] = {"change_count": 0, "stable_count": 0, "priority": 0}
-        _ACCEL_REGIONS[region_key]["stable_count"] += 1
-        _ACCEL_REGIONS[region_key]["change_count"] = max(0, _ACCEL_REGIONS[region_key]["change_count"] - 1)
-
-def _get_cold_regions():
-    """Return region keys that have been stable for >5 consecutive checks.
-    These are safe to skip in accelerated capture.
-    """
-    with _ACCEL_LOCK:
-        return [k for k, v in _ACCEL_REGIONS.items() if v["stable_count"] > 5]
-
 # ── UIA via pywinauto ─────────────────────────────────────────────────────
 # Initialize COM in STA mode BEFORE importing pywinauto
 try:

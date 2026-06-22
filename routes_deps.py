@@ -150,21 +150,6 @@ def _pip_install(package):
     )
 
 
-def try_import(module_name, pip_name=None):
-    try:
-        __import__(module_name)
-        return True
-    except ImportError:
-        if pip_name:
-            subprocess.run([sys.executable, "-m", "pip", "install", pip_name], capture_output=True)
-            try:
-                __import__(module_name)
-                return True
-            except Exception:
-                pass
-        return False
-
-
 @deps_bp.route("/deps", methods=["GET"])
 def route_deps_index():
     deps = [_check_module(dep["module"], dep["package"]) for dep in TRACKED_DEPS]

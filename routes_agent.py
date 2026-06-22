@@ -5,14 +5,14 @@ import os
 import re
 import shutil
 import subprocess
-import tempfile
 import threading
 import time
+from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, Response, jsonify, request, stream_with_context
 
 from shared import COAGENT_DIR, _console, _log
 
@@ -24,11 +24,15 @@ MAX_OUTPUT_CHARS = 500 * 1024
 DEFAULT_TIMEOUT_SECONDS = 300
 MAX_TIMEOUT_SECONDS = 1800
 LOG_DIR = COAGENT_DIR / "agent_logs"
+STREAM_BACKLOG_EVENTS = 10000
+STREAM_IDLE_CLEANUP_SECONDS = 300
 
 AGENT_DETECTION_LOCK = threading.Lock()
 LOG_WRITE_LOCK = threading.Lock()
 EXECUTION_LOCKS_LOCK = threading.Lock()
+STREAM_LOCK = threading.Lock()
 EXECUTION_LOCKS = {}
+ACTIVE_STREAMS = {}
 AGENT_CACHE = {}
 DEFAULT_AGENT = None
 
@@ -127,6 +131,228 @@ def _error(message, status=400, **extra):
     payload = {"error": message}
     payload.update(extra)
     return jsonify(payload), status
+
+
+def _validate_log_id(log_id):
+    if not isinstance(log_id, str) or not re.fullmatch(r"[A-Za-z0-9_.-]{1,180}", log_id):
+        raise ValueError("invalid log_id")
+    return log_id
+
+
+def _log_path_for_id(log_id):
+    return LOG_DIR / f"{_validate_log_id(log_id)}.json"
+
+
+def _new_stream_state():
+    return {
+        "events": deque(maxlen=STREAM_BACKLOG_EVENTS),
+        "next_seq": 0,
+        "complete": False,
+        "connections": 0,
+        "finished_at": None,
+        "created_at": time.time(),
+    }
+
+
+def _schedule_stream_cleanup(log_id, delay=STREAM_IDLE_CLEANUP_SECONDS):
+    timer = threading.Timer(delay, _cleanup_stream_if_idle, args=(log_id,))
+    timer.daemon = True
+    timer.start()
+
+
+def _cleanup_stream_if_idle(log_id):
+    delay = None
+    with STREAM_LOCK:
+        state = ACTIVE_STREAMS.get(log_id)
+        if not state or not state.get("complete"):
+            return
+        if state.get("connections", 0) > 0:
+            delay = STREAM_IDLE_CLEANUP_SECONDS
+        else:
+            finished_at = state.get("finished_at") or time.time()
+            age = time.time() - finished_at
+            if age >= STREAM_IDLE_CLEANUP_SECONDS:
+                ACTIVE_STREAMS.pop(log_id, None)
+                return
+            delay = max(1, STREAM_IDLE_CLEANUP_SECONDS - age)
+    if delay is not None:
+        _schedule_stream_cleanup(log_id, delay)
+
+
+def _ensure_stream(log_id):
+    if not log_id:
+        return None
+    _validate_log_id(log_id)
+    state = ACTIVE_STREAMS.get(log_id)
+    if state is None:
+        state = _new_stream_state()
+        ACTIVE_STREAMS[log_id] = state
+    return state
+
+
+def _write_stream_event(log_id, event):
+    if not log_id:
+        return
+    event_json = json.dumps(event, ensure_ascii=False)
+    with STREAM_LOCK:
+        state = _ensure_stream(log_id)
+        seq = state["next_seq"]
+        state["next_seq"] = seq + 1
+        state["events"].append((seq, event_json))
+
+
+def _write_line(log_id, line_type, text):
+    _write_stream_event(log_id, {"type": line_type, "text": text})
+
+
+def _close_stream(log_id, exit_code, duration):
+    if not log_id:
+        return
+    _write_stream_event(
+        log_id,
+        {"type": "complete", "exit_code": exit_code, "duration": duration},
+    )
+    with STREAM_LOCK:
+        state = ACTIVE_STREAMS.get(log_id)
+        if state:
+            state["complete"] = True
+            state["finished_at"] = time.time()
+    _schedule_stream_cleanup(log_id)
+
+
+def _reserve_stream_log_id(agent_name="agent"):
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    safe_agent = re.sub(r"[^A-Za-z0-9_.-]+", "_", agent_name or "agent")
+    for counter in range(1000):
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        suffix = f"_{counter}" if counter else ""
+        log_id = f"{stamp}_{safe_agent}{suffix}"
+        path = _log_path_for_id(log_id)
+        with STREAM_LOCK:
+            if log_id not in ACTIVE_STREAMS and not path.exists():
+                ACTIVE_STREAMS[log_id] = _new_stream_state()
+                return log_id
+        time.sleep(0.001)
+    raise RuntimeError("failed to reserve agent log_id")
+
+
+def _stream_exists(log_id):
+    with STREAM_LOCK:
+        return log_id in ACTIVE_STREAMS
+
+
+def _open_stream_connection(log_id):
+    with STREAM_LOCK:
+        state = ACTIVE_STREAMS.get(log_id)
+        if not state:
+            return False
+        state["connections"] += 1
+        return True
+
+
+def _release_stream_connection(log_id):
+    should_cleanup = False
+    with STREAM_LOCK:
+        state = ACTIVE_STREAMS.get(log_id)
+        if state:
+            state["connections"] = max(0, state.get("connections", 0) - 1)
+            should_cleanup = bool(state.get("complete") and state["connections"] == 0)
+    if should_cleanup:
+        _schedule_stream_cleanup(log_id)
+
+
+def _format_sse(event):
+    if isinstance(event, str):
+        payload = event
+    else:
+        payload = json.dumps(event, ensure_ascii=False)
+    return f"data: {payload}\n\n"
+
+
+def _completed_log_events(log_id):
+    path = _log_path_for_id(log_id)
+    try:
+        record = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None
+    except Exception as exc:
+        return [
+            {"type": "stderr", "text": f"Failed to read agent log: {exc}\n"},
+            {"type": "complete", "exit_code": -1, "duration": 0},
+        ]
+
+    events = []
+    stdout = record.get("stdout")
+    stderr = record.get("stderr")
+    if stdout is not None or stderr is not None:
+        for line in (stdout or "").splitlines(keepends=True):
+            events.append({"type": "stdout", "text": line})
+        for line in (stderr or "").splitlines(keepends=True):
+            events.append({"type": "stderr", "text": line})
+    else:
+        for line in (record.get("output") or "").splitlines(keepends=True):
+            events.append({"type": "stdout", "text": line})
+
+    files_modified = record.get("files_modified", [])
+    if not isinstance(files_modified, list):
+        files_modified = []
+    events.append({"type": "files_modified", "files": files_modified})
+    events.append({
+        "type": "complete",
+        "exit_code": record.get("exit_code"),
+        "duration": record.get("duration_seconds", record.get("duration", 0)),
+    })
+    return events
+
+
+def stream_agent_output(log_id):
+    log_id = _validate_log_id(log_id)
+
+    def generate():
+        connected = _open_stream_connection(log_id)
+        if not connected:
+            events = _completed_log_events(log_id)
+            if events is None:
+                yield _format_sse({"type": "stderr", "text": "stream not found\n"})
+                yield _format_sse({"type": "complete", "exit_code": -1, "duration": 0})
+                return
+            for event in events:
+                yield _format_sse(event)
+            return
+
+        last_seq = -1
+        try:
+            while True:
+                with STREAM_LOCK:
+                    state = ACTIVE_STREAMS.get(log_id)
+                    entries = list(state["events"]) if state else []
+
+                if not state:
+                    return
+
+                for seq, entry_json in entries:
+                    if seq <= last_seq:
+                        continue
+                    yield _format_sse(entry_json)
+                    last_seq = seq
+                    try:
+                        parsed = json.loads(entry_json)
+                    except json.JSONDecodeError:
+                        parsed = {}
+                    if parsed.get("type") == "complete":
+                        return
+                time.sleep(0.1)
+        finally:
+            _release_stream_connection(log_id)
+
+    return Response(
+        stream_with_context(generate()),
+        mimetype="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 def _auth_blueprint(bp, require_auth):
@@ -479,7 +705,33 @@ def _execution_lock_for(workdir_path):
         return lock
 
 
-def _run_command(command, prompt_input, timeout, workdir_path, env):
+def _pump_pipe(pipe, path, log_id, line_type):
+    try:
+        with path.open("w", encoding="utf-8", errors="replace", newline="") as handle:
+            for line in iter(pipe.readline, ""):
+                if line == "":
+                    break
+                handle.write(line)
+                handle.flush()
+                _write_line(log_id, line_type, line)
+    finally:
+        try:
+            pipe.close()
+        except Exception:
+            pass
+
+
+def _append_temp_line(path, text):
+    if not path:
+        return
+    try:
+        with path.open("a", encoding="utf-8", errors="replace", newline="") as handle:
+            handle.write(text)
+    except OSError:
+        pass
+
+
+def _run_command(command, prompt_input, timeout, workdir_path, env, log_id=None):
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     stdout_path = None
     stderr_path = None
@@ -491,43 +743,68 @@ def _run_command(command, prompt_input, timeout, workdir_path, env):
     exit_code = -1
     creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) if os.name == "nt" else 0
 
-    with tempfile.NamedTemporaryFile(prefix="agent_stdout_", suffix=".tmp", dir=LOG_DIR, delete=False) as stdout_file:
-        stdout_path = Path(stdout_file.name)
-    with tempfile.NamedTemporaryFile(prefix="agent_stderr_", suffix=".tmp", dir=LOG_DIR, delete=False) as stderr_file:
-        stderr_path = Path(stderr_file.name)
-
     try:
-        with stdout_path.open("wb") as stdout_handle, stderr_path.open("wb") as stderr_handle:
-            stdin_target = subprocess.PIPE if prompt_input is not None else subprocess.DEVNULL
-            proc = subprocess.Popen(
-                command,
-                stdin=stdin_target,
-                stdout=stdout_handle,
-                stderr=stderr_handle,
-                cwd=str(workdir_path),
-                env=env,
-                creationflags=creationflags,
-            )
+        stdin_target = subprocess.PIPE if prompt_input is not None else subprocess.DEVNULL
+        proc = subprocess.Popen(
+            command,
+            stdin=stdin_target,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            cwd=str(workdir_path),
+            env=env,
+            creationflags=creationflags,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            bufsize=1,
+        )
+        stdout_path = LOG_DIR / f"STDOUT_{proc.pid}.tmp"
+        stderr_path = LOG_DIR / f"STDERR_{proc.pid}.tmp"
+        stdout_thread = threading.Thread(
+            target=_pump_pipe,
+            args=(proc.stdout, stdout_path, log_id, "stdout"),
+            daemon=True,
+        )
+        stderr_thread = threading.Thread(
+            target=_pump_pipe,
+            args=(proc.stderr, stderr_path, log_id, "stderr"),
+            daemon=True,
+        )
+        stdout_thread.start()
+        stderr_thread.start()
+
+        if prompt_input is not None and proc.stdin:
             try:
-                stdin_bytes = prompt_input.encode("utf-8") if prompt_input is not None else None
-                proc.communicate(input=stdin_bytes, timeout=timeout)
-                exit_code = proc.returncode
+                proc.stdin.write(prompt_input)
+                proc.stdin.close()
+            except (BrokenPipeError, OSError):
+                pass
+
+        try:
+            exit_code = proc.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            _kill_process_tree(proc.pid)
+            try:
+                proc.wait(timeout=15)
             except subprocess.TimeoutExpired:
-                timed_out = True
-                _kill_process_tree(proc.pid)
                 try:
-                    proc.communicate(timeout=15)
-                except subprocess.TimeoutExpired:
-                    try:
-                        proc.kill()
-                    except Exception:
-                        pass
-                    try:
-                        proc.communicate(timeout=5)
-                    except Exception:
-                        pass
-                exit_code = -1
+                    proc.kill()
+                except Exception:
+                    pass
+                try:
+                    proc.wait(timeout=5)
+                except Exception:
+                    pass
+            exit_code = -1
+        finally:
+            stdout_thread.join(timeout=5)
+            stderr_thread.join(timeout=5)
     finally:
+        if timed_out:
+            timeout_line = f"Timed out after {timeout} seconds\n"
+            _append_temp_line(stderr_path, timeout_line)
+            _write_line(log_id, "stderr", timeout_line)
         if stdout_path:
             stdout_text, stdout_truncated = _read_limited_text(stdout_path, MAX_OUTPUT_CHARS)
         if stderr_path:
@@ -539,8 +816,6 @@ def _run_command(command, prompt_input, timeout, workdir_path, env):
                 except OSError:
                     pass
 
-    if timed_out:
-        stderr_text = (stderr_text + "\n" if stderr_text else "") + f"Timed out after {timeout} seconds"
     return stdout_text, stderr_text, exit_code, timed_out, stdout_truncated or stderr_truncated
 
 
@@ -569,16 +844,31 @@ def _next_log_path(agent_name):
     return path
 
 
-def _write_log(record):
+def _write_log(record, log_id=None):
     with LOG_WRITE_LOCK:
-        path = _next_log_path(record.get("agent", "agent"))
-        log_id = path.stem
+        LOG_DIR.mkdir(parents=True, exist_ok=True)
+        if log_id:
+            path = _log_path_for_id(log_id)
+        else:
+            path = _next_log_path(record.get("agent", "agent"))
+            log_id = path.stem
         record = {**record, "log_id": log_id}
         path.write_text(json.dumps(record, indent=2, ensure_ascii=False), encoding="utf-8")
         return log_id
 
 
-def _execute_agent(prompt, agent_name=None, model=None, timeout=None, workdir=None, purpose="exec", read_only=False):
+def _execute_agent(
+    prompt,
+    agent_name=None,
+    model=None,
+    timeout=None,
+    workdir=None,
+    purpose="exec",
+    read_only=False,
+    log_id=None,
+):
+    if log_id:
+        log_id = _validate_log_id(log_id)
     prompt = _validate_prompt(prompt)
     selected = _validate_agent_name(agent_name)
     model = _validate_model(model)
@@ -606,6 +896,18 @@ def _execute_agent(prompt, agent_name=None, model=None, timeout=None, workdir=No
     env.setdefault("CI", "1")
     env.setdefault("PYTHONIOENCODING", "utf-8")
 
+    if log_id:
+        _write_stream_event(
+            log_id,
+            {
+                "type": "start",
+                "log_id": log_id,
+                "agent": selected,
+                "purpose": purpose,
+                "workdir": str(workdir_path),
+            },
+        )
+
     run_lock = _execution_lock_for(workdir_path)
     with run_lock:
         before = _snapshot_files(workdir_path)
@@ -623,10 +925,13 @@ def _execute_agent(prompt, agent_name=None, model=None, timeout=None, workdir=No
             timeout=timeout,
             workdir_path=workdir_path,
             env=env,
+            log_id=log_id,
         )
         duration = round(time.time() - started, 2)
         after = _snapshot_files(workdir_path)
         files_modified = _changed_files(before, after)
+        if log_id:
+            _write_stream_event(log_id, {"type": "files_modified", "files": files_modified})
         output, output_truncated = _truncate_output(stdout, stderr)
         output_truncated = output_truncated or stream_truncated
         read_only_violation = bool(read_only and files_modified)
@@ -646,7 +951,7 @@ def _execute_agent(prompt, agent_name=None, model=None, timeout=None, workdir=No
         "exit_code": exit_code,
         "duration_seconds": duration,
         "files_modified": files_modified,
-        "log_id": "",
+        "log_id": log_id or "",
         "read_only": read_only,
         "read_only_violation": read_only_violation,
     }
@@ -660,14 +965,19 @@ def _execute_agent(prompt, agent_name=None, model=None, timeout=None, workdir=No
         "timeout_seconds": timeout,
         "timed_out": timed_out,
         "output_truncated": output_truncated,
+        "stdout": stdout,
+        "stderr": stderr,
         "prompt": prompt,
         "read_only": read_only,
         "read_only_violation": read_only_violation,
     }
     try:
-        response["log_id"] = _write_log(record)
+        response["log_id"] = _write_log(record, log_id=log_id)
     except Exception as exc:
         _console(f"[agent] failed to write log: {exc}")
+    finally:
+        if log_id:
+            _close_stream(log_id, exit_code, duration)
     return response
 
 
@@ -677,6 +987,84 @@ def _status_code_for_result(result):
     if result.get("exit_code") == -1:
         return 504
     return 500
+
+
+def _stream_requested():
+    return request.args.get("stream", "").lower() in {"1", "true", "yes", "sse"}
+
+
+def _validate_exec_payload_for_background(data):
+    _validate_prompt(data.get("prompt"))
+    agent_name = _validate_agent_name(data.get("agent"))
+    _validate_model(data.get("model"))
+    _validate_timeout(data.get("timeout"))
+    _resolve_workdir(data.get("workdir"))
+    return agent_name
+
+
+def _write_background_error_log(log_id, data, purpose, exc, duration, read_only=False):
+    stderr = f"[agent_gateway] {type(exc).__name__}: {exc}\n"
+    record = {
+        "success": False,
+        "agent": data.get("agent") or "",
+        "output": "[stderr]\n" + stderr,
+        "exit_code": -1,
+        "duration_seconds": duration,
+        "files_modified": [],
+        "log_id": log_id,
+        "read_only": read_only,
+        "read_only_violation": False,
+        "purpose": purpose,
+        "timestamp": datetime.now().isoformat(timespec="seconds"),
+        "workdir": str(data.get("workdir") or COAGENT_DIR),
+        "command": [],
+        "model": data.get("model"),
+        "timeout_seconds": data.get("timeout"),
+        "timed_out": False,
+        "output_truncated": False,
+        "stdout": "",
+        "stderr": stderr,
+        "prompt": data.get("prompt") if isinstance(data.get("prompt"), str) else "",
+    }
+    try:
+        _write_log(record, log_id=log_id)
+    except Exception as log_exc:
+        _console(f"[agent] failed to write background error log: {log_exc}")
+
+
+def _execute_agent_payload(data, purpose, read_only=False, log_id=None):
+    return _execute_agent(
+        prompt=data.get("prompt"),
+        agent_name=data.get("agent"),
+        model=data.get("model"),
+        timeout=data.get("timeout"),
+        workdir=data.get("workdir"),
+        purpose=purpose,
+        read_only=read_only,
+        log_id=log_id,
+    )
+
+
+def _start_background_agent(data, purpose="exec", read_only=False):
+    agent_hint = _validate_exec_payload_for_background(data) or "agent"
+    log_id = _reserve_stream_log_id(agent_hint)
+
+    def runner():
+        started = time.time()
+        try:
+            _execute_agent_payload(data, purpose=purpose, read_only=read_only, log_id=log_id)
+        except Exception as exc:
+            duration = round(time.time() - started, 2)
+            stderr = f"[agent_gateway] {type(exc).__name__}: {exc}\n"
+            _console(f"[agent] background {purpose} failed: {exc}")
+            _write_line(log_id, "stderr", stderr)
+            _write_stream_event(log_id, {"type": "files_modified", "files": []})
+            _write_background_error_log(log_id, data, purpose, exc, duration, read_only=read_only)
+            _close_stream(log_id, -1, duration)
+
+    thread = threading.Thread(target=runner, name=f"agent-{purpose}-{log_id}", daemon=True)
+    thread.start()
+    return log_id
 
 
 @agent_bp.route("/agent/status", methods=["GET"])
@@ -689,6 +1077,16 @@ def route_agent_status():
 @agent_bp.route("/agent/exec", methods=["POST"])
 def route_agent_exec():
     data = _json_payload()
+    if _stream_requested():
+        try:
+            log_id = _start_background_agent(data, purpose="exec")
+            return stream_agent_output(log_id)
+        except ValueError as exc:
+            return _error(str(exc), 400)
+        except Exception as exc:
+            _console(f"[agent] exec stream failed: {exc}")
+            return _error(str(exc), 500, type=type(exc).__name__)
+
     try:
         result = _execute_agent(
             prompt=data.get("prompt"),
@@ -704,6 +1102,33 @@ def route_agent_exec():
     except Exception as exc:
         _console(f"[agent] exec failed: {exc}")
         return _error(str(exc), 500, type=type(exc).__name__)
+
+
+@agent_bp.route("/agent/exec-stream", methods=["POST"])
+def route_agent_exec_stream_start():
+    data = _json_payload()
+    try:
+        log_id = _start_background_agent(data, purpose="exec")
+        return jsonify({
+            "log_id": log_id,
+            "stream_url": f"/agent/exec/stream/{log_id}",
+        }), 202
+    except ValueError as exc:
+        return _error(str(exc), 400)
+    except Exception as exc:
+        _console(f"[agent] exec-stream failed: {exc}")
+        return _error(str(exc), 500, type=type(exc).__name__)
+
+
+@agent_bp.route("/agent/exec/stream/<log_id>", methods=["GET"])
+def route_agent_exec_stream(log_id):
+    try:
+        log_id = _validate_log_id(log_id)
+    except ValueError as exc:
+        return _error(str(exc), 400)
+    if not _stream_exists(log_id) and not _log_path_for_id(log_id).exists():
+        return _error("stream not found", 404, log_id=log_id)
+    return stream_agent_output(log_id)
 
 
 @agent_bp.route("/agent/audit", methods=["POST"])

@@ -15,6 +15,7 @@ from shared import COAGENT_DIR, _json_body, _log
 
 
 _LOCK = threading.RLock()
+_FILE_LOCK = threading.Lock()
 _AUTO_ENABLED = False
 _AUTO_THREAD = None
 _AUTO_INTERVAL_SECONDS = 1800
@@ -23,6 +24,10 @@ _LAST_PUSH_TIME = None
 _LAST_ERROR = None
 _BACKUP_ROOT = COAGENT_DIR / "backups" / "git"
 _HASH_RE = re.compile(r"^[A-Fa-f0-9]{4,64}$")
+
+
+def _file_busy_payload():
+    return {"status": "busy", "error": "Git file operation already in progress"}, 409
 
 
 def _run_git(args, timeout=120):
@@ -72,31 +77,36 @@ def _ensure_token_gitignored():
 
 def _commit(message=None):
     global _LAST_COMMIT, _LAST_ERROR
+    if not _FILE_LOCK.acquire(blocking=False):
+        return _file_busy_payload()
     stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     message = str(message).strip() if message else f"auto: {stamp}"
     try:
-        gitignore_result = _ensure_token_gitignored()
-    except Exception as e:
-        error = {"error": str(e), "type": type(e).__name__}
+        try:
+            gitignore_result = _ensure_token_gitignored()
+        except Exception as e:
+            error = {"error": str(e), "type": type(e).__name__}
+            with _LOCK:
+                _LAST_ERROR = error
+            return {"status": "gitignore_failed", "gitignore": error}, 500
+        add_result = _run_git(["add", "."], timeout=120)
+        if not add_result["ok"]:
+            with _LOCK:
+                _LAST_ERROR = add_result
+            return {"status": "add_failed", "gitignore": gitignore_result, "add": add_result}, 500
+        commit_result = _run_git(["commit", "-m", message], timeout=120)
+        if commit_result["ok"]:
+            with _LOCK:
+                _LAST_COMMIT = {"message": message, "time": time.time(), "result": commit_result}
+                _LAST_ERROR = None
+            return {"status": "committed", "message": message, "gitignore": gitignore_result, "add": add_result, "commit": commit_result}, 200
+        if _is_no_changes(commit_result):
+            return {"status": "no_changes", "message": message, "gitignore": gitignore_result, "add": add_result, "commit": commit_result}, 200
         with _LOCK:
-            _LAST_ERROR = error
-        return {"status": "gitignore_failed", "gitignore": error}, 500
-    add_result = _run_git(["add", "."], timeout=120)
-    if not add_result["ok"]:
-        with _LOCK:
-            _LAST_ERROR = add_result
-        return {"status": "add_failed", "gitignore": gitignore_result, "add": add_result}, 500
-    commit_result = _run_git(["commit", "-m", message], timeout=120)
-    if commit_result["ok"]:
-        with _LOCK:
-            _LAST_COMMIT = {"message": message, "time": time.time(), "result": commit_result}
-            _LAST_ERROR = None
-        return {"status": "committed", "message": message, "gitignore": gitignore_result, "add": add_result, "commit": commit_result}, 200
-    if _is_no_changes(commit_result):
-        return {"status": "no_changes", "message": message, "gitignore": gitignore_result, "add": add_result, "commit": commit_result}, 200
-    with _LOCK:
-        _LAST_ERROR = commit_result
-    return {"status": "commit_failed", "message": message, "gitignore": gitignore_result, "add": add_result, "commit": commit_result}, 500
+            _LAST_ERROR = commit_result
+        return {"status": "commit_failed", "message": message, "gitignore": gitignore_result, "add": add_result, "commit": commit_result}, 500
+    finally:
+        _FILE_LOCK.release()
 
 
 def _auto_loop():
@@ -284,11 +294,16 @@ def register_routes(app, state, require_auth):
     @app.route("/git/backup", methods=["POST"])
     @require_auth
     def route_git_backup():
+        if not _FILE_LOCK.acquire(blocking=False):
+            payload, status = _file_busy_payload()
+            return jsonify(payload), status
         try:
             manifest = _make_backup()
             return jsonify({"status": "backed_up", **manifest})
         except Exception as e:
             return jsonify({"error": str(e), "type": type(e).__name__}), 500
+        finally:
+            _FILE_LOCK.release()
 
     @app.route("/git/rollback/<hash_value>", methods=["POST"])
     @require_auth
