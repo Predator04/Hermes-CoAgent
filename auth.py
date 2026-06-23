@@ -98,6 +98,13 @@ def _save_token(token):
             old_suffix.unlink()
 
 
+def generate_token():
+    """Generate and persist a new bearer token."""
+    token = secrets.token_hex(32)
+    _save_token(token)
+    return token
+
+
 def _token_from_password(password):
     salt = secrets.token_hex(16)
     material = f"{salt}:{password}".encode("utf-8")
@@ -127,11 +134,8 @@ def init_auth(port=9123, coag_dir=None):
             if saved:
                 token = saved
             else:
-                SETUP_REQUIRED = True
-                AUTH_ENABLED = False
-                AUTH_TOKEN = None
-                print("[Auth] First time? POST /setup with {'password':'yourpassword'}")
-                return
+                token = generate_token()
+                print(f"[Auth] Generated token and saved it to {_token_path()}")
         else:
             _save_token(token)
         AUTH_ENABLED = True

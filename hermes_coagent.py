@@ -1,19 +1,19 @@
-# ════════════════════════════════════════════════════════════════
-# HERMES COAGENT v7.3 — PERFORMANCE OPTIMIZATIONS
-# ════════════════════════════════════════════════════════════════
+# ================================================================
+# HERMES COAGENT v7.3 - PERFORMANCE OPTIMIZATIONS
+# ================================================================
 """
-Hermes CoAgent — Windows Desktop Co-Pilot (Flask REST + MCP server)
+Hermes CoAgent - Windows Desktop Co-Pilot (Flask REST + MCP server)
 ====================================================================
 Primary server for the CoAgent desktop automation system.
 
 v7.3: Performance and reliability optimizations on the modular route layout.
 v7.3: Codebase split into modular route files:
-  shared.py          — Shared utilities (logging, auth, path safety, SSE)
-  routes_mouse.py    — Mouse, keyboard, chain, emergency
-  routes_ocr.py      — Screenshots, OCR, crop, describe
-  routes_uia.py      — UIA tree, SOM overlays, element find
-  routes_file.py     — File ops, app launch, power management
-  routes_media.py    — Wallpaper, windows, clipboard, macros, scheduler, voice, tunnel
+  shared.py          - Shared utilities (logging, auth, path safety, SSE)
+  routes_mouse.py    - Mouse, keyboard, chain, emergency
+  routes_ocr.py      - Screenshots, OCR, crop, describe
+  routes_uia.py      - UIA tree, SOM overlays, element find
+  routes_file.py     - File ops, app launch, power management
+  routes_media.py    - Wallpaper, windows, clipboard, macros, scheduler, voice, tunnel
 
 LAUNCH:
   python hermes_coagent.py                    # REST server on :9123
@@ -58,11 +58,11 @@ else:
 
 os.environ["PYAUTOGUI_FAILSAFE"] = "false"
 
-# ── Shared utilities ──────────────────────────────────────────
+# -- Shared utilities --------------------------------------------
 from shared import COAGENT_DIR, SERVER_PORT, TRAY_PORT, SERVER_LOG, _console, _log
 from shared import VERSION, AGENT_NAME, BUILD
 
-# ── Flask setup ────────────────────────────────────────────────
+# -- Flask setup --------------------------------------------------
 from flask import Flask, request, jsonify, Response, g
 import waitress
 
@@ -152,9 +152,9 @@ def _reset_endpoint_health_window_if_needed():
             entry["last_5min_fail"] = 0
         _ENDPOINT_HEALTH_WINDOW_STARTED = now
 
-# ── v7.3: Single-source version ────────────────────────────────
+# -- v7.3: Single-source version ---------------------------------
 
-# ── v7.3: Security middleware ───────────────────────────────────
+# -- v7.3: Security middleware -----------------------------------
 AUTH_EXEMPT_PREFIXES = (
     "/static/",
 )
@@ -223,7 +223,7 @@ def _security_headers(response):
     response.headers["Cache-Control"] = "no-store"
     return response
 
-# ── v7.3: CORS support for dashboard ───────────────────────────
+# -- v7.3: CORS support for dashboard ----------------------------
 @app.after_request
 def _cors_headers(response):
     origin = request.headers.get("Origin", "")
@@ -244,7 +244,7 @@ def _record_endpoint_health(response):
         pass
     return response
 
-# ── v7.3: Request body size enforcement ──────────────────────
+# -- v7.3: Request body size enforcement -------------------------
 _MAX_BODY_SIZE = 16 * 1024 * 1024  # 16 MB
 
 @app.before_request
@@ -252,7 +252,7 @@ def _check_body_size():
     if request.content_length and request.content_length > _MAX_BODY_SIZE:
         return jsonify({"error": "Payload too large", "max_bytes": _MAX_BODY_SIZE}), 413
 
-# ── v7.3: Rate limiter (simple token bucket with TTL cleanup) ───
+# -- v7.3: Rate limiter (simple token bucket with TTL cleanup) ---
 _RATE_LIMITS = {}  # ip -> (tokens, last_refill)
 _RATE_MAX_TOKENS = 60
 _RATE_REFILL_PER_SEC = 10
@@ -337,7 +337,7 @@ def _create_singleton_mutex():
     except Exception:
         pass
 
-# ── State ──────────────────────────────────────────────────────
+# -- State --------------------------------------------------------
 @dataclass
 class CoPilotState:
     emergency_stop: bool = False
@@ -565,7 +565,7 @@ def _start_watchdog(port):
         _WATCHDOG_THREAD = threading.Thread(target=_watchdog_loop, args=(port,), name="watchdog", daemon=True)
         _WATCHDOG_THREAD.start()
 
-# ── Register route modules ─────────────────────────────────────
+# -- Register route modules --------------------------------------
 from routes_mouse import register_routes as reg_mouse
 from routes_ocr import register_routes as reg_ocr
 from routes_uia import register_routes as reg_uia
@@ -770,7 +770,7 @@ if HELP_AVAILABLE:
 features["web_dashboard_overhaul"] = True
 state.backup_file = backup_file
 
-# ── Core routes (stay in main) ─────────────────────────────────
+# -- Core routes (stay in main) ----------------------------------
 @app.route("/", methods=["GET"])
 def route_index():
     return route_dashboard2()
@@ -883,7 +883,7 @@ def route_mcp_test():
 
 register_auth_routes(app)
 
-# ── Short alias routes for MCP compatibility ──────────────────
+# -- Short alias routes for MCP compatibility --------------------
 _short_routes = {
     "/screenshot": "_screen_b64_proxy",
     "/click": "_mouse_click_proxy",
@@ -913,7 +913,7 @@ for _route, _handler_name in list(_short_routes.items()):
     _ep = _route.lstrip("/").replace("/", "_") or "root"
     app.route(_route, endpoint=_ep)(_proxy_get(_route))
 
-# ── System Tray Icon ──────────────────────────────────────────
+# -- System Tray Icon --------------------------------------------
 def _start_tray():
     try:
         def _ps_quote(value):
@@ -972,7 +972,7 @@ def _start_tray():
     except Exception as e:
         _console(f"  [INFO] Tray icon skipped: {e}")
 
-# ── Log viewer ────────────────────────────────────────────────
+# -- Log viewer --------------------------------------------------
 @app.route("/logs", methods=["GET"])
 @require_auth
 def route_logs():
@@ -992,12 +992,12 @@ def route_logs():
             return jsonify({"error": "Cannot read log"}), 500
     return jsonify({"lines": [], "text": "", "count": 0, "log": "No log file"})
 
-# ── Main ──────────────────────────────────────────────────────
-if __name__ == "__main__":
+# -- Main ---------------------------------------------------------
+def start_server():
     _create_singleton_mutex()
-    _console("╔════════════════════════════════════════════════╗")
-    _console(f"║     {AGENT_NAME} v{VERSION} — MODULAR REFACTOR   ║")
-    _console("╚════════════════════════════════════════════════╝")
+    _console("================================================")
+    _console(f"     {AGENT_NAME} v{VERSION} - MODULAR REFACTOR")
+    _console("================================================")
     _console(f"  PID: {os.getpid()}")
     _console(f"  Directory: {COAGENT_DIR}")
 
@@ -1057,3 +1057,11 @@ if __name__ == "__main__":
     # v7.3: Waitress WSGI server
     _console(f"  [OK] Waitress WSGI on http://{bind_host}:{port}/")
     waitress.serve(app, host=bind_host, port=port, threads=8, connection_limit=100)
+
+
+def main():
+    start_server()
+
+
+if __name__ == "__main__":
+    main()

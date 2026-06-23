@@ -1,188 +1,151 @@
-# Hermes CoAgent v7.9
+# Hermes CoAgent
 
-**Ultimate Desktop Co-Pilot for Windows** — gives AI agents full native Windows desktop control via a REST API. Screenshots, mouse/keyboard, UIA accessibility trees, OCR, voice, file ops, browser automation, notifications, Google Workspace, prompt bypass toolkit, agent gateway, and self-healing infrastructure. All local, zero API costs.
-
+[![CI — Syntax Check & Compile](https://github.com/Predator04/Hermes-CoAgent/actions/workflows/ci.yml/badge.svg)](https://github.com/Predator04/Hermes-CoAgent/actions/workflows/ci.yml)
+[![GitHub stars](https://img.shields.io/github/stars/Predator04/Hermes-CoAgent?style=social)](https://github.com/Predator04/Hermes-CoAgent/stargazers)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-blue.svg)](https://www.python.org/)
 
----
+Hermes CoAgent is a local Windows desktop automation REST API server for agents and operator dashboards. It controls mouse, keyboard, screenshots, OCR, UI Automation, browser sessions, processes, windows, files, notifications, recipes, mobile remote control, and AI agent gateway workflows from one Flask service.
 
-## 🚀 Quick Start
+![Hermes CoAgent dashboard](docs/demo.png)
 
-### Prerequisites
-- Windows 10/11
-- Python 3.8+ installed
+## Install
 
-### Install & Run
 ```bash
-# 1. Clone
+pip install hermes-coagent && hermes-coagent
+```
+
+For local development:
+
+```bash
 git clone https://github.com/Predator04/Hermes-CoAgent.git
 cd Hermes-CoAgent
+python -m pip install -r requirements.txt
+python hermes_coagent.py --secure
+```
 
-# 2. Install dependencies
-pip install flask waitress pillow pyautogui pywinauto pytesseract pygetwindow pyperclip pystray mss psutil
+`--secure` reads `./.token` or creates one automatically with a 64-character bearer token.
 
-# 3. Start with secure auth
+## Quickstart
+
+```bash
+# Start the server
 python hermes_coagent.py --secure
 
-# 4. First-time setup (one-time)
-curl -s -X POST http://127.0.0.1:9123/setup \
+# Confirm it is alive
+curl http://127.0.0.1:9123/ping
+
+# Read your generated token locally
+TOKEN=$(cat .token)
+
+# View capabilities
+curl http://127.0.0.1:9123/version
+
+# Move and click the mouse
+curl -X POST http://127.0.0.1:9123/mouse/move \
+  -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"password":"yourpassword"}'
+  -d '{"x":960,"y":540}'
 
-# → Returns your Bearer token (save it!)
-```
+curl -X POST http://127.0.0.1:9123/mouse/click \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"x":960,"y":540,"button":"left"}'
 
-### Test It
-```bash
-# Set your token
-TOKEN=***your-bearer-token-here***
+# Type text
+curl -X POST http://127.0.0.1:9123/key/type \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"text":"hello from Hermes"}'
 
-# Health check
-curl -s http://127.0.0.1:9123/ping
-
-# See version + features
-curl -s http://127.0.0.1:9123/version
-
-# Check agent gateway status
-curl -s http://127.0.0.1:9123/agent/status \
-  -H "Authorization: Bearer $TOKEN"
-
-# Take a screenshot
-curl -s http://127.0.0.1:9123/screen/base64 \
-  -H "Authorization: Bearer $TOKEN"
-
-# Get UIA accessibility tree
-curl -s http://127.0.0.1:9123/uia/tree \
+# Get a screenshot
+curl http://127.0.0.1:9123/screen/base64 \
   -H "Authorization: Bearer $TOKEN"
 ```
 
----
+Open the dashboard at `http://127.0.0.1:9123/dashboard`. Full API documentation is available from `http://127.0.0.1:9123/help`.
 
-## 📦 What's in v7.9
+## Features
 
-### 🆕 Telegram Relay (v7.9)
-Codex audit findings delivered directly to Telegram. Dashboard settings panel for bot token/chat ID. Includes:
-- `POST /telegram/register-chat` — Register any chat as deliver target
-- `POST /telegram/configure` — Configure bot token + chat ID
-- `POST /agent/exec-and-send` — Run Codex, extract findings, send to Telegram
-- Dashboard: Telegram settings panel with Save/Test/Clear
+| Area | What Hermes CoAgent exposes |
+|---|---|
+| 🖱️ Desktop control | Mouse move/click/drag/scroll, keyboard typing, hotkeys, action chains |
+| 📸 Screen intelligence | JPEG/base64 screenshots, OCR, text finding, scene object model overlays |
+| 🏗️ UI Automation | UIA trees, element lookup, element-indexed actions, window targeting |
+| 🌐 Browser automation | Playwright-backed navigation, click, fill, extract, screenshot endpoints |
+| ⚙️ System control | Process list/start/kill, window list/activate/move/resize, clipboard, power |
+| 🤖 AI workflows | Copilot goal runner, agent gateway for Codex/Claude/Gemini/OpenCode CLIs |
+| 🧩 Automation kits | Scheduled recipes, macro recording, GIF recording, undo, visual diff |
+| 🩺 Reliability | Watchdog, endpoint health tracking, self-healing checks, dependency helper |
+| 📱 Remote UI | Web dashboard, mobile remote view, SSE screen stream, notifications |
+| 🔐 Local security | Bearer auth, CSRF helpers, rate limiting, local CORS, secret file ignores |
 
-### 🆕 Security Hardening (v7.9)
-- CSRF protection system (`GET /csrf-token`, `@csrf_protect` decorator)
-- No more hardcoded `C:\Users\Admin` paths — all resolved from env vars
-- `SECURITY.md` and `CONTRIBUTING.md` added
-- `.gitignore` expanded: `.env*`, `*.pem`, `*.key`, `*.p12`, `*.pfx`, secrets files
-- Token no longer passed via argv to tray process (process list leak fix)
-- CORS origins resolved dynamically from runtime host IP
+## Authentication
 
-### 🆕 Agent Gateway (v7.9)
-Call installed AI agents (Codex, Claude Code, Gemini CLI, OpenCode) as HTTP endpoints:
+Run with `--secure` for bearer-token auth:
 
 ```bash
-POST /agent/exec {"prompt":"audit the codebase", "agent":"codex"}
-POST /agent/audit {"paths":["."], "focus":"security"}
-POST /agent/implement {"task":"add bluetooth discovery"}
-GET  /agent/status
-GET  /agent/logs
+python hermes_coagent.py --secure
 ```
 
-Full docs in `AGENTS.md`.
+On first secure launch, Hermes creates `./.token` with `secrets.token_hex(32)`. Send it on protected requests:
 
-### 🆕 Security Hardening (v7.8)
-| Fix | What changed |
-|-----|-------------|
-| Token rotation | No hardcoded tokens in source |
-| Plugin auth | Blocks plugins with unprotected endpoints |
-| File delete guard | Requires `confirm: true`, protects user dirs |
-| Dashboard security | `sessionStorage` + `history.replaceState` |
-| CORS preflight | Runs before auth gate |
-| CSP fix | Inline dashboard scripts work again |
-
-### 🖥️ Full REST API
-
-**Core:** `GET /` — dashboard · `GET /ping` — health · `GET /version` · `GET /setup-status` · `POST /setup`
-
-**Desktop Control:** `POST /mouse/move` · `POST /mouse/click` · `POST /mouse/drag` · `POST /mouse/scroll` · `POST /key/type` · `POST /key/press` · `POST /chain`
-
-**Screenshots:** `GET /screen` · `GET /screen/base64` · `GET /screen/jpeg` · `GET /screen/fresh` · `POST /ocr/find` · `GET /describe`
-
-**UIA:** `GET /uia/tree` · `GET /uia/find/<name>` · `POST /uia/click` · `POST /uia/element/find` · `POST /uia/element/click-by-name`
-
-**File Ops:** `POST /file/list` · `POST /file/read` · `POST /file/write` · `POST /file/delete` (needs `confirm: true`)
-
-**Browser:** `POST /browser/navigate` · `POST /browser/click` · `POST /browser/fill` · `POST /browser/extract` · `POST /browser/screenshot`
-
-**Agent Gateway:** `GET /agent/status` · `POST /agent/exec` · `POST /agent/audit` · `POST /agent/plan` · `POST /agent/implement` · `GET /agent/logs`
-
-**Other:** `POST /voice/toggle` · `POST /toast/show` · `POST /google/gmail/send` · `POST /tunnel/start` · `POST /emergency/stop`
-
----
-
-## 🏗 Architecture (v7.8)
-
-```
-hermes_coagent.py          — Main server (auth, CORS, health, watchdog)
-├── routes_mouse.py        — Mouse/keyboard/chain/smart click
-├── routes_ocr.py          — Screenshots/OCR/FallbackChain (5 methods)
-├── routes_uia.py          — UIA tree/SOM/element find
-├── routes_file.py         — File ops/app launch/power
-├── routes_media.py        — Wallpaper/clipboard/macros/scheduler
-├── routes_process.py      — Process management
-├── routes_voice.py        — Voice commands
-├── routes_cua.py          — Cua Driver (37 tools)
-├── routes_copilot.py      — AI Co-Pilot
-├── routes_bypass.py       — Prompt bypass toolkit (9 endpoints)
-├── routes_agent.py        — 🆕 Agent Gateway (6 endpoints)
-├── routes_toast.py        — Toast notifications
-├── routes_browser.py      — Playwright browser automation
-├── routes_google.py       — Google Workspace (Gmail + Calendar)
-├── routes_streak.py       — SSE screen streaming
-|__ and more in AGENTS.md
-├── shared.py              — Shared utilities
-├── auth.py                — Bearer token auth
-├── coagent_watchdog.ps1   — Self-healing watchdog
-├── AGENTS.md              — AI onboarding guide (read this!)
+```bash
+curl http://127.0.0.1:9123/agent/status \
+  -H "Authorization: Bearer $TOKEN"
 ```
 
----
+Useful auth options:
 
-## 🔐 Security
+| Option | Behavior |
+|---|---|
+| `--secure` | Enable auth using `./.token`, creating it if missing |
+| `--token=KEY` | Start with an explicit token and save it locally |
+| `HERMES_COAGENT_TOKEN` | Use a token from the environment |
+| `--allow-external` | Bind to `0.0.0.0`; requires auth |
 
-| Flag | Effect |
-|------|--------|
-| `--secure` | Enable Bearer auth using `.token` or first-time setup |
-| `--token=KEY` | Enable Bearer auth with explicit token |
-| `HERMES_COAGENT_TOKEN` | Enable Bearer auth from env var |
-| `--allow-external` | Bind `0.0.0.0` for LAN (requires auth) |
+The token file is ignored by git. Do not expose port `9123` to untrusted networks.
 
-**All endpoints require Bearer auth** except: `/`, `/health`, `/ping`, `/version`, `/favicon.ico`, `/setup`, `/setup-status`.
+## API Docs
 
-Token file `.token` is gitignored. Dashboard uses `sessionStorage` (cleared on tab close). No hardcoded secrets in source.
+`GET /help` returns the full endpoint catalog as JSON. Use `GET /help?format=text` for a terminal-friendly version.
 
----
+Common endpoints:
 
-## 🔧 Requirements
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/ping` | Liveness check |
+| `GET` | `/version` | Version, modules, feature list |
+| `GET` | `/dashboard` | Operator dashboard |
+| `GET` | `/healer/status` | Self-healing status |
+| `POST` | `/mouse/click` | Click at screen coordinates |
+| `POST` | `/key/type` | Type text |
+| `GET` | `/uia/tree` | Accessibility tree |
+| `POST` | `/agent/exec` | Run an installed agent CLI |
 
-- **Windows 10/11**
-- **Python 3.8+**
-- **Core:** `flask waitress pillow pyautogui pywinauto pytesseract pygetwindow pyperclip pystray mss psutil`
-- **Optional:** `dxcam` (GPU screenshots), `playwright` (browser), `google-api-python-client` + `google-auth-oauthlib` (Google), `win11toast` (notifications)
+## Docker
 
----
+Docker packaging is planned. Hermes controls the native Windows desktop, so the supported launch path today is a local Windows Python process. A future image can still run syntax checks, docs generation, and non-desktop API tests.
 
-## 🤖 How AI Agents Use This
+Placeholder:
 
-See `AGENTS.md` for the full AI onboarding guide. Key patterns:
+```bash
+docker build -t hermes-coagent .
+docker run --rm -p 9123:9123 hermes-coagent
+```
 
-1. **Authenticate:** Send `Authorization: Bearer TOKEN` on every request
-2. **See the screen:** `GET /screen/base64` → decode → analyze → pick coordinates
-3. **Click:** `POST /mouse/click {"x":960,"y":540}`
-4. **Read UI:** `GET /uia/tree` → find element by name → `POST /uia/click {"name":"OK"}`
-5. **Automate:** `POST /chain` with batched mouse/keyboard actions
-6. **Self-heal:** `GET /health` to verify, `GET /watchdog/status` for uptime
+## Development
 
----
+```bash
+python -m pip install -r requirements.txt
+python test_compile.py
+python hermes_coagent.py --secure
+```
 
-## 📄 License
+CI runs a syntax/compile smoke check on Python 3.11 and 3.12 across Windows and Ubuntu. Windows is the production runtime for desktop-control features.
 
-MIT — see [LICENSE](LICENSE)
+See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution workflow and [SECURITY.md](SECURITY.md) for security reporting.
+
+## License
+
+MIT. See [LICENSE](LICENSE).

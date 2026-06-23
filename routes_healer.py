@@ -33,6 +33,22 @@ DEFAULT_CONFIG = {
     "memory_limit_mb": 500,
 }
 
+JSON_PROBE_PATHS = (
+    "/ping",
+    "/version",
+    "/help",
+    "/healer/status",
+    "/health",
+)
+NON_JSON_ROUTE_PREFIXES = (
+    "/screen",
+    "/screenshot",
+    "/som",
+    "/browser/screenshot",
+    "/stream",
+)
+MIN_HEALTHY_PROBES = 3
+
 _CONFIG_LOCK = threading.RLock()
 _LOG_LOCK = threading.RLock()
 _STATUS_LOCK = threading.RLock()
@@ -162,7 +178,7 @@ def _auth_header():
 
 
 def _http_get(path, timeout=5):
-    headers = {"Accept": "application/json,text/plain,*/*"}
+    headers = {"Accept": "application/json"}
     token = _auth_header()
     if token:
         headers["Authorization"] = token
@@ -172,10 +188,13 @@ def _http_get(path, timeout=5):
         with urllib.request.urlopen(req, timeout=timeout) as response:
             body = response.read(4096)
             latency = time.perf_counter() - started
+            content_type = response.headers.get("Content-Type", "")
+            status_code = getattr(response, "status", 200)
             return {
                 "path": path,
-                "ok": 200 <= getattr(response, "status", 200) < 500,
-                "status_code": getattr(response, "status", 200),
+                "ok": 200 <= status_code < 300 and "application/json" in content_type,
+                "status_code": status_code,
+                "content_type": content_type,
                 "latency_seconds": round(latency, 3),
                 "bytes": len(body),
             }
@@ -205,6 +224,9 @@ def _metric_error_total():
         total = 0
         for key, value in errors.items():
             try:
+                path = str(key[1])
+                if _is_non_json_route(path):
+                    continue
                 status = int(key[2])
             except Exception:
                 status = 0
@@ -231,6 +253,14 @@ def _route_total():
         return len([rule for rule in _APP.url_map.iter_rules()]) if _APP is not None else 0
     except Exception:
         return 0
+
+
+def _is_non_json_route(path):
+    return any(path == prefix or path.startswith(f"{prefix}/") for prefix in NON_JSON_ROUTE_PREFIXES)
+
+
+def _json_probe_paths():
+    return [path for path in JSON_PROBE_PATHS if not _is_non_json_route(path)]
 
 
 def _restart_count_today():
@@ -310,10 +340,11 @@ def _perform_check(reason="scheduled"):
     elif rss_mb > config["memory_limit_mb"]:
         memory_status = "warning"
 
-    checks = [_http_get("/ping"), _http_get("/version"), _http_get("/metrics")]
+    checks = [_http_get(path) for path in _json_probe_paths()]
     failing = [check for check in checks if not check.get("ok")]
     slow = [check for check in checks if check.get("path") == "/ping" and check.get("latency_seconds", 0) > 5]
-    route_status = "healthy" if not failing and not slow else "degraded"
+    healthy_count = max(0, len(checks) - len(failing) - len(slow))
+    route_status = "healthy" if healthy_count >= MIN_HEALTHY_PROBES else "degraded"
     if failing:
         _log_action("route_check_failed", "warning", {"failing": failing})
     if slow:
@@ -332,10 +363,12 @@ def _perform_check(reason="scheduled"):
         "server": {"uptime": uptime, "status": "healthy" if route_status == "healthy" else "degraded"},
         "memory": {"rss_mb": rss_mb, "limit_mb": config["memory_limit_mb"], "status": memory_status},
         "routes": {
-            "total": _route_total(),
-            "healthy": max(0, len(checks) - len(failing)),
+            "total": len(checks),
+            "registered_total": _route_total(),
+            "healthy": healthy_count,
             "failing": failing + slow,
             "probed": checks,
+            "minimum_healthy": MIN_HEALTHY_PROBES,
         },
         "errors_last_hour": errors,
         "restarts_today": _restart_count_today(),
