@@ -53,7 +53,7 @@ Hermes CoAgent is a Flask-based Windows desktop automation server. Provides REST
 | 📈 Memory Leak Detect | Watchdog thread | Warns >100MB/5min, restarts >150MB |
 | 📦 Auto-Deps | `routes_deps.py` | Detect missing packages from logs, auto-install |
 
-## Agent Gateway (v7.8)
+## Agent Gateway (v7.9.1)
 
 Allows calling installed AI agent CLIs (Codex, Claude Code, Gemini CLI, OpenCode) as HTTP endpoints. Detects available agents automatically at startup.
 

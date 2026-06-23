@@ -2,14 +2,15 @@
 # Run this script as Administrator
 
 $taskName = "HermesCoAgent-Watchdog"
-$scriptPath = "C:\Users\Admin\Desktop\Hermes CoAgent\coagent_watchdog.ps1"
+$scriptPath = Join-Path $PSScriptRoot "coagent_watchdog.ps1"
+$taskUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
 $taskCommand = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$scriptPath`""
 
 # Delete old task if exists
 schtasks /Delete /TN $taskName /F 2>$null
 
 # Create the task using schtasks.exe with properly escaped quotes
-$cmd = "schtasks /Create /TN `"$taskName`" /TR `"powershell.exe -NoProfile -ExecutionPolicy Bypass -File \`"$scriptPath\`"`" /SC MINUTE /MO 1 /RU Admin /IT /F"
+$cmd = "schtasks /Create /TN `"$taskName`" /TR `"powershell.exe -NoProfile -ExecutionPolicy Bypass -File \`"$scriptPath\`"`" /SC MINUTE /MO 1 /RU `"$taskUser`" /IT /F"
 Write-Host "Running: $cmd"
 Invoke-Expression $cmd
 

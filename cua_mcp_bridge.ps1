@@ -1,5 +1,5 @@
 param(
-    [string]$CuaExe = 'C:\Users\Admin\AppData\Local\Programs\Cua\cua-driver\bin\cua-driver.exe',
+    [string]$CuaExe = (Join-Path $env:USERPROFILE 'AppData\Local\Programs\Cua\cua-driver\bin\cua-driver.exe'),
     [switch]$Overlay
 )
 

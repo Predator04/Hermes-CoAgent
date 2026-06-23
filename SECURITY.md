@@ -16,7 +16,7 @@ Security is a top priority.
 
 Instead, report via:
 - **GitHub Security Advisories**: Use the "Report a vulnerability" link on the repo
-- **Email**: predator04@users.noreply.github.com
+- **Email**: security@example.com
 
 You should receive a response within 48 hours. If not, follow up.
 

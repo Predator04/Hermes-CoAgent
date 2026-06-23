@@ -35,7 +35,6 @@ def register_routes(app, state, require_auth):
         candidates = [
             COAGENT_DIR.parent / "Ember" / "ember.py",
             Path.home() / "Desktop" / "Ember" / "ember.py",
-            Path("C:/Users/Admin/Desktop/Ember/ember.py"),
         ]
         for c in candidates:
             if c.exists():

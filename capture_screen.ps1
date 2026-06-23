@@ -1,4 +1,4 @@
-$scriptPath = "C:\Users\Admin\Desktop\Hermes CoAgent\"
+$scriptPath = $PSScriptRoot
 Set-Location $scriptPath
 
 Add-Type -AssemblyName System.Windows.Forms
@@ -10,7 +10,7 @@ $g = [System.Drawing.Graphics]::FromImage($bmp)
 $g.CopyFromScreen($bounds.X, $bounds.Y, 0, 0, $bounds.Size)
 $g.Dispose()
 
-$outPath = $scriptPath + "screenshot_v73.jpg"
+$outPath = Join-Path $scriptPath "screenshot_v73.jpg"
 $bmp.Save($outPath, [System.Drawing.Imaging.ImageFormat]::Jpeg)
 $bmp.Dispose()
 

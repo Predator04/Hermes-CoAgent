@@ -32,7 +32,7 @@ while ($true) {
         Start-Process -FilePath "cmd.exe" -ArgumentList "/c", "`"$batch`"" -WindowStyle Hidden
         Write-Log "Launched via start_coagent.bat"
     } else {
-        $pyw = "C:\Users\Admin\AppData\Local\Programs\Python\Python313\pythonw.exe"
+        $pyw = Join-Path $env:LOCALAPPDATA "Programs\Python\Python313\pythonw.exe"
         $script = "$PSScriptRoot\hermes_coagent.py"
         if (Test-Path $pyw -and (Test-Path $script)) {
             Start-Process -FilePath $pyw -ArgumentList "`"$script`" --secure --allow-external" -WindowStyle Hidden

@@ -12,7 +12,7 @@ class CoAgent:
     """Client for Hermes CoAgent v7.3 REST API."""
 
     def __init__(self, url=None, token=None):
-        self.url = (url or os.environ.get("COAGENT_URL", "http://172.21.192.1:9123")).rstrip("/")
+        self.url = (url or os.environ.get("COAGENT_URL", "http://127.0.0.1:9123")).rstrip("/")
         self.token = token or os.environ.get("COAGENT_TOKEN", "") or os.environ.get("HERMES_COAGENT_TOKEN", "")
         self._headers = {}
         if self.token:
@@ -117,7 +117,7 @@ class CoAgent:
     def macro_run(self, name):
         return self._post("/macro/run", {"name": name})
 
-    def search_files(self, pattern, path="C:/Users/Admin", limit=50):
+    def search_files(self, pattern, path=".", limit=50):
         return self._post("/search/files", {"pattern": pattern, "path": path, "limit": limit})
 
     # ── High-level helpers ──

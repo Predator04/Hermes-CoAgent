@@ -32,7 +32,7 @@ DANGEROUS_CMD_CHARS = set(';&|`$(){}[]\n\r')
 _sse_clients = []
 _sse_lock = threading.Lock()
 
-HOST_IP = "172.21.192.1"
+HOST_IP = "127.0.0.1"
 _HOST_IP_LOADED = False
 _HOST_IP_LOCK = threading.Lock()
 

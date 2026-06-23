@@ -1,6 +1,6 @@
 # Launch CoAgent properly — workingdir is the CoAgent folder
-$coagentDir = "C:\Users\Admin\Desktop\Hermes CoAgent"
-$python = "C:\Users\Admin\AppData\Local\hermes\hermes-agent\venv\Scripts\python.exe"
+$coagentDir = $PSScriptRoot
+$python = Join-Path $env:LOCALAPPDATA "hermes\hermes-agent\venv\Scripts\python.exe"
 $script = "$coagentDir\hermes_coagent.py"
 $log = "$coagentDir\launch_debug.log"
 

@@ -10,7 +10,7 @@ Get-Process -Name python* -ErrorAction SilentlyContinue | Where-Object {
 Start-Sleep -Seconds 3
 
 # Launch fresh
-cd "C:\Users\Admin\Desktop\Hermes CoAgent"
+Set-Location $PSScriptRoot
 $pythonwCandidates = @(
     "$env:LOCALAPPDATA\Programs\Python\Python313\pythonw.exe"
     "$env:LOCALAPPDATA\Programs\Python\Python312\pythonw.exe"

@@ -1,11 +1,11 @@
-$batPath = "C:\Users\Admin\Desktop\Hermes CoAgent\launch_coagent.bat"
+$batPath = Join-Path $PSScriptRoot "launch_coagent.bat"
 Write-Output "Starting: $batPath"
 
 # Use Invoke-Expression for the batch file (simulates double-click)
 $psi = New-Object System.Diagnostics.ProcessStartInfo
 $psi.FileName = "cmd.exe"
 $psi.Arguments = "/c `"$batPath`""
-$psi.WorkingDirectory = "C:\Users\Admin\Desktop\Hermes CoAgent"
+$psi.WorkingDirectory = $PSScriptRoot
 $psi.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden
 $psi.CreateNoWindow = $true
 $p = [System.Diagnostics.Process]::Start($psi)

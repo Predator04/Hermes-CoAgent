@@ -4,7 +4,7 @@
 # Logs to C:\Windows\Temp\coagent_watchdog.log
 
 param(
-    [string]$CoAgentDir = "C:\Users\Admin\Desktop\Hermes CoAgent",
+    [string]$CoAgentDir = $PSScriptRoot,
     [string]$PythonPath = "C:\Program Files\Python312\python.exe",
     [string]$Token = "",
     [int]$Port = 9123,
@@ -78,7 +78,8 @@ start "" "$pythonExe" "$coagentPy" "--token=$resolvedToken" --allow-external
     # Create and run a one-shot interactive task (Session 1)
     $launchTaskName = "HermesCoAgent-Launch"
     schtasks /Delete /TN $launchTaskName /F 2>$null
-    schtasks /Create /TN $launchTaskName /TR "$tempBat" /SC ONCE /ST 00:00 /RU Admin /IT /RL HIGHEST /F 2>$null
+    $taskUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+    schtasks /Create /TN $launchTaskName /TR "$tempBat" /SC ONCE /ST 00:00 /RU "$taskUser" /IT /RL HIGHEST /F 2>$null
     Start-Sleep -Milliseconds 500
     schtasks /Run /TN $launchTaskName 2>$null
     Start-Sleep -Seconds 10
