@@ -596,6 +596,30 @@ from routes_agent import register_routes as reg_agent
 from routes_telegram import register_routes as reg_telegram
 
 try:
+    from routes_recorder_gif import register_routes as reg_recorder_gif
+    RECORDER_GIF_AVAILABLE = True
+except ImportError:
+    RECORDER_GIF_AVAILABLE = False
+
+try:
+    from routes_undo import register_routes as reg_undo
+    UNDO_AVAILABLE = True
+except ImportError:
+    UNDO_AVAILABLE = False
+
+try:
+    from routes_diff import register_routes as reg_diff
+    DIFF_AVAILABLE = True
+except ImportError:
+    DIFF_AVAILABLE = False
+
+try:
+    from routes_finder import register_routes as reg_finder
+    FINDER_AVAILABLE = True
+except ImportError:
+    FINDER_AVAILABLE = False
+
+try:
     from routes_metrics import register_routes as reg_metrics
     METRICS_AVAILABLE = True
 except ImportError:
@@ -656,6 +680,18 @@ reg_palmreject(app, state, require_auth)
 reg_agent(app, state, require_auth)
 reg_telegram(app, state, require_auth)
 reg_mcp(app, state, require_auth)
+if RECORDER_GIF_AVAILABLE:
+    reg_recorder_gif(app, state, require_auth)
+    features["recorder_gif"] = True
+if UNDO_AVAILABLE:
+    reg_undo(app, state, require_auth)
+    features["undo"] = True
+if DIFF_AVAILABLE:
+    reg_diff(app, state, require_auth)
+    features["diff"] = True
+if FINDER_AVAILABLE:
+    reg_finder(app, state, require_auth)
+    features["finder"] = True
 if METRICS_AVAILABLE:
     reg_metrics(app, state, require_auth)
     features["metrics"] = True
@@ -746,13 +782,15 @@ def route_version():
                                  "phone_bridge", "remote_desktop",
                                  "plugin_system", "palm_rejection",
                                  "agent", "agent_gateway", "metrics",
-                                 "docs", "updates", "webhooks"],
+                                 "docs", "updates", "webhooks",
+                                 "recorder_gif", "undo", "diff", "finder"],
                     "modules": ["mouse", "ocr", "uia", "file", "media", "v63",
                                 "stream", "process", "voice", "cua", "copilot",
                                 "bypass", "toast", "deps", "config", "browser", "google", "logs",
                                 "recorder", "mcp", "git", "dashboard", "obsidian", "wol",
                                 "phone", "webrtc", "plugins", "palmreject", "agent",
-                                "metrics", "docs", "updates", "webhooks"],
+                                "metrics", "docs", "updates", "webhooks",
+                                "recorder_gif", "undo", "diff", "finder"],
                     "security": ["auth_token", "rate_limit", "input_sanitization",
                                  "cors_restricted", "security_headers"]})
 
