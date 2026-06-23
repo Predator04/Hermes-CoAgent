@@ -162,6 +162,7 @@ AUTH_EXEMPT_PATHS = {
     "/",
     "/health",
     "/ping",
+    "/help",
     "/version",
     "/favicon.ico",
     "/setup",
@@ -684,6 +685,13 @@ except ImportError:
     MOBILE_AVAILABLE = False
     _console("[WARN] routes_mobile.py not found")
 
+try:
+    from routes_help import register_routes as reg_help
+    HELP_AVAILABLE = True
+except ImportError:
+    HELP_AVAILABLE = False
+    _console("[WARN] routes_help.py not found")
+
 features = {}
 
 reg_mouse(app, state, require_auth)
@@ -756,6 +764,9 @@ if BROWSER_FINAL_AVAILABLE:
 if MOBILE_AVAILABLE:
     reg_mobile(app, state, require_auth)
     features["mobile_remote_control"] = True
+if HELP_AVAILABLE:
+    reg_help(app, state, require_auth)
+    features["help"] = True
 features["web_dashboard_overhaul"] = True
 state.backup_file = backup_file
 
