@@ -302,6 +302,137 @@ def route_telegram_status():
     })
 
 
+def _send_telegram_message(bot_token, chat_id, text):
+    """Send one plain Telegram message. Returns (ok, response_or_error)."""
+    payload = {
+        "chat_id": chat_id,
+        "text": (text or "")[:4096],
+        "disable_web_page_preview": True,
+    }
+    data = json.dumps(payload).encode("utf-8")
+    url = TELEGRAM_API.format(token=bot_token)
+    try:
+        req = urllib.request.Request(
+            url,
+            data=data,
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            raw = resp.read().decode("utf-8", errors="replace")
+        result = json.loads(raw or "{}")
+        if result.get("ok"):
+            return True, result
+        return False, result.get("description") or result
+    except Exception as exc:
+        return False, f"{type(exc).__name__}: {exc}"
+
+
+def _telegram_message_id(response_data):
+    try:
+        return response_data.get("result", {}).get("message_id")
+    except AttributeError:
+        return None
+
+
+def _format_agent_result_for_telegram(result):
+    output = result.get("output") or ""
+    header = "\n".join([
+        "Codex Output",
+        f"Agent: {result.get('agent') or 'unknown'}",
+        f"Success: {bool(result.get('success'))}",
+        f"Exit: {result.get('exit_code')}",
+        f"Duration: {result.get('duration_seconds', '?')}s",
+        f"Log ID: {result.get('log_id') or '-'}",
+        "",
+    ])
+    if not output:
+        output = "No output."
+
+    room_for_output = max(0, 4096 - len(header) - 1)
+    if len(output) > room_for_output:
+        suffix = f"\n\n[truncated from {len(output)} chars]"
+        output = output[:max(0, room_for_output - len(suffix))] + suffix
+    return header + output
+
+
+def _record_telegram_send(config, error=None):
+    try:
+        config["last_send"] = time.time()
+        config["last_error"] = str(error) if error else None
+        _save_config(config)
+    except Exception as exc:
+        _console(f"[telegram] failed to update send status: {exc}")
+
+
+@telegram_bp.route("/agent/exec-to-telegram", methods=["POST"])
+def route_agent_exec_to_telegram():
+    """Run an agent prompt and relay the final output to Telegram."""
+    config = _load_config()
+    if not config:
+        return jsonify({"error": "Telegram config not found. POST /telegram/configure first"}), 400
+
+    bot_token = (config.get("bot_token") or "").strip()
+    data = _json_body()
+    target_chat = (data.get("target") or data.get("chat_id") or _resolve_target_chat(config) or "").strip()
+    if not bot_token or not target_chat:
+        return jsonify({"error": "Telegram bot_token and chat_id are required"}), 400
+
+    prompt = (data.get("prompt") or "").strip()
+    if not prompt:
+        return jsonify({"error": "prompt is required"}), 400
+
+    try:
+        from routes_agent import _execute_agent
+    except ImportError as exc:
+        return jsonify({"error": f"routes_agent not available: {exc}"}), 500
+
+    try:
+        result = _execute_agent(
+            prompt=prompt,
+            agent_name=data.get("agent"),
+            model=data.get("model"),
+            timeout=data.get("timeout", 600),
+            workdir=data.get("workdir"),
+            purpose="telegram-relay",
+            read_only=False,
+        )
+    except Exception as exc:
+        error_msg = f"{type(exc).__name__}: {exc}"
+        _console(f"[telegram] exec-to-telegram failed: {error_msg}")
+        send_ok, send_resp = _send_telegram_message(
+            bot_token,
+            target_chat,
+            "Codex execution failed\n\n" + error_msg,
+        )
+        if not send_ok:
+            _console(f"[telegram] failed to send agent error: {send_resp}")
+        _record_telegram_send(config, None if send_ok else send_resp)
+        return jsonify({
+            "error": error_msg,
+            "telegram_sent": send_ok,
+            "telegram_message_id": _telegram_message_id(send_resp) if send_ok else None,
+            "telegram_error": None if send_ok else str(send_resp),
+        }), 500
+
+    message = _format_agent_result_for_telegram(result)
+    send_ok, send_resp = _send_telegram_message(bot_token, target_chat, message)
+    if not send_ok:
+        _console(f"[telegram] exec-to-telegram send failed: {send_resp}")
+    _record_telegram_send(config, None if send_ok else send_resp)
+
+    return jsonify({
+        "status": "ok" if send_ok else "telegram_send_failed",
+        "lines_sent": 1 if send_ok else 0,
+        "telegram_message_id": _telegram_message_id(send_resp) if send_ok else None,
+        "telegram_error": None if send_ok else str(send_resp),
+        "agent_success": bool(result.get("success")),
+        "exit_code": result.get("exit_code"),
+        "duration_seconds": result.get("duration_seconds"),
+        "output_length": len(result.get("output") or ""),
+        "log_id": result.get("log_id"),
+    })
+
+
 def register_routes(app, state, require_auth):
     """Register all telegram relay routes."""
     from routes_agent import _auth_blueprint
