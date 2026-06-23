@@ -715,7 +715,7 @@ def route_dashboard2():
     try:
         html = Path(COAGENT_DIR / "dashboard.html").read_text(encoding="utf-8")
         return Response(html, mimetype="text/html")
-    except: return jsonify({"error": "dashboard.html not found"}), 404
+    except Exception: return jsonify({"error": "dashboard.html not found"}), 404
 
 @app.route("/index.html", methods=["GET"])
 @require_auth
@@ -834,7 +834,7 @@ def route_logs():
             if request.args.get("format") == "json" or "application/json" in request.headers.get("Accept", ""):
                 return jsonify({"lines": last_n.splitlines(), "text": last_n, "count": len(last_n.splitlines())})
             return Response(f"<pre>{escape(last_n)}</pre>", mimetype="text/html")
-        except:
+        except Exception:
             return jsonify({"error": "Cannot read log"}), 500
     return jsonify({"lines": [], "text": "", "count": 0, "log": "No log file"})
 
@@ -887,7 +887,7 @@ if __name__ == "__main__":
         ue = _get_uia_engine()
         if ue.UIA_READY:
             _console("  [OK] UIA engine ready")
-    except: pass
+    except Exception: pass
 
     from routes_ocr import _capture_raw
     _capture_raw(force=True)

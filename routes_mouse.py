@@ -147,7 +147,7 @@ def _background_sendinput(action, x, y, button="left"):
             ctypes.windll.user32.mouse_event(btn_up, x, y, extra, 0)
         ctypes.windll.user32.mouse_event(btn_down, x, y, extra, 0)
         ctypes.windll.user32.mouse_event(btn_up, x, y, extra, 0)
-    except:
+    except Exception:
         pyautogui.click(x, y, button=button)
 
 def _mouse_action(action, x, y, button="left", background=True, state=None):
@@ -342,7 +342,7 @@ def register_routes(app, state, require_auth):
         try:
             x, y = pyautogui.position()
             return jsonify({"x": x, "y": y})
-        except:
+        except Exception:
             return jsonify({"x": 0, "y": 0})
 
     @app.route("/copilot/mode", methods=["GET"])

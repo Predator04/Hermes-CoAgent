@@ -110,7 +110,7 @@ class RelayHandler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         try:
             self.wfile.write(data)
-        except:
+        except Exception:
             pass
 
     def do_OPTIONS(self):

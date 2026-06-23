@@ -181,7 +181,7 @@ def _load_scheduler():
     if SCHEDULER_FILE.exists():
         try:
             return json.loads(SCHEDULER_FILE.read_text())
-        except:
+        except Exception:
             return {"actions": []}
     return {"actions": []}
 
@@ -227,7 +227,7 @@ def register_routes(app, state, require_auth):
                 if needle in w.title.lower():
                     w.activate()
                     return jsonify({"status": "activated", "title": w.title})
-        except:
+        except Exception:
             def enum_cb(hwnd, _):
                 buf = ctypes.create_unicode_buffer(512)
                 ctypes.windll.user32.GetWindowTextW(hwnd, buf, 512)
@@ -318,7 +318,7 @@ def register_routes(app, state, require_auth):
         try:
             import pyperclip
             return jsonify({"text": pyperclip.paste()})
-        except:
+        except Exception:
             return jsonify({"text": ""})
 
     @app.route("/clipboard/set", methods=["POST"])
@@ -456,7 +456,7 @@ $s.Speak($text)
             for f in sorted(MACROS_DIR.glob("*.json")):
                 try:
                     macros.append({"name": f.stem, "path": str(f), "size": f.stat().st_size})
-                except:
+                except Exception:
                     pass
         return jsonify({"macros": macros, "count": len(macros)})
 
@@ -672,7 +672,7 @@ $s.Speak($text)
         d = _json_body()
         pattern = d.get("pattern", "*")
         try:
-            search_path = _sanitize_path(d.get("path", os.environ.get("USERPROFILE", "C:/Users/Default")))
+            search_path = _sanitize_path(d.get("path", os.environ.get("USERPROFILE", str(Path.home()))))
         except ValueError as e:
             return jsonify({"error": str(e)}), 403
         import fnmatch
@@ -708,11 +708,11 @@ $s.Speak($text)
                         if fnmatch.fnmatch(f, pattern):
                             full = os.path.join(root, f)
                             try: sz = os.path.getsize(full)
-                            except: sz = 0
+                            except Exception: sz = 0
                             results.append({"path": full, "name": f, "size": sz})
                 except (PermissionError, OSError): continue
                 if len(results) >= limit: break
-        except:
+        except Exception:
             pass
         return jsonify({"matches": results, "count": len(results), "pattern": pattern,
                         "dirs_scanned": dirs_seen, "stopped": stopped})

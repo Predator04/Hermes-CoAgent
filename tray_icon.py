@@ -60,7 +60,7 @@ def _api(path, method="POST", body=None):
             data=data, headers=headers,
             method=method)
         urllib.request.urlopen(req, timeout=2)
-    except:
+    except Exception:
         pass
 
 
@@ -221,7 +221,7 @@ def _start_screenshot_server():
                 import pythoncom
                 try:
                     pythoncom.CoInitialize()
-                except:
+                except Exception:
                     pass
                 from pywinauto import Desktop as PyWinDesktop
                 desktop = PyWinDesktop(backend="uia")
@@ -240,7 +240,7 @@ def _start_screenshot_server():
                         try:
                             r = w.rectangle()
                             info["rect"] = {"left": r.left, "top": r.top, "width": r.width(), "height": r.height()}
-                        except:
+                        except Exception:
                             pass
                         # Get children
                         try:
@@ -255,16 +255,16 @@ def _start_screenshot_server():
                                     try:
                                         r2 = c.rectangle()
                                         ci["rect"] = {"left": r2.left, "top": r2.top, "width": r2.width(), "height": r2.height()}
-                                    except:
+                                    except Exception:
                                         pass
                                     children.append(ci)
-                                except:
+                                except Exception:
                                     pass
                             info["children"] = children
-                        except:
+                        except Exception:
                             info["children"] = []
                         result.append(info)
-                    except:
+                    except Exception:
                         pass
                 data = json.dumps({"windows": result, "count": len(result), "session": 1}).encode()
                 self._send_body(data)

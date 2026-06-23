@@ -62,7 +62,7 @@ def _lazy_imports():
         try:
             pytesseract.get_tesseract_version()
             HAS_TESSERACT = True
-        except:
+        except Exception:
             pass
     except ImportError:
         pass
@@ -91,7 +91,7 @@ else:
         try:
             pytesseract.get_tesseract_version()
             HAS_TESSERACT = True
-        except:
+        except Exception:
             pass
     except ImportError:
         pass

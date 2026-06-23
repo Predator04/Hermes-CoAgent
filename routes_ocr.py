@@ -137,7 +137,7 @@ def _screenshot_dxcam(force=False, monitor_index=0):
             import dxcam as m
             _DXCAM_MODULE = m
             HAS_DXCAM = True
-        except:
+        except Exception:
             # DXCam crashes from Session 0 (no GPU access)
             _DXCAM_MODULE = "__failed__"
             return None
@@ -429,7 +429,7 @@ def _windows_ocr(pil_image):
         _log(f"WinRT OCR direct path unavailable; falling back to PowerShell: {type(e).__name__}: {e}")
         try:
             return _windows_ocr_powershell(pil_image)
-        except:
+        except Exception:
             return {"success": False, "error": "Windows OCR unavailable", "winrt_runtime": _check_winrt_version()}
     except Exception as e:
         return {"success": False, "error": str(e)}
@@ -619,7 +619,7 @@ def register_routes(app, state, require_auth):
             r = subprocess.run(["powershell.exe", "-NoProfile", "-Command", f"(Get-Process -Id {_os.getpid()}).SessionId"],
                                capture_output=True, text=True, timeout=5)
             sid = int(r.stdout.strip()) if r.stdout.strip() else 0
-        except:
+        except Exception:
             pass
         monitors = get_monitor_list()
         return jsonify({"dxcam": HAS_DXCAM, "mss": _MSS_AVAILABLE, "pil": HAS_PIL, "session": sid,

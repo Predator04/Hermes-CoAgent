@@ -28,7 +28,7 @@ class CoAgent:
                 return json.loads(r.read().decode())
         except URLError as e:
             try: err = e.read().decode(errors="replace")[:500]
-            except: err = str(e)
+            except Exception: err = str(e)
             return {"error": str(e), "detail": err}
         except Exception as e:
             return {"error": str(e)}

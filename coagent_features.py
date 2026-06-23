@@ -54,7 +54,7 @@ def _ensure_cursor_window():
         try:
             if ctypes.windll.user32.IsWindow(_CURSOR_HWND):
                 return _CURSOR_HWND
-        except:
+        except Exception:
             pass
     try:
         hwnd = ctypes.windll.user32.CreateWindowExW(
@@ -68,7 +68,7 @@ def _ensure_cursor_window():
             ctypes.windll.user32.ShowWindow(hwnd, 8)  # SW_SHOWNA
             _CURSOR_HWND = hwnd
             return hwnd
-    except:
+    except Exception:
         pass
     return None
 
@@ -78,7 +78,7 @@ def _destroy_cursor_window():
     if _CURSOR_HWND:
         try:
             ctypes.windll.user32.DestroyWindow(_CURSOR_HWND)
-        except:
+        except Exception:
             pass
         _CURSOR_HWND = None
 
@@ -114,7 +114,7 @@ def show_cursor_at(x: int, y: int):
         s = _CURSOR_SIZE
         ctypes.windll.user32.SetWindowPos(hwnd, -1, x - s//2, y - s//2, s, s, 0x0010)
         return True
-    except:
+    except Exception:
         return False
 
 def animate_cursor_to(x: int, y: int):
@@ -142,7 +142,7 @@ def animate_cursor_to(x: int, y: int):
             iy = cy + (y - cy) * t - _CURSOR_ARC_SIZE * math.sin(t * math.pi)
             show_cursor_at(int(ix), int(iy))
             time.sleep(_CURSOR_GLIDE_MS / 1000)
-    except:
+    except Exception:
         show_cursor_at(x, y)
 
 
@@ -229,7 +229,7 @@ def _fallback_find(query: str, mode: str = "name"):
                                 "automation_id": info.automation_id or "",
                                 "class_name": info.class_name or "",
                             })
-                except:
+                except Exception:
                     pass
         return results
     except Exception as e:
@@ -577,7 +577,7 @@ def record_action(action_type: str, data: dict, result: dict = None):
                 r = 5
                 draw.ellipse([x-r, y-r, x+r, y+r], fill="red")
                 img.save(str(turn_dir / "click.png"))
-        except:
+        except Exception:
             pass
         
         # Update session metadata
@@ -615,7 +615,7 @@ def stop_recording() -> dict:
                     started = dt.fromisoformat(meta["started"])
                     ended = dt.fromisoformat(meta["ended"])
                     summary["duration_seconds"] = (ended - started).total_seconds()
-                except:
+                except Exception:
                     pass
         
         _RECORDING_ACTIVE = False

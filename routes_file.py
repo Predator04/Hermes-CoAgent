@@ -40,7 +40,7 @@ def register_routes(app, state, require_auth):
                     st = e.stat()
                     entries.append({"name": e.name, "path": e.path, "is_dir": e.is_dir(),
                                     "size": st.st_size, "mtime": int(st.st_mtime)})
-                except:
+                except Exception:
                     pass
             return jsonify({"path": path, "entries": entries, "count": len(entries)})
         except Exception as ex:

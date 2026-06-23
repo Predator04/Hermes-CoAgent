@@ -65,7 +65,7 @@ def _console(msg=""):
         try:
             stream.write(text)
             stream.flush()
-        except:
+        except Exception:
             pass
     try:
         if SERVER_LOG.exists() and SERVER_LOG.stat().st_size > 5 * 1024 * 1024:
@@ -79,7 +79,7 @@ def _console(msg=""):
             SERVER_LOG.rename(SERVER_LOG.with_suffix(".log.1"))
         with SERVER_LOG.open("a", encoding="utf-8") as f:
             f.write(text)
-    except:
+    except Exception:
         pass
 
 
@@ -90,7 +90,7 @@ def _log(msg):
 def _json_body():
     try:
         return request.get_json(force=True, silent=True) or {}
-    except:
+    except Exception:
         return {}
 
 
@@ -100,7 +100,7 @@ def _ensure_interactive_session():
         point = wintypes.POINT()
         ctypes.windll.user32.GetCursorPos(ctypes.byref(point))
         return True
-    except:
+    except Exception:
         _console("WARNING: No desktop access (cursor=(0,0)). Launch from Windows desktop.")
         return False
 
@@ -182,14 +182,18 @@ def _interactive_task_xml(command, arguments, author="CoAgent", execution_limit=
 def sse_broadcast(event_type, data):
     msg = f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
     with _sse_lock:
-        dead = []
-        for q in _sse_clients:
-            try:
-                q.put_nowait(msg)
-            except:
-                dead.append(q)
-        for q in dead:
-            _sse_clients.remove(q)
+        clients = list(_sse_clients)
+    dead = []
+    for q in clients:
+        try:
+            q.put_nowait(msg)
+        except Exception:
+            dead.append(q)
+    if dead:
+        with _sse_lock:
+            for q in dead:
+                if q in _sse_clients:
+                    _sse_clients.remove(q)
 
 
 def sse_response():

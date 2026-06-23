@@ -44,7 +44,7 @@ STREAM_IDLE_CLEANUP_SECONDS = 300
 AGENT_DETECTION_LOCK = threading.Lock()
 LOG_WRITE_LOCK = threading.Lock()
 EXECUTION_LOCKS_LOCK = threading.Lock()
-STREAM_LOCK = threading.Lock()
+_streams_lock = threading.Lock()
 EXECUTION_LOCKS = {}
 ACTIVE_STREAMS = {}
 AGENT_CACHE = {}
@@ -161,7 +161,7 @@ def _schedule_stream_cleanup(log_id, delay=STREAM_IDLE_CLEANUP_SECONDS):
 
 def _cleanup_stream_if_idle(log_id):
     delay = None
-    with STREAM_LOCK:
+    with _streams_lock:
         state = ACTIVE_STREAMS.get(log_id)
         if not state or not state.get("complete"):
             return
@@ -182,19 +182,23 @@ def _ensure_stream(log_id):
     if not log_id:
         return None
     _validate_log_id(log_id)
-    state = ACTIVE_STREAMS.get(log_id)
-    if state is None:
-        state = _new_stream_state()
-        ACTIVE_STREAMS[log_id] = state
-    return state
+    with _streams_lock:
+        state = ACTIVE_STREAMS.get(log_id)
+        if state is None:
+            state = _new_stream_state()
+            ACTIVE_STREAMS[log_id] = state
+        return state
 
 
 def _write_stream_event(log_id, event):
     if not log_id:
         return
     event_json = json.dumps(event, ensure_ascii=False)
-    with STREAM_LOCK:
-        state = _ensure_stream(log_id)
+    with _streams_lock:
+        state = ACTIVE_STREAMS.get(log_id)
+        if state is None:
+            state = _new_stream_state()
+            ACTIVE_STREAMS[log_id] = state
         seq = state["next_seq"]
         state["next_seq"] = seq + 1
         state["events"].append((seq, event_json))
@@ -211,7 +215,7 @@ def _close_stream(log_id, exit_code, duration):
         log_id,
         {"type": "complete", "exit_code": exit_code, "duration": duration},
     )
-    with STREAM_LOCK:
+    with _streams_lock:
         state = ACTIVE_STREAMS.get(log_id)
         if state:
             state["complete"] = True
@@ -227,7 +231,7 @@ def _reserve_stream_log_id(agent_name="agent"):
         suffix = f"_{counter}" if counter else ""
         log_id = f"{stamp}_{safe_agent}{suffix}"
         path = _log_path_for_id(log_id)
-        with STREAM_LOCK:
+        with _streams_lock:
             if log_id not in ACTIVE_STREAMS and not path.exists():
                 ACTIVE_STREAMS[log_id] = _new_stream_state()
                 return log_id
@@ -236,12 +240,12 @@ def _reserve_stream_log_id(agent_name="agent"):
 
 
 def _stream_exists(log_id):
-    with STREAM_LOCK:
+    with _streams_lock:
         return log_id in ACTIVE_STREAMS
 
 
 def _open_stream_connection(log_id):
-    with STREAM_LOCK:
+    with _streams_lock:
         state = ACTIVE_STREAMS.get(log_id)
         if not state:
             return False
@@ -251,7 +255,7 @@ def _open_stream_connection(log_id):
 
 def _release_stream_connection(log_id):
     should_cleanup = False
-    with STREAM_LOCK:
+    with _streams_lock:
         state = ACTIVE_STREAMS.get(log_id)
         if state:
             state["connections"] = max(0, state.get("connections", 0) - 1)
@@ -322,7 +326,7 @@ def stream_agent_output(log_id):
         last_seq = -1
         try:
             while True:
-                with STREAM_LOCK:
+                with _streams_lock:
                     state = ACTIVE_STREAMS.get(log_id)
                     entries = list(state["events"]) if state else []
 

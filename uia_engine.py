@@ -33,7 +33,7 @@ def _get_element_key(elem) -> str:
         rid = elem.element_info.runtime_id
         if rid:
             return "rid:" + hashlib.md5(str(rid).encode()).hexdigest()
-    except:
+    except Exception:
         pass
     try:
         aid = elem.element_info.automation_id or ""
@@ -43,7 +43,7 @@ def _get_element_key(elem) -> str:
         raw = f"{aid}|{ct}|{nm}|{cn}"
         if raw != "|||":
             return "fallback:" + hashlib.md5(raw.encode()).hexdigest()
-    except:
+    except Exception:
         pass
     return None
 
@@ -73,7 +73,7 @@ def _get_stable_id(elem) -> int:
 try:
     import pythoncom
     pythoncom.CoInitialize()
-except:
+except Exception:
     pass
 
 UIA_READY = False
@@ -88,7 +88,7 @@ try:
         try:
             r = elem.rectangle()
             return {"left": r.left, "top": r.top, "width": r.width(), "height": r.height()}
-        except:
+        except Exception:
             return None
 
     def _uia_element_state(elem, method_name: str, default: bool = True) -> bool:
@@ -96,7 +96,7 @@ try:
         try:
             method = getattr(elem, method_name)
             return bool(method())
-        except:
+        except Exception:
             return default
 
     def _uia_child_info(elem):
@@ -116,7 +116,7 @@ try:
                 "enabled": _uia_element_state(elem, "is_enabled"),
                 "visible": _uia_element_state(elem, "is_visible"),
             }
-        except:
+        except Exception:
             return None
 
     def _uia_find_info(elem):
@@ -130,7 +130,7 @@ try:
                 "name": elem.element_info.name or "",
                 "rect": _uia_element_rect(elem),
             }
-        except:
+        except Exception:
             return None
 
     def _get_children(element, depth=0, max_depth=3) -> list:
@@ -143,7 +143,7 @@ try:
                 descendants = element.descendants(depth=max_depth - depth)
             except TypeError:
                 descendants = element.descendants()
-        except:
+        except Exception:
             return results
         for descendant in descendants:
             child_info = _uia_child_info(descendant)
@@ -158,7 +158,7 @@ try:
             try:
                 if not _uia_element_state(elem, "is_visible", True):
                     return None
-            except:
+            except Exception:
                 pass
             info = {
                 "control_type": elem.element_info.control_type or "",
@@ -177,10 +177,10 @@ try:
                         child_info = _uia_element_info(child, depth+1)
                         if child_info:
                             info["children"].append(child_info)
-                except:
+                except Exception:
                     pass
             return info
-        except:
+        except Exception:
             return None
     def uia_snapshot(timeout=12) -> dict:
         """Get full accessibility tree with timeout. Sets UIA_READY on failure."""
@@ -229,7 +229,7 @@ try:
                                 def _crawl_window_children(w=_target_win):
                                     try:
                                         children_result.extend(_get_children(w, max_depth=2))
-                                    except:
+                                    except Exception:
                                         pass
                                     finally:
                                         try:
@@ -242,14 +242,14 @@ try:
                                     ct.join(timeout=_WINDOW_CHILD_JOIN_TIMEOUT)
                                 win_info["children"] = children_result
                             info["children"].append(win_info)
-                        except:
+                        except Exception:
                             pass
                     result = {"success": True, "tree": info}
                     # v7.3: Cache successful result for next call
                     _UIA_LAST_CRAWL_RESULT = info
                 except Exception as e:
                     result = {"success": False, "error": str(e), "traceback": traceback.format_exc()}
-            except:
+            except Exception:
                 pass
         try:
             t = threading.Thread(target=_run, daemon=True)
@@ -276,13 +276,13 @@ try:
                         win_info = _uia_find_info(win)
                         if win_info:
                             results.append(win_info)
-                except:
+                except Exception:
                     pass
                 if len(results) >= 50:
                     break
                 try:
                     descendants = win.descendants()
-                except:
+                except Exception:
                     descendants = []
                 for child in descendants:
                     try:
@@ -293,7 +293,7 @@ try:
                                 results.append(child_info)
                                 if len(results) >= 50:
                                     break
-                    except:
+                    except Exception:
                         pass
                 if len(results) >= 50:
                     break
@@ -311,7 +311,7 @@ try:
                 try:
                     if name.lower() in (win.element_info.name or "").lower():
                         results.append(_uia_element_info(win))
-                except:
+                except Exception:
                     pass
                 # Search children
                 try:
@@ -320,9 +320,9 @@ try:
                             cname = child.element_info.name or ""
                             if name.lower() in cname.lower():
                                 results.append(_uia_element_info(child))
-                        except:
+                        except Exception:
                             pass
-                except:
+                except Exception:
                     pass
             return results
         except Exception as e:
@@ -343,9 +343,9 @@ try:
                         for child in win.descendants():
                             try:
                                 all_elements.append(child)
-                            except:
+                            except Exception:
                                 pass
-                    except:
+                    except Exception:
                         pass
                 for win in desktop.windows():
                     collect(win)
@@ -362,7 +362,7 @@ try:
                             if target.lower() in (win.element_info.name or "").lower():
                                 win.click_input()
                                 return {"success": True, "method": "name"}
-                        except:
+                        except Exception:
                             pass
                         for child in win.descendants():
                             try:
@@ -370,7 +370,7 @@ try:
                                 if target.lower() in cname.lower():
                                     child.click_input()
                                     return {"success": True, "method": "name_descendant"}
-                            except:
+                            except Exception:
                                 pass
                 return {"success": False, "error": f"Element '{target}' not found"}
         except Exception as e:
@@ -398,7 +398,7 @@ def _uia_winlist_changed(win_list: list) -> bool:
                 return False
             _UIA_WIN_CACHE[:] = sig
         return True
-    except:
+    except Exception:
         return True
 
 if "uia_find_deep" not in globals():
@@ -410,10 +410,10 @@ def _som_monitor_bounds(monitor_index, fallback_size):
     try:
         from routes_ocr import _coerce_monitor_index, _monitor_bounds
         return dict(_monitor_bounds(_coerce_monitor_index(monitor_index)))
-    except:
+    except Exception:
         try:
             width, height = fallback_size
-        except:
+        except Exception:
             width, height = 1920, 1080
         try:
             monitor_index = max(0, int(monitor_index))
@@ -491,7 +491,7 @@ def som_overlay(screenshot_bytes: bytes, monitor_index=0) -> dict:
         draw = ImageDraw.Draw(img)
         try:
             font = ImageFont.truetype("arial.ttf", 14)
-        except:
+        except Exception:
             font = ImageFont.load_default()
         
         labeled = []
@@ -659,7 +659,7 @@ def per_window_som(window_title: str = None) -> dict:
                 rect = _uia_element_rect(win)
                 if title and rect and rect["width"] > 100 and rect["height"] > 100:
                     windows.append({"handle": win, "title": title, "rect": rect})
-            except:
+            except Exception:
                 pass
 
         if not windows:
@@ -673,7 +673,7 @@ def per_window_som(window_title: str = None) -> dict:
             screen_bytes = BytesIO()
             img_full.save(screen_bytes, format="PNG")
             screen_bytes = screen_bytes.getvalue()
-        except:
+        except Exception:
             return {"success": False, "error": "Cannot capture screen"}
 
         if window_title:
@@ -685,7 +685,7 @@ def per_window_som(window_title: str = None) -> dict:
         img_base = Image.open(BytesIO(screen_bytes)).convert("RGBA")
         try:
             font = ImageFont.truetype("arial.ttf", 12)
-        except:
+        except Exception:
             font = ImageFont.load_default()
 
         per_window_results = []
@@ -810,7 +810,7 @@ def find_on_screen(text: str) -> dict:
         from io import BytesIO
         # We'll get screenshot from the caller
         results["method"] = "combined"
-    except:
+    except Exception:
         pass
     
     results["total"] = len(results["matches"])
