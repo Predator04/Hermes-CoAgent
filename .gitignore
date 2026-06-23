@@ -27,3 +27,6 @@ client_secret*.json
 *.bak
 *.tmp
 nul
+
+# Codex temp audit files
+codex_audit_result.txt
