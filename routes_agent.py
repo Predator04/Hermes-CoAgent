@@ -18,7 +18,7 @@ from shared import COAGENT_DIR, _console, _log
 
 
 def _userprofile():
-    return os.environ.get("USERPROFILE") or os.environ.get("HOME") or "C:\\Users\\Default"
+    return os.environ.get("USERPROFILE") or os.environ.get("HOME") or str(Path.home())
 
 
 def _resolve_npm_paths(name):

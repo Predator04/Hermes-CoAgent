@@ -170,8 +170,14 @@ AUTH_EXEMPT_PATHS = {
 _CORS_ALLOWED_ORIGINS = {
     "http://localhost:9123",
     "http://127.0.0.1:9123",
-    "http://172.21.192.1:9123",
 }
+# Dynamically add host IP from shared module if resolved
+try:
+    from shared import HOST_IP
+    if HOST_IP:
+        _CORS_ALLOWED_ORIGINS.add(f"http://{HOST_IP}:9123")
+except ImportError:
+    pass
 app.config["AUTH_EXEMPT_PREFIXES"] = AUTH_EXEMPT_PREFIXES
 app.config["AUTH_EXEMPT_PATHS"] = AUTH_EXEMPT_PATHS
 
@@ -773,8 +779,9 @@ def _start_tray():
             return
         task_name = "HermesCoAgent_Tray"
         tray_argv = [str(tray_script), str(SERVER_PORT), str(TRAY_PORT)]
-        if _auth.AUTH_TOKEN:
-            tray_argv.append(f"--token={_auth.AUTH_TOKEN}")
+        # Token is read from .token file by tray_icon.py, not passed via argv
+        # to avoid exposing the bearer token in process lists and task metadata
+        _log("[tray] token will be read from .token file")
         tray_args = subprocess.list2cmdline(tray_argv)
         tray_cmd = subprocess.list2cmdline([pyw, *tray_argv])
         create_flags = subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0

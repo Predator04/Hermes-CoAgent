@@ -13,4 +13,17 @@ agent_logs/
 *.token
 .token_*
 telegram_config.json
+.env*
+google_token.json
+google_credentials.json
+config.json
+client_secret*.json
+*.pem
+*.key
+*.pfx
+*.p12
+*.sqlite
+*.db
+*.bak
+*.tmp
 nul

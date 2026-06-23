@@ -1,6 +1,6 @@
 """Shared utilities for CoAgent route modules."""
 
-import json, os, queue, shlex, subprocess, sys, threading
+import json, os, queue, shlex, subprocess, sys, threading, tempfile
 from pathlib import Path
 from xml.sax.saxutils import escape as _xml_escape
 import ctypes
@@ -22,8 +22,8 @@ SERVER_DIR = COAGENT_DIR
 PYTHON = sys.executable
 
 SAFE_ALLOWED_ROOTS = [
-    Path(os.environ.get("USERPROFILE", "C:/Users/Default")).resolve(),
-    Path(os.environ.get("TEMP", "C:/Windows/Temp")).resolve(),
+    Path.home().resolve(),
+    Path(tempfile.gettempdir()).resolve(),
     COAGENT_DIR.resolve(),
 ]
 

@@ -1,4 +1,4 @@
-# Hermes CoAgent v7.8
+# Hermes CoAgent v7.9
 
 **Ultimate Desktop Co-Pilot for Windows** — gives AI agents full native Windows desktop control via a REST API. Screenshots, mouse/keyboard, UIA accessibility trees, OCR, voice, file ops, browser automation, notifications, Google Workspace, prompt bypass toolkit, agent gateway, and self-healing infrastructure. All local, zero API costs.
 
@@ -58,9 +58,24 @@ curl -s http://127.0.0.1:9123/uia/tree \
 
 ---
 
-## 📦 What's in v7.8
+## 📦 What's in v7.9
 
-### 🆕 Agent Gateway (v7.8)
+### 🆕 Telegram Relay (v7.9)
+Codex audit findings delivered directly to Telegram. Dashboard settings panel for bot token/chat ID. Includes:
+- `POST /telegram/register-chat` — Register any chat as deliver target
+- `POST /telegram/configure` — Configure bot token + chat ID
+- `POST /agent/exec-and-send` — Run Codex, extract findings, send to Telegram
+- Dashboard: Telegram settings panel with Save/Test/Clear
+
+### 🆕 Security Hardening (v7.9)
+- CSRF protection system (`GET /csrf-token`, `@csrf_protect` decorator)
+- No more hardcoded `C:\Users\Admin` paths — all resolved from env vars
+- `SECURITY.md` and `CONTRIBUTING.md` added
+- `.gitignore` expanded: `.env*`, `*.pem`, `*.key`, `*.p12`, `*.pfx`, secrets files
+- Token no longer passed via argv to tray process (process list leak fix)
+- CORS origins resolved dynamically from runtime host IP
+
+### 🆕 Agent Gateway (v7.9)
 Call installed AI agents (Codex, Claude Code, Gemini CLI, OpenCode) as HTTP endpoints:
 
 ```bash
