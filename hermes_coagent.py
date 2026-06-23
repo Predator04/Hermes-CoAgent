@@ -166,6 +166,9 @@ AUTH_EXEMPT_PATHS = {
     "/favicon.ico",
     "/setup",
     "/setup-status",
+    "/metrics",
+    "/docs",
+    "/docs.json",
 }
 _CORS_ALLOWED_ORIGINS = {
     "http://localhost:9123",
@@ -592,6 +595,36 @@ from routes_palmreject import register_routes as reg_palmreject
 from routes_agent import register_routes as reg_agent
 from routes_telegram import register_routes as reg_telegram
 
+try:
+    from routes_metrics import register_routes as reg_metrics
+    METRICS_AVAILABLE = True
+except ImportError:
+    METRICS_AVAILABLE = False
+    _console("[WARN] routes_metrics.py not found")
+
+try:
+    from routes_docs import register_routes as reg_docs
+    DOCS_AVAILABLE = True
+except ImportError:
+    DOCS_AVAILABLE = False
+    _console("[WARN] routes_docs.py not found")
+
+try:
+    from routes_updates import register_routes as reg_updates
+    UPDATES_AVAILABLE = True
+except ImportError:
+    UPDATES_AVAILABLE = False
+    _console("[WARN] routes_updates.py not found")
+
+try:
+    from routes_webhooks import register_routes as reg_webhooks
+    WEBHOOKS_AVAILABLE = True
+except ImportError:
+    WEBHOOKS_AVAILABLE = False
+    _console("[WARN] routes_webhooks.py not found")
+
+features = {}
+
 reg_mouse(app, state, require_auth)
 reg_ocr(app, state, require_auth)
 reg_uia(app, state, require_auth)
@@ -623,6 +656,18 @@ reg_palmreject(app, state, require_auth)
 reg_agent(app, state, require_auth)
 reg_telegram(app, state, require_auth)
 reg_mcp(app, state, require_auth)
+if METRICS_AVAILABLE:
+    reg_metrics(app, state, require_auth)
+    features["metrics"] = True
+if DOCS_AVAILABLE:
+    reg_docs(app, state, require_auth)
+    features["docs"] = True
+if UPDATES_AVAILABLE:
+    reg_updates(app, state, require_auth)
+    features["updates"] = True
+if WEBHOOKS_AVAILABLE:
+    reg_webhooks(app, state, require_auth)
+    features["webhooks"] = True
 state.backup_file = backup_file
 
 # ── Core routes (stay in main) ─────────────────────────────────
@@ -700,12 +745,14 @@ def route_version():
                                  "dashboard", "obsidian", "wake_on_lan",
                                  "phone_bridge", "remote_desktop",
                                  "plugin_system", "palm_rejection",
-                                 "agent", "agent_gateway"],
+                                 "agent", "agent_gateway", "metrics",
+                                 "docs", "updates", "webhooks"],
                     "modules": ["mouse", "ocr", "uia", "file", "media", "v63",
                                 "stream", "process", "voice", "cua", "copilot",
                                 "bypass", "toast", "deps", "config", "browser", "google", "logs",
                                 "recorder", "mcp", "git", "dashboard", "obsidian", "wol",
-                                "phone", "webrtc", "plugins", "palmreject", "agent"],
+                                "phone", "webrtc", "plugins", "palmreject", "agent",
+                                "metrics", "docs", "updates", "webhooks"],
                     "security": ["auth_token", "rate_limit", "input_sanitization",
                                  "cors_restricted", "security_headers"]})
 
