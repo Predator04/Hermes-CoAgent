@@ -169,6 +169,8 @@ AUTH_EXEMPT_PATHS = {
     "/metrics",
     "/docs",
     "/docs.json",
+    "/mobile",
+    "/mobile/view",
 }
 _CORS_ALLOWED_ORIGINS = {
     "http://localhost:9123",
@@ -647,6 +649,41 @@ except ImportError:
     WEBHOOKS_AVAILABLE = False
     _console("[WARN] routes_webhooks.py not found")
 
+try:
+    from routes_copilot_enhanced import register_routes as reg_copilot_enhanced
+    COPILOT_ENHANCED_AVAILABLE = True
+except ImportError:
+    COPILOT_ENHANCED_AVAILABLE = False
+    _console("[WARN] routes_copilot_enhanced.py not found")
+
+try:
+    from routes_recipes import register_routes as reg_recipes
+    RECIPES_AVAILABLE = True
+except ImportError:
+    RECIPES_AVAILABLE = False
+    _console("[WARN] routes_recipes.py not found")
+
+try:
+    from routes_healer import register_routes as reg_healer
+    HEALER_AVAILABLE = True
+except ImportError:
+    HEALER_AVAILABLE = False
+    _console("[WARN] routes_healer.py not found")
+
+try:
+    from routes_browser_final import register_routes as reg_browser_final
+    BROWSER_FINAL_AVAILABLE = True
+except ImportError:
+    BROWSER_FINAL_AVAILABLE = False
+    _console("[WARN] routes_browser_final.py not found")
+
+try:
+    from routes_mobile import register_routes as reg_mobile
+    MOBILE_AVAILABLE = True
+except ImportError:
+    MOBILE_AVAILABLE = False
+    _console("[WARN] routes_mobile.py not found")
+
 features = {}
 
 reg_mouse(app, state, require_auth)
@@ -704,6 +741,22 @@ if UPDATES_AVAILABLE:
 if WEBHOOKS_AVAILABLE:
     reg_webhooks(app, state, require_auth)
     features["webhooks"] = True
+if COPILOT_ENHANCED_AVAILABLE:
+    reg_copilot_enhanced(app, state, require_auth)
+    features["copilot_enhanced"] = True
+if RECIPES_AVAILABLE:
+    reg_recipes(app, state, require_auth)
+    features["scheduled_recipes"] = True
+if HEALER_AVAILABLE:
+    reg_healer(app, state, require_auth)
+    features["self_healing_mode"] = True
+if BROWSER_FINAL_AVAILABLE:
+    reg_browser_final(app, state, require_auth)
+    features["browser_automation_v2"] = True
+if MOBILE_AVAILABLE:
+    reg_mobile(app, state, require_auth)
+    features["mobile_remote_control"] = True
+features["web_dashboard_overhaul"] = True
 state.backup_file = backup_file
 
 # ── Core routes (stay in main) ─────────────────────────────────
@@ -783,14 +836,19 @@ def route_version():
                                  "plugin_system", "palm_rejection",
                                  "agent", "agent_gateway", "metrics",
                                  "docs", "updates", "webhooks",
-                                 "recorder_gif", "undo", "diff", "finder"],
+                                 "recorder_gif", "undo", "diff", "finder",
+                                 "web_dashboard_overhaul", "copilot_enhanced",
+                                 "scheduled_recipes", "self_healing_mode",
+                                 "browser_automation_v2", "mobile_remote_control"],
                     "modules": ["mouse", "ocr", "uia", "file", "media", "v63",
                                 "stream", "process", "voice", "cua", "copilot",
                                 "bypass", "toast", "deps", "config", "browser", "google", "logs",
                                 "recorder", "mcp", "git", "dashboard", "obsidian", "wol",
                                 "phone", "webrtc", "plugins", "palmreject", "agent",
                                 "metrics", "docs", "updates", "webhooks",
-                                "recorder_gif", "undo", "diff", "finder"],
+                                "recorder_gif", "undo", "diff", "finder",
+                                "copilot_enhanced", "recipes", "healer",
+                                "browser_v2", "mobile"],
                     "security": ["auth_token", "rate_limit", "input_sanitization",
                                  "cors_restricted", "security_headers"]})
 
@@ -960,7 +1018,7 @@ if __name__ == "__main__":
         _console("  Auth: disabled")
 
     _console(f"  Server: http://{bind_host}:{port}/")
-    _console(f"  Modules: mouse ocr uia file media v63 stream process voice cua copilot buddy bypass toast deps config browser google logs recorder mcp git dashboard obsidian wol phone webrtc plugins palmreject agent")
+    _console(f"  Modules: mouse ocr uia file media v63 stream process voice cua copilot buddy bypass toast deps config browser google logs recorder mcp git dashboard obsidian wol phone webrtc plugins palmreject agent copilot_enhanced recipes healer browser_v2 mobile")
     gateway = getattr(state, "agent_gateway", {})
     _console(f"  Agent Gateway: default={gateway.get('default_agent') or 'none'}")
     _console()

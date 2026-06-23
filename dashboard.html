@@ -4,342 +4,300 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Hermes CoAgent Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <style>
 :root {
   color-scheme: dark;
-  --bg: #090b0f;
-  --panel: #111720;
-  --panel-2: #151d28;
-  --line: #263241;
-  --line-soft: #1b2531;
-  --text: #e5edf6;
-  --muted: #8fa1b5;
-  --faint: #637489;
-  --accent: #38bdf8;
+  --bg: #07090c;
+  --shell: #0d1116;
+  --panel: #111820;
+  --panel-2: #16212b;
+  --line: #263441;
+  --line-soft: #1d2833;
+  --text: #edf5fb;
+  --muted: #91a4b5;
+  --faint: #687b8d;
+  --accent: #2dd4bf;
+  --accent-2: #38bdf8;
   --ok: #22c55e;
   --warn: #f59e0b;
   --danger: #ef4444;
-  --button: #1b2735;
-  --button-hover: #243346;
-  --shadow: 0 12px 30px rgba(0, 0, 0, .24);
+  --shadow: 0 18px 44px rgba(0, 0, 0, .28);
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; min-height: 100%; background: var(--bg); color: var(--text); }
 body {
-  font-family: "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  font-family: "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, Arial, sans-serif;
   letter-spacing: 0;
   overflow: hidden;
 }
-button, input, select {
-  font: inherit;
-}
+button, input, textarea, select { font: inherit; }
 button {
-  min-height: 32px;
+  min-height: 34px;
   border: 1px solid var(--line);
-  border-radius: 6px;
+  border-radius: 7px;
   color: var(--text);
-  background: var(--button);
-  padding: 6px 10px;
+  background: #172331;
+  padding: 7px 11px;
   cursor: pointer;
 }
-button:hover { background: var(--button-hover); border-color: #38506a; }
-button:disabled { cursor: not-allowed; opacity: .55; }
-button.danger { border-color: rgba(239, 68, 68, .45); color: #fecaca; background: rgba(127, 29, 29, .42); }
-button.warn { border-color: rgba(245, 158, 11, .45); color: #fde68a; background: rgba(120, 53, 15, .42); }
-button.ok { border-color: rgba(34, 197, 94, .42); color: #bbf7d0; background: rgba(20, 83, 45, .42); }
-select, input {
-  min-height: 32px;
+button:hover { background: #203044; border-color: #365267; }
+button:disabled { opacity: .55; cursor: not-allowed; }
+button.primary { border-color: rgba(45, 212, 191, .45); background: rgba(20, 83, 76, .72); }
+button.warn { border-color: rgba(245, 158, 11, .45); background: rgba(120, 53, 15, .55); }
+button.danger { border-color: rgba(239, 68, 68, .45); background: rgba(127, 29, 29, .55); }
+input, textarea, select {
+  min-height: 34px;
   border: 1px solid var(--line);
-  border-radius: 6px;
+  border-radius: 7px;
   color: var(--text);
-  background: #0d141d;
-  padding: 5px 8px;
+  background: #0b1117;
+  padding: 7px 9px;
   outline: none;
 }
-select:focus, input:focus { border-color: var(--accent); }
+textarea { min-height: 88px; resize: vertical; line-height: 1.4; }
+input:focus, textarea:focus, select:focus { border-color: var(--accent); }
 .app {
   height: 100vh;
   display: grid;
-  grid-template-rows: auto 1fr auto;
+  grid-template-rows: auto auto 1fr;
+  background:
+    radial-gradient(circle at 30% -20%, rgba(45, 212, 191, .15), transparent 32%),
+    linear-gradient(180deg, #0a0e13, #06080b 48%, #07090c);
 }
-.topbar, .statusbar {
-  display: flex;
-  align-items: center;
+.topbar {
+  display: grid;
+  grid-template-columns: auto minmax(260px, 1fr) auto;
   gap: 12px;
-  padding: 10px 14px;
-  border-bottom: 1px solid var(--line);
-  background: #0c1118;
-}
-.statusbar {
-  border-top: 1px solid var(--line);
-  border-bottom: 0;
-  color: var(--muted);
-  font-size: 12px;
-  flex-wrap: wrap;
-}
-.brand {
-  display: flex;
   align-items: center;
-  gap: 10px;
-  min-width: 210px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--line);
+  background: linear-gradient(135deg, rgba(16, 24, 32, .96), rgba(10, 14, 19, .96) 55%, rgba(14, 39, 36, .9));
 }
+.brand { display: flex; align-items: center; gap: 10px; min-width: 205px; }
 .mark {
-  width: 28px;
-  height: 28px;
-  border: 1px solid #2d4358;
-  border-radius: 7px;
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  border: 1px solid rgba(56, 189, 248, .35);
   display: grid;
   place-items: center;
   color: var(--accent);
-  background: #101a25;
-  font-weight: 700;
+  background: #0c151c;
+  font-weight: 800;
 }
-.title { line-height: 1.1; }
-.title strong { display: block; font-size: 15px; }
-.title span { color: var(--muted); font-size: 12px; }
-.top-actions {
-  margin-left: auto;
-  display: flex;
-  align-items: center;
+.brand strong { display: block; font-size: 15px; }
+.brand span { display: block; color: var(--muted); font-size: 12px; margin-top: 1px; }
+.command {
+  display: grid;
+  grid-template-columns: 1fr auto;
   gap: 8px;
-  flex-wrap: wrap;
+  min-width: 0;
 }
+.top-actions { display: flex; gap: 8px; align-items: center; justify-content: flex-end; flex-wrap: wrap; }
 .pill {
+  min-height: 30px;
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  min-height: 28px;
-  padding: 4px 8px;
   border: 1px solid var(--line);
   border-radius: 999px;
+  padding: 5px 9px;
   color: var(--muted);
-  background: #0d141d;
+  background: rgba(11, 17, 23, .78);
   white-space: nowrap;
 }
-.dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--faint);
-}
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); }
 .dot.ok { background: var(--ok); }
 .dot.warn { background: var(--warn); }
 .dot.danger { background: var(--danger); }
-.main {
+.tabs {
+  display: flex;
+  gap: 6px;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--line);
+  overflow-x: auto;
+  background: rgba(8, 12, 16, .78);
+}
+.tab {
+  white-space: nowrap;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+}
+.tab.active {
+  color: var(--text);
+  border-color: rgba(45, 212, 191, .5);
+  background: rgba(20, 83, 76, .5);
+}
+.workspace {
   min-height: 0;
-  display: grid;
-  grid-template-columns: minmax(420px, 1.45fr) minmax(360px, .9fr);
-  gap: 12px;
   padding: 12px;
   overflow: auto;
 }
-.left, .right {
-  min-height: 0;
+.view { display: none; min-height: 100%; }
+.view.active { display: block; animation: rise .16s ease-out; }
+@keyframes rise { from { opacity: .55; transform: translateY(3px); } to { opacity: 1; transform: translateY(0); } }
+.grid {
   display: grid;
+  grid-template-columns: minmax(380px, 1.45fr) minmax(320px, .8fr);
   gap: 12px;
+  min-height: calc(100vh - 152px);
 }
-.left { grid-template-rows: minmax(340px, 1fr) minmax(260px, .72fr); }
-.right { grid-template-rows: auto minmax(250px, .9fr) minmax(220px, .75fr); }
 .panel {
   min-width: 0;
   min-height: 0;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: var(--panel);
+  background: rgba(17, 24, 32, .94);
   box-shadow: var(--shadow);
   overflow: hidden;
   display: flex;
   flex-direction: column;
 }
 .panel-head {
+  min-height: 46px;
+  padding: 9px 10px;
   display: flex;
   align-items: center;
-  gap: 8px;
   justify-content: space-between;
-  min-height: 44px;
-  padding: 9px 10px;
+  gap: 8px;
   border-bottom: 1px solid var(--line-soft);
   background: var(--panel-2);
 }
-.panel-head h2 {
-  margin: 0;
-  font-size: 13px;
-  font-weight: 650;
-}
-.panel-tools {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  flex-wrap: wrap;
-}
-.panel-body {
-  min-height: 0;
-  flex: 1;
-  overflow: auto;
-  padding: 10px;
-}
+.panel-head h2 { margin: 0; font-size: 14px; font-weight: 700; }
+.panel-tools { display: flex; gap: 7px; align-items: center; flex-wrap: wrap; }
+.panel-body { flex: 1; min-height: 0; overflow: auto; padding: 10px; }
+.screen-panel { min-height: 520px; }
 .screen-wrap {
-  min-height: 0;
+  position: relative;
   flex: 1;
+  min-height: 0;
   display: grid;
   place-items: center;
-  background: #05070a;
-  position: relative;
+  background: #020406;
+  overflow: hidden;
 }
-#screenImg, #snapshotImg {
-  max-width: 100%;
-  max-height: 100%;
+#screenImg {
+  width: 100%;
+  height: 100%;
   object-fit: contain;
   display: block;
+  user-select: none;
+  cursor: crosshair;
 }
-#screenImg { width: 100%; height: 100%; }
+#selectionBox {
+  position: absolute;
+  border: 2px solid var(--accent);
+  background: rgba(45, 212, 191, .12);
+  display: none;
+  pointer-events: none;
+}
 .screen-state {
   position: absolute;
   left: 10px;
   bottom: 10px;
-  padding: 5px 8px;
-  border: 1px solid rgba(38, 50, 65, .82);
-  border-radius: 6px;
+  border: 1px solid rgba(38, 52, 65, .85);
+  border-radius: 7px;
+  background: rgba(2, 4, 6, .78);
   color: var(--muted);
-  background: rgba(5, 7, 10, .78);
+  padding: 5px 8px;
   font-size: 12px;
 }
-.metric-grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 8px;
+.stack { display: grid; gap: 12px; }
+.form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.grow { flex: 1; min-width: 160px; }
+.mono { font-family: "Cascadia Code", Consolas, monospace; font-variant-numeric: tabular-nums; }
+.muted { color: var(--muted); }
+.small { font-size: 12px; }
+pre.output {
+  margin: 0;
+  min-height: 180px;
+  max-height: 430px;
+  overflow: auto;
+  padding: 10px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: #070b10;
+  color: #d9e6f2;
+  white-space: pre-wrap;
 }
+.metric-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
 .metric {
   border: 1px solid var(--line-soft);
   border-radius: 8px;
+  background: #0b1117;
+  padding: 10px;
+}
+.metric label { display: block; color: var(--muted); font-size: 12px; margin-bottom: 5px; }
+.metric strong { font-size: 20px; }
+.steps { display: grid; gap: 8px; }
+.step {
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: #0b1117;
   padding: 9px;
-  background: #0d141d;
 }
-.metric label {
-  display: flex;
-  justify-content: space-between;
-  color: var(--muted);
-  font-size: 12px;
-  margin-bottom: 7px;
-}
-.bar {
-  height: 8px;
+.step-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.badge {
+  border: 1px solid var(--line);
   border-radius: 999px;
-  overflow: hidden;
-  background: #060a0f;
-  border: 1px solid #1d2835;
-}
-.bar span {
-  display: block;
-  height: 100%;
-  width: 0;
-  background: var(--accent);
-}
-.bar span.warn { background: var(--warn); }
-.bar span.danger { background: var(--danger); }
-.quick-grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 7px;
-  margin-top: 10px;
-}
-.split {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
-  min-height: 0;
-}
-.table-wrap {
-  overflow: auto;
-  min-height: 0;
-}
-table {
-  width: 100%;
-  border-collapse: collapse;
+  padding: 3px 7px;
   font-size: 12px;
-}
-th, td {
-  padding: 7px 8px;
-  border-bottom: 1px solid var(--line-soft);
-  text-align: left;
-  vertical-align: middle;
-}
-th {
-  position: sticky;
-  top: 0;
-  background: #111923;
   color: var(--muted);
-  font-weight: 650;
-  cursor: pointer;
-  user-select: none;
 }
-td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
-td.actions { text-align: right; width: 70px; }
-tr:hover td { background: rgba(56, 189, 248, .04); }
-.mono { font-family: "Cascadia Code", Consolas, monospace; font-variant-numeric: tabular-nums; }
-.muted { color: var(--muted); }
-.log-list {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  font-family: "Cascadia Code", Consolas, monospace;
-  font-size: 11px;
-  line-height: 1.45;
-  color: #c9d6e4;
-}
-.log-list li {
-  padding: 4px 0;
-  border-bottom: 1px solid rgba(38, 50, 65, .36);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-.uia-tree {
-  font-size: 12px;
-  line-height: 1.35;
-}
-.uia-tree details {
-  border-left: 1px solid var(--line-soft);
-  margin-left: 8px;
-  padding-left: 8px;
-}
-.uia-tree summary {
-  cursor: pointer;
-  padding: 3px 0;
-  color: var(--text);
-}
-.uia-line {
+.badge.ok { color: #bbf7d0; border-color: rgba(34, 197, 94, .45); }
+.badge.error { color: #fecaca; border-color: rgba(239, 68, 68, .45); }
+.badge.running { color: #bae6fd; border-color: rgba(56, 189, 248, .45); }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { padding: 8px; border-bottom: 1px solid var(--line-soft); text-align: left; vertical-align: middle; }
+th { color: var(--muted); font-weight: 700; position: sticky; top: 0; background: #111820; }
+td.num, th.num { text-align: right; }
+tr:hover td { background: rgba(45, 212, 191, .04); }
+.drop {
+  border: 1px dashed #436174;
+  border-radius: 8px;
+  padding: 16px;
+  text-align: center;
   color: var(--muted);
-  padding: 3px 0;
-  overflow-wrap: anywhere;
+  background: #0a1015;
 }
-.snapshot-body {
-  min-height: 210px;
+.drop.drag { border-color: var(--accent); color: var(--text); }
+.toast-wrap {
+  position: fixed;
+  right: 14px;
+  bottom: 14px;
   display: grid;
-  place-items: center;
-  background: #05070a;
-}
-.field-row {
-  display: flex;
-  align-items: center;
   gap: 8px;
-  flex-wrap: wrap;
+  z-index: 20;
 }
-.grow { flex: 1; min-width: 140px; }
-.small { font-size: 12px; }
+.toast {
+  min-width: 240px;
+  max-width: 420px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #101820;
+  color: var(--text);
+  padding: 9px 10px;
+  box-shadow: var(--shadow);
+}
 @media (max-width: 1100px) {
   body { overflow: auto; }
   .app { height: auto; min-height: 100vh; }
-  .main { grid-template-columns: 1fr; overflow: visible; }
-  .left, .right { grid-template-rows: auto; }
-  .screen-wrap { height: 54vh; min-height: 300px; }
+  .topbar { grid-template-columns: 1fr; }
+  .top-actions { justify-content: flex-start; }
+  .workspace { overflow: visible; }
+  .grid { grid-template-columns: 1fr; min-height: 0; }
+  .screen-panel { height: 58vh; min-height: 420px; }
 }
 @media (max-width: 720px) {
-  .topbar { align-items: flex-start; flex-direction: column; }
-  .top-actions { margin-left: 0; width: 100%; }
-  .main { padding: 8px; gap: 8px; }
-  .split, .metric-grid, .quick-grid { grid-template-columns: 1fr; }
+  .workspace { padding: 8px; }
+  .metric-grid, .form-grid { grid-template-columns: 1fr; }
+  .command { grid-template-columns: 1fr; }
+  .panel-head { align-items: flex-start; flex-direction: column; }
   .panel-tools { width: 100%; }
-  .panel-tools > * { flex: 1; }
+  .panel-tools > input, .panel-tools > select, .panel-tools > button { flex: 1; }
   th:nth-child(3), td:nth-child(3), th:nth-child(4), td:nth-child(4) { display: none; }
 }
 </style>
@@ -349,192 +307,215 @@ tr:hover td { background: rgba(56, 189, 248, .04); }
   <header class="topbar">
     <div class="brand">
       <div class="mark">H</div>
-      <div class="title">
-        <strong>Hermes CoAgent</strong>
-        <span>Desktop control dashboard</span>
-      </div>
+      <div><strong>Hermes CoAgent</strong><span id="versionLine">desktop automation server</span></div>
+    </div>
+    <div class="command">
+      <input id="commandInput" type="text" placeholder="Ask Codex to inspect or run a task">
+      <button id="commandRun" class="primary">Run</button>
     </div>
     <div class="top-actions">
       <span class="pill"><span id="healthDot" class="dot"></span><span id="healthText">checking</span></span>
       <span class="pill">Auth <span id="authState">none</span></span>
-      <span class="pill">Cursor <span id="cursorPos" class="mono">0, 0</span></span>
-      <span class="pill">Cua <span id="cuaState">checking</span></span>
+      <button id="tokenBtn">Token</button>
+      <button id="undoBtn" class="warn">↶ Undo</button>
     </div>
   </header>
 
-  <main class="main">
-    <section class="left">
+  <nav class="tabs">
+    <button class="tab active" data-tab="desktop">🖥️ Desktop</button>
+    <button class="tab" data-tab="copilot">🤖 AI Copilot</button>
+    <button class="tab" data-tab="recorder">🎬 Recorder</button>
+    <button class="tab" data-tab="files">📁 Files</button>
+    <button class="tab" data-tab="metrics">📊 Metrics</button>
+    <button class="tab" data-tab="settings">⚙️ Settings</button>
+  </nav>
+
+  <main class="workspace">
+    <section id="desktop" class="view active">
+      <div class="grid">
+        <section class="panel screen-panel">
+          <div class="panel-head">
+            <h2>Live Desktop</h2>
+            <div class="panel-tools">
+              <button id="refreshScreen">Refresh</button>
+              <button id="clearRegion">Clear Region</button>
+            </div>
+          </div>
+          <div id="screenWrap" class="screen-wrap">
+            <img id="screenImg" alt="Live desktop">
+            <div id="selectionBox"></div>
+            <div id="screenState" class="screen-state">idle</div>
+          </div>
+        </section>
+        <aside class="stack">
+          <section class="panel">
+            <div class="panel-head"><h2>Control Panel</h2></div>
+            <div class="panel-body stack">
+              <div class="row">
+                <input id="keyboardText" class="grow" type="text" placeholder="Text to type">
+                <button id="typeText" class="primary">Type</button>
+              </div>
+              <div class="row">
+                <button data-key="enter">Enter</button>
+                <button data-key="tab">Tab</button>
+                <button data-key="escape">Esc</button>
+                <button data-key="ctrl+v">Ctrl+V</button>
+              </div>
+              <div class="metric-grid" style="grid-template-columns:repeat(2,1fr)">
+                <div class="metric"><label>Cursor</label><strong id="cursorText">0,0</strong></div>
+                <div class="metric"><label>Region</label><strong id="regionText">none</strong></div>
+              </div>
+            </div>
+          </section>
+          <section class="panel">
+            <div class="panel-head"><h2>Command Output</h2></div>
+            <div class="panel-body"><pre id="commandOutput" class="output">No command output yet.</pre></div>
+          </section>
+        </aside>
+      </div>
+    </section>
+
+    <section id="copilot" class="view">
+      <div class="grid">
+        <section class="panel">
+          <div class="panel-head"><h2>Goal Runner</h2></div>
+          <div class="panel-body stack">
+            <textarea id="goalInput" placeholder="Open Telegram, search for William, send message 'hello'"></textarea>
+            <div class="row">
+              <label class="small muted">Max steps <input id="goalSteps" type="number" min="1" max="50" value="10" style="width:82px"></label>
+              <button id="goalRun" class="primary">Start Goal</button>
+              <button id="goalStop" class="danger" disabled>Stop</button>
+              <span id="goalStatus" class="pill">idle</span>
+            </div>
+            <div id="goalStepsList" class="steps"></div>
+          </div>
+        </section>
+        <section class="panel">
+          <div class="panel-head"><h2>Goal JSON</h2></div>
+          <div class="panel-body"><pre id="goalRaw" class="output">No active goal.</pre></div>
+        </section>
+      </div>
+    </section>
+
+    <section id="recorder" class="view">
+      <div class="grid">
+        <section class="panel">
+          <div class="panel-head"><h2>GIF Recorder</h2></div>
+          <div class="panel-body stack">
+            <div class="form-grid">
+              <label class="small muted">FPS <input id="gifFps" type="number" min="1" max="30" value="5"></label>
+              <label class="small muted">Max seconds <input id="gifMax" type="number" min="1" max="3600" value="30"></label>
+            </div>
+            <div class="row">
+              <button id="gifStart" class="primary">Start</button>
+              <button id="gifStop" class="danger">Stop</button>
+              <button id="gifStatusBtn">Status</button>
+              <a id="gifLatest" class="pill" href="/recorder/gif/latest" target="_blank">Latest GIF</a>
+            </div>
+            <pre id="gifOutput" class="output">Recorder idle.</pre>
+          </div>
+        </section>
+        <section class="panel">
+          <div class="panel-head"><h2>Selected Region</h2></div>
+          <div class="panel-body">
+            <pre id="regionOutput" class="output">Select a region on the Desktop tab.</pre>
+          </div>
+        </section>
+      </div>
+    </section>
+
+    <section id="files" class="view">
       <section class="panel">
         <div class="panel-head">
-          <h2>Live Screen</h2>
+          <h2>File Browser</h2>
           <div class="panel-tools">
-            <select id="monitorSelect" title="Monitor"></select>
-            <button id="restartStream">Restart Stream</button>
-            <button id="snapshotBtn">Capture</button>
+            <input id="filePath" class="grow" type="text" placeholder="Path">
+            <button id="fileLoad" class="primary">List</button>
           </div>
         </div>
-        <div class="screen-wrap">
-          <img id="screenImg" alt="Live desktop stream">
-          <div id="streamState" class="screen-state">stream idle</div>
+        <div class="panel-body stack">
+          <div id="dropZone" class="drop">Drop files here to write them into the current folder.</div>
+          <div style="overflow:auto">
+            <table>
+              <thead><tr><th>Name</th><th>Type</th><th class="num">Size</th><th>Modified</th><th></th></tr></thead>
+              <tbody id="fileRows"></tbody>
+            </table>
+          </div>
         </div>
-      </section>
-
-      <section class="split">
-        <section class="panel">
-          <div class="panel-head">
-            <h2>UIA Tree</h2>
-            <div class="panel-tools">
-              <button id="uiaBtn">Refresh</button>
-            </div>
-          </div>
-          <div id="uiaTree" class="panel-body uia-tree muted">No snapshot loaded.</div>
-        </section>
-
-        <section class="panel">
-          <div class="panel-head">
-            <h2>Screenshot Viewer</h2>
-            <div class="panel-tools">
-              <button id="snapshotBtn2">Refresh</button>
-            </div>
-          </div>
-          <div class="panel-body snapshot-body">
-            <img id="snapshotImg" alt="Captured screenshot">
-          </div>
-        </section>
       </section>
     </section>
 
-    <section class="right">
-      <section class="panel">
-        <div class="panel-head">
-          <h2>System</h2>
-          <div class="panel-tools">
-            <button id="refreshSystem">Refresh</button>
-          </div>
+    <section id="metrics" class="view">
+      <div class="stack">
+        <div class="metric-grid">
+          <div class="metric"><label>Requests</label><strong id="requestsMetric">0</strong></div>
+          <div class="metric"><label>Errors</label><strong id="errorsMetric">0</strong></div>
+          <div class="metric"><label>RSS Memory</label><strong id="memoryMetric">0 MB</strong></div>
+          <div class="metric"><label>Uptime</label><strong id="uptimeMetric">0s</strong></div>
         </div>
-        <div class="panel-body">
-          <div class="metric-grid">
-            <div class="metric">
-              <label><span>CPU</span><strong id="cpuText">0%</strong></label>
-              <div class="bar"><span id="cpuBar"></span></div>
-            </div>
-            <div class="metric">
-              <label><span>Memory</span><strong id="memText">0%</strong></label>
-              <div class="bar"><span id="memBar"></span></div>
-            </div>
-            <div class="metric">
-              <label><span>Disk C</span><strong id="diskText">0%</strong></label>
-              <div class="bar"><span id="diskBar"></span></div>
-            </div>
-          </div>
-          <div class="quick-grid">
-            <button data-power="sleep">Sleep</button>
-            <button class="warn" data-power="restart">Restart</button>
-            <button class="danger" data-power="shutdown">Shutdown</button>
-            <button data-power="lock">Lock</button>
-            <button class="danger" id="emergencyStop">Emergency Stop</button>
-            <button class="ok" id="emergencyResume">Resume</button>
-          </div>
-        </div>
-      </section>
+        <section class="panel">
+          <div class="panel-head"><h2>Live Metrics</h2><div class="panel-tools"><button id="metricsRefresh">Refresh</button></div></div>
+          <div class="panel-body"><canvas id="metricsChart" height="110"></canvas><pre id="metricsRaw" class="output" style="margin-top:10px"></pre></div>
+        </section>
+      </div>
+    </section>
 
-      <section class="panel">
-        <div class="panel-head">
-          <h2>Telegram Relay</h2>
-          <div class="panel-tools">
-            <button id="refreshTelegram">Refresh</button>
+    <section id="settings" class="view">
+      <div class="grid">
+        <section class="panel">
+          <div class="panel-head"><h2>Telegram</h2><div class="panel-tools"><button id="tgLoad">Refresh</button></div></div>
+          <div class="panel-body stack">
+            <div id="tgStatus" class="muted">Loading...</div>
+            <div class="form-grid">
+              <input id="tgToken" type="password" placeholder="Bot token">
+              <input id="tgChat" type="text" placeholder="Chat ID">
+            </div>
+            <div class="row">
+              <button id="tgSave" class="primary">Save</button>
+              <button id="tgClear" class="danger">Clear</button>
+            </div>
           </div>
-        </div>
-        <div class="panel-body">
-          <div id="telegramStatus" class="small muted">Loading...</div>
-          <div class="field-row" style="margin-top:8px">
-            <input id="tgTokenInput" class="grow" type="password" placeholder="Bot Token">
-            <input id="tgChatIdInput" class="grow" type="text" placeholder="Chat ID">
+        </section>
+        <section class="panel">
+          <div class="panel-head"><h2>Webhooks & Updates</h2></div>
+          <div class="panel-body stack">
+            <div class="row">
+              <button id="webhooksLoad">List Webhooks</button>
+              <button id="updateCheck">Check Update</button>
+            </div>
+            <pre id="settingsOutput" class="output">No settings output yet.</pre>
           </div>
-          <div class="field-row" style="margin-top:6px">
-            <button id="tgSaveBtn" class="ok">Save &amp; Test</button>
-            <button id="tgTestBtn">Test Message</button>
-            <button id="tgClearBtn" class="danger">Clear</button>
-            <span id="tgResult" class="small muted"></span>
-          </div>
-        </div>
-      </section>
-
-      <section class="panel">
-        <div class="panel-head">
-          <h2>Processes</h2>
-          <div class="panel-tools">
-            <input id="processFilter" class="grow" type="search" placeholder="Filter">
-            <button id="refreshProcesses">Refresh</button>
-          </div>
-        </div>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th data-sort="name">Name</th>
-                <th class="num" data-sort="pid">PID</th>
-                <th class="num" data-sort="cpu_percent">CPU</th>
-                <th class="num" data-sort="memory_mb">Memory</th>
-                <th class="actions">Action</th>
-              </tr>
-            </thead>
-            <tbody id="processRows"></tbody>
-          </table>
-        </div>
-      </section>
-
-      <section class="panel">
-        <div class="panel-head">
-          <h2>Action Log</h2>
-          <div class="panel-tools">
-            <button id="refreshLogs">Refresh</button>
-          </div>
-        </div>
-        <div class="panel-body">
-          <ul id="logList" class="log-list"></ul>
-        </div>
-      </section>
+        </section>
+      </div>
     </section>
   </main>
-
-  <footer class="statusbar">
-    <span>Version <span id="versionText">unknown</span></span>
-    <span>Build <span id="buildText">unknown</span></span>
-    <span>Uptime <span id="uptimeText">0s</span></span>
-    <span>Status <span id="statusText">loading</span></span>
-    <span>Screen <span id="frameText">0 frames</span></span>
-  </footer>
 </div>
+<div id="toasts" class="toast-wrap"></div>
 
 <script>
 (() => {
   "use strict";
-
   const params = new URLSearchParams(location.search);
-  const queryToken = params.get("token") || "";
+  const queryToken = (params.get("token") || "").replace(/^Bearer\s+/i, "");
   if (queryToken) {
     sessionStorage.setItem("hermes_token", queryToken);
     params.delete("token");
     const cleanUrl = location.pathname + (params.toString() ? "?" + params.toString() : "") + location.hash;
     history.replaceState(null, document.title, cleanUrl);
   }
-  const token = queryToken || sessionStorage.getItem("hermes_token") || "";
-  const state = {
-    monitor: "0",
-    processes: [],
-    sortKey: "memory_mb",
-    sortDir: -1,
-    screenAbort: null,
-    frameCount: 0
-  };
-
+  let token = (queryToken || sessionStorage.getItem("hermes_token") || sessionStorage.getItem("coagent_token") || "").replace(/^Bearer\s+/i, "");
   const $ = (id) => document.getElementById(id);
-
-  function setText(id, value) {
-    const el = $(id);
-    if (el) el.textContent = value;
-  }
+  const state = {
+    screenTimer: null,
+    metricTimer: null,
+    goalTimer: null,
+    activeGoal: null,
+    selectedRegion: null,
+    drag: null,
+    filePath: "",
+    metrics: { labels: [], requests: [], memory: [] },
+    chart: null
+  };
 
   function headers(json) {
     const h = {};
@@ -542,11 +523,14 @@ tr:hover td { background: rgba(56, 189, 248, .04); }
     if (json) h["Content-Type"] = "application/json";
     return h;
   }
-
   async function api(path, options = {}) {
     const method = options.method || "GET";
-    const body = options.body === undefined ? undefined : JSON.stringify(options.body);
-    const res = await fetch(path, { method, headers: headers(body !== undefined), body });
+    const hasBody = Object.prototype.hasOwnProperty.call(options, "body");
+    const res = await fetch(path, {
+      method,
+      headers: headers(hasBody),
+      body: hasBody ? JSON.stringify(options.body || {}) : undefined
+    });
     const type = res.headers.get("content-type") || "";
     const data = type.includes("application/json") ? await res.json() : await res.text();
     if (!res.ok) {
@@ -555,15 +539,28 @@ tr:hover td { background: rgba(56, 189, 248, .04); }
     }
     return data;
   }
-
-  function addLocalLog(text) {
-    const list = $("logList");
-    const li = document.createElement("li");
-    li.textContent = new Date().toLocaleTimeString() + " " + text;
-    list.prepend(li);
-    while (list.children.length > 80) list.lastChild.remove();
+  function toast(message) {
+    const wrap = $("toasts");
+    const el = document.createElement("div");
+    el.className = "toast";
+    el.textContent = message;
+    wrap.appendChild(el);
+    setTimeout(() => el.remove(), 3600);
   }
-
+  function setText(id, value) {
+    const el = $(id);
+    if (el) el.textContent = value;
+  }
+  function setJson(id, value) {
+    setText(id, JSON.stringify(value, null, 2));
+  }
+  function formatBytes(bytes) {
+    const n = Number(bytes) || 0;
+    if (n > 1024 * 1024 * 1024) return (n / (1024 * 1024 * 1024)).toFixed(2) + " GB";
+    if (n > 1024 * 1024) return (n / (1024 * 1024)).toFixed(1) + " MB";
+    if (n > 1024) return (n / 1024).toFixed(1) + " KB";
+    return n + " B";
+  }
   function formatUptime(seconds) {
     seconds = Math.max(0, Number(seconds) || 0);
     const h = Math.floor(seconds / 3600);
@@ -573,438 +570,401 @@ tr:hover td { background: rgba(56, 189, 248, .04); }
     if (m) return m + "m " + s + "s";
     return s + "s";
   }
-
-  function percent(value) {
-    return Math.max(0, Math.min(100, Number(value) || 0));
+  function showTab(name) {
+    document.querySelectorAll(".tab").forEach(btn => btn.classList.toggle("active", btn.dataset.tab === name));
+    document.querySelectorAll(".view").forEach(view => view.classList.toggle("active", view.id === name));
   }
-
-  function setBar(name, value) {
-    const p = percent(value);
-    const bar = $(name + "Bar");
-    const text = $(name + "Text");
-    if (!bar || !text) return;
-    bar.style.width = p.toFixed(0) + "%";
-    bar.className = p >= 90 ? "danger" : (p >= 75 ? "warn" : "");
-    text.textContent = p.toFixed(0) + "%";
-  }
-
-  function setHealth(kind, text) {
-    const dot = $("healthDot");
-    dot.className = "dot " + kind;
+  function health(kind, text) {
+    $("healthDot").className = "dot " + (kind || "");
     setText("healthText", text);
-    setText("statusText", text);
   }
-
   async function loadVersion() {
-    try {
-      const data = await api("/version");
-      setText("versionText", data.version || "unknown");
-      setText("buildText", data.build || "unknown");
-    } catch (err) {
-      setText("versionText", "error");
-    }
+    const data = await api("/version");
+    setText("versionLine", "v" + (data.version || "?") + " build " + (data.build || "?"));
   }
-
   async function ping() {
     try {
       const data = await api("/ping");
-      setHealth("ok", "running");
-      setText("uptimeText", formatUptime(data.uptime));
+      health("ok", "running");
+      setText("uptimeMetric", formatUptime(data.uptime));
     } catch (err) {
-      setHealth("danger", "offline");
+      health("danger", "offline");
     }
   }
-
-  async function loadCua() {
+  async function runCommand() {
+    const prompt = $("commandInput").value.trim();
+    if (!prompt) return;
+    $("commandRun").disabled = true;
+    setText("commandOutput", "Running...");
     try {
-      const data = await api("/cua/status");
-      setText("cuaState", data.available ? "available" : "offline");
+      const data = await api("/agent/exec", { method: "POST", body: { prompt, agent: "codex", timeout: 300 } });
+      setText("commandOutput", data.output || JSON.stringify(data, null, 2));
     } catch (err) {
-      setText("cuaState", "error");
+      setText("commandOutput", err.message);
+      toast("Command failed: " + err.message);
     }
+    $("commandRun").disabled = false;
   }
-
-  async function loadCursor() {
+  async function refreshScreen() {
     try {
-      const data = await api("/cursor/pos");
-      setText("cursorPos", (data.x ?? 0) + ", " + (data.y ?? 0));
-    } catch (err) {
-      setText("cursorPos", "blocked");
-    }
-  }
-
-  async function loadMonitors() {
-    const select = $("monitorSelect");
-    select.innerHTML = "";
-    try {
-      const data = await api("/monitors/list");
-      const monitors = data.monitors || [];
-      if (!monitors.length) throw new Error("No monitors returned");
-      monitors.forEach((m, i) => {
-        const opt = document.createElement("option");
-        opt.value = String(m.id ?? m.index ?? i);
-        const name = m.name || ("Monitor " + opt.value);
-        const size = (m.width && m.height) ? (" " + m.width + "x" + m.height) : "";
-        opt.textContent = name + size + (m.is_primary ? " primary" : "");
-        select.appendChild(opt);
-      });
-      state.monitor = select.value || "0";
-    } catch (err) {
-      const opt = document.createElement("option");
-      opt.value = "0";
-      opt.textContent = "Primary monitor";
-      select.appendChild(opt);
-      state.monitor = "0";
-    }
-  }
-
-  function parseSseBlock(block) {
-    let event = "message";
-    const data = [];
-    block.split(/\r?\n/).forEach((line) => {
-      if (!line || line.startsWith(":")) return;
-      const idx = line.indexOf(":");
-      const field = idx >= 0 ? line.slice(0, idx) : line;
-      const value = idx >= 0 ? line.slice(idx + 1).replace(/^ /, "") : "";
-      if (field === "event") event = value;
-      if (field === "data") data.push(value);
-    });
-    return { event, data: data.join("\n") };
-  }
-
-  async function startScreenStream() {
-    if (state.screenAbort) state.screenAbort.abort();
-    state.screenAbort = new AbortController();
-    const signal = state.screenAbort.signal;
-    const url = "/events/screen?monitor=" + encodeURIComponent(state.monitor) + "&quality=72";
-    $("streamState").textContent = "connecting";
-    try {
-      const res = await fetch(url, { headers: headers(false), signal });
-      if (!res.ok || !res.body) throw new Error("stream status " + res.status);
-      $("streamState").textContent = "streaming";
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-      while (true) {
-        const chunk = await reader.read();
-        if (chunk.done) break;
-        buffer += decoder.decode(chunk.value, { stream: true });
-        const parts = buffer.split(/\r?\n\r?\n/);
-        buffer = parts.pop() || "";
-        for (const part of parts) {
-          const msg = parseSseBlock(part);
-          if (msg.event !== "screen" || !msg.data) continue;
-          const payload = JSON.parse(msg.data);
-          if (payload.data) {
-            $("screenImg").src = "data:image/jpeg;base64," + payload.data;
-            state.frameCount += 1;
-            setText("frameText", state.frameCount + " frames");
-          }
-        }
-      }
-    } catch (err) {
-      if (signal.aborted) return;
-      $("streamState").textContent = "stream error";
-      addLocalLog("screen stream error: " + err.message);
-      setTimeout(() => startScreenStream(), 1800);
-    }
-  }
-
-  async function captureSnapshot() {
-    try {
-      const data = await api("/screen/fresh?monitor=" + encodeURIComponent(state.monitor));
+      const data = await api("/screen/jpeg?ts=" + Date.now());
       if (data.data) {
-        $("snapshotImg").src = "data:image/jpeg;base64," + data.data;
-        addLocalLog("screenshot captured");
+        $("screenImg").src = "data:image/jpeg;base64," + data.data;
+        setText("screenState", "live " + new Date().toLocaleTimeString());
       }
     } catch (err) {
-      addLocalLog("screenshot failed: " + err.message);
+      setText("screenState", "screen error");
     }
   }
-
-  async function loadResources() {
+  function renderedImageRect() {
+    const img = $("screenImg");
+    const rect = img.getBoundingClientRect();
+    const nw = img.naturalWidth || rect.width;
+    const nh = img.naturalHeight || rect.height;
+    const imageRatio = nw / nh;
+    const boxRatio = rect.width / rect.height;
+    let width = rect.width, height = rect.height, left = rect.left, top = rect.top;
+    if (boxRatio > imageRatio) {
+      width = rect.height * imageRatio;
+      left = rect.left + (rect.width - width) / 2;
+    } else {
+      height = rect.width / imageRatio;
+      top = rect.top + (rect.height - height) / 2;
+    }
+    return { left, top, width, height, naturalWidth: nw, naturalHeight: nh };
+  }
+  function desktopPoint(clientX, clientY) {
+    const r = renderedImageRect();
+    const x = Math.round(Math.max(0, Math.min(r.naturalWidth, (clientX - r.left) / r.width * r.naturalWidth)));
+    const y = Math.round(Math.max(0, Math.min(r.naturalHeight, (clientY - r.top) / r.height * r.naturalHeight)));
+    return { x, y };
+  }
+  function showSelection(a, b) {
+    const r = renderedImageRect();
+    const wrapRect = $("screenWrap").getBoundingClientRect();
+    const left = Math.min(a.clientX, b.clientX);
+    const top = Math.min(a.clientY, b.clientY);
+    const right = Math.max(a.clientX, b.clientX);
+    const bottom = Math.max(a.clientY, b.clientY);
+    const box = $("selectionBox");
+    box.style.left = Math.max(r.left, left) - wrapRect.left + "px";
+    box.style.top = Math.max(r.top, top) - wrapRect.top + "px";
+    box.style.width = Math.max(0, Math.min(r.left + r.width, right) - Math.max(r.left, left)) + "px";
+    box.style.height = Math.max(0, Math.min(r.top + r.height, bottom) - Math.max(r.top, top)) + "px";
+    box.style.display = "block";
+  }
+  function updateRegionText() {
+    if (!state.selectedRegion) {
+      setText("regionText", "none");
+      setText("regionOutput", "Select a region on the Desktop tab.");
+      return;
+    }
+    const r = state.selectedRegion;
+    setText("regionText", r.w + "x" + r.h);
+    setJson("regionOutput", r);
+  }
+  async function clickDesktop(point) {
+    await api("/mouse/click", { method: "POST", body: { x: point.x, y: point.y, retry: false } });
+    toast("Clicked " + point.x + ", " + point.y);
+  }
+  function bindScreen() {
+    const wrap = $("screenWrap");
+    wrap.addEventListener("pointerdown", ev => {
+      state.drag = { clientX: ev.clientX, clientY: ev.clientY, start: desktopPoint(ev.clientX, ev.clientY), moved: false };
+      wrap.setPointerCapture(ev.pointerId);
+    });
+    wrap.addEventListener("pointermove", ev => {
+      if (!state.drag) return;
+      const dx = ev.clientX - state.drag.clientX;
+      const dy = ev.clientY - state.drag.clientY;
+      if (Math.sqrt(dx * dx + dy * dy) > 8) state.drag.moved = true;
+      if (state.drag.moved) showSelection(state.drag, ev);
+    });
+    wrap.addEventListener("pointerup", async ev => {
+      if (!state.drag) return;
+      const start = state.drag.start;
+      const end = desktopPoint(ev.clientX, ev.clientY);
+      const moved = state.drag.moved;
+      state.drag = null;
+      if (!moved) {
+        try { await clickDesktop(end); } catch (err) { toast("Click failed: " + err.message); }
+        return;
+      }
+      const x = Math.min(start.x, end.x);
+      const y = Math.min(start.y, end.y);
+      const w = Math.abs(end.x - start.x);
+      const h = Math.abs(end.y - start.y);
+      state.selectedRegion = { x, y, w, h };
+      updateRegionText();
+    });
+  }
+  async function typeText() {
+    const text = $("keyboardText").value;
+    if (!text) return;
+    await api("/key/type", { method: "POST", body: { text } });
+    $("keyboardText").value = "";
+  }
+  async function pressKey(key) {
+    const keys = key.split("+");
+    await api("/key/press", { method: "POST", body: { keys } });
+  }
+  async function undoLast() {
     try {
-      const data = await api("/process/resources");
-      setBar("cpu", data.cpu_percent);
-      setBar("mem", data.memory && data.memory.used_percent);
-      setBar("disk", data.disk && data.disk.used_percent);
+      const data = await api("/undo/last", { method: "POST", body: {} });
+      toast("Undo: " + (data.status || "ok"));
     } catch (err) {
-      addLocalLog("resources failed: " + err.message);
+      toast("Undo failed: " + err.message);
     }
   }
-
-  function renderProcesses() {
-    const filter = $("processFilter").value.trim().toLowerCase();
-    const tbody = $("processRows");
-    tbody.innerHTML = "";
-    const rows = state.processes
-      .filter((p) => !filter || String(p.name || "").toLowerCase().includes(filter) || String(p.pid).includes(filter))
-      .sort((a, b) => {
-        const av = a[state.sortKey];
-        const bv = b[state.sortKey];
-        if (typeof av === "number" && typeof bv === "number") return (av - bv) * state.sortDir;
-        return String(av || "").localeCompare(String(bv || "")) * state.sortDir;
-      })
-      .slice(0, 80);
-    rows.forEach((p) => {
+  function renderGoal(data) {
+    setText("goalStatus", data.status || "unknown");
+    setJson("goalRaw", data);
+    const list = $("goalStepsList");
+    list.innerHTML = "";
+    (data.steps || []).forEach(step => {
+      const item = document.createElement("div");
+      item.className = "step";
+      const status = step.status || "pending";
+      item.innerHTML = "<div class='step-head'><strong>" + (step.index ?? "") + " " + escapeHtml(step.action || "") + "</strong><span class='badge " + status + "'>" + status + "</span></div><pre class='mono small muted'></pre>";
+      item.querySelector("pre").textContent = JSON.stringify(step.result || step.params || {}, null, 2);
+      list.appendChild(item);
+    });
+  }
+  function escapeHtml(text) {
+    return String(text).replace(/[&<>"']/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
+  }
+  async function runGoal() {
+    const goal = $("goalInput").value.trim();
+    if (!goal) return;
+    $("goalRun").disabled = true;
+    $("goalStop").disabled = false;
+    try {
+      const data = await api("/copilot/goal", {
+        method: "POST",
+        body: { goal, max_steps: Number($("goalSteps").value || 10), agent: "codex" }
+      });
+      state.activeGoal = data.goal_id || data.id;
+      renderGoal(data);
+      clearInterval(state.goalTimer);
+      state.goalTimer = setInterval(pollGoal, 1200);
+    } catch (err) {
+      toast("Goal failed: " + err.message);
+      $("goalRun").disabled = false;
+      $("goalStop").disabled = true;
+    }
+  }
+  async function pollGoal() {
+    if (!state.activeGoal) return;
+    try {
+      const data = await api("/copilot/goal/" + encodeURIComponent(state.activeGoal));
+      renderGoal(data);
+      if (["completed", "failed", "stopped"].includes(data.status)) {
+        clearInterval(state.goalTimer);
+        $("goalRun").disabled = false;
+        $("goalStop").disabled = true;
+      }
+    } catch (err) {
+      clearInterval(state.goalTimer);
+      toast("Goal status failed: " + err.message);
+      $("goalRun").disabled = false;
+      $("goalStop").disabled = true;
+    }
+  }
+  async function stopGoal() {
+    if (!state.activeGoal) return;
+    const data = await api("/copilot/stop/" + encodeURIComponent(state.activeGoal), { method: "POST", body: {} });
+    renderGoal(data);
+  }
+  async function gifStart() {
+    const body = { fps: Number($("gifFps").value || 5), max_seconds: Number($("gifMax").value || 30) };
+    if (state.selectedRegion && state.selectedRegion.w > 0 && state.selectedRegion.h > 0) body.region = state.selectedRegion;
+    const data = await api("/recorder/gif/start", { method: "POST", body });
+    setJson("gifOutput", data);
+  }
+  async function gifStop() {
+    const data = await api("/recorder/gif/stop", { method: "POST", body: {} });
+    setJson("gifOutput", data);
+    $("gifLatest").href = "/recorder/gif/latest?ts=" + Date.now();
+  }
+  async function gifStatus() {
+    const data = await api("/recorder/gif/status");
+    setJson("gifOutput", data);
+  }
+  async function loadFiles(path) {
+    const body = {};
+    const requested = path !== undefined ? path : $("filePath").value.trim();
+    if (requested) body.path = requested;
+    const data = await api("/file/list", { method: "POST", body });
+    state.filePath = data.path || requested || "";
+    $("filePath").value = state.filePath;
+    const rows = $("fileRows");
+    rows.innerHTML = "";
+    (data.entries || []).forEach(entry => {
       const tr = document.createElement("tr");
-      const cells = [
-        { text: p.name || "", cls: "" },
-        { text: p.pid, cls: "num mono" },
-        { text: Number(p.cpu_percent || 0).toFixed(1), cls: "num mono" },
-        { text: Number(p.memory_mb || 0).toFixed(1), cls: "num mono" }
-      ];
-      cells.forEach((cell) => {
-        const td = document.createElement("td");
-        td.className = cell.cls;
-        td.textContent = cell.text;
-        tr.appendChild(td);
-      });
-      const action = document.createElement("td");
-      action.className = "actions";
-      const btn = document.createElement("button");
-      btn.className = "danger";
-      btn.textContent = "Kill";
-      btn.addEventListener("click", () => killProcess(p));
-      action.appendChild(btn);
-      tr.appendChild(action);
-      tbody.appendChild(tr);
-    });
-  }
-
-  async function loadProcesses() {
-    try {
-      const data = await api("/process/list?limit=250");
-      state.processes = data.processes || [];
-      renderProcesses();
-    } catch (err) {
-      addLocalLog("process list failed: " + err.message);
-    }
-  }
-
-  async function killProcess(proc) {
-    const label = (proc.name || "process") + " pid " + proc.pid;
-    if (!confirm("Kill " + label + "?")) return;
-    try {
-      await api("/process/kill", { method: "POST", body: { pid: proc.pid, confirm: true } });
-      addLocalLog("killed " + label);
-      await loadProcesses();
-    } catch (err) {
-      addLocalLog("kill failed: " + err.message);
-    }
-  }
-
-  function nodeLabel(node) {
-    if (node === null) return "null";
-    if (typeof node !== "object") return String(node);
-    const parts = [];
-    if (node.name) parts.push(node.name);
-    if (node.control_type) parts.push(node.control_type);
-    if (node.class_name) parts.push(node.class_name);
-    if (node.pid) parts.push("pid " + node.pid);
-    if (node.rect) {
-      const r = node.rect;
-      parts.push([r.left ?? r.x, r.top ?? r.y, r.width, r.height].filter((v) => v !== undefined).join(","));
-    }
-    return parts.filter(Boolean).join(" | ") || "node";
-  }
-
-  function renderNode(node, depth = 0) {
-    const children = Array.isArray(node && node.children) ? node.children : [];
-    if (children.length) {
-      const details = document.createElement("details");
-      details.open = depth < 1;
-      const summary = document.createElement("summary");
-      summary.textContent = nodeLabel(node) + " (" + children.length + ")";
-      details.appendChild(summary);
-      children.slice(0, 400).forEach((child) => details.appendChild(renderNode(child, depth + 1)));
-      if (children.length > 400) {
-        const extra = document.createElement("div");
-        extra.className = "uia-line";
-        extra.textContent = "... " + (children.length - 400) + " more";
-        details.appendChild(extra);
+      tr.innerHTML = "<td></td><td></td><td class='num mono'></td><td class='mono small'></td><td></td>";
+      tr.children[0].textContent = entry.name;
+      tr.children[1].textContent = entry.is_dir ? "folder" : "file";
+      tr.children[2].textContent = entry.is_dir ? "" : formatBytes(entry.size);
+      tr.children[3].textContent = entry.mtime ? new Date(entry.mtime * 1000).toLocaleString() : "";
+      if (entry.is_dir) {
+        const btn = document.createElement("button");
+        btn.textContent = "Open";
+        btn.addEventListener("click", () => loadFiles(entry.path).catch(err => toast(err.message)));
+        tr.children[4].appendChild(btn);
       }
-      return details;
-    }
-    const line = document.createElement("div");
-    line.className = "uia-line";
-    line.textContent = nodeLabel(node);
-    return line;
-  }
-
-  async function loadUia() {
-    const root = $("uiaTree");
-    root.textContent = "Loading...";
-    try {
-      const data = await api("/uia/tree");
-      root.innerHTML = "";
-      root.appendChild(renderNode(data));
-      addLocalLog("UIA tree loaded");
-    } catch (err) {
-      root.textContent = "UIA error: " + err.message;
-      addLocalLog("UIA failed: " + err.message);
-    }
-  }
-
-  async function loadLogs() {
-    try {
-      const data = await api("/logs?format=json&lines=80");
-      const list = $("logList");
-      list.innerHTML = "";
-      (data.lines || []).slice(-80).reverse().forEach((line) => {
-        const li = document.createElement("li");
-        li.textContent = line;
-        list.appendChild(li);
-      });
-    } catch (err) {
-      addLocalLog("log refresh failed: " + err.message);
-    }
-  }
-
-  async function powerAction(action) {
-    if (["restart", "shutdown", "sleep"].includes(action) && !confirm(action + " this computer?")) return;
-    try {
-      await api("/power/" + action, { method: "POST", body: {} });
-      addLocalLog("power action: " + action);
-    } catch (err) {
-      addLocalLog("power action failed: " + err.message);
-    }
-  }
-
-  async function emergency(action) {
-    try {
-      await api("/emergency/" + action, { method: "POST", body: {} });
-      addLocalLog("emergency " + action);
-    } catch (err) {
-      addLocalLog("emergency failed: " + err.message);
-    }
-  }
-
-  function bindEvents() {
-    $("monitorSelect").addEventListener("change", (e) => {
-      state.monitor = e.target.value;
-      state.frameCount = 0;
-      startScreenStream();
+      rows.appendChild(tr);
     });
-    $("restartStream").addEventListener("click", startScreenStream);
-    $("snapshotBtn").addEventListener("click", captureSnapshot);
-    $("snapshotBtn2").addEventListener("click", captureSnapshot);
-    $("refreshSystem").addEventListener("click", loadResources);
-    $("refreshProcesses").addEventListener("click", loadProcesses);
-    $("refreshLogs").addEventListener("click", loadLogs);
-    $("uiaBtn").addEventListener("click", loadUia);
-    $("processFilter").addEventListener("input", renderProcesses);
-    document.querySelectorAll("[data-power]").forEach((btn) => {
-      btn.addEventListener("click", () => powerAction(btn.dataset.power));
-    });
-    $("emergencyStop").addEventListener("click", () => emergency("stop"));
-    $("emergencyResume").addEventListener("click", () => emergency("resume"));
-    document.querySelectorAll("th[data-sort]").forEach((th) => {
-      th.addEventListener("click", () => {
-        const key = th.dataset.sort;
-        if (state.sortKey === key) state.sortDir *= -1;
-        else {
-          state.sortKey = key;
-          state.sortDir = key === "name" ? 1 : -1;
-        }
-        renderProcesses();
-      });
-    });
-
-    // Telegram relay
-    $("refreshTelegram").addEventListener("click", loadTelegramConfig);
-    $("tgSaveBtn").addEventListener("click", saveTelegramConfig);
-    $("tgTestBtn").addEventListener("click", testTelegram);
-    $("tgClearBtn").addEventListener("click", clearTelegram);
   }
-
-  async function loadTelegramConfig() {
+  async function uploadFiles(files) {
+    const base = $("filePath").value.trim() || state.filePath;
+    if (!base) throw new Error("List a folder first");
+    for (const file of files) {
+      const text = await file.text();
+      const sep = base.endsWith("\\") || base.endsWith("/") ? "" : "\\";
+      await api("/file/write", { method: "POST", body: { path: base + sep + file.name, content: text } });
+      toast("Wrote " + file.name);
+    }
+    await loadFiles(base);
+  }
+  function parseMetrics(text) {
+    let requests = 0, errors = 0, memory = 0;
+    text.split(/\r?\n/).forEach(line => {
+      if (line.startsWith("coagent_requests_total")) requests += Number(line.trim().split(/\s+/).pop()) || 0;
+      if (line.startsWith("coagent_request_errors_total")) errors += Number(line.trim().split(/\s+/).pop()) || 0;
+      if (line.startsWith("coagent_memory_rss_bytes")) memory = Number(line.trim().split(/\s+/).pop()) || 0;
+    });
+    return { requests, errors, memory };
+  }
+  function initChart() {
+    if (!window.Chart || state.chart) return;
+    state.chart = new Chart($("metricsChart"), {
+      type: "line",
+      data: {
+        labels: state.metrics.labels,
+        datasets: [
+          { label: "Requests", data: state.metrics.requests, borderColor: "#2dd4bf", backgroundColor: "rgba(45,212,191,.12)", tension: .25, yAxisID: "y" },
+          { label: "Memory MB", data: state.metrics.memory, borderColor: "#38bdf8", backgroundColor: "rgba(56,189,248,.10)", tension: .25, yAxisID: "y1" }
+        ]
+      },
+      options: {
+        responsive: true,
+        interaction: { mode: "index", intersect: false },
+        scales: {
+          y: { beginAtZero: true, ticks: { color: "#91a4b5" }, grid: { color: "rgba(145,164,181,.12)" } },
+          y1: { beginAtZero: true, position: "right", ticks: { color: "#91a4b5" }, grid: { drawOnChartArea: false } },
+          x: { ticks: { color: "#91a4b5" }, grid: { color: "rgba(145,164,181,.08)" } }
+        },
+        plugins: { legend: { labels: { color: "#edf5fb" } } }
+      }
+    });
+  }
+  async function refreshMetrics() {
+    try {
+      const raw = await api("/metrics");
+      const data = parseMetrics(raw);
+      setText("requestsMetric", String(data.requests));
+      setText("errorsMetric", String(data.errors));
+      setText("memoryMetric", formatBytes(data.memory));
+      setText("metricsRaw", raw.trim());
+      initChart();
+      const label = new Date().toLocaleTimeString();
+      state.metrics.labels.push(label);
+      state.metrics.requests.push(data.requests);
+      state.metrics.memory.push(Math.round(data.memory / (1024 * 1024)));
+      ["labels", "requests", "memory"].forEach(key => { while (state.metrics[key].length > 40) state.metrics[key].shift(); });
+      if (state.chart) state.chart.update();
+    } catch (err) {
+      toast("Metrics failed: " + err.message);
+    }
+  }
+  async function loadTelegram() {
     try {
       const data = await api("/telegram/config");
-      const status = $("telegramStatus");
       if (data.configured) {
-        status.innerHTML = "✅ Bot: " + (data.bot_token || "***") + " | Chat: " + (data.target_chat_id || data.chat_id || "?");
-        $("tgTokenInput").value = "";
-        $("tgChatIdInput").value = data.target_chat_id || data.chat_id || "";
+        setText("tgStatus", "Configured: " + (data.bot_token || "***") + " / " + (data.target_chat_id || data.chat_id || "?"));
+        $("tgChat").value = data.target_chat_id || data.chat_id || "";
       } else {
-        status.textContent = "⏹ Not configured. Enter token + chat ID and click Save.";
-        $("tgTokenInput").value = "";
-        $("tgChatIdInput").value = "";
+        setText("tgStatus", "Not configured");
       }
     } catch (err) {
-      $("telegramStatus").textContent = "❌ " + err.message;
+      setText("tgStatus", err.message);
     }
   }
-
-  async function saveTelegramConfig() {
-    const bot_token = $("tgTokenInput").value.trim();
-    const chat_id = $("tgChatIdInput").value.trim();
-    if (!bot_token || !chat_id) {
-      $("tgResult").textContent = "❌ Both fields required";
-      return;
-    }
-    $("tgSaveBtn").disabled = true;
-    $("tgResult").textContent = "Testing...";
-    try {
-      const data = await api("/telegram/configure", { method: "POST", body: { bot_token, chat_id } });
-      $("tgResult").textContent = "✅ " + (data.status || "saved");
-      loadTelegramConfig();
-    } catch (err) {
-      $("tgResult").textContent = "❌ " + err.message;
-    }
-    $("tgSaveBtn").disabled = false;
+  async function saveTelegram() {
+    const bot_token = $("tgToken").value.trim();
+    const chat_id = $("tgChat").value.trim();
+    const data = await api("/telegram/configure", { method: "POST", body: { bot_token, chat_id } });
+    setJson("settingsOutput", data);
+    await loadTelegram();
   }
-
-  async function testTelegram() {
-    const chat_id = $("tgChatIdInput").value.trim();
-    if (!chat_id) {
-      $("tgResult").textContent = "❌ Enter a chat ID first";
-      return;
-    }
-    $("tgTestBtn").disabled = true;
-    $("tgResult").textContent = "Sending test...";
-    try {
-      const data = await api("/telegram/register-chat", { method: "POST", body: { chat_id } });
-      $("tgResult").textContent = "✅ " + (data.status || "registered");
-      loadTelegramConfig();
-    } catch (err) {
-      $("tgResult").textContent = "❌ " + err.message;
-    }
-    $("tgTestBtn").disabled = false;
-  }
-
   async function clearTelegram() {
-    if (!confirm("Clear Telegram config?")) return;
-    $("tgClearBtn").disabled = true;
-    try {
-      await api("/telegram/clear", { method: "POST" });
-      $("tgResult").textContent = "✅ Cleared";
-      loadTelegramConfig();
-    } catch (err) {
-      $("tgResult").textContent = "❌ " + err.message;
-    }
-    $("tgClearBtn").disabled = false;
+    const data = await api("/telegram/clear", { method: "POST", body: {} });
+    setJson("settingsOutput", data);
+    await loadTelegram();
   }
-
+  async function listWebhooks() {
+    const data = await api("/webhooks/list");
+    setJson("settingsOutput", data);
+  }
+  async function checkUpdate() {
+    const data = await api("/update/check");
+    setJson("settingsOutput", data);
+  }
+  function bindEvents() {
+    document.querySelectorAll(".tab").forEach(btn => btn.addEventListener("click", () => showTab(btn.dataset.tab)));
+    $("commandRun").addEventListener("click", runCommand);
+    $("commandInput").addEventListener("keydown", ev => { if (ev.key === "Enter") runCommand(); });
+    $("tokenBtn").addEventListener("click", () => {
+      const value = prompt("Bearer token", token || "");
+      if (value !== null) {
+        token = value.trim().replace(/^Bearer\s+/i, "");
+        sessionStorage.setItem("hermes_token", token);
+        setText("authState", token ? "token" : "missing");
+      }
+    });
+    $("undoBtn").addEventListener("click", undoLast);
+    $("refreshScreen").addEventListener("click", refreshScreen);
+    $("clearRegion").addEventListener("click", () => { state.selectedRegion = null; $("selectionBox").style.display = "none"; updateRegionText(); });
+    $("typeText").addEventListener("click", () => typeText().catch(err => toast("Type failed: " + err.message)));
+    document.querySelectorAll("[data-key]").forEach(btn => btn.addEventListener("click", () => pressKey(btn.dataset.key).catch(err => toast(err.message))));
+    $("goalRun").addEventListener("click", runGoal);
+    $("goalStop").addEventListener("click", () => stopGoal().catch(err => toast(err.message)));
+    $("gifStart").addEventListener("click", () => gifStart().catch(err => toast(err.message)));
+    $("gifStop").addEventListener("click", () => gifStop().catch(err => toast(err.message)));
+    $("gifStatusBtn").addEventListener("click", () => gifStatus().catch(err => toast(err.message)));
+    $("fileLoad").addEventListener("click", () => loadFiles().catch(err => toast(err.message)));
+    $("metricsRefresh").addEventListener("click", refreshMetrics);
+    $("tgLoad").addEventListener("click", loadTelegram);
+    $("tgSave").addEventListener("click", () => saveTelegram().catch(err => toast(err.message)));
+    $("tgClear").addEventListener("click", () => clearTelegram().catch(err => toast(err.message)));
+    $("webhooksLoad").addEventListener("click", () => listWebhooks().catch(err => toast(err.message)));
+    $("updateCheck").addEventListener("click", () => checkUpdate().catch(err => toast(err.message)));
+    const drop = $("dropZone");
+    drop.addEventListener("dragover", ev => { ev.preventDefault(); drop.classList.add("drag"); });
+    drop.addEventListener("dragleave", () => drop.classList.remove("drag"));
+    drop.addEventListener("drop", ev => {
+      ev.preventDefault();
+      drop.classList.remove("drag");
+      uploadFiles(ev.dataTransfer.files).catch(err => toast("Upload failed: " + err.message));
+    });
+    bindScreen();
+  }
   async function init() {
     setText("authState", token ? "token" : "missing");
     bindEvents();
-    await Promise.allSettled([loadVersion(), loadMonitors(), ping(), loadCua()]);
-    startScreenStream();
-    captureSnapshot();
-    loadResources();
-    loadProcesses();
-    loadLogs();
-    loadCursor();
-    loadTelegramConfig();
+    updateRegionText();
+    await Promise.allSettled([loadVersion(), ping(), refreshScreen(), loadTelegram(), loadFiles()]);
+    refreshMetrics();
+    state.screenTimer = setInterval(refreshScreen, 750);
+    state.metricTimer = setInterval(refreshMetrics, 5000);
     setInterval(ping, 5000);
-    setInterval(loadCursor, 1000);
-    setInterval(loadResources, 5000);
-    setInterval(loadProcesses, 7000);
-    setInterval(loadLogs, 4000);
-    setInterval(loadCua, 15000);
+    setInterval(async () => {
+      try {
+        const pos = await api("/cursor/pos");
+        setText("cursorText", (pos.x ?? 0) + "," + (pos.y ?? 0));
+      } catch (_err) {}
+    }, 1200);
   }
-
   init();
 })();
 </script>
