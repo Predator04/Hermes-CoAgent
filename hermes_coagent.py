@@ -1047,8 +1047,8 @@ def start_server():
     _capture_raw(force=True)
     _console("  [OK] Screenshot engine warmed")
 
-    # Start tray icon
-    _start_tray()
+    # Tray icon disabled — v7.13 doesn't need it, and schtasks /Run causes popup windows
+    # _start_tray()
 
     # Start auto-healing watchdog
     _start_watchdog(port)
