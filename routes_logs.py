@@ -7,7 +7,7 @@ from collections import Counter
 from flask import Blueprint, jsonify
 
 from routes_bypass import _json_payload
-from shared import SERVER_LOG
+from shared import SERVER_LOG, _wrap_registered_blueprint_routes
 
 
 logs_bp = Blueprint("logs_analyzer", __name__)
@@ -108,5 +108,5 @@ def route_logs_summary():
 
 
 def register_routes(app, state, require_auth):
-    _auth_blueprint(logs_bp, require_auth)
     app.register_blueprint(logs_bp)
+    _wrap_registered_blueprint_routes(app, logs_bp.name, require_auth)

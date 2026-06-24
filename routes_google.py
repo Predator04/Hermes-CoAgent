@@ -9,7 +9,7 @@ from pathlib import Path
 from flask import Blueprint, jsonify
 
 from routes_bypass import _json_payload
-from shared import COAGENT_DIR, _log
+from shared import COAGENT_DIR, _log, _wrap_registered_blueprint_routes
 
 
 google_bp = Blueprint("google", __name__)
@@ -261,5 +261,5 @@ def route_google_calendar_create():
 
 
 def register_routes(app, state, require_auth):
-    _auth_blueprint(google_bp, require_auth)
     app.register_blueprint(google_bp)
+    _wrap_registered_blueprint_routes(app, google_bp.name, require_auth)

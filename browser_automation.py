@@ -7,7 +7,7 @@ import uuid
 
 from flask import Blueprint, jsonify
 
-from shared import _json_body
+from shared import _json_body, _wrap_registered_blueprint_routes
 
 
 browser_automation_bp = Blueprint("browser_automation", __name__)
@@ -274,11 +274,6 @@ def route_browser_undetectable_close(browser_id):
 
 
 def register_routes(app, state, require_auth):
-    for endpoint, view_func in list(browser_automation_bp.view_functions.items()):
-        if getattr(view_func, "_hermes_auth_wrapped", False):
-            continue
-        wrapped = require_auth(view_func)
-        wrapped._hermes_auth_wrapped = True
-        browser_automation_bp.view_functions[endpoint] = wrapped
     app.register_blueprint(browser_automation_bp)
+    _wrap_registered_blueprint_routes(app, browser_automation_bp.name, require_auth)
     state.browser_automation = {"undetectable_sessions": _SESSIONS}

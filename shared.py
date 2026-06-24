@@ -141,6 +141,19 @@ def _result_response(result, default_error_status=400):
     return jsonify(result), status
 
 
+def _wrap_registered_blueprint_routes(app, blueprint_name, require_auth):
+    """Apply auth to already-registered Flask blueprint view functions."""
+    endpoint_prefix = f"{blueprint_name}."
+    for endpoint, view_func in list(app.view_functions.items()):
+        if not endpoint.startswith(endpoint_prefix):
+            continue
+        if getattr(view_func, "_hermes_auth_wrapped", False):
+            continue
+        wrapped = require_auth(view_func)
+        wrapped._hermes_auth_wrapped = True
+        app.view_functions[endpoint] = wrapped
+
+
 def _interactive_task_xml(command, arguments, author="CoAgent", execution_limit="PT0S", working_dir=None):
     command_xml = _xml_escape(str(command))
     arguments_xml = _xml_escape(str(arguments))

@@ -7,7 +7,7 @@ from pathlib import Path
 
 from flask import Blueprint, jsonify
 
-from shared import COAGENT_DIR, _console, _json_body
+from shared import COAGENT_DIR, _console, _json_body, _wrap_registered_blueprint_routes
 
 
 hud_bp = Blueprint("hud", __name__)
@@ -84,8 +84,14 @@ def _position_xy(position):
     import ctypes
 
     user32 = ctypes.windll.user32
+    user32.GetSystemMetrics.argtypes = [ctypes.c_int]
+    user32.GetSystemMetrics.restype = ctypes.c_int
     screen_w = int(user32.GetSystemMetrics(0))
     screen_h = int(user32.GetSystemMetrics(1))
+    if screen_w <= 0 or screen_w > 100000:
+        screen_w = 1920
+    if screen_h <= 0 or screen_h > 100000:
+        screen_h = 1080
     margin = 18
     if position == "top-left":
         return margin, margin
@@ -113,8 +119,9 @@ def _run_native_hud(config, stop_event, token, ready_event):
     import ctypes
     from ctypes import wintypes
 
-    user32 = ctypes.windll.user32
-    gdi32 = ctypes.windll.gdi32
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    gdi32 = ctypes.WinDLL("gdi32", use_last_error=True)
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
 
     WS_POPUP = 0x80000000
     WS_EX_LAYERED = 0x00080000
@@ -169,31 +176,102 @@ def _run_native_hud(config, stop_event, token, ready_event):
     class BITMAPINFO(ctypes.Structure):
         _fields_ = [("bmiHeader", BITMAPINFOHEADER), ("bmiColors", RGBQUAD * 1)]
 
+    HINSTANCE = getattr(wintypes, "HINSTANCE", wintypes.HANDLE)
+    HICON = getattr(wintypes, "HICON", wintypes.HANDLE)
+    HCURSOR = getattr(wintypes, "HCURSOR", wintypes.HANDLE)
+    HBRUSH = getattr(wintypes, "HBRUSH", wintypes.HANDLE)
+    HWND = getattr(wintypes, "HWND", wintypes.HANDLE)
+    HDC = getattr(wintypes, "HDC", wintypes.HANDLE)
+    HBITMAP = getattr(wintypes, "HBITMAP", wintypes.HANDLE)
+    HMENU = getattr(wintypes, "HMENU", wintypes.HANDLE)
+    ATOM = getattr(wintypes, "ATOM", wintypes.WORD)
+    WPARAM = getattr(wintypes, "WPARAM", ctypes.c_size_t)
+    LPARAM = getattr(wintypes, "LPARAM", ctypes.c_ssize_t)
+    LRESULT = getattr(wintypes, "LRESULT", ctypes.c_ssize_t)
+
     class WNDCLASS(ctypes.Structure):
         _fields_ = [
             ("style", wintypes.UINT),
             ("lpfnWndProc", ctypes.c_void_p),
             ("cbClsExtra", ctypes.c_int),
             ("cbWndExtra", ctypes.c_int),
-            ("hInstance", wintypes.HINSTANCE),
-            ("hIcon", wintypes.HICON),
-            ("hCursor", wintypes.HCURSOR),
-            ("hbrBackground", wintypes.HBRUSH),
+            ("hInstance", HINSTANCE),
+            ("hIcon", HICON),
+            ("hCursor", HCURSOR),
+            ("hbrBackground", HBRUSH),
             ("lpszMenuName", wintypes.LPCWSTR),
             ("lpszClassName", wintypes.LPCWSTR),
         ]
 
     class MSG(ctypes.Structure):
         _fields_ = [
-            ("hwnd", wintypes.HWND),
+            ("hwnd", HWND),
             ("message", wintypes.UINT),
-            ("wParam", wintypes.WPARAM),
-            ("lParam", wintypes.LPARAM),
+            ("wParam", WPARAM),
+            ("lParam", LPARAM),
             ("time", wintypes.DWORD),
             ("pt", POINT),
         ]
 
-    WNDPROC = ctypes.WINFUNCTYPE(wintypes.LRESULT, wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM)
+    WNDPROC = ctypes.WINFUNCTYPE(LRESULT, HWND, wintypes.UINT, WPARAM, LPARAM)
+
+    user32.DefWindowProcW.argtypes = [HWND, wintypes.UINT, WPARAM, LPARAM]
+    user32.DefWindowProcW.restype = LRESULT
+    user32.RegisterClassW.argtypes = [ctypes.POINTER(WNDCLASS)]
+    user32.RegisterClassW.restype = ATOM
+    user32.CreateWindowExW.argtypes = [
+        wintypes.DWORD,
+        wintypes.LPCWSTR,
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_int,
+        HWND,
+        HMENU,
+        HINSTANCE,
+        ctypes.c_void_p,
+    ]
+    user32.CreateWindowExW.restype = HWND
+    user32.GetDC.argtypes = [HWND]
+    user32.GetDC.restype = HDC
+    user32.ReleaseDC.argtypes = [HWND, HDC]
+    user32.ReleaseDC.restype = ctypes.c_int
+    COLORREF = getattr(wintypes, "COLORREF", wintypes.DWORD)
+    user32.UpdateLayeredWindow.argtypes = [
+        HWND,
+        HDC,
+        ctypes.POINTER(POINT),
+        ctypes.POINTER(SIZE),
+        HDC,
+        ctypes.POINTER(POINT),
+        COLORREF,
+        ctypes.POINTER(BLENDFUNCTION),
+        wintypes.DWORD,
+    ]
+    user32.UpdateLayeredWindow.restype = wintypes.BOOL
+    user32.ShowWindow.argtypes = [HWND, ctypes.c_int]
+    user32.DestroyWindow.argtypes = [HWND]
+    user32.PeekMessageW.argtypes = [ctypes.POINTER(MSG), HWND, wintypes.UINT, wintypes.UINT, wintypes.UINT]
+    user32.PeekMessageW.restype = wintypes.BOOL
+    kernel32.GetModuleHandleW.argtypes = [wintypes.LPCWSTR]
+    kernel32.GetModuleHandleW.restype = HINSTANCE
+    gdi32.CreateCompatibleDC.argtypes = [HDC]
+    gdi32.CreateCompatibleDC.restype = HDC
+    gdi32.CreateDIBSection.argtypes = [
+        HDC,
+        ctypes.POINTER(BITMAPINFO),
+        wintypes.UINT,
+        ctypes.POINTER(ctypes.c_void_p),
+        wintypes.HANDLE,
+        wintypes.DWORD,
+    ]
+    gdi32.CreateDIBSection.restype = HBITMAP
+    gdi32.SelectObject.argtypes = [HDC, wintypes.HANDLE]
+    gdi32.SelectObject.restype = wintypes.HANDLE
+    gdi32.DeleteObject.argtypes = [wintypes.HANDLE]
+    gdi32.DeleteDC.argtypes = [HDC]
 
     def wnd_proc(hwnd, msg, wparam, lparam):
         if msg == WM_DESTROY:
@@ -202,15 +280,20 @@ def _run_native_hud(config, stop_event, token, ready_event):
 
     wnd_proc_ref = WNDPROC(wnd_proc)
     class_name = "HermesCoAgentHudOverlay"
-    hinstance = ctypes.windll.kernel32.GetModuleHandleW(None)
+    hinstance = kernel32.GetModuleHandleW(None)
     wc = WNDCLASS()
     wc.lpfnWndProc = ctypes.cast(wnd_proc_ref, ctypes.c_void_p).value
     wc.hInstance = hinstance
     wc.lpszClassName = class_name
-    user32.RegisterClassW(ctypes.byref(wc))
+    ctypes.set_last_error(0)
+    atom = user32.RegisterClassW(ctypes.byref(wc))
+    register_error = ctypes.get_last_error()
+    if not atom and register_error != 1410:  # ERROR_CLASS_ALREADY_EXISTS
+        raise OSError(f"RegisterClassW failed: {register_error}")
 
     x, y = _position_xy(config["position"])
     ex_style = WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOPMOST | WS_EX_TOOLWINDOW
+    ctypes.set_last_error(0)
     hwnd = user32.CreateWindowExW(
         ex_style,
         class_name,
@@ -226,7 +309,7 @@ def _run_native_hud(config, stop_event, token, ready_event):
         None,
     )
     if not hwnd:
-        raise OSError("CreateWindowExW failed")
+        raise OSError(f"CreateWindowExW failed: {ctypes.get_last_error()}")
 
     screen_dc = user32.GetDC(None)
     mem_dc = gdi32.CreateCompatibleDC(screen_dc)
@@ -377,6 +460,6 @@ def _auth_blueprint(bp, require_auth):
 
 
 def register_routes(app, state, require_auth):
-    _auth_blueprint(hud_bp, require_auth)
     app.register_blueprint(hud_bp)
+    _wrap_registered_blueprint_routes(app, hud_bp.name, require_auth)
     state.hud_overlay = {"status_file": str(HUD_STATUS_FILE)}

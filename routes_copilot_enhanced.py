@@ -11,7 +11,7 @@ from copy import deepcopy
 
 from flask import Blueprint, jsonify, request
 
-from shared import COAGENT_DIR, _console, _json_body
+from shared import COAGENT_DIR, _console, _json_body, _wrap_registered_blueprint_routes
 
 
 copilot_enhanced_bp = Blueprint("copilot_enhanced", __name__)
@@ -312,7 +312,17 @@ def _decompose_goal(goal, max_steps, auth_header, agent=None, model=None):
         }
 
 
-def _plan_batch_actions(goal, context, max_actions, auth_header, agent=None, model=None, provider=None):
+def _plan_batch_actions(
+    goal,
+    context,
+    max_actions,
+    auth_header,
+    agent=None,
+    model=None,
+    provider=None,
+    base_url=None,
+    api_key=None,
+):
     prompt = (
         "Create a speculative multi-action plan for Hermes CoAgent. Return only JSON with this shape: "
         '{"reasoning":"short explanation","actions":[{"type":"key/press","data":{"keys":["win","r"]}}]}. '
@@ -329,6 +339,8 @@ def _plan_batch_actions(goal, context, max_actions, auth_header, agent=None, mod
         "agent": agent,
         "model": model,
         "provider": provider,
+        "base_url": base_url,
+        "api_key": api_key,
         "timeout": 120,
         "workdir": str(COAGENT_DIR),
     }
@@ -666,6 +678,8 @@ def route_copilot_batch_plan():
             agent=data.get("agent"),
             model=data.get("model"),
             provider=data.get("provider"),
+            base_url=data.get("base_url"),
+            api_key=data.get("api_key"),
         )
         return jsonify({
             "actions": actions,
@@ -721,6 +735,8 @@ def route_copilot_batch_plan_execute():
             agent=data.get("agent"),
             model=data.get("model"),
             provider=data.get("provider"),
+            base_url=data.get("base_url"),
+            api_key=data.get("api_key"),
         )
         execution = _execute_batch_actions(
             actions,
@@ -815,11 +831,6 @@ def route_copilot_goal_stop(goal_id):
 
 
 def register_routes(app, state, require_auth):
-    for endpoint, view_func in list(copilot_enhanced_bp.view_functions.items()):
-        if getattr(view_func, "_hermes_auth_wrapped", False):
-            continue
-        wrapped = require_auth(view_func)
-        wrapped._hermes_auth_wrapped = True
-        copilot_enhanced_bp.view_functions[endpoint] = wrapped
     app.register_blueprint(copilot_enhanced_bp)
+    _wrap_registered_blueprint_routes(app, copilot_enhanced_bp.name, require_auth)
     state.copilot_enhanced = {"max_concurrent_goals": MAX_CONCURRENT_GOALS}

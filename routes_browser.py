@@ -7,7 +7,7 @@ from pathlib import Path
 from flask import Blueprint, jsonify
 
 from routes_bypass import _json_payload
-from shared import _sanitize_path
+from shared import _sanitize_path, _wrap_registered_blueprint_routes
 
 
 browser_bp = Blueprint("browser", __name__)
@@ -308,5 +308,5 @@ def route_browser_close():
 
 
 def register_routes(app, state, require_auth):
-    _auth_blueprint(browser_bp, require_auth)
     app.register_blueprint(browser_bp)
+    _wrap_registered_blueprint_routes(app, browser_bp.name, require_auth)

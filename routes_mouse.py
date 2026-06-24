@@ -82,6 +82,9 @@ def _record_action(action_type, data, result=None):
         recorder = getattr(cf, "record_action", None)
         if recorder:
             recorder(action_type, data, result)
+    except ModuleNotFoundError as e:
+        if e.name != "coagent_features":
+            _log(f"Session recording failed for {action_type}: {type(e).__name__}: {e}")
     except Exception as e:
         _log(f"Session recording failed for {action_type}: {type(e).__name__}: {e}")
 

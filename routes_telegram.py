@@ -15,7 +15,7 @@ import json, os, time, urllib.request
 from pathlib import Path
 from flask import Blueprint, jsonify, request
 
-from shared import COAGENT_DIR, _console, _log, _json_body
+from shared import COAGENT_DIR, _console, _log, _json_body, _wrap_registered_blueprint_routes
 
 telegram_bp = Blueprint("telegram_relay", __name__)
 CONFIG_FILE = COAGENT_DIR / "telegram_config.json"
@@ -435,9 +435,8 @@ def route_agent_exec_to_telegram():
 
 def register_routes(app, state, require_auth):
     """Register all telegram relay routes."""
-    from routes_agent import _auth_blueprint
-    _auth_blueprint(telegram_bp, require_auth)
     app.register_blueprint(telegram_bp)
+    _wrap_registered_blueprint_routes(app, telegram_bp.name, require_auth)
     state.telegram_relay = {
         "configured": CONFIG_FILE.exists(),
         "config_file": str(CONFIG_FILE),

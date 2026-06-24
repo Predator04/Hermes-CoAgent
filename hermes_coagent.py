@@ -193,6 +193,16 @@ def _is_auth_exempt(path):
         return True
     return any(path.startswith(prefix) for prefix in AUTH_EXEMPT_PREFIXES)
 
+def _ensure_registered_route_auth():
+    """Wrap every non-public registered endpoint with require_auth once."""
+    for endpoint, view_func in list(app.view_functions.items()):
+        if endpoint == "static" or getattr(view_func, "_hermes_auth_wrapped", False):
+            continue
+        rules = [rule for rule in app.url_map.iter_rules() if rule.endpoint == endpoint]
+        if rules and all(_is_auth_exempt(rule.rule) for rule in rules):
+            continue
+        app.view_functions[endpoint] = require_auth(view_func)
+
 @app.before_request
 def _cors_preflight():
     if request.method == "OPTIONS":
@@ -1022,6 +1032,8 @@ def route_logs():
         except Exception:
             return jsonify({"error": "Cannot read log"}), 500
     return jsonify({"lines": [], "text": "", "count": 0, "log": "No log file"})
+
+_ensure_registered_route_auth()
 
 # -- Main ---------------------------------------------------------
 def start_server():

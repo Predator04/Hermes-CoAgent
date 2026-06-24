@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 
 from flask import Blueprint, jsonify
 
-from shared import COAGENT_DIR, _console, _json_body
+from shared import COAGENT_DIR, _console, _json_body, _wrap_registered_blueprint_routes
 
 
 reminders_bp = Blueprint("reminders", __name__)
@@ -416,7 +416,7 @@ def _auth_blueprint(bp, require_auth):
 
 def register_routes(app, state, require_auth):
     _init_db()
-    _auth_blueprint(reminders_bp, require_auth)
     app.register_blueprint(reminders_bp)
+    _wrap_registered_blueprint_routes(app, reminders_bp.name, require_auth)
     _start_scheduler()
     state.reminders = {"db": str(DB_FILE), "interval_seconds": CHECK_INTERVAL_SECONDS}

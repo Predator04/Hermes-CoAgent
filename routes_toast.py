@@ -3,6 +3,7 @@
 from flask import Blueprint, jsonify
 
 from routes_bypass import _json_payload
+from shared import _wrap_registered_blueprint_routes
 
 
 toast_bp = Blueprint("toast", __name__)
@@ -162,5 +163,5 @@ def route_toast_input():
 
 
 def register_routes(app, state, require_auth):
-    _auth_blueprint(toast_bp, require_auth)
     app.register_blueprint(toast_bp)
+    _wrap_registered_blueprint_routes(app, toast_bp.name, require_auth)

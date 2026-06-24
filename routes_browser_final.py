@@ -9,7 +9,7 @@ import uuid
 
 from flask import Blueprint, Response, jsonify
 
-from shared import _json_body
+from shared import _json_body, _wrap_registered_blueprint_routes
 
 
 browser_v2_bp = Blueprint("browser_v2", __name__)
@@ -233,7 +233,7 @@ def _one_shot_browser(data, callback):
     url = url.strip()
     sync_playwright, PlaywrightError, missing = _load_playwright()
     if missing:
-        return missing
+        return _error(missing, 501, package="patchright-python")
     headless = _as_bool(data.get("headless"), True)
     width = _clamp_int(data.get("width"), 1280, 320, 7680)
     height = _clamp_int(data.get("height"), 720, 240, 4320)
@@ -624,11 +624,6 @@ def route_browser_list():
 
 
 def register_routes(app, state, require_auth):
-    for endpoint, view_func in list(browser_v2_bp.view_functions.items()):
-        if getattr(view_func, "_hermes_auth_wrapped", False):
-            continue
-        wrapped = require_auth(view_func)
-        wrapped._hermes_auth_wrapped = True
-        browser_v2_bp.view_functions[endpoint] = wrapped
     app.register_blueprint(browser_v2_bp)
+    _wrap_registered_blueprint_routes(app, browser_v2_bp.name, require_auth)
     state.browser_v2 = {"instances": _BROWSERS}

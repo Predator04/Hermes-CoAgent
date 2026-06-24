@@ -7,7 +7,7 @@ from pathlib import Path
 from flask import Blueprint, jsonify
 
 from routes_bypass import _json_payload
-from shared import COAGENT_DIR, _sanitize_path
+from shared import COAGENT_DIR, _sanitize_path, _wrap_registered_blueprint_routes
 
 
 config_bp = Blueprint("config", __name__)
@@ -136,5 +136,5 @@ def route_config_rollback():
 
 
 def register_routes(app, state, require_auth):
-    _auth_blueprint(config_bp, require_auth)
     app.register_blueprint(config_bp)
+    _wrap_registered_blueprint_routes(app, config_bp.name, require_auth)

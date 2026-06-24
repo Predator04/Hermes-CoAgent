@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 
 from flask import Blueprint, jsonify, request
 
-from shared import COAGENT_DIR, _console, _json_body
+from shared import COAGENT_DIR, _console, _json_body, _wrap_registered_blueprint_routes
 
 try:
     from croniter import croniter
@@ -824,12 +824,7 @@ def route_recipe_logs(recipe_id):
 
 def register_routes(app, state, require_auth):
     _load_recipes()
-    for endpoint, view_func in list(recipes_bp.view_functions.items()):
-        if getattr(view_func, "_hermes_auth_wrapped", False):
-            continue
-        wrapped = require_auth(view_func)
-        wrapped._hermes_auth_wrapped = True
-        recipes_bp.view_functions[endpoint] = wrapped
     app.register_blueprint(recipes_bp)
+    _wrap_registered_blueprint_routes(app, recipes_bp.name, require_auth)
     _start_scheduler()
     state.recipes = {"file": str(RECIPES_FILE), "croniter": HAS_CRONITER}

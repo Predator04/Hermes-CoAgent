@@ -9,7 +9,7 @@ from importlib import metadata
 from flask import Blueprint, jsonify
 
 from routes_bypass import _json_payload
-from shared import SERVER_LOG
+from shared import SERVER_LOG, _wrap_registered_blueprint_routes
 
 
 deps_bp = Blueprint("deps", __name__)
@@ -248,5 +248,5 @@ def route_deps_auto():
 
 
 def register_routes(app, state, require_auth):
-    _auth_blueprint(deps_bp, require_auth)
     app.register_blueprint(deps_bp)
+    _wrap_registered_blueprint_routes(app, deps_bp.name, require_auth)

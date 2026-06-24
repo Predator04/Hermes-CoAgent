@@ -17,7 +17,7 @@ from urllib.parse import urlparse
 
 from flask import Blueprint, Response, jsonify, request, stream_with_context
 
-from shared import COAGENT_DIR, _console, _log
+from shared import COAGENT_DIR, _console, _log, _wrap_registered_blueprint_routes
 
 
 def _userprofile():
@@ -1780,8 +1780,8 @@ def route_agent_logs():
 
 
 def register_routes(app, state, require_auth):
-    _auth_blueprint(agent_bp, require_auth)
     app.register_blueprint(agent_bp)
+    _wrap_registered_blueprint_routes(app, agent_bp.name, require_auth)
     state.agent_gateway = {
         "agents": AGENT_CACHE,
         "default_agent": DEFAULT_AGENT,
