@@ -142,6 +142,51 @@ def _resolve_refs(value, previous):
     return value
 
 
+def _step_params(step, previous):
+    params = _resolve_refs(deepcopy(step.get("params") or {}), previous)
+    target = _resolve_refs(deepcopy(step.get("target") or {}), previous)
+    if isinstance(target, dict):
+        for key, value in target.items():
+            params.setdefault(key, value)
+    return params
+
+
+def _step_target(step):
+    target = step.get("target") if isinstance(step.get("target"), dict) else {}
+    params = step.get("params") if isinstance(step.get("params"), dict) else {}
+    merged = {}
+    merged.update(target)
+    merged.update({key: value for key, value in params.items() if value is not None})
+    return merged
+
+
+def _step_target_text(step):
+    target = _step_target(step)
+    for key in ("text", "name", "automation_id", "selector", "query"):
+        value = target.get(key)
+        if isinstance(value, str) and value.strip():
+            text = value.strip()
+            if key == "selector" and text[:1] in {"#", "."}:
+                text = text[1:]
+            return text
+    return ""
+
+
+def _describe_step_action(step):
+    action = str(step.get("action") or "").strip().lower() or "unknown"
+    target = _step_target(step)
+    if action == "click":
+        text = _step_target_text(step)
+        if text:
+            return f"click on {text}"
+        if "x" in target and "y" in target:
+            return f"click at {target.get('x')},{target.get('y')}"
+    if action == "type":
+        text = target.get("text") or (step.get("params") or {}).get("text") or ""
+        return f"type {str(text)[:40]}"
+    return action
+
+
 def _prev_from_result(result):
     if not isinstance(result, dict):
         return {}
@@ -165,7 +210,7 @@ def _prev_from_result(result):
 
 def _run_one_step(step, previous, auth_header):
     action = str(step.get("action") or "").strip().lower()
-    params = _resolve_refs(deepcopy(step.get("params") or {}), previous)
+    params = _step_params(step, previous)
     if action == "wait":
         seconds = max(0.0, min(float(params.get("seconds", 1)), 3600.0))
         time.sleep(seconds)
@@ -177,9 +222,21 @@ def _run_one_step(step, previous, auth_header):
             result = _coagent_request("POST", "/app/open", {"path": query}, auth_header=auth_header)
         return {"status": "error" if result.get("error") else "ok", "result": result}
     if action == "click":
-        result = _coagent_request("POST", "/mouse/click", params, auth_header=auth_header)
+        if ("x" not in params or "y" not in params) and _step_target_text(step):
+            target_payload = {
+                "text": _step_target_text(step),
+                "type": params.get("type") or params.get("control_type") or "button",
+                "fallback_to_ocr": params.get("fallback_to_ocr", True),
+                "button": params.get("button", "left"),
+                "background": params.get("background", True),
+            }
+            result = _coagent_request("POST", "/uia/click-hybrid", target_payload, auth_header=auth_header)
+        else:
+            result = _coagent_request("POST", "/mouse/click", params, auth_header=auth_header)
         return {"status": "error" if result.get("error") else "ok", "result": result}
     if action == "type":
+        if "text" not in params and _step_target_text(step):
+            params["text"] = _step_target_text(step)
         result = _coagent_request("POST", "/key/type", params, auth_header=auth_header)
         return {"status": "error" if result.get("error") else "ok", "result": result}
     if action in {"key", "hotkey", "press"}:
@@ -298,7 +355,13 @@ def _normalize_recipe(data, recipe_id=None):
         params = step.get("params", {})
         if not isinstance(params, dict):
             raise ValueError("step params must be an object")
-        normalized_steps.append({"action": action, "params": params})
+        normalized = {"action": action, "params": params}
+        for optional in ("target", "expected"):
+            if optional in step:
+                if not isinstance(step.get(optional), dict):
+                    raise ValueError(f"step {optional} must be an object")
+                normalized[optional] = step.get(optional)
+        normalized_steps.append(normalized)
     created_at = data.get("created_at") or datetime.now().isoformat(timespec="seconds")
     return {
         "recipe_id": rid,
@@ -432,6 +495,190 @@ def _start_scheduler():
         _SCHEDULER_THREAD.start()
 
 
+def _steps_from_payload(data):
+    if not isinstance(data, dict):
+        return None, "payload must be an object", 400
+    recipe_id = data.get("recipe_id") or data.get("id")
+    if recipe_id:
+        with _RECIPES_LOCK:
+            recipe = deepcopy(_RECIPES.get(str(recipe_id)))
+        if not recipe:
+            return None, "recipe not found", 404
+        return recipe.get("steps", []), None, 200
+    recipe = data.get("recipe")
+    if isinstance(recipe, dict):
+        steps = recipe.get("steps")
+    else:
+        steps = data.get("steps")
+    if not isinstance(steps, list) or not steps:
+        return None, "steps must be a non-empty list", 400
+    return steps, None, 200
+
+
+def _screen_base64(auth_header):
+    result = _coagent_request("GET", "/screen/base64", auth_header=auth_header, timeout=20)
+    if isinstance(result, dict) and result.get("data"):
+        return result.get("data")
+    return ""
+
+
+def _expected_text(expected):
+    for key in ("text", "selector", "name", "automation_id", "query"):
+        value = expected.get(key)
+        if isinstance(value, str) and value.strip():
+            text = value.strip()
+            if key == "selector" and text[:1] in {"#", "."}:
+                text = text[1:]
+            return text
+    return ""
+
+
+def _verify_expected(expected, auth_header, screenshot_before="", screenshot_after=""):
+    if not expected:
+        return {"ok": True, "actual": "no expected condition supplied"}
+    if not isinstance(expected, dict):
+        return {"ok": False, "actual": "expected condition must be an object"}
+    expected_type = str(expected.get("type") or "text_visible").strip().lower()
+    if expected_type in {"toast", "text", "text_visible", "ocr", "ocr_text"}:
+        text = _expected_text(expected)
+        if not text:
+            return {"ok": False, "actual": "expected text is required"}
+        result = _coagent_request("POST", "/uia/find-hybrid", {
+            "text": text,
+            "fallback_to_ocr": True,
+        }, auth_header=auth_header, timeout=30)
+        ok = bool(isinstance(result, dict) and result.get("found"))
+        return {
+            "ok": ok,
+            "actual": f"Found '{text}' via {result.get('method')}" if ok else f"No '{text}' visible in screenshot",
+            "result": result,
+        }
+    if expected_type in {"element_exists", "exists", "element"}:
+        text = _expected_text(expected)
+        if not text:
+            return {"ok": False, "actual": "element selector/text is required"}
+        result = _coagent_request("POST", "/uia/find-hybrid", {
+            "text": text,
+            "type": expected.get("control_type") or expected.get("element_type") or "",
+            "fallback_to_ocr": True,
+        }, auth_header=auth_header, timeout=30)
+        ok = bool(isinstance(result, dict) and result.get("found"))
+        return {
+            "ok": ok,
+            "actual": f"Element '{text}' exists via {result.get('method')}" if ok else f"Element '{text}' not found",
+            "result": result,
+        }
+    if expected_type == "screen_changed":
+        ok = bool(screenshot_before and screenshot_after and screenshot_before != screenshot_after)
+        return {"ok": ok, "actual": "screen changed" if ok else "screen did not change"}
+    return {"ok": False, "actual": f"unsupported expected type: {expected_type}"}
+
+
+def _verify_target_exists(step, auth_header):
+    action = str(step.get("action") or "").strip().lower()
+    target = _step_target(step)
+    if "x" in target and "y" in target:
+        return {"ok": True, "actual": "coordinates supplied", "target": target}
+    if action in {"type", "key", "hotkey", "press", "wait", "screenshot", "telegram_send"} and not (
+        isinstance(step.get("target"), dict) and any(key in step["target"] for key in ("selector", "name", "automation_id"))
+    ):
+        return {"ok": True, "actual": "no UI element target required"}
+    text = _step_target_text(step)
+    if not text:
+        return {"ok": True, "actual": "no UI element target supplied"}
+    result = _coagent_request("POST", "/uia/find-hybrid", {
+        "text": text,
+        "type": target.get("type") or target.get("control_type") or "",
+        "fallback_to_ocr": target.get("fallback_to_ocr", True),
+    }, auth_header=auth_header, timeout=30)
+    ok = bool(isinstance(result, dict) and result.get("found"))
+    return {
+        "ok": ok,
+        "actual": f"target '{text}' found via {result.get('method')}" if ok else f"target '{text}' not found",
+        "target": text,
+        "result": result,
+    }
+
+
+def _execute_steps_with_verification(steps, auth_header, timeout=300):
+    deadline = time.time() + max(1, int(timeout or 300))
+    total = len(steps)
+    completed = 0
+    previous = {}
+    step_records = []
+    for index, step in enumerate(steps):
+        if time.time() >= deadline:
+            return {
+                "status": "failed",
+                "completed": completed,
+                "total": total,
+                "failed_at_step": index + 1,
+                "failed_action": _describe_step_action(step),
+                "expected": step.get("expected"),
+                "actual": "verify-run timeout exceeded",
+                "steps": step_records,
+            }
+        screenshot_before = _screen_base64(auth_header)
+        attempts = []
+        verified = False
+        latest_after = ""
+        latest_result = {}
+        latest_verify = {}
+        for attempt in (1, 2):
+            started = time.time()
+            outcome = _run_one_step(step, previous, auth_header)
+            latest_result = outcome.get("result", {})
+            time.sleep(1.0)
+            latest_after = _screen_base64(auth_header)
+            if outcome.get("status") != "ok":
+                latest_verify = {
+                    "ok": False,
+                    "actual": latest_result.get("error") if isinstance(latest_result, dict) else "action failed",
+                }
+            else:
+                latest_verify = _verify_expected(
+                    step.get("expected"),
+                    auth_header,
+                    screenshot_before=screenshot_before,
+                    screenshot_after=latest_after,
+                )
+            attempts.append({
+                "attempt": attempt,
+                "action_status": outcome.get("status"),
+                "verification_ok": bool(latest_verify.get("ok")),
+                "actual": latest_verify.get("actual"),
+                "duration": round(time.time() - started, 3),
+                "result": latest_result,
+            })
+            if latest_verify.get("ok"):
+                verified = True
+                completed += 1
+                previous = _prev_from_result(latest_result)
+                break
+        record = {
+            "step_index": index,
+            "step_number": index + 1,
+            "action": str(step.get("action") or "").strip().lower(),
+            "verified": verified,
+            "attempts": attempts,
+        }
+        step_records.append(record)
+        if not verified:
+            return {
+                "status": "failed",
+                "completed": completed,
+                "total": total,
+                "failed_at_step": index + 1,
+                "failed_action": _describe_step_action(step),
+                "expected": step.get("expected"),
+                "actual": latest_verify.get("actual") or "verification failed",
+                "screenshot_before": screenshot_before,
+                "screenshot_after": latest_after,
+                "steps": step_records,
+            }
+    return {"status": "completed", "completed": completed, "total": total, "steps": step_records}
+
+
 @recipes_bp.route("/recipes/create", methods=["POST"])
 def route_recipes_create():
     data = _json_body()
@@ -449,6 +696,54 @@ def route_recipes_create():
         "steps": len(recipe["steps"]),
         "enabled": recipe["enabled"],
     })
+
+
+@recipes_bp.route("/recipes/verify", methods=["POST"])
+def route_recipes_verify():
+    data = _json_body()
+    steps, error, status = _steps_from_payload(data)
+    if error:
+        return jsonify({"error": error}), status
+    auth = _auth_header(request.headers.get("Authorization", ""))
+    results = []
+    for index, step in enumerate(steps):
+        if not isinstance(step, dict):
+            results.append({
+                "step_index": index,
+                "step_number": index + 1,
+                "ok": False,
+                "actual": "step must be an object",
+            })
+            continue
+        check = _verify_target_exists(step, auth)
+        results.append({
+            "step_index": index,
+            "step_number": index + 1,
+            "action": str(step.get("action") or "").strip().lower(),
+            **check,
+        })
+    ok_count = sum(1 for item in results if item.get("ok"))
+    return jsonify({
+        "valid": ok_count == len(results),
+        "completed": ok_count,
+        "total": len(results),
+        "results": results,
+    })
+
+
+@recipes_bp.route("/recipes/verify-run", methods=["POST"])
+def route_recipes_verify_run():
+    data = _json_body()
+    steps, error, status = _steps_from_payload(data)
+    if error:
+        return jsonify({"error": error}), status
+    for step in steps:
+        if not isinstance(step, dict):
+            return jsonify({"error": "each step must be an object"}), 400
+    auth = _auth_header(request.headers.get("Authorization", ""))
+    timeout = data.get("timeout", 300) if isinstance(data, dict) else 300
+    result = _execute_steps_with_verification(steps, auth, timeout=timeout)
+    return jsonify(result)
 
 
 @recipes_bp.route("/recipes/list", methods=["GET"])

@@ -2,8 +2,23 @@
 
 from flask import jsonify
 
-from cua_bridge import cua_available, cua_call, cua_status
 from shared import _json_body, _log, _missing_field
+
+try:
+    from cua_bridge import cua_available, cua_call, cua_status
+except ImportError as _cua_import_error:
+    _CUA_IMPORT_ERROR = _cua_import_error
+
+    def cua_available():
+        return False
+
+    def cua_status():
+        return {"available": False, "error": str(_CUA_IMPORT_ERROR)}
+
+    def cua_call(tool, data):
+        raise FileNotFoundError(f"CUA bridge unavailable: {_CUA_IMPORT_ERROR}")
+else:
+    _CUA_IMPORT_ERROR = None
 
 
 def _route_call(tool, data, success_status="ok"):

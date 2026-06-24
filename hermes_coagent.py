@@ -22,6 +22,7 @@ LAUNCH:
   python hermes_coagent.py --allow-external   # Bind 0.0.0.0 (requires --secure)
 """
 import sys, os, subprocess, threading, time, ctypes, traceback
+import contextlib
 from collections import deque
 from datetime import datetime
 from html import escape
@@ -583,10 +584,11 @@ from routes_toast import register_routes as reg_toast
 from routes_deps import register_routes as reg_deps
 from routes_config import register_routes as reg_config, backup_file
 from routes_browser import register_routes as reg_browser
+from browser_automation import register_routes as reg_browser_automation
 from routes_google import register_routes as reg_google
 from routes_logs import register_routes as reg_logs
 from routes_recorder import register_routes as reg_recorder
-from routes_mcp import register_routes as reg_mcp
+from routes_mcp import register_routes as reg_mcp, run_stdio_server
 from routes_git import register_routes as reg_git
 from routes_dashboard import register_routes as reg_dashboard
 from routes_obsidian import register_routes as reg_obsidian
@@ -597,6 +599,9 @@ from routes_plugins import register_routes as reg_plugins
 from routes_palmreject import register_routes as reg_palmreject
 from routes_agent import register_routes as reg_agent
 from routes_telegram import register_routes as reg_telegram
+from routes_memory import register_routes as reg_memory, memory_stats
+from routes_reminders import register_routes as reg_reminders
+from routes_hud import register_routes as reg_hud
 
 try:
     from routes_recorder_gif import register_routes as reg_recorder_gif
@@ -711,6 +716,7 @@ reg_toast(app, state, require_auth)
 reg_deps(app, state, require_auth)
 reg_config(app, state, require_auth)
 reg_browser(app, state, require_auth)
+reg_browser_automation(app, state, require_auth)
 reg_google(app, state, require_auth)
 reg_logs(app, state, require_auth)
 reg_recorder(app, state, require_auth)
@@ -725,6 +731,12 @@ reg_palmreject(app, state, require_auth)
 reg_agent(app, state, require_auth)
 reg_telegram(app, state, require_auth)
 reg_mcp(app, state, require_auth)
+reg_memory(app, state, require_auth)
+features["memory"] = True
+reg_reminders(app, state, require_auth)
+features["reminders"] = True
+reg_hud(app, state, require_auth)
+features["hud_overlay"] = True
 if RECORDER_GIF_AVAILABLE:
     reg_recorder_gif(app, state, require_auth)
     features["recorder_gif"] = True
@@ -768,6 +780,17 @@ if HELP_AVAILABLE:
     reg_help(app, state, require_auth)
     features["help"] = True
 features["web_dashboard_overhaul"] = True
+features["mcp_mode"] = True
+features["dom_mode"] = True
+features["cross_session_memory"] = True
+features["patchright"] = True
+features["multi_provider_ai"] = True
+features["speculative_batching"] = True
+features["browser_undetectable"] = True
+features["hybrid_detection"] = True
+features["recipe_verification"] = True
+features["reminders"] = True
+features["hud_overlay"] = True
 state.backup_file = backup_file
 
 # -- Core routes (stay in main) ----------------------------------
@@ -850,16 +873,24 @@ def route_version():
                                  "recorder_gif", "undo", "diff", "finder",
                                  "web_dashboard_overhaul", "copilot_enhanced",
                                  "scheduled_recipes", "self_healing_mode",
-                                 "browser_automation_v2", "mobile_remote_control"],
+                                 "browser_automation_v2", "browser_undetectable",
+                                  "mobile_remote_control",
+                                 "memory", "cross_session_memory", "sqlite_bm25_memory",
+                                 "mcp_mode", "dom_mode", "patchright", "multi_provider_ai",
+                                 "speculative_batching", "hybrid_detection",
+                                 "recipe_verification", "reminders", "hud_overlay"],
                     "modules": ["mouse", "ocr", "uia", "file", "media", "v63",
                                 "stream", "process", "voice", "cua", "copilot",
-                                "bypass", "toast", "deps", "config", "browser", "google", "logs",
+                                "bypass", "toast", "deps", "config", "browser",
+                                "browser_automation", "google", "logs",
                                 "recorder", "mcp", "git", "dashboard", "obsidian", "wol",
                                 "phone", "webrtc", "plugins", "palmreject", "agent",
                                 "metrics", "docs", "updates", "webhooks",
                                 "recorder_gif", "undo", "diff", "finder",
                                 "copilot_enhanced", "recipes", "healer",
-                                "browser_v2", "mobile"],
+                                "browser_v2", "mobile", "memory", "batching", "speculative_batching",
+                                "reminders", "hud"],
+                    "memory": memory_stats(),
                     "security": ["auth_token", "rate_limit", "input_sanitization",
                                  "cors_restricted", "security_headers"]})
 
@@ -994,14 +1025,8 @@ def route_logs():
 
 # -- Main ---------------------------------------------------------
 def start_server():
-    _create_singleton_mutex()
-    _console("================================================")
-    _console(f"     {AGENT_NAME} v{VERSION} - MODULAR REFACTOR")
-    _console("================================================")
-    _console(f"  PID: {os.getpid()}")
-    _console(f"  Directory: {COAGENT_DIR}")
-
     # Parse args
+    mcp_stdio = "--mcp-stdio" in sys.argv
     bind_host = "127.0.0.1"
     port = SERVER_PORT
     if "--allow-external" in sys.argv:
@@ -1011,7 +1036,19 @@ def start_server():
         port = int(sys.argv[idx + 1])
     has_secure_arg = "--secure" in sys.argv
     has_token_arg = any(a == "--token" or a.startswith("--token=") for a in sys.argv)
-    _init_auth(port, COAGENT_DIR)
+
+    if not mcp_stdio:
+        _create_singleton_mutex()
+    _console("================================================")
+    _console(f"     {AGENT_NAME} v{VERSION} - MODULAR REFACTOR")
+    _console("================================================")
+    _console(f"  PID: {os.getpid()}")
+    _console(f"  Directory: {COAGENT_DIR}")
+    if mcp_stdio:
+        with contextlib.redirect_stdout(sys.stderr):
+            _init_auth(port, COAGENT_DIR)
+    else:
+        _init_auth(port, COAGENT_DIR)
     auth_enabled = bool(_auth and _auth.AUTH_ENABLED)
     if "--allow-external" in sys.argv:
         if not (has_secure_arg or has_token_arg):
@@ -1028,8 +1065,13 @@ def start_server():
     else:
         _console("  Auth: disabled")
 
+    if mcp_stdio:
+        _console("  MCP stdio: enabled")
+        run_stdio_server(app)
+        return
+
     _console(f"  Server: http://{bind_host}:{port}/")
-    _console(f"  Modules: mouse ocr uia file media v63 stream process voice cua copilot buddy bypass toast deps config browser google logs recorder mcp git dashboard obsidian wol phone webrtc plugins palmreject agent copilot_enhanced recipes healer browser_v2 mobile")
+    _console(f"  Modules: mouse ocr uia file media v63 stream process voice cua copilot buddy bypass toast deps config browser google logs recorder mcp git dashboard obsidian wol phone webrtc plugins palmreject agent memory batching reminders hud copilot_enhanced recipes healer browser_v2 mobile")
     gateway = getattr(state, "agent_gateway", {})
     _console(f"  Agent Gateway: default={gateway.get('default_agent') or 'none'}")
     _console()

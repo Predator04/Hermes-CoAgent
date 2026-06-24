@@ -1,4 +1,4 @@
-"""Playwright browser control routes."""
+"""Patchright/Playwright browser control routes."""
 
 import base64
 import threading
@@ -50,20 +50,27 @@ def _as_bool(value, default=False):
 
 def _playwright_missing():
     return _error(
-        "playwright not installed. Install with: pip install playwright && python -m playwright install chromium",
+        "patchright or playwright not installed. Install with: "
+        "pip install patchright-python playwright && python -m playwright install chromium",
         501,
-        package="playwright",
+        package="patchright-python",
     )
 
 
 def _load_playwright():
     try:
-        from playwright.sync_api import Error as PlaywrightError
-        from playwright.sync_api import sync_playwright
+        from patchright.sync_api import Error as PlaywrightError
+        from patchright.sync_api import sync_playwright
 
         return sync_playwright, PlaywrightError, None
     except ImportError:
-        return None, Exception, _playwright_missing()
+        try:
+            from playwright.sync_api import Error as PlaywrightError
+            from playwright.sync_api import sync_playwright
+
+            return sync_playwright, PlaywrightError, None
+        except ImportError:
+            return None, Exception, _playwright_missing()
 
 
 def _ensure_browser(new_page=False):
@@ -246,9 +253,10 @@ def route_browser_evaluate():
             return error
         try:
             result = page.evaluate(script)
-            return jsonify({"result": result, "url": page.url})
-        except TypeError:
-            return jsonify({"result": str(result), "url": page.url})
+            try:
+                return jsonify({"result": result, "url": page.url})
+            except TypeError:
+                return jsonify({"result": str(result), "url": page.url})
         except Exception as e:
             return _error(str(e), 500, type=type(e).__name__)
 

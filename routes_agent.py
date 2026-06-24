@@ -7,10 +7,13 @@ import shutil
 import subprocess
 import threading
 import time
+import urllib.error
+import urllib.request
 from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import urlparse
 
 from flask import Blueprint, Response, jsonify, request, stream_with_context
 
@@ -38,17 +41,35 @@ MAX_OUTPUT_CHARS = 500 * 1024
 DEFAULT_TIMEOUT_SECONDS = 300
 MAX_TIMEOUT_SECONDS = 1800
 LOG_DIR = COAGENT_DIR / "agent_logs"
+PROVIDER_CONFIG_FILE = COAGENT_DIR / "agent_providers_config.json"
 STREAM_BACKLOG_EVENTS = 10000
 STREAM_IDLE_CLEANUP_SECONDS = 300
 
 AGENT_DETECTION_LOCK = threading.Lock()
 LOG_WRITE_LOCK = threading.Lock()
 EXECUTION_LOCKS_LOCK = threading.Lock()
+PROVIDER_CONFIG_LOCK = threading.Lock()
 _streams_lock = threading.Lock()
 EXECUTION_LOCKS = {}
 ACTIVE_STREAMS = {}
 AGENT_CACHE = {}
 DEFAULT_AGENT = None
+
+SUPPORTED_PROVIDERS = {"codex", "openai", "anthropic", "deepseek", "ollama", "generic"}
+PROVIDER_DEFAULTS = {
+    "codex": {"model": None, "base_url": None},
+    "openai": {"model": "gpt-4o", "base_url": "https://api.openai.com/v1"},
+    "anthropic": {"model": "claude-sonnet-4", "base_url": "https://api.anthropic.com/v1"},
+    "deepseek": {"model": "deepseek-chat", "base_url": "https://api.deepseek.com/v1"},
+    "ollama": {"model": "qwen3.6:27b", "base_url": "http://127.0.0.1:11434"},
+    "generic": {"model": None, "base_url": None},
+}
+PROVIDER_ENV_KEYS = {
+    "openai": "OPENAI_API_KEY",
+    "anthropic": "ANTHROPIC_API_KEY",
+    "deepseek": "DEEPSEEK_API_KEY",
+    "generic": "GENERIC_AI_API_KEY",
+}
 
 SKIP_DIRS = {
     ".git",
@@ -130,6 +151,375 @@ def _error(message, status=400, **extra):
     payload = {"error": message}
     payload.update(extra)
     return jsonify(payload), status
+
+
+def _validate_provider_name(provider):
+    if provider in (None, ""):
+        return "codex"
+    if not isinstance(provider, str):
+        raise ValueError("provider must be a string")
+    normalized = provider.strip().lower()
+    if normalized not in SUPPORTED_PROVIDERS:
+        allowed = ", ".join(sorted(SUPPORTED_PROVIDERS))
+        raise ValueError(f"provider must be one of: {allowed}")
+    return normalized
+
+
+def _validate_api_key(value):
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError("api_key must be a string")
+    value = value.strip()
+    if len(value) > 4096:
+        raise ValueError("api_key is too long")
+    return value
+
+
+def _validate_base_url(value):
+    if value in (None, ""):
+        return None
+    if not isinstance(value, str):
+        raise ValueError("base_url must be a string")
+    base_url = value.strip().rstrip("/")
+    if len(base_url) > 2048:
+        raise ValueError("base_url is too long")
+    parsed = urlparse(base_url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError("base_url must be an http or https URL")
+    return base_url
+
+
+def _provider_defaults(provider):
+    return dict(PROVIDER_DEFAULTS.get(provider, {}))
+
+
+def _load_provider_config_unlocked():
+    config = {"provider": "codex", "providers": {}}
+    try:
+        if PROVIDER_CONFIG_FILE.exists():
+            loaded = json.loads(PROVIDER_CONFIG_FILE.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                if isinstance(loaded.get("providers"), dict):
+                    config.update(loaded)
+                else:
+                    provider = _validate_provider_name(loaded.get("provider"))
+                    config["provider"] = provider
+                    config["providers"][provider] = {
+                        key: loaded.get(key)
+                        for key in ("api_key", "model", "base_url")
+                        if loaded.get(key) not in (None, "")
+                    }
+    except Exception as exc:
+        _console(f"[agent] failed to load provider config: {exc}")
+    try:
+        config["provider"] = _validate_provider_name(config.get("provider"))
+    except ValueError:
+        config["provider"] = "codex"
+    providers = config.get("providers")
+    if not isinstance(providers, dict):
+        providers = {}
+    sanitized = {}
+    for provider, entry in providers.items():
+        try:
+            normalized = _validate_provider_name(provider)
+        except ValueError:
+            continue
+        if not isinstance(entry, dict):
+            continue
+        clean = {}
+        for key in ("api_key", "model", "base_url"):
+            value = entry.get(key)
+            if value not in (None, ""):
+                clean[key] = str(value)
+        sanitized[normalized] = clean
+    config["providers"] = sanitized
+    return config
+
+
+def _load_provider_config():
+    with PROVIDER_CONFIG_LOCK:
+        return _load_provider_config_unlocked()
+
+
+def _save_provider_config(config):
+    with PROVIDER_CONFIG_LOCK:
+        PROVIDER_CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = PROVIDER_CONFIG_FILE.with_suffix(".json.tmp")
+        tmp_path.write_text(json.dumps(config, indent=2, ensure_ascii=False), encoding="utf-8")
+        tmp_path.replace(PROVIDER_CONFIG_FILE)
+
+
+def _provider_entry(provider, config=None):
+    config = config or _load_provider_config()
+    entry = _provider_defaults(provider)
+    stored = (config.get("providers") or {}).get(provider)
+    if isinstance(stored, dict):
+        for key in ("api_key", "model", "base_url"):
+            if stored.get(key) not in (None, ""):
+                entry[key] = stored.get(key)
+    return entry
+
+
+def _mask_api_key(value):
+    if not value:
+        return ""
+    value = str(value)
+    if len(value) <= 8:
+        return "*" * len(value)
+    return f"{value[:4]}...{value[-4:]}"
+
+
+def _masked_provider_entry(provider, entry):
+    masked = {
+        "provider": provider,
+        "model": entry.get("model"),
+        "base_url": entry.get("base_url"),
+        "api_key_configured": bool(entry.get("api_key") or os.environ.get(PROVIDER_ENV_KEYS.get(provider, ""))),
+    }
+    if entry.get("api_key"):
+        masked["api_key"] = _mask_api_key(entry.get("api_key"))
+        masked["api_key_source"] = "config"
+    elif os.environ.get(PROVIDER_ENV_KEYS.get(provider, "")):
+        masked["api_key"] = _mask_api_key(os.environ.get(PROVIDER_ENV_KEYS.get(provider, "")))
+        masked["api_key_source"] = "environment"
+    else:
+        masked["api_key"] = ""
+        masked["api_key_source"] = ""
+    return masked
+
+
+def _provider_name_for_exec(data):
+    if isinstance(data, dict) and data.get("provider") not in (None, ""):
+        return _validate_provider_name(data.get("provider"))
+    if isinstance(data, dict) and data.get("agent") not in (None, ""):
+        return "codex"
+    config = _load_provider_config()
+    return _validate_provider_name(config.get("provider"))
+
+
+def _provider_settings(provider, data=None):
+    data = data or {}
+    config = _load_provider_config()
+    entry = _provider_entry(provider, config=config)
+    if data.get("model") not in (None, ""):
+        entry["model"] = _validate_model(data.get("model"))
+    if data.get("base_url") not in (None, ""):
+        entry["base_url"] = _validate_base_url(data.get("base_url"))
+    if data.get("api_key") not in (None, ""):
+        entry["api_key"] = _validate_api_key(data.get("api_key"))
+    env_key = PROVIDER_ENV_KEYS.get(provider)
+    if not entry.get("api_key") and env_key:
+        entry["api_key"] = os.environ.get(env_key, "")
+    return entry
+
+
+def _post_json(url, headers, payload, timeout):
+    body = json.dumps(payload).encode("utf-8")
+    request_headers = {str(key): str(value) for key, value in (headers or {}).items()}
+    request_headers.setdefault("Content-Type", "application/json")
+    request_headers.setdefault("Accept", "application/json")
+    req = urllib.request.Request(url, data=body, headers=request_headers, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as response:
+            status_code = getattr(response, "status", 200)
+            reason = getattr(response, "reason", "")
+            text = response.read().decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as exc:
+        status_code = exc.code
+        reason = exc.reason
+        text = exc.read().decode("utf-8", errors="replace")
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        raise RuntimeError(f"request failed: {exc}") from exc
+    try:
+        data = json.loads(text) if text else {}
+    except ValueError:
+        data = {"text": text}
+    if status_code >= 400:
+        detail = data.get("error") if isinstance(data, dict) else None
+        if isinstance(detail, dict):
+            detail = detail.get("message") or detail.get("type") or json.dumps(detail)
+        if not detail:
+            detail = text[:500] or reason
+        raise RuntimeError(f"HTTP {status_code}: {detail}")
+    return data
+
+
+def _content_from_openai_payload(payload):
+    choices = payload.get("choices") if isinstance(payload, dict) else None
+    if not choices:
+        return ""
+    first = choices[0] if isinstance(choices[0], dict) else {}
+    message = first.get("message") if isinstance(first.get("message"), dict) else {}
+    content = message.get("content", "")
+    if isinstance(content, list):
+        parts = []
+        for item in content:
+            if isinstance(item, dict):
+                parts.append(str(item.get("text") or item.get("content") or ""))
+            else:
+                parts.append(str(item))
+        return "\n".join(part for part in parts if part)
+    if content in (None, ""):
+        content = first.get("text") or message.get("reasoning_content") or ""
+    return str(content)
+
+
+def _provider_generic(prompt, model, api_key, base_url, timeout):
+    model = model or ""
+    if not model:
+        raise ValueError("model is required for generic provider")
+    base_url = _validate_base_url(base_url)
+    if not base_url:
+        raise ValueError("base_url is required for generic provider")
+    headers = {"Content-Type": "application/json", "Accept": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    payload = {
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0.2,
+    }
+    data = _post_json(f"{base_url}/chat/completions", headers, payload, timeout)
+    return {"role": "assistant", "content": _content_from_openai_payload(data)}
+
+
+def _provider_openai(prompt, model, api_key, timeout):
+    if not api_key:
+        raise ValueError("api_key is required for openai provider")
+    return _provider_generic(
+        prompt,
+        model or PROVIDER_DEFAULTS["openai"]["model"],
+        api_key,
+        PROVIDER_DEFAULTS["openai"]["base_url"],
+        timeout,
+    )
+
+
+def _provider_deepseek(prompt, model, api_key, base_url, timeout):
+    if not api_key:
+        raise ValueError("api_key is required for deepseek provider")
+    return _provider_generic(
+        prompt,
+        model or PROVIDER_DEFAULTS["deepseek"]["model"],
+        api_key,
+        base_url or PROVIDER_DEFAULTS["deepseek"]["base_url"],
+        timeout,
+    )
+
+
+def _provider_anthropic(prompt, model, api_key, timeout):
+    if not api_key:
+        raise ValueError("api_key is required for anthropic provider")
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "x-api-key": api_key,
+        "anthropic-version": "2023-06-01",
+    }
+    payload = {
+        "model": model or PROVIDER_DEFAULTS["anthropic"]["model"],
+        "max_tokens": 4096,
+        "messages": [{"role": "user", "content": prompt}],
+    }
+    data = _post_json(f"{PROVIDER_DEFAULTS['anthropic']['base_url']}/messages", headers, payload, timeout)
+    content = data.get("content") if isinstance(data, dict) else None
+    if isinstance(content, list):
+        text = "\n".join(str(item.get("text", "")) for item in content if isinstance(item, dict) and item.get("text"))
+    else:
+        text = str(content or "")
+    return {"role": "assistant", "content": text}
+
+
+def _provider_ollama(prompt, model):
+    return _provider_ollama_request(prompt, model, PROVIDER_DEFAULTS["ollama"]["base_url"], DEFAULT_TIMEOUT_SECONDS)
+
+
+def _provider_ollama_request(prompt, model, base_url, timeout):
+    base_url = _validate_base_url(base_url) or PROVIDER_DEFAULTS["ollama"]["base_url"]
+    payload = {
+        "model": model or PROVIDER_DEFAULTS["ollama"]["model"],
+        "stream": False,
+        "messages": [{"role": "user", "content": prompt}],
+    }
+    data = _post_json(f"{base_url}/api/chat", {"Content-Type": "application/json"}, payload, timeout)
+    message = data.get("message") if isinstance(data, dict) else {}
+    content = message.get("content") if isinstance(message, dict) else None
+    return {"role": "assistant", "content": str(content or data.get("response") or "")}
+
+
+def _provider_codex(prompt, timeout):
+    result = _execute_agent(prompt=prompt, timeout=timeout, purpose="exec")
+    return {"role": "assistant", "content": result.get("output", "")}
+
+
+def _call_provider(provider, prompt, settings, timeout):
+    model = settings.get("model")
+    api_key = settings.get("api_key")
+    base_url = settings.get("base_url")
+    if provider == "openai":
+        return _provider_openai(prompt, model, api_key, timeout)
+    if provider == "anthropic":
+        return _provider_anthropic(prompt, model, api_key, timeout)
+    if provider == "deepseek":
+        return _provider_deepseek(prompt, model, api_key, base_url, timeout)
+    if provider == "ollama":
+        return _provider_ollama_request(prompt, model, base_url, timeout)
+    if provider == "generic":
+        return _provider_generic(prompt, model, api_key, base_url, timeout)
+    if provider == "codex":
+        return _provider_codex(prompt, timeout)
+    raise ValueError(f"unsupported provider: {provider}")
+
+
+def _execute_provider(data, provider, purpose="exec"):
+    prompt = _validate_prompt(data.get("prompt"))
+    timeout = _validate_timeout(data.get("timeout"))
+    settings = _provider_settings(provider, data)
+    started = time.time()
+    message = {"role": "assistant", "content": ""}
+    error = ""
+    success = False
+    try:
+        message = _call_provider(provider, prompt, settings, timeout)
+        success = True
+    except Exception as exc:
+        error = f"{type(exc).__name__}: {exc}"
+    duration = round(time.time() - started, 2)
+    output = message.get("content", "") if success else f"[provider:{provider}] {error}"
+    response = {
+        "success": success,
+        "agent": provider,
+        "provider": provider,
+        "message": message,
+        "output": output,
+        "exit_code": 0 if success else 1,
+        "duration_seconds": duration,
+        "files_modified": [],
+        "log_id": "",
+        "read_only": False,
+        "read_only_violation": False,
+    }
+    record = {
+        **response,
+        "purpose": purpose,
+        "timestamp": datetime.now().isoformat(timespec="seconds"),
+        "workdir": str(COAGENT_DIR),
+        "command": [f"provider:{provider}"],
+        "model": settings.get("model"),
+        "base_url": settings.get("base_url"),
+        "timeout_seconds": timeout,
+        "timed_out": False,
+        "output_truncated": False,
+        "stdout": output if success else "",
+        "stderr": "" if success else error,
+        "prompt": prompt,
+    }
+    try:
+        response["log_id"] = _write_log(record)
+    except Exception as exc:
+        _console(f"[agent] failed to write provider log: {exc}")
+    return response
 
 
 def _validate_log_id(log_id):
@@ -997,6 +1387,9 @@ def _stream_requested():
 
 
 def _validate_exec_payload_for_background(data):
+    provider = _provider_name_for_exec(data)
+    if provider != "codex":
+        raise ValueError("streaming/background execution is only supported for codex provider")
     _validate_prompt(data.get("prompt"))
     agent_name = _validate_agent_name(data.get("agent"))
     _validate_model(data.get("model"))
@@ -1077,10 +1470,116 @@ def route_agent_status():
     return jsonify({"agents": agents, "default_agent": default_agent})
 
 
+@agent_bp.route("/agent/providers/config", methods=["GET"])
+def route_agent_provider_config():
+    try:
+        config = _load_provider_config()
+        active_provider = _validate_provider_name(config.get("provider"))
+        active_entry = _provider_entry(active_provider, config=config)
+        providers = {
+            provider: _masked_provider_entry(provider, _provider_entry(provider, config=config))
+            for provider in sorted(SUPPORTED_PROVIDERS)
+        }
+        return jsonify({
+            "provider": active_provider,
+            "config_file": str(PROVIDER_CONFIG_FILE),
+            "config": _masked_provider_entry(active_provider, active_entry),
+            "providers": providers,
+            "default_provider": "codex",
+        })
+    except Exception as exc:
+        _console(f"[agent] provider config failed: {exc}")
+        return _error(str(exc), 500, type=type(exc).__name__)
+
+
+@agent_bp.route("/agent/providers/configure", methods=["POST"])
+def route_agent_provider_configure():
+    data = _json_payload()
+    try:
+        provider = _validate_provider_name(data.get("provider"))
+        config = _load_provider_config()
+        providers = config.setdefault("providers", {})
+        entry = _provider_entry(provider, config=config)
+        if "api_key" in data:
+            api_key = _validate_api_key(data.get("api_key"))
+            if api_key:
+                entry["api_key"] = api_key
+            else:
+                entry.pop("api_key", None)
+        if "model" in data:
+            model = _validate_model(data.get("model")) if data.get("model") not in (None, "") else None
+            if model:
+                entry["model"] = model
+            else:
+                entry.pop("model", None)
+        if "base_url" in data:
+            base_url = _validate_base_url(data.get("base_url"))
+            if base_url:
+                entry["base_url"] = base_url
+            else:
+                entry.pop("base_url", None)
+        providers[provider] = {
+            key: value
+            for key, value in entry.items()
+            if key in {"api_key", "model", "base_url"} and value not in (None, "")
+        }
+        config["provider"] = provider
+        _save_provider_config(config)
+        return jsonify({
+            "status": "configured",
+            "provider": provider,
+            "config_file": str(PROVIDER_CONFIG_FILE),
+            "config": _masked_provider_entry(provider, providers[provider]),
+        })
+    except ValueError as exc:
+        return _error(str(exc), 400)
+    except Exception as exc:
+        _console(f"[agent] provider configure failed: {exc}")
+        return _error(str(exc), 500, type=type(exc).__name__)
+
+
+@agent_bp.route("/agent/providers/test", methods=["POST"])
+def route_agent_provider_test():
+    data = _json_payload()
+    try:
+        provider = _provider_name_for_exec(data)
+        if provider == "codex":
+            result = _execute_agent(
+                prompt="Say hello",
+                agent_name=data.get("agent"),
+                model=data.get("model"),
+                timeout=data.get("timeout"),
+                workdir=data.get("workdir"),
+                purpose="provider_test",
+            )
+            return jsonify({
+                "success": result.get("success"),
+                "provider": "codex",
+                "message": {"role": "assistant", "content": result.get("output", "")},
+                "output": result.get("output", ""),
+                "log_id": result.get("log_id", ""),
+            }), _status_code_for_result(result)
+        payload = dict(data)
+        payload["prompt"] = "Say hello"
+        result = _execute_provider(payload, provider, purpose="provider_test")
+        return jsonify(result), _status_code_for_result(result)
+    except ValueError as exc:
+        return _error(str(exc), 400)
+    except Exception as exc:
+        _console(f"[agent] provider test failed: {exc}")
+        return _error(str(exc), 500, type=type(exc).__name__)
+
+
 @agent_bp.route("/agent/exec", methods=["POST"])
 def route_agent_exec():
     data = _json_payload()
+    try:
+        provider = _provider_name_for_exec(data)
+    except ValueError as exc:
+        return _error(str(exc), 400)
     if _stream_requested():
+        if provider != "codex":
+            return _error("streaming is only supported for codex CLI provider", 400, provider=provider)
         try:
             log_id = _start_background_agent(data, purpose="exec")
             return stream_agent_output(log_id)
@@ -1091,6 +1590,9 @@ def route_agent_exec():
             return _error(str(exc), 500, type=type(exc).__name__)
 
     try:
+        if provider != "codex":
+            result = _execute_provider(data, provider, purpose="exec")
+            return jsonify(result), _status_code_for_result(result)
         result = _execute_agent(
             prompt=data.get("prompt"),
             agent_name=data.get("agent"),
@@ -1111,6 +1613,9 @@ def route_agent_exec():
 def route_agent_exec_stream_start():
     data = _json_payload()
     try:
+        provider = _provider_name_for_exec(data)
+        if provider != "codex":
+            return _error("exec-stream is only supported for codex CLI provider", 400, provider=provider)
         log_id = _start_background_agent(data, purpose="exec")
         return jsonify({
             "log_id": log_id,
@@ -1281,6 +1786,8 @@ def register_routes(app, state, require_auth):
         "agents": AGENT_CACHE,
         "default_agent": DEFAULT_AGENT,
         "log_dir": str(LOG_DIR),
+        "provider_config": str(PROVIDER_CONFIG_FILE),
+        "providers": sorted(SUPPORTED_PROVIDERS),
     }
 
 

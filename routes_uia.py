@@ -26,6 +26,318 @@ _som_cache = {}
 _som_cache_ts = {}
 _SOM_CACHE_TTL = 1.0
 
+
+def _norm_text(value):
+    return " ".join(str(value or "").casefold().split())
+
+
+def _as_bool(value, default=True):
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"1", "true", "yes", "on"}:
+            return True
+        if lowered in {"0", "false", "no", "off"}:
+            return False
+    return bool(value)
+
+
+def _levenshtein(a, b, max_distance=3):
+    """Bounded Levenshtein distance for short OCR/UIA labels."""
+    a = _norm_text(a)
+    b = _norm_text(b)
+    if a == b:
+        return 0
+    if abs(len(a) - len(b)) > max_distance:
+        return max_distance + 1
+    previous = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        current = [i]
+        row_min = current[0]
+        for j, cb in enumerate(b, 1):
+            cost = 0 if ca == cb else 1
+            value = min(previous[j] + 1, current[j - 1] + 1, previous[j - 1] + cost)
+            current.append(value)
+            row_min = min(row_min, value)
+        if row_min > max_distance:
+            return max_distance + 1
+        previous = current
+    return previous[-1]
+
+
+def _walk_uia_nodes(node, depth=0, max_depth=6):
+    if not isinstance(node, dict) or depth > max_depth:
+        return
+    yield node
+    for child in node.get("children", []) or []:
+        yield from _walk_uia_nodes(child, depth + 1, max_depth=max_depth)
+
+
+def _rect_payload(rect):
+    if not isinstance(rect, dict):
+        return None
+    try:
+        left = int(rect.get("left", rect.get("x", 0)))
+        top = int(rect.get("top", rect.get("y", 0)))
+        width = int(rect.get("width", 0))
+        height = int(rect.get("height", 0))
+    except (TypeError, ValueError):
+        return None
+    if width <= 0 or height <= 0:
+        return None
+    return {"x": left, "y": top, "width": width, "height": height}
+
+
+def _uia_candidate_score(node, needle, type_hint=""):
+    needle_n = _norm_text(needle)
+    type_hint_n = _norm_text(type_hint)
+    name = _norm_text(node.get("name"))
+    automation_id = _norm_text(node.get("automation_id"))
+    control_type = _norm_text(node.get("control_type"))
+    class_name = _norm_text(node.get("class_name"))
+    haystacks = [name, automation_id, control_type, class_name]
+
+    best = None
+    for value in haystacks:
+        if not value:
+            continue
+        if value == needle_n:
+            score = 0
+        elif needle_n and needle_n in value:
+            score = 1
+        elif value and value in needle_n:
+            score = 2
+        else:
+            distance = _levenshtein(value, needle_n, max_distance=2)
+            if distance < 3:
+                score = 3 + distance
+            else:
+                continue
+        if best is None or score < best:
+            best = score
+
+    if best is None:
+        return None
+    if type_hint_n:
+        if type_hint_n == control_type or type_hint_n in control_type:
+            best -= 1
+        else:
+            best += 4
+    return best
+
+
+def _find_uia_candidate(ue, text, type_hint=""):
+    candidates = []
+    try:
+        snap = ue.uia_snapshot(timeout=5)
+    except Exception as exc:
+        snap = {"success": False, "error": str(exc)}
+
+    if snap.get("success"):
+        for node in _walk_uia_nodes(snap.get("tree", {})):
+            rect = _rect_payload(node.get("rect"))
+            if not rect:
+                continue
+            score = _uia_candidate_score(node, text, type_hint)
+            if score is None:
+                continue
+            candidates.append((score, node, rect))
+    else:
+        _log(f"[uia] hybrid UIA snapshot failed: {snap.get('error', 'unknown')}")
+
+    if not candidates:
+        try:
+            for node in ue.uia_find_deep(text):
+                if not isinstance(node, dict) or node.get("error"):
+                    continue
+                rect = _rect_payload(node.get("rect"))
+                if not rect:
+                    continue
+                score = _uia_candidate_score(node, text, type_hint)
+                if score is not None:
+                    candidates.append((score, node, rect))
+        except Exception as exc:
+            _log(f"[uia] hybrid uia_find_deep failed: {type(exc).__name__}: {exc}")
+
+    if not candidates:
+        return None
+    score, node, rect = sorted(
+        candidates,
+        key=lambda item: (item[0], item[2]["width"] * item[2]["height"]),
+    )[0]
+    return {
+        "found": True,
+        "method": "uia",
+        "x": rect["x"],
+        "y": rect["y"],
+        "width": rect["width"],
+        "height": rect["height"],
+        "center": {"x": rect["x"] + rect["width"] // 2, "y": rect["y"] + rect["height"] // 2},
+        "element_info": {
+            "name": node.get("name", ""),
+            "automation_id": node.get("automation_id", ""),
+            "control_type": node.get("control_type", ""),
+            "class_name": node.get("class_name", ""),
+            "rect": node.get("rect"),
+            "score": score,
+        },
+    }
+
+
+def _parse_confidence(value):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _ocr_value(ocr_data, key, index, default=0):
+    values = ocr_data.get(key)
+    if not isinstance(values, list) or index >= len(values):
+        return default
+    return values[index]
+
+
+def _ocr_candidates_from_data(ocr_data):
+    words = []
+    texts = ocr_data.get("text", []) or []
+    for index, raw_text in enumerate(texts):
+        text = str(raw_text or "").strip()
+        if not text:
+            continue
+        try:
+            left = int(ocr_data["left"][index])
+            top = int(ocr_data["top"][index])
+            width = int(ocr_data["width"][index])
+            height = int(ocr_data["height"][index])
+        except (KeyError, TypeError, ValueError, IndexError):
+            continue
+        if width <= 3 or height <= 3:
+            continue
+        line_key = (
+            _ocr_value(ocr_data, "block_num", index),
+            _ocr_value(ocr_data, "par_num", index),
+            _ocr_value(ocr_data, "line_num", index),
+        )
+        words.append({
+            "text": text,
+            "left": left,
+            "top": top,
+            "width": width,
+            "height": height,
+            "confidence": _parse_confidence(_ocr_value(ocr_data, "conf", index)),
+            "line_key": line_key,
+        })
+    return words
+
+
+def _merge_word_candidate(words):
+    text = " ".join(word["text"] for word in words)
+    left = min(word["left"] for word in words)
+    top = min(word["top"] for word in words)
+    right = max(word["left"] + word["width"] for word in words)
+    bottom = max(word["top"] + word["height"] for word in words)
+    confidence = sum(word.get("confidence", 0.0) for word in words) / max(1, len(words))
+    return {
+        "text": text,
+        "x": left,
+        "y": top,
+        "width": right - left,
+        "height": bottom - top,
+        "confidence": round(confidence, 2),
+    }
+
+
+def _find_ocr_candidate(text):
+    try:
+        import pytesseract
+        from routes_ocr import _screen_img
+
+        image = _screen_img(force=True)
+        if image is None:
+            return None
+        ocr_data = pytesseract.image_to_data(image, output_type=pytesseract.Output.DICT)
+        words = _ocr_candidates_from_data(ocr_data)
+    except ImportError as exc:
+        _log(f"[uia] hybrid OCR unavailable: {exc}")
+        return None
+    except Exception as exc:
+        _log(f"[uia] hybrid OCR failed: {type(exc).__name__}: {exc}")
+        return None
+
+    needle = _norm_text(text)
+    if not needle:
+        return None
+    needle_word_count = max(1, len(needle.split()))
+    best = None
+    best_distance = 999
+    max_window = min(max(needle_word_count + 2, 3), 8)
+    grouped = {}
+    for word in words:
+        grouped.setdefault(word["line_key"], []).append(word)
+    for line_words in grouped.values():
+        line_words.sort(key=lambda item: item["left"])
+        for start in range(len(line_words)):
+            for size in range(1, max_window + 1):
+                chunk = line_words[start:start + size]
+                if not chunk:
+                    continue
+                candidate = _merge_word_candidate(chunk)
+                candidate_text = _norm_text(candidate["text"])
+                if candidate_text == needle:
+                    distance = 0
+                elif needle in candidate_text:
+                    distance = 1
+                else:
+                    distance = _levenshtein(candidate_text, needle, max_distance=2)
+                if distance < 3 and distance < best_distance:
+                    best = candidate
+                    best_distance = distance
+    if not best:
+        return None
+    return {
+        "found": True,
+        "method": "ocr",
+        "x": best["x"],
+        "y": best["y"],
+        "width": best["width"],
+        "height": best["height"],
+        "center": {"x": best["x"] + best["width"] // 2, "y": best["y"] + best["height"] // 2},
+        "element_info": {
+            "text": best["text"],
+            "confidence": best["confidence"],
+            "distance": best_distance,
+        },
+    }
+
+
+def _find_hybrid_element(ue, text, type_hint="", fallback_to_ocr=True):
+    found = _find_uia_candidate(ue, text, type_hint)
+    if found:
+        return found
+    if fallback_to_ocr:
+        found = _find_ocr_candidate(text)
+        if found:
+            return found
+    return {"found": False}
+
+
+def _response_payload(result):
+    response = result
+    status_code = getattr(result, "status_code", 200)
+    if isinstance(result, tuple):
+        response = result[0]
+        if len(result) > 1:
+            status_code = result[1]
+    if hasattr(response, "get_json"):
+        payload = response.get_json(silent=True)
+    else:
+        payload = response
+    return payload, status_code
+
 def register_routes(app, state, require_auth):
     ue = _get_uia_engine()
 
@@ -84,6 +396,53 @@ def register_routes(app, state, require_auth):
                                             "control_type": child.get("control_type", ""),
                                             "rect": child.get("rect", {})})
         return jsonify({"query": text, "count": len(matches), "matches": matches})
+
+    @app.route("/uia/find-hybrid", methods=["POST"])
+    @require_auth
+    def route_uia_find_hybrid():
+        d = _json_body()
+        text = (d.get("text") or d.get("name") or d.get("automation_id") or "").strip()
+        if not text:
+            return _missing_field("text")
+        type_hint = (d.get("type") or d.get("control_type") or "").strip()
+        fallback_to_ocr = _as_bool(d.get("fallback_to_ocr"), True)
+        result = _find_hybrid_element(ue, text, type_hint, fallback_to_ocr=fallback_to_ocr)
+        result["query"] = text
+        if type_hint:
+            result["type"] = type_hint
+        return jsonify(result)
+
+    @app.route("/uia/click-hybrid", methods=["POST"])
+    @require_auth
+    def route_uia_click_hybrid():
+        d = _json_body()
+        text = (d.get("text") or d.get("name") or d.get("automation_id") or "").strip()
+        if not text:
+            return _missing_field("text")
+        type_hint = (d.get("type") or d.get("control_type") or "").strip()
+        result = _find_hybrid_element(ue, text, type_hint, fallback_to_ocr=_as_bool(d.get("fallback_to_ocr"), True))
+        result["query"] = text
+        if not result.get("found"):
+            return jsonify(result)
+        try:
+            from routes_mouse import _mouse_action
+            center = result.get("center") or {}
+            click_result = _mouse_action(
+                "click",
+                int(center.get("x", result["x"] + result["width"] // 2)),
+                int(center.get("y", result["y"] + result["height"] // 2)),
+                d.get("button", "left"),
+                d.get("background", True),
+                state,
+            )
+            payload, status_code = _response_payload(click_result)
+            result["clicked"] = status_code < 400
+            result["click_result"] = payload
+            return jsonify(result), status_code
+        except Exception as exc:
+            result["clicked"] = False
+            result["error"] = f"{type(exc).__name__}: {exc}"
+            return jsonify(result), 500
 
     @app.route("/uia/diag", methods=["GET"])
     @require_auth

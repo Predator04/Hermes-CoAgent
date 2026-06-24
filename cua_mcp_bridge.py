@@ -8,6 +8,7 @@ PowerShell/batch script stdin handling quirks.
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import subprocess
 import sys

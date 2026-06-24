@@ -112,6 +112,26 @@ def _first_json_array(text):
     raise ValueError("no JSON step list found")
 
 
+def _first_json_value(text):
+    text = str(text or "").strip()
+    if not text:
+        raise ValueError("empty agent response")
+    fenced = re.search(r"```(?:json)?\s*([\[{].*?[\]}])\s*```", text, re.DOTALL | re.IGNORECASE)
+    if fenced:
+        return json.loads(fenced.group(1))
+    decoder = json.JSONDecoder()
+    for index, char in enumerate(text):
+        if char not in "[{":
+            continue
+        try:
+            value, _end = decoder.raw_decode(text[index:])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, (dict, list)):
+            return value
+    raise ValueError("no JSON object or array found")
+
+
 def _fallback_steps(goal):
     """Conservative local fallback when the agent gateway cannot decompose."""
     text = str(goal or "")
@@ -138,6 +158,14 @@ def _fallback_steps(goal):
     return steps
 
 
+def _clamp_int(value, default, minimum, maximum):
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = default
+    return max(minimum, min(maximum, parsed))
+
+
 def _normalize_steps(raw_steps, max_steps):
     if not isinstance(raw_steps, list):
         raise ValueError("steps must be a list")
@@ -154,6 +182,100 @@ def _normalize_steps(raw_steps, max_steps):
     if not normalized:
         raise ValueError("no executable steps returned")
     return normalized
+
+
+_BATCH_TYPE_TO_ACTION = {
+    "sleep": "wait",
+    "wait": "wait",
+    "key/press": "key",
+    "key": "key",
+    "hotkey": "key",
+    "press": "key",
+    "key/type": "type",
+    "type": "type",
+    "mouse/click": "click",
+    "click": "click",
+    "mouse/move": "mouse_move",
+    "mouse/scroll": "mouse_scroll",
+    "mouse/drag": "mouse_drag",
+    "ocr/find": "ocr_find",
+    "ocr_find": "ocr_find",
+    "screen/base64": "screenshot",
+    "screen/screenshot": "screenshot",
+    "screenshot": "screenshot",
+    "process/start": "launch",
+    "app/open": "launch",
+    "launch": "launch",
+    "telegram/send": "telegram_send",
+    "telegram_send": "telegram_send",
+    "finder/click": "finder_click",
+    "finder/type": "finder_type",
+}
+
+_ACTION_TO_BATCH_TYPE = {
+    "wait": "sleep",
+    "key": "key/press",
+    "hotkey": "key/press",
+    "press": "key/press",
+    "type": "key/type",
+    "click": "mouse/click",
+    "mouse_move": "mouse/move",
+    "mouse_scroll": "mouse/scroll",
+    "mouse_drag": "mouse/drag",
+    "ocr_find": "ocr/find",
+    "screenshot": "screen/base64",
+    "launch": "process/start",
+    "telegram_send": "telegram/send",
+    "finder_click": "finder/click",
+    "finder_type": "finder/type",
+}
+
+
+def _normalize_batch_type(value):
+    normalized = str(value or "").strip().lower().replace("_", "/")
+    normalized = re.sub(r"\s+", "", normalized)
+    if normalized.startswith("/"):
+        normalized = normalized[1:]
+    return normalized
+
+
+def _batch_action_to_step(raw):
+    if not isinstance(raw, dict):
+        raise ValueError("each action must be an object")
+    raw_type = raw.get("type") or raw.get("action")
+    public_type = _normalize_batch_type(raw_type)
+    action = _BATCH_TYPE_TO_ACTION.get(public_type)
+    if not action:
+        raise ValueError(f"unsupported action type: {raw_type}")
+    data = raw.get("data", raw.get("params", {}))
+    if data is None:
+        data = {}
+    if not isinstance(data, dict):
+        raise ValueError("action data must be an object")
+    data = deepcopy(data)
+    if action == "wait":
+        duration = raw.get("duration", data.get("duration", data.get("seconds", 1)))
+        try:
+            seconds = max(0.0, min(float(duration), 300.0))
+        except (TypeError, ValueError):
+            seconds = 1.0
+        return {"action": "wait", "params": {"seconds": seconds}}, {"type": "sleep", "duration": seconds}
+    public_type = _ACTION_TO_BATCH_TYPE.get(action, public_type)
+    return {"action": action, "params": data}, {"type": public_type, "data": data}
+
+
+def _normalize_batch_actions(raw_actions, max_actions):
+    if not isinstance(raw_actions, list):
+        raise ValueError("actions must be a list")
+    public_actions = []
+    steps = []
+    for raw in raw_actions[:max_actions]:
+        step, public = _batch_action_to_step(raw)
+        steps.append(step)
+        public_actions.append(public)
+    if not steps:
+        raise ValueError("no executable actions returned")
+    return public_actions, steps
 
 
 def _decompose_goal(goal, max_steps, auth_header, agent=None, model=None):
@@ -186,6 +308,55 @@ def _decompose_goal(goal, max_steps, auth_header, agent=None, model=None):
         return fallback, {
             "source": "fallback",
             "warning": f"agent decomposition failed: {type(exc).__name__}: {exc}",
+            "agent_response": response,
+        }
+
+
+def _plan_batch_actions(goal, context, max_actions, auth_header, agent=None, model=None, provider=None):
+    prompt = (
+        "Create a speculative multi-action plan for Hermes CoAgent. Return only JSON with this shape: "
+        '{"reasoning":"short explanation","actions":[{"type":"key/press","data":{"keys":["win","r"]}}]}. '
+        "Generate 5-10 actions when the goal needs them, fewer when the goal is small. "
+        "Allowed action types: sleep, key/press, key/type, mouse/click, mouse/move, mouse/scroll, "
+        "mouse/drag, process/start, app/open, ocr/find, screen/base64, telegram/send, finder/click, finder/type. "
+        "Use action data matching the target endpoint payload. For sleep, use duration seconds.\n\n"
+        f"Goal: {goal}\n"
+        f"Context: {context or 'No additional context provided.'}\n"
+        f"Maximum actions: {max_actions}"
+    )
+    payload = {
+        "prompt": prompt,
+        "agent": agent,
+        "model": model,
+        "provider": provider,
+        "timeout": 120,
+        "workdir": str(COAGENT_DIR),
+    }
+    payload = {key: value for key, value in payload.items() if value not in (None, "")}
+    response = _coagent_request("POST", "/agent/exec", payload, auth_header=auth_header, timeout=150)
+    output = ""
+    if isinstance(response, dict):
+        output = response.get("output") or response.get("stdout") or response.get("text") or ""
+    try:
+        parsed = _first_json_value(output)
+        if isinstance(parsed, dict):
+            reasoning = str(parsed.get("reasoning") or parsed.get("summary") or "")
+            raw_actions = parsed.get("actions")
+        else:
+            reasoning = ""
+            raw_actions = parsed
+        public_actions, steps = _normalize_batch_actions(raw_actions, max_actions)
+        return public_actions, steps, {
+            "source": "agent_gateway",
+            "reasoning": reasoning,
+            "agent_response": response,
+        }
+    except Exception as exc:
+        fallback_actions, steps = _normalize_batch_actions(_fallback_steps(goal), max_actions)
+        return fallback_actions, steps, {
+            "source": "fallback",
+            "reasoning": "Used local fallback planner because agent planning did not return executable JSON.",
+            "warning": f"agent batch planning failed: {type(exc).__name__}: {exc}",
             "agent_response": response,
         }
 
@@ -280,6 +451,15 @@ def _run_step(step, previous, stop_event, auth_header):
         return {"status": "error" if result.get("error") else "ok", "result": result}
     if action == "click":
         result = _coagent_request("POST", "/mouse/click", params, auth_header=auth_header)
+        return {"status": "error" if result.get("error") else "ok", "result": result}
+    if action == "mouse_move":
+        result = _coagent_request("POST", "/mouse/move", params, auth_header=auth_header)
+        return {"status": "error" if result.get("error") else "ok", "result": result}
+    if action == "mouse_scroll":
+        result = _coagent_request("POST", "/mouse/scroll", params, auth_header=auth_header)
+        return {"status": "error" if result.get("error") else "ok", "result": result}
+    if action == "mouse_drag":
+        result = _coagent_request("POST", "/mouse/drag", params, auth_header=auth_header)
         return {"status": "error" if result.get("error") else "ok", "result": result}
     if action == "type":
         result = _coagent_request("POST", "/key/type", params, auth_header=auth_header)
@@ -416,6 +596,158 @@ def _trim_goals():
                 _GOAL_ORDER.append(old_id)
                 break
             _GOALS.pop(old_id, None)
+
+
+def _execute_batch_actions(raw_actions, auth_header, max_actions=50, continue_on_error=False):
+    public_actions, steps = _normalize_batch_actions(raw_actions, max_actions)
+    stop_event = threading.Event()
+    previous = {}
+    results = []
+    completed = 0
+    failed = 0
+    failed_at = None
+    error = ""
+    for index, step in enumerate(steps):
+        start = _now()
+        outcome = _run_step(step, previous, stop_event, auth_header)
+        duration = round(_now() - start, 3)
+        result = outcome.get("result", {})
+        status = outcome.get("status", "error")
+        record = {
+            "index": index,
+            "type": public_actions[index].get("type"),
+            "data": public_actions[index].get("data", {}),
+            "duration": public_actions[index].get("duration"),
+            "status": status,
+            "result": result,
+            "duration_seconds": duration,
+        }
+        if record["duration"] is None:
+            record.pop("duration", None)
+        results.append(record)
+        if status == "ok":
+            completed += 1
+            previous = _prev_from_result(result or {})
+            continue
+        failed += 1
+        failed_at = index if failed_at is None else failed_at
+        if isinstance(result, dict):
+            error = str(result.get("error") or result)
+        else:
+            error = str(result)
+        if not continue_on_error:
+            break
+    return {
+        "completed": completed,
+        "failed": failed,
+        "failed_at": failed_at,
+        "error": error,
+        "results": results,
+        "action_count": len(public_actions),
+        "continue_on_error": bool(continue_on_error),
+    }
+
+
+@copilot_enhanced_bp.route("/copilot/batch-plan", methods=["POST"])
+def route_copilot_batch_plan():
+    data = _json_body()
+    goal_text = str(data.get("goal") or "").strip()
+    if not goal_text:
+        return jsonify({"error": "goal is required"}), 400
+    context = str(data.get("context") or "")
+    max_actions = _clamp_int(data.get("max_actions"), 10, 1, 50)
+    auth = _auth_header(request.headers.get("Authorization", ""))
+    try:
+        actions, _steps, meta = _plan_batch_actions(
+            goal_text,
+            context,
+            max_actions,
+            auth,
+            agent=data.get("agent"),
+            model=data.get("model"),
+            provider=data.get("provider"),
+        )
+        return jsonify({
+            "actions": actions,
+            "reasoning": meta.get("reasoning", ""),
+            "action_count": len(actions),
+            "source": meta.get("source"),
+            "warning": meta.get("warning"),
+        })
+    except Exception as exc:
+        _console(f"[copilot_enhanced] batch-plan failed: {type(exc).__name__}: {exc}")
+        return jsonify({"error": f"{type(exc).__name__}: {exc}"}), 500
+
+
+@copilot_enhanced_bp.route("/copilot/batch-execute", methods=["POST"])
+def route_copilot_batch_execute():
+    data = _json_body()
+    actions = data.get("actions")
+    if not isinstance(actions, list):
+        return jsonify({"error": "actions must be a list"}), 400
+    max_actions = _clamp_int(data.get("max_actions"), len(actions), 1, 100)
+    continue_on_error = str(data.get("continue_on_error", "")).lower() in {"1", "true", "yes", "on"}
+    auth = _auth_header(request.headers.get("Authorization", ""))
+    try:
+        return jsonify(_execute_batch_actions(actions, auth, max_actions=max_actions, continue_on_error=continue_on_error))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception as exc:
+        _console(f"[copilot_enhanced] batch-execute failed: {type(exc).__name__}: {exc}")
+        return jsonify({"error": f"{type(exc).__name__}: {exc}"}), 500
+
+
+@copilot_enhanced_bp.route("/copilot/batch-plan-execute", methods=["POST"])
+def route_copilot_batch_plan_execute():
+    data = _json_body()
+    goal_text = str(data.get("goal") or "").strip()
+    if not goal_text:
+        return jsonify({"error": "goal is required"}), 400
+    context = str(data.get("context") or "")
+    max_actions = _clamp_int(data.get("max_actions"), 10, 1, 50)
+    include_screenshots = str(data.get("include_screenshots", "true")).lower() not in {"0", "false", "no", "off"}
+    continue_on_error = str(data.get("continue_on_error", "")).lower() in {"1", "true", "yes", "on"}
+    auth = _auth_header(request.headers.get("Authorization", ""))
+    before = None
+    after = None
+    try:
+        if include_screenshots:
+            before = _coagent_request("GET", "/screen/base64", auth_header=auth, timeout=30)
+        actions, _steps, meta = _plan_batch_actions(
+            goal_text,
+            context,
+            max_actions,
+            auth,
+            agent=data.get("agent"),
+            model=data.get("model"),
+            provider=data.get("provider"),
+        )
+        execution = _execute_batch_actions(
+            actions,
+            auth,
+            max_actions=max_actions,
+            continue_on_error=continue_on_error,
+        )
+        if include_screenshots:
+            after = _coagent_request("GET", "/screen/base64", auth_header=auth, timeout=30)
+        return jsonify({
+            "goal": goal_text,
+            "plan": {
+                "actions": actions,
+                "reasoning": meta.get("reasoning", ""),
+                "action_count": len(actions),
+                "source": meta.get("source"),
+                "warning": meta.get("warning"),
+            },
+            "execution": execution,
+            "before_screenshot": before,
+            "after_screenshot": after,
+        })
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception as exc:
+        _console(f"[copilot_enhanced] batch-plan-execute failed: {type(exc).__name__}: {exc}")
+        return jsonify({"error": f"{type(exc).__name__}: {exc}"}), 500
 
 
 @copilot_enhanced_bp.route("/copilot/goal", methods=["POST"])

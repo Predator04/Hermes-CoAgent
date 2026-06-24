@@ -1,7 +1,8 @@
-"""Thread-owned Playwright browser automation routes."""
+"""Thread-owned Patchright/Playwright browser automation routes."""
 
 import json
 import queue
+import re
 import threading
 import time
 import uuid
@@ -19,14 +20,21 @@ _BROWSERS_LOCK = threading.RLock()
 
 def _load_playwright():
     try:
-        from playwright.sync_api import Error as PlaywrightError
-        from playwright.sync_api import sync_playwright
+        from patchright.sync_api import Error as PlaywrightError
+        from patchright.sync_api import sync_playwright
+
         return sync_playwright, PlaywrightError, None
     except ImportError:
-        return None, Exception, (
-            "Playwright not installed. Install with: "
-            "pip install playwright && python -m playwright install chromium"
-        )
+        try:
+            from playwright.sync_api import Error as PlaywrightError
+            from playwright.sync_api import sync_playwright
+
+            return sync_playwright, PlaywrightError, None
+        except ImportError:
+            return None, Exception, (
+                "Patchright or Playwright not installed. Install with: "
+                "pip install patchright-python playwright && python -m playwright install chromium"
+            )
 
 
 def _error(message, status=400, **extra):
@@ -63,6 +71,199 @@ def _safe_json_value(value):
         return value
     except TypeError:
         return str(value)
+
+
+_CHROME_TEXT_SCRIPT = """
+() => {
+  const selectors = [
+    'header', 'footer', 'nav', 'aside',
+    '[role="navigation"]', '[role="banner"]', '[role="contentinfo"]',
+    '[role="complementary"]', '[aria-label*="navigation" i]',
+    '[class*="nav" i]', '[class*="menu" i]', '[class*="sidebar" i]',
+    '[class*="footer" i]', '[class*="header" i]'
+  ];
+  const lines = [];
+  for (const el of document.querySelectorAll(selectors.join(','))) {
+    const text = (el.innerText || '').replace(/\\s+/g, ' ').trim();
+    if (!text) continue;
+    for (const line of text.split(/\\n+/)) {
+      const clean = line.replace(/\\s+/g, ' ').trim();
+      if (clean) lines.push(clean);
+    }
+  }
+  return Array.from(new Set(lines));
+}
+"""
+
+
+_DOM_SNAPSHOT_SCRIPT = """
+(limit) => {
+  const candidates = Array.from(document.querySelectorAll([
+    'a[href]', 'button', 'input', 'select', 'textarea', 'summary',
+    '[role]', '[onclick]', '[tabindex]:not([tabindex="-1"])',
+    'label', 'option'
+  ].join(',')));
+
+  function cssEscape(value) {
+    if (window.CSS && CSS.escape) return CSS.escape(value);
+    return String(value).replace(/[^a-zA-Z0-9_-]/g, '\\\\$&');
+  }
+
+  function selectorFor(el) {
+    if (el.id) return '#' + cssEscape(el.id);
+    const parts = [];
+    let node = el;
+    while (node && node.nodeType === Node.ELEMENT_NODE && node !== document.body) {
+      let part = node.tagName.toLowerCase();
+      if (node.classList && node.classList.length) {
+        part += '.' + cssEscape(Array.from(node.classList).slice(0, 2).join('.'));
+      }
+      const parent = node.parentElement;
+      if (parent) {
+        const sameTag = Array.from(parent.children).filter(child => child.tagName === node.tagName);
+        if (sameTag.length > 1) {
+          part += `:nth-of-type(${sameTag.indexOf(node) + 1})`;
+        }
+      }
+      parts.unshift(part);
+      if (parts.length >= 5) break;
+      node = parent;
+    }
+    return parts.join(' > ');
+  }
+
+  function implicitRole(el) {
+    const role = el.getAttribute('role');
+    if (role) return role;
+    const tag = el.tagName.toLowerCase();
+    const type = (el.getAttribute('type') || '').toLowerCase();
+    if (tag === 'a' && el.href) return 'link';
+    if (tag === 'button') return 'button';
+    if (tag === 'select') return 'combobox';
+    if (tag === 'textarea') return 'textbox';
+    if (tag === 'input') {
+      if (['button', 'submit', 'reset'].includes(type)) return 'button';
+      if (type === 'checkbox') return 'checkbox';
+      if (type === 'radio') return 'radio';
+      if (type === 'range') return 'slider';
+      return 'textbox';
+    }
+    if (tag === 'summary') return 'button';
+    return '';
+  }
+
+  const out = [];
+  for (const el of candidates) {
+    const rect = el.getBoundingClientRect();
+    const style = window.getComputedStyle(el);
+    if (rect.width <= 0 || rect.height <= 0) continue;
+    if (style.visibility === 'hidden' || style.display === 'none') continue;
+    const text = (
+      el.getAttribute('aria-label') ||
+      el.getAttribute('title') ||
+      el.getAttribute('placeholder') ||
+      el.innerText ||
+      el.value ||
+      el.alt ||
+      ''
+    ).replace(/\\s+/g, ' ').trim();
+    out.push({
+      tag: el.tagName.toLowerCase(),
+      text: text.slice(0, 300),
+      role: implicitRole(el),
+      x: Math.round(rect.x),
+      y: Math.round(rect.y),
+      width: Math.round(rect.width),
+      height: Math.round(rect.height),
+      selector: selectorFor(el)
+    });
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+"""
+
+
+def _normalize_text_lines(text):
+    if not isinstance(text, str):
+        return []
+    lines = []
+    for raw_line in text.splitlines():
+        line = re.sub(r"\s+", " ", raw_line).strip()
+        if line:
+            lines.append(line)
+    return lines
+
+
+def _strip_chrome_text(text, chrome_lines):
+    lines = _normalize_text_lines(text)
+    chrome = {line.lower() for line in chrome_lines if isinstance(line, str) and len(line.strip()) <= 220}
+    counts = {}
+    for line in lines:
+        key = line.lower()
+        counts[key] = counts.get(key, 0) + 1
+
+    kept = []
+    previous_blank = False
+    for line in text.splitlines():
+        clean = re.sub(r"\s+", " ", line).strip()
+        key = clean.lower()
+        is_chrome = clean and key in chrome
+        is_repeated_label = clean and len(clean) <= 80 and counts.get(key, 0) > 2
+        if is_chrome or is_repeated_label:
+            continue
+        if not clean:
+            if not previous_blank and kept:
+                kept.append("")
+            previous_blank = True
+            continue
+        kept.append(clean)
+        previous_blank = False
+    return "\n".join(kept).strip()
+
+
+def _word_count(text):
+    return len(re.findall(r"\b[\w'-]+\b", text or ""))
+
+
+def _one_shot_browser(data, callback):
+    url = data.get("url")
+    if not isinstance(url, str) or not url.strip():
+        return _error("url is required")
+    url = url.strip()
+    sync_playwright, PlaywrightError, missing = _load_playwright()
+    if missing:
+        return missing
+    headless = _as_bool(data.get("headless"), True)
+    width = _clamp_int(data.get("width"), 1280, 320, 7680)
+    height = _clamp_int(data.get("height"), 720, 240, 4320)
+    timeout = _clamp_int(data.get("timeout"), 30000, 1000, 180000)
+    wait_until = data.get("wait_until") if data.get("wait_until") in {"commit", "domcontentloaded", "load", "networkidle"} else "load"
+
+    pw = browser = context = None
+    try:
+        pw = sync_playwright().start()
+        browser = pw.chromium.launch(headless=headless)
+        context = browser.new_context(viewport={"width": width, "height": height})
+        page = context.new_page()
+        page.goto(url, wait_until=wait_until, timeout=timeout)
+        return callback(page, data)
+    except PlaywrightError as exc:
+        return _error(str(exc), 500, type="PlaywrightError")
+    except Exception as exc:
+        return _error(str(exc), 500, type=type(exc).__name__)
+    finally:
+        for obj in (context, browser):
+            try:
+                if obj is not None:
+                    obj.close()
+            except Exception:
+                pass
+        try:
+            if pw is not None:
+                pw.stop()
+        except Exception:
+            pass
 
 
 def _metadata(browser_id):
@@ -234,6 +435,36 @@ def _browser_worker(browser_id, options, ready_queue):
             if info:
                 info["status"] = "closed"
                 info["closed_at"] = time.time()
+
+
+@browser_v2_bp.route("/browser/dom", methods=["POST"])
+def route_browser_dom():
+    data = _json_body()
+
+    def extract(page, payload):
+        raw_text = page.evaluate("document.body.innerText")
+        chrome_lines = page.evaluate(_CHROME_TEXT_SCRIPT) if _as_bool(payload.get("strip_chrome"), True) else []
+        text = _strip_chrome_text(raw_text, chrome_lines)
+        return jsonify({
+            "url": page.url,
+            "title": page.title(),
+            "text": text,
+            "word_count": _word_count(text),
+        })
+
+    return _one_shot_browser(data, extract)
+
+
+@browser_v2_bp.route("/browser/dom-snapshot", methods=["POST"])
+def route_browser_dom_snapshot():
+    data = _json_body()
+
+    def snapshot(page, payload):
+        limit = _clamp_int(payload.get("limit"), 500, 1, 5000)
+        elements = page.evaluate(_DOM_SNAPSHOT_SCRIPT, limit)
+        return jsonify(elements)
+
+    return _one_shot_browser(data, snapshot)
 
 
 @browser_v2_bp.route("/browser/open", methods=["POST"])
