@@ -13,6 +13,7 @@ agent_logs/
 *.token
 .token_*
 telegram_config.json
+codex_audit_result.txt
 .env*
 google_token.json
 google_credentials.json
