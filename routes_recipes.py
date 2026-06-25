@@ -754,6 +754,48 @@ def route_recipes_list():
     return jsonify({"recipes": recipes, "count": len(recipes), "croniter": HAS_CRONITER})
 
 
+@recipes_bp.route("/recipes/run", methods=["POST"])
+def route_recipes_run():
+    data = _json_body()
+    recipe_id = data.get("recipe_id") or data.get("id")
+    auth = _auth_header(request.headers.get("Authorization", ""))
+    if recipe_id:
+        result = _run_recipe(str(recipe_id), auth_header=auth, triggered_by="manual")
+        status = 404 if result.get("error") == "recipe not found" else 409 if result.get("error") else 200
+        return jsonify(result), status
+    steps, error, status = _steps_from_payload(data)
+    if error:
+        return jsonify({"error": error}), status
+    for step in steps:
+        if not isinstance(step, dict):
+            return jsonify({"error": "each step must be an object"}), 400
+    timeout = data.get("timeout", 300) if isinstance(data, dict) else 300
+    if str(data.get("verify", "false")).lower() in {"1", "true", "yes", "on"}:
+        result = _execute_steps_with_verification(steps, auth, timeout=timeout)
+        return jsonify(result), 200 if result.get("status") == "completed" else 409
+    results = _execute_steps(steps, timeout=timeout, auth_header=auth)
+    failed = [item for item in results if item.get("status") != "ok"]
+    return jsonify({
+        "status": "failed" if failed else "completed",
+        "completed": sum(1 for item in results if item.get("status") == "ok"),
+        "failed": len(failed),
+        "total": len(steps),
+        "steps": results,
+    }), 200 if not failed else 409
+
+
+@recipes_bp.route("/recipes/status/<recipe_id>", methods=["GET"])
+def route_recipe_status(recipe_id):
+    with _RECIPES_LOCK:
+        recipe = _RECIPES.get(recipe_id)
+        if not recipe:
+            return jsonify({"error": "recipe not found", "recipe_id": recipe_id}), 404
+        payload = _recipe_summary(recipe)
+        payload["running"] = recipe_id in _RUNNING_RECIPES
+        payload["logs"] = list(_RECIPE_LOGS.get(recipe_id, []))
+        return jsonify(payload)
+
+
 @recipes_bp.route("/recipes/<recipe_id>", methods=["GET"])
 def route_recipe_get(recipe_id):
     with _RECIPES_LOCK:

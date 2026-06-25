@@ -338,6 +338,23 @@ def _response_payload(result):
         payload = response
     return payload, status_code
 
+
+def _type_text(text, state):
+    from routes_mouse import _key_action
+
+    return _key_action("type", text, state)
+
+
+def _ocr_screen_text():
+    import pytesseract
+    from routes_ocr import _screen_img
+
+    image = _screen_img(force=True)
+    if image is None:
+        raise RuntimeError("screenshot unavailable")
+    return pytesseract.image_to_string(image)
+
+
 def register_routes(app, state, require_auth):
     ue = _get_uia_engine()
 
@@ -411,6 +428,39 @@ def register_routes(app, state, require_auth):
         if type_hint:
             result["type"] = type_hint
         return jsonify(result)
+
+    @app.route("/uia/find", methods=["POST"])
+    @require_auth
+    def route_uia_find_post():
+        d = _json_body()
+        text = (d.get("text") or d.get("name") or d.get("automation_id") or "").strip()
+        if not text:
+            return _missing_field("text")
+        type_hint = (d.get("type") or d.get("control_type") or "").strip()
+        fallback_to_ocr = _as_bool(d.get("fallback_to_ocr"), True)
+        result = _find_hybrid_element(ue, text, type_hint, fallback_to_ocr=fallback_to_ocr)
+        result["query"] = text
+        if type_hint:
+            result["type"] = type_hint
+        return jsonify(result)
+
+    @app.route("/uia/type", methods=["POST"])
+    @require_auth
+    def route_uia_type():
+        d = _json_body()
+        text = d.get("text")
+        if not isinstance(text, str) or text == "":
+            return _missing_field("text")
+        return _type_text(text, state)
+
+    @app.route("/uia/ocr", methods=["POST"])
+    @require_auth
+    def route_uia_ocr():
+        try:
+            text = _ocr_screen_text()
+            return jsonify({"text": text})
+        except Exception as exc:
+            return jsonify({"error": f"{type(exc).__name__}: {exc}"}), 500
 
     @app.route("/uia/click-hybrid", methods=["POST"])
     @require_auth

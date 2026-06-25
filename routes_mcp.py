@@ -23,6 +23,8 @@ _SUBSCRIBERS_LOCK = threading.Lock()
 _EXCLUDED_PATHS = {
     "/mcp",
     "/mcp/events",
+    "/mcp/sse",
+    "/mcp/message",
     "/mcp/tools",
 }
 _EXCLUDED_ENDPOINTS = {"static"}
@@ -638,6 +640,17 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_mcp_events():
         return _mcp_events_response()
+
+    @app.route("/mcp/sse", methods=["GET"])
+    @require_auth
+    def route_mcp_sse():
+        return _mcp_events_response()
+
+    @app.route("/mcp/message", methods=["POST"])
+    @require_auth
+    def route_mcp_message():
+        payload = request.get_json(force=True, silent=True)
+        return _jsonrpc_http_response(app, payload)
 
     @app.route("/mcp/tools", methods=["GET"])
     @require_auth

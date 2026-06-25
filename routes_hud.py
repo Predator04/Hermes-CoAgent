@@ -31,6 +31,7 @@ _HUD_STATE = {
     "color": "cyan",
     "position": "top-right",
     "timeout": 0,
+    "progress": None,
     "mode": "none",
     "error": None,
     "updated_at": None,
@@ -436,6 +437,34 @@ def route_hud_hide():
         if _HUD_STOP_EVENT:
             _HUD_STOP_EVENT.set()
     return jsonify(_write_status(visible=False, mode="none", error=None))
+
+
+@hud_bp.route("/hud/text", methods=["POST"])
+def route_hud_text():
+    data = _json_body()
+    text = str(data.get("text") or "").strip()[:160]
+    if not text:
+        return jsonify({"error": "text is required"}), 400
+    updates = {"text": text}
+    color = str(data.get("color") or "").strip().lower()
+    if color:
+        if color not in COLOR_MAP:
+            return jsonify({"error": "color must be green, yellow, red, or cyan"}), 400
+        updates["color"] = color
+    return jsonify(_write_status(**updates))
+
+
+@hud_bp.route("/hud/progress", methods=["POST"])
+def route_hud_progress():
+    data = _json_body()
+    try:
+        progress = max(0, min(100, int(data.get("progress", data.get("value")))))
+    except (TypeError, ValueError):
+        return jsonify({"error": "progress is required"}), 400
+    updates = {"progress": progress}
+    if data.get("text") is not None:
+        updates["text"] = str(data.get("text") or "").strip()[:160]
+    return jsonify(_write_status(**updates))
 
 
 @hud_bp.route("/hud/status", methods=["GET"])

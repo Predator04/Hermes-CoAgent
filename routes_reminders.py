@@ -390,6 +390,36 @@ def route_reminders_delete(reminder_id):
     return jsonify({"status": "canceled", "reminder": _load_reminder(reminder_id)})
 
 
+@reminders_bp.route("/reminders/cancel/<int:reminder_id>", methods=["POST"])
+def route_reminders_cancel(reminder_id):
+    now_text = _now().isoformat(timespec="seconds")
+    with _DB_LOCK, _db() as conn:
+        cur = conn.execute(
+            "UPDATE reminders SET status = 'canceled', updated_at = ? WHERE id = ?",
+            (now_text, reminder_id),
+        )
+        conn.commit()
+    if cur.rowcount == 0:
+        return jsonify({"error": "reminder not found", "id": reminder_id}), 404
+    return jsonify({"status": "canceled", "reminder": _load_reminder(reminder_id)})
+
+
+@reminders_bp.route("/reminders/stats", methods=["GET"])
+def route_reminders_stats():
+    with _DB_LOCK, _db() as conn:
+        rows = conn.execute("SELECT status, COUNT(*) AS count FROM reminders GROUP BY status").fetchall()
+        total = conn.execute("SELECT COUNT(*) FROM reminders").fetchone()[0]
+    by_status = {row["status"]: row["count"] for row in rows}
+    return jsonify({
+        "total": total,
+        "active": by_status.get("active", 0),
+        "completed": by_status.get("completed", 0),
+        "canceled": by_status.get("canceled", 0),
+        "failed": by_status.get("failed", 0),
+        "by_status": by_status,
+    })
+
+
 @reminders_bp.route("/reminders/trigger/<int:reminder_id>", methods=["POST"])
 def route_reminders_trigger(reminder_id):
     reminder = _load_reminder(reminder_id)

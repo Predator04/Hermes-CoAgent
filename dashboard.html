@@ -232,14 +232,201 @@ pre.output {
 }
 .metric label { display: block; color: var(--muted); font-size: 12px; margin-bottom: 5px; }
 .metric strong { font-size: 20px; }
-.steps { display: grid; gap: 8px; }
-.step {
+.goal-grid { grid-template-columns: minmax(420px, 1.25fr) minmax(320px, .75fr); }
+.goal-runner textarea { min-height: 104px; }
+.goal-status-pill {
+  transition: border-color .2s ease, color .2s ease, background .2s ease;
+}
+.goal-status-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--faint);
+  box-shadow: 0 0 0 3px rgba(104, 123, 141, .12);
+  transition: background .2s ease, box-shadow .2s ease;
+}
+.goal-status-pill.idle .goal-status-dot,
+.goal-status-pill.queued .goal-status-dot { background: #2ea043; box-shadow: 0 0 0 3px rgba(46, 160, 67, .15); }
+.goal-status-pill.planning .goal-status-dot,
+.goal-status-pill.stopping .goal-status-dot { background: #d29922; box-shadow: 0 0 0 3px rgba(210, 153, 34, .15); }
+.goal-status-pill.running .goal-status-dot { background: #58a6ff; box-shadow: 0 0 0 3px rgba(88, 166, 255, .15); }
+.goal-status-pill.failed .goal-status-dot,
+.goal-status-pill.stopped .goal-status-dot { background: #f85149; box-shadow: 0 0 0 3px rgba(248, 81, 73, .15); }
+.goal-status-pill.completed .goal-status-dot { background: #2ea043; box-shadow: 0 0 0 3px rgba(46, 160, 67, .15); }
+.goal-progress {
   border: 1px solid var(--line-soft);
   border-radius: 8px;
   background: #0b1117;
-  padding: 9px;
+  padding: 10px;
 }
-.step-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.goal-progress-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.goal-progress-meta strong { color: var(--text); font-size: 13px; font-weight: 700; }
+.goal-progress-track {
+  height: 12px;
+  border-radius: 999px;
+  overflow: hidden;
+  border: 1px solid rgba(38, 52, 65, .9);
+  background: #070b10;
+}
+.goal-progress-fill {
+  width: 0%;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #00bcd4, #58a6ff);
+  transition: width .2s ease, background .2s ease;
+}
+.goal-current {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: #0b1117;
+  padding: 10px;
+}
+.goal-current label {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.goal-current strong {
+  display: block;
+  min-width: 0;
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+.goal-current-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+.goal-current-grid div {
+  min-width: 0;
+}
+.timeline-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.goal-timeline {
+  display: grid;
+  gap: 8px;
+  align-content: start;
+}
+.timeline-card {
+  width: 100%;
+  text-align: left;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: #0b1117;
+  padding: 10px;
+  transition: border-color .2s ease, background .2s ease, transform .2s ease;
+}
+.timeline-card:hover,
+.timeline-card:focus-visible {
+  border-color: rgba(0, 188, 212, .55);
+  background: #101923;
+}
+.timeline-card.running { border-color: rgba(88, 166, 255, .6); }
+.timeline-card.done { border-color: rgba(46, 160, 67, .48); }
+.timeline-card.error { border-color: rgba(248, 81, 73, .65); }
+.timeline-card-main {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+}
+.timeline-icon {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: #070b10;
+  font-size: 17px;
+}
+.timeline-title {
+  min-width: 0;
+}
+.timeline-title strong {
+  display: block;
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+.timeline-title span {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.timeline-details {
+  display: none;
+  margin: 10px 0 0 42px;
+  padding-top: 9px;
+  border-top: 1px solid var(--line-soft);
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+.timeline-card.expanded .timeline-details { display: grid; gap: 3px; }
+.timeline-error {
+  margin-top: 7px;
+  color: #ffb4ad;
+  font-size: 12px;
+  line-height: 1.4;
+}
+.empty-state {
+  border: 1px dashed #334657;
+  border-radius: 8px;
+  background: #0a1015;
+  color: var(--muted);
+  padding: 16px;
+  text-align: center;
+}
+.activity-log {
+  min-height: 430px;
+  max-height: calc(100vh - 250px);
+  overflow: auto;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: #070b10;
+  padding: 9px;
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.45;
+}
+.log-line {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr);
+  gap: 7px;
+  padding: 3px 0;
+  color: #d9e6f2;
+}
+.log-time { color: var(--faint); }
+.log-line.error { color: #ffb4ad; }
+.log-line.warn,
+.log-line.planning { color: #f2cc60; }
+.log-line.success { color: #9be9a8; }
+.log-line.action,
+.log-line.running { color: #a5d6ff; }
 .badge {
   border: 1px solid var(--line);
   border-radius: 999px;
@@ -248,8 +435,11 @@ pre.output {
   color: var(--muted);
 }
 .badge.ok { color: #bbf7d0; border-color: rgba(34, 197, 94, .45); }
+.badge.done { color: #bbf7d0; border-color: rgba(34, 197, 94, .45); }
 .badge.error { color: #fecaca; border-color: rgba(239, 68, 68, .45); }
 .badge.running { color: #bae6fd; border-color: rgba(56, 189, 248, .45); }
+.badge.pending { color: #d1d5db; border-color: rgba(145, 164, 181, .32); }
+.badge.stopped { color: #fecaca; border-color: rgba(239, 68, 68, .45); }
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
 th, td { padding: 8px; border-bottom: 1px solid var(--line-soft); text-align: left; vertical-align: middle; }
 th { color: var(--muted); font-weight: 700; position: sticky; top: 0; background: #111820; }
@@ -288,12 +478,17 @@ tr:hover td { background: rgba(45, 212, 191, .04); }
   .topbar { grid-template-columns: 1fr; }
   .top-actions { justify-content: flex-start; }
   .workspace { overflow: visible; }
-  .grid { grid-template-columns: 1fr; min-height: 0; }
+  .grid, .goal-grid { grid-template-columns: 1fr; min-height: 0; }
   .screen-panel { height: 58vh; min-height: 420px; }
 }
 @media (max-width: 720px) {
   .workspace { padding: 8px; }
   .metric-grid, .form-grid { grid-template-columns: 1fr; }
+  .goal-current { grid-template-columns: 1fr; }
+  .goal-current-grid { grid-template-columns: 1fr; }
+  .timeline-card-main { grid-template-columns: auto minmax(0, 1fr); }
+  .timeline-card-main .badge { grid-column: 2; justify-self: start; }
+  .timeline-details { margin-left: 0; }
   .command { grid-template-columns: 1fr; }
   .panel-head { align-items: flex-start; flex-direction: column; }
   .panel-tools { width: 100%; }
@@ -376,23 +571,50 @@ tr:hover td { background: rgba(45, 212, 191, .04); }
     </section>
 
     <section id="copilot" class="view">
-      <div class="grid">
-        <section class="panel">
-          <div class="panel-head"><h2>Goal Runner</h2></div>
-          <div class="panel-body stack">
+      <div class="grid goal-grid">
+        <section class="panel goal-panel">
+          <div class="panel-head">
+            <h2>Goal Runner</h2>
+            <span id="goalStatusPill" class="pill goal-status-pill idle"><span class="goal-status-dot"></span><span id="goalStatusText">Idle</span></span>
+          </div>
+          <div class="panel-body stack goal-runner">
             <textarea id="goalInput" placeholder="Open Telegram, search for William, send message 'hello'"></textarea>
             <div class="row">
               <label class="small muted">Max steps <input id="goalSteps" type="number" min="1" max="50" value="10" style="width:82px"></label>
               <button id="goalRun" class="primary">Start Goal</button>
               <button id="goalStop" class="danger" disabled>Stop</button>
-              <span id="goalStatus" class="pill">idle</span>
             </div>
-            <div id="goalStepsList" class="steps"></div>
+            <div class="goal-progress">
+              <div class="goal-progress-meta">
+                <strong id="goalProgressLabel">Waiting for goal</strong>
+                <span id="goalProgressCount">Step 0 of 0</span>
+              </div>
+              <div class="goal-progress-track"><div id="goalProgressFill" class="goal-progress-fill"></div></div>
+            </div>
+            <div class="goal-current">
+              <div class="goal-current-grid">
+                <div><label>Goal</label><strong id="goalCurrentText">No active goal.</strong></div>
+                <div><label>Status</label><strong id="goalCurrentStatus">Idle</strong></div>
+                <div><label>Duration</label><strong id="goalCurrentDuration">0.0s</strong></div>
+              </div>
+              <button id="goalRetry" disabled>Retry</button>
+            </div>
+            <div class="timeline-head">
+              <span>Timeline</span>
+              <span id="goalTimelineCount">0 actions</span>
+            </div>
+            <div id="goalTimeline" class="goal-timeline">
+              <div class="empty-state">No steps yet.</div>
+            </div>
           </div>
         </section>
-        <section class="panel">
-          <div class="panel-head"><h2>Goal JSON</h2></div>
-          <div class="panel-body"><pre id="goalRaw" class="output">No active goal.</pre></div>
+        <section class="panel goal-log-panel">
+          <div class="panel-head"><h2>Activity Log</h2><span id="goalEventState" class="pill">SSE idle</span></div>
+          <div class="panel-body">
+            <div id="goalActivityLog" class="activity-log">
+              <div class="log-line"><span class="log-time">[--:--:--]</span><span>&#x1F7E2;</span><span>Waiting for a new goal.</span></div>
+            </div>
+          </div>
         </section>
       </div>
     </section>
@@ -509,7 +731,12 @@ tr:hover td { background: rgba(45, 212, 191, .04); }
     screenTimer: null,
     metricTimer: null,
     goalTimer: null,
+    goalEvents: null,
+    goalRefreshTimer: null,
     activeGoal: null,
+    activeGoalText: "",
+    goalLog: [],
+    expandedSteps: new Set(),
     selectedRegion: null,
     drag: null,
     filePath: "",
@@ -716,26 +943,257 @@ tr:hover td { background: rgba(45, 212, 191, .04); }
       toast("Undo failed: " + err.message);
     }
   }
-  function renderGoal(data) {
-    setText("goalStatus", data.status || "unknown");
-    setJson("goalRaw", data);
-    const list = $("goalStepsList");
-    list.innerHTML = "";
-    (data.steps || []).forEach(step => {
-      const item = document.createElement("div");
-      item.className = "step";
-      const status = step.status || "pending";
-      item.innerHTML = "<div class='step-head'><strong>" + (step.index ?? "") + " " + escapeHtml(step.action || "") + "</strong><span class='badge " + status + "'>" + status + "</span></div><pre class='mono small muted'></pre>";
-      item.querySelector("pre").textContent = JSON.stringify(step.result || step.params || {}, null, 2);
-      list.appendChild(item);
-    });
+  const goalStatusLabels = {
+    idle: "Idle",
+    queued: "Queued",
+    planning: "Planning",
+    running: "Running",
+    stopping: "Stopping",
+    stopped: "Stopped",
+    failed: "Failed",
+    completed: "Completed"
+  };
+  const stepStatusLabels = {
+    done: { icon: "\u2705", label: "Done" },
+    ok: { icon: "\u2705", label: "Done" },
+    pending: { icon: "\u23F3", label: "Pending" },
+    running: { icon: "\uD83D\uDD04", label: "Running" },
+    error: { icon: "\u274C", label: "Error" },
+    stopped: { icon: "\u274C", label: "Stopped" }
+  };
+  function formatGoalDuration(seconds) {
+    const value = Math.max(0, Number(seconds) || 0);
+    if (value >= 60) return Math.floor(value / 60) + "m " + Math.round(value % 60) + "s";
+    return value.toFixed(1) + "s";
   }
-  function escapeHtml(text) {
-    return String(text).replace(/[&<>"']/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
+  function setGoalStatus(status) {
+    const normalized = String(status || "idle").toLowerCase();
+    const pill = $("goalStatusPill");
+    pill.className = "pill goal-status-pill " + normalized;
+    setText("goalStatusText", goalStatusLabels[normalized] || normalized);
+    // Live duration ticker
+    clearInterval(state._durationTimer);
+    if (normalized === "running" || normalized === "planning" || normalized === "queued") {
+      const startTime = Date.now() - (state._goalStartOffset || 0);
+      state._durationTimer = setInterval(() => {
+        const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+        const el = $("goalCurrentDuration");
+        if (el) el.textContent = elapsed + "s";
+      }, 100);
+    }
+  }
+  function renderGoalLog(entries) {
+    const log = $("goalActivityLog");
+    log.innerHTML = "";
+    const list = Array.isArray(entries) ? entries : [];
+    if (!list.length) {
+      const line = document.createElement("div");
+      line.className = "log-line";
+      line.innerHTML = "<span class='log-time'>[--:--:--]</span><span>\uD83D\uDFE2</span><span>Waiting for a new goal.</span>";
+      log.appendChild(line);
+      log.scrollTop = log.scrollHeight;
+      return;
+    }
+    list.forEach(entry => {
+      const line = document.createElement("div");
+      line.className = "log-line " + (entry.level || "info");
+      const time = document.createElement("span");
+      time.className = "log-time";
+      time.textContent = "[" + (entry.time || "--:--:--") + "]";
+      const icon = document.createElement("span");
+      icon.textContent = entry.icon || "\uD83D\uDFE2";
+      const message = document.createElement("span");
+      message.textContent = entry.message || "";
+      line.append(time, icon, message);
+      log.appendChild(line);
+    });
+    log.scrollTop = log.scrollHeight;
+  }
+  function appendGoalLog(entry) {
+    if (!entry) return;
+    const key = [entry.timestamp, entry.level, entry.message].join("|");
+    const last = state.goalLog.length ? state.goalLog[state.goalLog.length - 1] : null;
+    const lastKey = last ? [last.timestamp, last.level, last.message].join("|") : "";
+    if (key !== lastKey) state.goalLog.push(entry);
+    renderGoalLog(state.goalLog);
+  }
+  function renderStepCard(step) {
+    const status = step.status || "pending";
+    const badgeMeta = stepStatusLabels[status] || { icon: "", label: status };
+    const card = document.createElement("div");
+    card.className = "timeline-card " + status + (state.expandedSteps.has(String(step.index)) ? " expanded" : "");
+    card.setAttribute("role", "button");
+    card.setAttribute("tabindex", "0");
+    card.setAttribute("aria-expanded", state.expandedSteps.has(String(step.index)) ? "true" : "false");
+
+    const main = document.createElement("div");
+    main.className = "timeline-card-main";
+    const icon = document.createElement("div");
+    icon.className = "timeline-icon";
+    icon.textContent = step.icon || "\u23F3";
+    const title = document.createElement("div");
+    title.className = "timeline-title";
+    const strong = document.createElement("strong");
+    strong.textContent = "Step " + ((Number(step.index) || 0) + 1) + " - " + (step.label || "Action");
+    const meta = document.createElement("span");
+    meta.textContent = step.duration_ms !== undefined ? step.duration_ms + " ms" : "No duration yet";
+    title.append(strong, meta);
+    const badge = document.createElement("span");
+    badge.className = "badge " + status;
+    badge.textContent = (badgeMeta.icon ? badgeMeta.icon + " " : "") + badgeMeta.label;
+    main.append(icon, title, badge);
+    card.appendChild(main);
+
+    if (step.error) {
+      const error = document.createElement("div");
+      error.className = "timeline-error";
+      error.textContent = step.error;
+      card.appendChild(error);
+    }
+
+    const details = document.createElement("div");
+    details.className = "timeline-details";
+    (Array.isArray(step.details) && step.details.length ? step.details : ["No additional details."]).forEach(text => {
+      const row = document.createElement("div");
+      row.textContent = text;
+      details.appendChild(row);
+    });
+    card.appendChild(details);
+
+    const toggle = () => {
+      const key = String(step.index);
+      if (state.expandedSteps.has(key)) state.expandedSteps.delete(key);
+      else state.expandedSteps.add(key);
+      card.classList.toggle("expanded");
+      card.setAttribute("aria-expanded", card.classList.contains("expanded") ? "true" : "false");
+    };
+    card.addEventListener("click", toggle);
+    card.addEventListener("keydown", ev => {
+      if (ev.key === "Enter" || ev.key === " ") {
+        ev.preventDefault();
+        toggle();
+      }
+    });
+    return card;
+  }
+  function renderGoal(data) {
+    const status = data.status || "idle";
+    const steps = Array.isArray(data.steps) ? data.steps : [];
+    const progress = data.progress || { current: 0, total: steps.length };
+    const current = Number(progress.current) || 0;
+    const total = Number(progress.total) || steps.length || 0;
+    const percent = total ? Math.max(0, Math.min(100, current / total * 100)) : 0;
+    const currentStep = data.current_step || "";
+    const statusText = data.status_text || goalStatusLabels[status] || status;
+
+    setGoalStatus(status);
+    state._goalStartOffset = data.started_at ? (Date.now() - data.started_at * 1000) : state._goalStartOffset || 0;
+    setText("goalProgressLabel", total ? "Step " + current + " of " + total + " — " + (currentStep || statusText) : statusText);
+    setText("goalProgressCount", "Step " + current + " of " + total);
+    $("goalProgressFill").style.width = percent + "%";
+    setText("goalCurrentText", data.goal || state.activeGoalText || "No active goal.");
+    setText("goalCurrentStatus", (data.status_icon ? data.status_icon + " " : "") + statusText);
+    setText("goalCurrentDuration", formatGoalDuration(data.duration_seconds));
+    setText("goalTimelineCount", steps.length + (steps.length === 1 ? " action" : " actions"));
+
+    const timeline = $("goalTimeline");
+    timeline.innerHTML = "";
+    if (!steps.length) {
+      const empty = document.createElement("div");
+      empty.className = "empty-state";
+      empty.textContent = status === "planning" || status === "queued" ? "Planning steps..." : "No steps yet.";
+      timeline.appendChild(empty);
+    } else {
+      steps.forEach(step => timeline.appendChild(renderStepCard(step)));
+    }
+
+    state.goalLog = Array.isArray(data.log) ? data.log.slice() : state.goalLog;
+    renderGoalLog(state.goalLog);
+
+    const terminal = ["completed", "failed", "stopped"].includes(status);
+    if (terminal) clearInterval(state._durationTimer);
+    const active = Boolean(state.activeGoal) && !terminal;
+    $("goalRun").disabled = active;
+    $("goalStop").disabled = !active;
+    $("goalRetry").disabled = !(state.activeGoalText && terminal);
+  }
+  function resetGoalUi(goalText) {
+    state.expandedSteps.clear();
+    state.goalLog = [];
+    setGoalStatus("planning");
+    setText("goalEventState", "SSE connecting");
+    setText("goalCurrentText", goalText || "No active goal.");
+    setText("goalCurrentStatus", "\uD83D\uDFE1 Planning");
+    setText("goalCurrentDuration", "0.0s");
+    setText("goalProgressLabel", "Planning goal");
+    setText("goalProgressCount", "Step 0 of 0");
+    $("goalProgressFill").style.width = "0%";
+    setText("goalTimelineCount", "0 actions");
+    $("goalTimeline").innerHTML = "<div class='empty-state'>Planning steps...</div>";
+    renderGoalLog([]);
+  }
+  function closeGoalEvents(label) {
+    if (state.goalEvents) {
+      state.goalEvents.close();
+      state.goalEvents = null;
+    }
+    if (label) setText("goalEventState", label);
+  }
+  function goalEventsUrl(goalId) {
+    const params = new URLSearchParams();
+    if (token) params.set("token", token);
+    const query = params.toString();
+    return "/goal/" + encodeURIComponent(goalId) + "/events" + (query ? "?" + query : "");
+  }
+  async function refreshGoalTimeline(goalId = state.activeGoal) {
+    if (!goalId) return null;
+    const data = await api("/goal/" + encodeURIComponent(goalId) + "/timeline");
+    renderGoal(data);
+    return data;
+  }
+  function scheduleGoalRefresh() {
+    clearTimeout(state.goalRefreshTimer);
+    state.goalRefreshTimer = setTimeout(() => {
+      refreshGoalTimeline().catch(err => toast("Goal update failed: " + err.message));
+    }, 120);
+  }
+  function connectGoalEvents(goalId) {
+    closeGoalEvents("SSE connecting");
+    clearInterval(state.goalTimer);
+    if (!window.EventSource) {
+      setText("goalEventState", "Polling");
+      state.goalTimer = setInterval(pollGoal, 1200);
+      return;
+    }
+    const source = new EventSource(goalEventsUrl(goalId));
+    state.goalEvents = source;
+    source.onopen = () => setText("goalEventState", "SSE live");
+    source.onerror = () => {
+      if (!state.activeGoal) return;
+      setText("goalEventState", "SSE reconnecting");
+    };
+    source.addEventListener("timeline", ev => {
+      try { renderGoal(JSON.parse(ev.data)); } catch (err) { toast("Timeline parse failed: " + err.message); }
+    });
+    source.addEventListener("log", ev => {
+      try { appendGoalLog(JSON.parse(ev.data)); } catch (_err) {}
+    });
+    ["goal_status", "steps_planned", "step_start", "step_retry", "step_complete", "step_error"].forEach(name => {
+      source.addEventListener(name, scheduleGoalRefresh);
+    });
+    source.addEventListener("goal_complete", () => {
+      setText("goalEventState", "SSE complete");
+      scheduleGoalRefresh();
+      setTimeout(() => closeGoalEvents("SSE complete"), 250);
+    });
   }
   async function runGoal() {
     const goal = $("goalInput").value.trim();
     if (!goal) return;
+    closeGoalEvents("SSE idle");
+    clearInterval(state.goalTimer);
+    state.activeGoalText = goal;
+    resetGoalUi(goal);
     $("goalRun").disabled = true;
     $("goalStop").disabled = false;
     try {
@@ -744,22 +1202,25 @@ tr:hover td { background: rgba(45, 212, 191, .04); }
         body: { goal, max_steps: Number($("goalSteps").value || 10), agent: "codex" }
       });
       state.activeGoal = data.goal_id || data.id;
-      renderGoal(data);
-      clearInterval(state.goalTimer);
-      state.goalTimer = setInterval(pollGoal, 1200);
+      await refreshGoalTimeline(state.activeGoal);
+      connectGoalEvents(state.activeGoal);
     } catch (err) {
       toast("Goal failed: " + err.message);
       $("goalRun").disabled = false;
       $("goalStop").disabled = true;
+      setGoalStatus("failed");
+      setText("goalCurrentStatus", "\uD83D\uDD34 Failed");
+      setText("goalEventState", "SSE idle");
     }
   }
   async function pollGoal() {
     if (!state.activeGoal) return;
     try {
-      const data = await api("/copilot/goal/" + encodeURIComponent(state.activeGoal));
+      const data = await api("/goal/" + encodeURIComponent(state.activeGoal) + "/timeline");
       renderGoal(data);
       if (["completed", "failed", "stopped"].includes(data.status)) {
         clearInterval(state.goalTimer);
+        closeGoalEvents("SSE idle");
         $("goalRun").disabled = false;
         $("goalStop").disabled = true;
       }
@@ -772,8 +1233,14 @@ tr:hover td { background: rgba(45, 212, 191, .04); }
   }
   async function stopGoal() {
     if (!state.activeGoal) return;
-    const data = await api("/copilot/stop/" + encodeURIComponent(state.activeGoal), { method: "POST", body: {} });
-    renderGoal(data);
+    await api("/copilot/stop/" + encodeURIComponent(state.activeGoal), { method: "POST", body: {} });
+    await refreshGoalTimeline(state.activeGoal);
+  }
+  async function retryGoal() {
+    const goal = state.activeGoalText || $("goalInput").value.trim();
+    if (!goal) return;
+    $("goalInput").value = goal;
+    await runGoal();
   }
   async function gifStart() {
     const body = { fps: Number($("gifFps").value || 5), max_seconds: Number($("gifMax").value || 30) };
@@ -929,6 +1396,7 @@ tr:hover td { background: rgba(45, 212, 191, .04); }
     document.querySelectorAll("[data-key]").forEach(btn => btn.addEventListener("click", () => pressKey(btn.dataset.key).catch(err => toast(err.message))));
     $("goalRun").addEventListener("click", runGoal);
     $("goalStop").addEventListener("click", () => stopGoal().catch(err => toast(err.message)));
+    $("goalRetry").addEventListener("click", () => retryGoal().catch(err => toast("Retry failed: " + err.message)));
     $("gifStart").addEventListener("click", () => gifStart().catch(err => toast(err.message)));
     $("gifStop").addEventListener("click", () => gifStop().catch(err => toast(err.message)));
     $("gifStatusBtn").addEventListener("click", () => gifStatus().catch(err => toast(err.message)));

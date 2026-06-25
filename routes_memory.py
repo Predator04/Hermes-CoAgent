@@ -339,6 +339,61 @@ def register_routes(app, state, require_auth):
         except (sqlite3.Error, RuntimeError) as exc:
             return _db_error(exc)
 
+    @app.route("/memory/store", methods=["POST"])
+    @require_auth
+    def route_memory_store():
+        data = _json_body()
+        key = data.get("key")
+        if not isinstance(key, str) or not key.strip():
+            return jsonify({"error": "key is required"}), 400
+        try:
+            value = _value_text(data.get("value"))
+            tags = _tag_text(data.get("tags"))
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        source = data.get("source")
+        source = str(source).strip() if source is not None else ""
+        now = _now()
+        try:
+            with _db() as conn:
+                existing = conn.execute("SELECT id, created_at FROM facts WHERE key = ?", (key.strip(),)).fetchone()
+                if existing:
+                    conn.execute(
+                        """
+                        UPDATE facts
+                        SET value = ?, updated_at = ?, source = ?, tags = ?
+                        WHERE id = ?
+                        """,
+                        (value, now, source, tags, existing["id"]),
+                    )
+                    fact_id = existing["id"]
+                else:
+                    cur = conn.execute(
+                        """
+                        INSERT INTO facts(key, value, created_at, updated_at, source, tags)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                        """,
+                        (key.strip(), value, now, now, source, tags),
+                    )
+                    fact_id = cur.lastrowid
+                row = conn.execute("SELECT * FROM facts WHERE id = ?", (fact_id,)).fetchone()
+                _upsert_fts_fact(conn, row)
+                return jsonify({"status": "stored", "key": row["key"], "value": row["value"], "fact": _fact_payload(row)})
+        except (sqlite3.Error, RuntimeError) as exc:
+            return _db_error(exc)
+
+    @app.route("/memory/recall/<path:key>", methods=["GET"])
+    @require_auth
+    def route_memory_recall(key):
+        try:
+            with _db() as conn:
+                row = conn.execute("SELECT * FROM facts WHERE key = ?", (key,)).fetchone()
+                if not row:
+                    return jsonify({"error": "fact not found", "key": key}), 404
+                return jsonify({"key": row["key"], "value": row["value"], "fact": _fact_payload(row)})
+        except (sqlite3.Error, RuntimeError) as exc:
+            return _db_error(exc)
+
     @app.route("/memory/note", methods=["POST"])
     @require_auth
     def route_memory_note_save():
@@ -452,5 +507,25 @@ def register_routes(app, state, require_auth):
                 return jsonify({"status": "deleted", "id": note_id})
         except (sqlite3.Error, RuntimeError) as exc:
             return _db_error(exc)
+
+    @app.route("/memory/forget/<path:key>", methods=["POST"])
+    @require_auth
+    def route_memory_forget(key):
+        try:
+            with _db() as conn:
+                row = conn.execute("SELECT id FROM facts WHERE key = ?", (key,)).fetchone()
+                if not row:
+                    return jsonify({"error": "fact not found", "key": key}), 404
+                fact_id = row["id"]
+                conn.execute("DELETE FROM facts WHERE id = ?", (fact_id,))
+                _delete_fts(conn, "fact", fact_id)
+                return jsonify({"status": "forgotten", "key": key})
+        except (sqlite3.Error, RuntimeError) as exc:
+            return _db_error(exc)
+
+    @app.route("/memory/stats", methods=["GET"])
+    @require_auth
+    def route_memory_stats():
+        return jsonify(memory_stats())
 
     state.memory = {"db_path": str(MEMORY_DB), "stats": memory_stats}

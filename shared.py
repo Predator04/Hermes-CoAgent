@@ -1,6 +1,7 @@
 """Shared utilities for CoAgent route modules."""
 
-import json, os, queue, shlex, subprocess, sys, threading, tempfile
+import atexit, getpass, json, os, queue, shlex, socket, subprocess, sys, threading, tempfile
+import urllib.request
 from pathlib import Path
 from xml.sax.saxutils import escape as _xml_escape
 import ctypes
@@ -8,7 +9,7 @@ import ctypes
 from flask import Response, jsonify, request
 
 COAGENT_DIR = Path(__file__).parent.resolve()
-VERSION = "8.0"
+VERSION = "8.1"
 BUILD = "2026-06-24"
 AGENT_NAME = "Hermes CoAgent"
 MACROS_DIR = COAGENT_DIR / "macros"
@@ -16,6 +17,7 @@ SCREENSHOTS_DIR = COAGENT_DIR / "screenshots"
 TUNNEL_LOG = COAGENT_DIR / "tunnel.log"
 TRAY_LOG = COAGENT_DIR / "tray_icon.log"
 SERVER_LOG = COAGENT_DIR / "coagent_server.log"
+PID_FILE = COAGENT_DIR / "coagent.pid"
 SERVER_PORT = 9123
 TRAY_PORT = 9124
 SERVER_DIR = COAGENT_DIR
@@ -35,6 +37,225 @@ _sse_lock = threading.Lock()
 HOST_IP = "127.0.0.1"
 _HOST_IP_LOADED = False
 _HOST_IP_LOCK = threading.Lock()
+
+_LOCK_STATE = {
+    "pid_file": False,
+    "mutex_handle": None,
+    "mutex_name": None,
+}
+_LOCK_STATE_LOCK = threading.RLock()
+
+
+def _coagent_mutex_name():
+    username = os.environ.get("USERNAME") or getpass.getuser() or "user"
+    safe_username = "".join(ch if ch.isalnum() else "_" for ch in username)
+    return f"Global\\HermesCoAgent_{safe_username}"
+
+
+def _kernel32():
+    if not hasattr(ctypes, "WinDLL"):
+        return None
+    return ctypes.WinDLL("kernel32", use_last_error=True)
+
+
+def _is_windows_process_alive(pid):
+    try:
+        pid = int(pid)
+    except (TypeError, ValueError):
+        return False
+    if pid <= 0:
+        return False
+    if pid == os.getpid():
+        return True
+
+    kernel32 = _kernel32()
+    if kernel32 is None:
+        try:
+            os.kill(pid, 0)
+            return True
+        except OSError:
+            return False
+
+    from ctypes import wintypes
+
+    PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+    STILL_ACTIVE = 259
+    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+    kernel32.GetExitCodeProcess.restype = wintypes.BOOL
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+
+    handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    if not handle:
+        return False
+    try:
+        exit_code = wintypes.DWORD()
+        if not kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+            return False
+        return exit_code.value == STILL_ACTIVE
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+def _read_pid_file():
+    try:
+        raw = PID_FILE.read_text(encoding="utf-8").strip()
+        return int(raw)
+    except (OSError, ValueError):
+        return None
+
+
+def is_coagent_server_running(port=SERVER_PORT, timeout=1.5):
+    """Return True only when /ping identifies a Hermes CoAgent server."""
+    try:
+        url = f"http://127.0.0.1:{int(port)}/ping"
+        with urllib.request.urlopen(url, timeout=timeout) as response:
+            payload = json.loads(response.read().decode("utf-8", errors="replace") or "{}")
+        agent = str(payload.get("agent", ""))
+        status = str(payload.get("status", "")).lower()
+        return status == "pong" and ("CoAgent" in agent or "Hermes" in agent)
+    except Exception:
+        return False
+
+
+def _can_bind_port(port, host="127.0.0.1"):
+    try:
+        probe_host = host or "127.0.0.1"
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+            sock.bind((probe_host, int(port)))
+        return True
+    except OSError:
+        return False
+
+
+def _acquire_named_mutex():
+    kernel32 = _kernel32()
+    if kernel32 is None:
+        return True
+
+    from ctypes import wintypes
+
+    ERROR_ALREADY_EXISTS = 183
+    mutex_name = _coagent_mutex_name()
+    kernel32.CreateMutexW.argtypes = [ctypes.c_void_p, wintypes.BOOL, wintypes.LPCWSTR]
+    kernel32.CreateMutexW.restype = wintypes.HANDLE
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+
+    ctypes.set_last_error(0)
+    handle = kernel32.CreateMutexW(None, True, mutex_name)
+    last_error = ctypes.get_last_error()
+    if not handle:
+        raise OSError(last_error, f"CreateMutexW failed for {mutex_name}")
+    if last_error == ERROR_ALREADY_EXISTS:
+        kernel32.CloseHandle(handle)
+        _console("CoAgent already running")
+        return False
+
+    _LOCK_STATE["mutex_handle"] = handle
+    _LOCK_STATE["mutex_name"] = mutex_name
+    return True
+
+
+def _write_pid_file():
+    PID_FILE.write_text(f"{os.getpid()}\n", encoding="utf-8")
+    _LOCK_STATE["pid_file"] = True
+
+
+def _prepare_pid_file(port):
+    existing_pid = _read_pid_file()
+    if existing_pid is None:
+        if PID_FILE.exists():
+            try:
+                PID_FILE.unlink()
+            except OSError:
+                pass
+        return True
+
+    if existing_pid == os.getpid():
+        return True
+
+    if _is_windows_process_alive(existing_pid):
+        if is_coagent_server_running(port):
+            _console(f"CoAgent already running on port {port}")
+            return False
+        _console(f"[WARN] Replacing stale CoAgent PID file for live nonresponsive PID {existing_pid}")
+    else:
+        _console(f"[INFO] Removing stale CoAgent PID file for PID {existing_pid}")
+
+    try:
+        PID_FILE.unlink()
+    except OSError:
+        pass
+    return True
+
+
+def release_single_instance_lock():
+    with _LOCK_STATE_LOCK:
+        if _LOCK_STATE.get("pid_file"):
+            current_pid = _read_pid_file()
+            if current_pid == os.getpid():
+                try:
+                    PID_FILE.unlink()
+                except OSError:
+                    pass
+            _LOCK_STATE["pid_file"] = False
+
+        handle = _LOCK_STATE.get("mutex_handle")
+        if handle:
+            kernel32 = _kernel32()
+            if kernel32 is not None:
+                from ctypes import wintypes
+
+                kernel32.ReleaseMutex.argtypes = [wintypes.HANDLE]
+                kernel32.ReleaseMutex.restype = wintypes.BOOL
+                kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+                kernel32.CloseHandle.restype = wintypes.BOOL
+                try:
+                    kernel32.ReleaseMutex(handle)
+                except Exception:
+                    pass
+                try:
+                    kernel32.CloseHandle(handle)
+                except Exception:
+                    pass
+            _LOCK_STATE["mutex_handle"] = None
+            _LOCK_STATE["mutex_name"] = None
+
+
+def acquire_single_instance_lock(port=SERVER_PORT, bind_host="127.0.0.1"):
+    """Acquire PID, port, and Windows mutex locks for the CoAgent server."""
+    with _LOCK_STATE_LOCK:
+        if _LOCK_STATE.get("pid_file") or _LOCK_STATE.get("mutex_handle"):
+            return True
+
+        if not _acquire_named_mutex():
+            return False
+
+        if not _prepare_pid_file(port):
+            release_single_instance_lock()
+            return False
+
+        if is_coagent_server_running(port):
+            _console(f"CoAgent already running on port {port}")
+            release_single_instance_lock()
+            return False
+
+        if not _can_bind_port(port, bind_host):
+            if is_coagent_server_running(port):
+                _console(f"CoAgent already running on port {port}")
+                release_single_instance_lock()
+                return False
+            _console(f"[WARN] Port {port} is in use but /ping did not identify CoAgent; continuing")
+
+        _write_pid_file()
+        atexit.register(release_single_instance_lock)
+        _console(f"[LOCK] Single-instance lock acquired: pid={os.getpid()}, mutex={_LOCK_STATE.get('mutex_name') or 'none'}")
+        return True
 
 def get_host_ip():
     """Return the WSL host IP, resolving lazily to avoid import-time PowerShell work."""
@@ -87,7 +308,12 @@ def _log(msg):
     _console(msg)
 
 
-def _json_body():
+_JSON_BODY_SENTINEL = object()
+
+
+def _json_body(data=_JSON_BODY_SENTINEL, status=200):
+    if data is not _JSON_BODY_SENTINEL:
+        return jsonify(data), status
     try:
         return request.get_json(force=True, silent=True) or {}
     except Exception:
@@ -129,7 +355,14 @@ def _sanitize_cmd(cmd_str):
     return args
 
 
-def _missing_field(name):
+def _missing_field(payload_or_name, field=None):
+    if field is not None:
+        payload = payload_or_name if isinstance(payload_or_name, dict) else {}
+        if field in payload and payload.get(field) not in (None, ""):
+            return None
+        name = field
+    else:
+        name = payload_or_name
     return jsonify({"error": f"Missing required field: {name}"}), 400
 
 
@@ -193,7 +426,7 @@ def _interactive_task_xml(command, arguments, author="CoAgent", execution_limit=
 
 
 def sse_broadcast(event_type, data):
-    msg = f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
+    msg = sse_pack(event_type, data)
     with _sse_lock:
         clients = list(_sse_clients)
     dead = []
@@ -215,7 +448,7 @@ def sse_response():
         with _sse_lock:
             _sse_clients.append(q)
         try:
-            yield f"event: status\ndata: {json.dumps({'running': True})}\n\n"
+            yield sse_pack("status", {"running": True})
             while True:
                 try:
                     msg = q.get(timeout=30)
@@ -226,4 +459,38 @@ def sse_response():
             with _sse_lock:
                 if q in _sse_clients:
                     _sse_clients.remove(q)
-    return Response(gen(), mimetype="text/event-stream")
+    return sse_stream_response(gen())
+
+
+def _json_frame(event, data):
+    return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+
+
+def _sse_response(events):
+    return sse_stream_response(events)
+
+
+def sse_pack(event_type, data=None, event_id=None, retry=None):
+    """Format one Server-Sent Events frame."""
+    lines = []
+    if event_id is not None:
+        lines.append(f"id: {event_id}")
+    if event_type:
+        lines.append(f"event: {event_type}")
+    if retry is not None:
+        lines.append(f"retry: {int(retry)}")
+    payload = json.dumps(data if data is not None else {}, ensure_ascii=False)
+    for line in payload.splitlines() or [""]:
+        lines.append(f"data: {line}")
+    return "\n".join(lines) + "\n\n"
+
+
+def sse_stream_response(generator, headers=None):
+    stream_headers = {
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no",
+    }
+    if headers:
+        stream_headers.update(headers)
+    return Response(generator, mimetype="text/event-stream", headers=stream_headers)
