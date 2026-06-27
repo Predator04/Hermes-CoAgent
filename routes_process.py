@@ -1,7 +1,7 @@
 """Process listing, control, and resource routes."""
 import csv, io, json, os, shlex, subprocess, time
 from flask import jsonify
-from shared import _json_body
+from shared import _json_body, _sanitize_path
 
 try:
     import psutil
@@ -330,7 +330,7 @@ def register_routes(app, state, require_auth):
         data = _json_body()
         try:
             args = _parse_command(data)
-            cwd = data.get("cwd") or None
+            cwd = _sanitize_path(data["cwd"]) if data.get("cwd") else None
             proc = subprocess.Popen(args, cwd=cwd, shell=False)
             return jsonify({"status": "started", "pid": proc.pid, "command": args})
         except Exception as e:

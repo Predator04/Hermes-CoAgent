@@ -164,16 +164,12 @@ AUTH_EXEMPT_PATHS = {
     "/",
     "/health",
     "/ping",
-    "/help",
     "/version",
     "/favicon.ico",
     "/setup",
     "/setup-status",
-    "/metrics",
-    "/docs",
-    "/docs.json",
+    "/auth/dashboard-handoff/exchange",
     "/mobile",
-    "/mobile/view",
 }
 _CORS_ALLOWED_ORIGINS = {
     "http://localhost:9123",
@@ -895,6 +891,14 @@ def route_version():
 def route_dashboard2():
     try:
         html = Path(COAGENT_DIR / "dashboard.html").read_text(encoding="utf-8")
+        # Inject token into the HTML JS scope so screen/metrics calls work
+        import urllib.parse
+        import auth
+        safe_token = urllib.parse.quote(auth.AUTH_TOKEN or "", safe='')
+        html = html.replace(
+            'let token = (queryToken || sessionStorage.getItem("hermes_token") || sessionStorage.getItem("coagent_token") || "").replace(/^Bearer\\s+/i, "");',
+            f'let token = "{safe_token}" || queryToken || sessionStorage.getItem("hermes_token") || sessionStorage.getItem("coagent_token") || "";'
+        )
         return Response(html, mimetype="text/html")
     except Exception: return jsonify({"error": "dashboard.html not found"}), 404
 

@@ -1,11 +1,17 @@
 """OCR, screenshot, crop, and screen-describe routes."""
-import io, base64, json, os, tempfile, subprocess, time, threading, hashlib
+import io, base64, json, logging, os, tempfile, subprocess, time, threading, hashlib
 import urllib.error, urllib.request
 from io import BytesIO
 from pathlib import Path
 from flask import Response, jsonify, request
 from shared import _json_body, _log, _console, _missing_field, get_host_ip, COAGENT_DIR, SCREENSHOTS_DIR, TRAY_PORT
 from shared_fallbacks import FallbackChain
+
+_LOGGER = logging.getLogger(__name__)
+
+
+def _debug_backend_failure(backend, exc):
+    _LOGGER.debug("%s failed: %s: %s", backend, type(exc).__name__, exc, exc_info=True)
 
 # MSS for fast screenshots (DXGI)
 _MSS_AVAILABLE = False
@@ -67,13 +73,15 @@ def get_monitor_list():
                     if monitors:
                         return monitors
         except Exception as e:
+            _debug_backend_failure("MSS monitor enumeration", e)
             _log(f"MSS monitor enumeration failed: {type(e).__name__}: {e}")
     try:
         import pyautogui
         w, h = pyautogui.size()
         return [{"id": 0, "name": "Primary monitor", "width": int(w), "height": int(h),
                  "left": 0, "top": 0, "is_primary": True}]
-    except Exception:
+    except (ImportError, OSError, RuntimeError) as e:
+        _debug_backend_failure("pyautogui monitor fallback", e)
         return [{"id": 0, "name": "Primary monitor", "width": 1920, "height": 1080,
                  "left": 0, "top": 0, "is_primary": True}]
 
@@ -126,6 +134,7 @@ def _grab_screen_mss(force=False, monitor_index=0):
         pil_img.save(buf, format="PNG")
         return buf.getvalue()
     except Exception as e:
+        _debug_backend_failure("MSS capture", e)
         _log(f"MSS capture failed: {type(e).__name__}: {e}")
         return b""
 
@@ -137,7 +146,8 @@ def _screenshot_dxcam(force=False, monitor_index=0):
             import dxcam as m
             _DXCAM_MODULE = m
             HAS_DXCAM = True
-        except Exception:
+        except Exception as e:
+            _debug_backend_failure("DXCam import", e)
             # DXCam crashes from Session 0 (no GPU access)
             _DXCAM_MODULE = "__failed__"
             return None
@@ -159,6 +169,7 @@ def _screenshot_dxcam(force=False, monitor_index=0):
         img.convert("RGB").save(buf, format="JPEG", quality=85)
         return buf.getvalue()
     except Exception as e:
+        _debug_backend_failure("DXCam capture", e)
         _log(f"DXCam capture failed: {type(e).__name__}: {e}")
         return None
 
@@ -187,6 +198,7 @@ def _screenshot_pil(force=False, monitor_index=0):
         pil_img.save(buf, format="PNG")
         return buf.getvalue()
     except Exception as e:
+        _debug_backend_failure("PIL capture", e)
         _log(f"PIL capture failed: {type(e).__name__}: {e}")
         return None
 
@@ -227,35 +239,37 @@ def _screenshot_win32(force=False, monitor_index=0):
         img.save(buf, format="PNG")
         return buf.getvalue()
     except Exception as e:
+        _debug_backend_failure("Win32 capture", e)
         _log(f"Win32 capture failed: {type(e).__name__}: {e}")
         return None
     finally:
         try:
             if bitmap is not None:
                 win32gui.DeleteObject(bitmap.GetHandle())
-        except Exception:
-            pass
+        except Exception as e:
+            _debug_backend_failure("Win32 bitmap cleanup", e)
         try:
             if mem_dc is not None:
                 mem_dc.DeleteDC()
-        except Exception:
-            pass
+        except Exception as e:
+            _debug_backend_failure("Win32 memory DC cleanup", e)
         try:
             if src_dc is not None:
                 src_dc.DeleteDC()
-        except Exception:
-            pass
+        except Exception as e:
+            _debug_backend_failure("Win32 source DC cleanup", e)
         try:
             if hwnd and hwnd_dc:
                 win32gui.ReleaseDC(hwnd, hwnd_dc)
-        except Exception:
-            pass
+        except Exception as e:
+            _debug_backend_failure("Win32 window DC cleanup", e)
 
 def _screenshot_relay(force=False, monitor_index=0):
     data, _latency_ms, relay_error = _fetch_tray_relay_screen(timeout=2.0)
     if data:
         return data
     if relay_error:
+        _debug_backend_failure("PowerShell relay capture", RuntimeError(relay_error))
         _log(f"PowerShell relay capture failed: {relay_error}")
     return None
 
@@ -271,7 +285,8 @@ def _ensure_png_bytes(data):
         buf = BytesIO()
         img.save(buf, format="PNG")
         return buf.getvalue()
-    except Exception:
+    except Exception as e:
+        _debug_backend_failure("PNG coercion", e)
         return data
 
 def _capture_raw(force=False, monitor_index=0):
@@ -296,6 +311,7 @@ def _capture_raw(force=False, monitor_index=0):
             img_bytes = _ensure_png_bytes(screenshot_chain.execute())
             _LAST_CAPTURE_METHOD[monitor_index] = screenshot_chain.last_success
         except Exception as e:
+            _debug_backend_failure("screenshot fallback chain", e)
             _log(f"Screenshot fallback chain failed: {type(e).__name__}: {e}")
             img_bytes = b""
         if img_bytes:
@@ -319,6 +335,7 @@ def _capture_jpeg(force=False, quality=85, monitor_index=0):
         img.convert("RGB").save(buf, format="JPEG", quality=quality)
         return buf.getvalue()
     except Exception as e:
+        _debug_backend_failure("JPEG capture", e)
         _log(f"JPEG capture failed: {type(e).__name__}: {e}")
         return b""
 
@@ -354,7 +371,8 @@ def _tray_relay_headers():
         import auth as _auth_mod
         if getattr(_auth_mod, "AUTH_ENABLED", False):
             token = getattr(_auth_mod, "AUTH_TOKEN", "") or ""
-    except Exception:
+    except (ImportError, AttributeError) as e:
+        _debug_backend_failure("auth token lookup", e)
         token = ""
     token = token or os.environ.get("COAGENT_TOKEN", "") or os.environ.get("HERMES_COAGENT_TOKEN", "")
     if token:
@@ -391,8 +409,13 @@ def _check_winrt_version():
     """Return the installed winrt-runtime version for OCR diagnostics."""
     try:
         from importlib import metadata
+    except ImportError as e:
+        _debug_backend_failure("winrt metadata import", e)
+        return None
+    try:
         return metadata.version("winrt-runtime")
-    except Exception:
+    except metadata.PackageNotFoundError as e:
+        _debug_backend_failure("winrt metadata lookup", e)
         return None
 
 def _windows_ocr(pil_image):
@@ -429,7 +452,8 @@ def _windows_ocr(pil_image):
         _log(f"WinRT OCR direct path unavailable; falling back to PowerShell: {type(e).__name__}: {e}")
         try:
             return _windows_ocr_powershell(pil_image)
-        except Exception:
+        except (OSError, subprocess.SubprocessError, ValueError) as e:
+            _debug_backend_failure("Windows OCR PowerShell fallback", e)
             return {"success": False, "error": "Windows OCR unavailable", "winrt_runtime": _check_winrt_version()}
     except Exception as e:
         return {"success": False, "error": str(e)}
@@ -619,8 +643,8 @@ def register_routes(app, state, require_auth):
             r = subprocess.run(["powershell.exe", "-NoProfile", "-Command", f"(Get-Process -Id {_os.getpid()}).SessionId"],
                                capture_output=True, text=True, timeout=5)
             sid = int(r.stdout.strip()) if r.stdout.strip() else 0
-        except Exception:
-            pass
+        except (OSError, subprocess.SubprocessError, ValueError) as e:
+            _debug_backend_failure("OCR diagnostics session lookup", e)
         monitors = get_monitor_list()
         return jsonify({"dxcam": HAS_DXCAM, "mss": _MSS_AVAILABLE, "pil": HAS_PIL, "session": sid,
                         "host": get_host_ip(), "winrt_runtime": _check_winrt_version(),

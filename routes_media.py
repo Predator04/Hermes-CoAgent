@@ -1,5 +1,5 @@
 """Wallpaper, windows, clipboard, scheduler, macro, tunnel, voice, and misc routes."""
-import os, json, subprocess, time, ctypes, re, threading, webbrowser, tempfile, shutil
+import os, json, subprocess, time, ctypes, re, threading, webbrowser, tempfile, shutil, sys, types
 from pathlib import Path
 from flask import jsonify, request
 from shared import _json_body, _log, _console, _missing_field, COAGENT_DIR, MACROS_DIR, \
@@ -10,10 +10,12 @@ from routes_config import backup_file
 # In-memory action history (shared with main)
 _action_history = []
 _MAX_HISTORY = 1000
+_ACTION_HISTORY_LOCK = threading.RLock()
 
 # Macro state
 _recording = False
 _recorded_actions = []
+_RECORDING_LOCK = threading.Lock()
 
 # Scheduler state
 SCHEDULER_FILE = COAGENT_DIR / "scheduler.json"
@@ -44,6 +46,49 @@ _SEARCH_SKIP_DIRS = {
     "Cache", "Caches", "Code Cache",
 }
 _SEARCH_SKIP_DIRS_LOWER = {name.lower() for name in _SEARCH_SKIP_DIRS}
+
+def _json_safe(value):
+    if isinstance(value, (dict, list, str, int, float, bool)) or value is None:
+        return value
+    if hasattr(value, "get_json"):
+        try:
+            payload = value.get_json(silent=True)
+            if payload is not None:
+                return payload
+        except Exception:
+            pass
+    return str(value)[:500]
+
+def _record_action(action_type, data=None, result=None):
+    action_type = str(action_type or "").strip().lower()
+    action_data = dict(data) if isinstance(data, dict) else {"value": data}
+    action = dict(action_data)
+    action.setdefault("type", action_type)
+    entry = {
+        "time": time.time(),
+        "source": "input",
+        "type": action.get("type", action_type),
+        "action": action,
+        "data": action_data,
+        "result": _json_safe(result),
+    }
+    with _ACTION_HISTORY_LOCK:
+        _action_history.append(entry)
+        del _action_history[:-_MAX_HISTORY]
+    with _RECORDING_LOCK:
+        if _recording:
+            _recorded_actions.append(action)
+            del _recorded_actions[:-_MAX_HISTORY]
+    return entry
+
+def _install_record_action_hook():
+    module = sys.modules.get("coagent_features")
+    if module is None:
+        module = types.ModuleType("coagent_features")
+        sys.modules["coagent_features"] = module
+    setattr(module, "record_action", _record_action)
+
+_install_record_action_hook()
 
 def _tunnel_tools():
     return {
@@ -501,13 +546,15 @@ $s.Speak($text)
         global _recording, _recorded_actions
         d = _json_body()
         enable = d.get("enable", True)
-        if enable:
-            _recording = True
-            _recorded_actions = []
-            return jsonify({"status": "recording"})
-        else:
+        with _RECORDING_LOCK:
+            if enable:
+                if _recording:
+                    return jsonify({"error": "Recording already in progress"}), 409
+                _recording = True
+                _recorded_actions = []
+                return jsonify({"status": "recording"})
             _recording = False
-            return jsonify({"status": "stopped", "actions": _recorded_actions})
+            return jsonify({"status": "stopped", "actions": list(_recorded_actions)})
 
     @app.route("/macro/delete", methods=["POST"])
     @require_auth
@@ -530,10 +577,12 @@ $s.Speak($text)
         d = _json_body()
         count = min(d.get("count", 5), 100)
         from routes_mouse import _execute_action_wrapper
-        for a in list(_action_history)[-count:]:
+        with _ACTION_HISTORY_LOCK:
+            actions = list(_action_history)[-count:]
+        for a in actions:
             _execute_action_wrapper(a.get("action", {}), state)
             time.sleep(0.05)
-        return jsonify({"status": "replayed", "count": count})
+        return jsonify({"status": "replayed", "count": len(actions)})
 
     # ── Voice ─────────────────────────────────────────
     @app.route("/voice/toggle", methods=["POST"])
@@ -722,14 +771,22 @@ $s.Speak($text)
     @require_auth
     def route_stats():
         uptime = time.time() - getattr(state, 'start_time', time.time())
-        return jsonify({"actions": len(_action_history), "uptime": int(uptime),
+        with _ACTION_HISTORY_LOCK:
+            action_count = len(_action_history)
+        state_history = getattr(state, "action_history", None)
+        if state_history is not None and state_history is not _action_history:
+            action_count += len(state_history)
+        return jsonify({"actions": action_count, "uptime": int(uptime),
                         "macros": len(list(MACROS_DIR.glob("*.json"))) if MACROS_DIR.exists() else 0})
 
     @app.route("/history", methods=["GET"])
     @require_auth
     def route_history():
         limit = min(int(request.args.get("limit", 50)), 500)
-        return jsonify({"actions": list(_action_history)[-limit:], "count": min(limit, len(_action_history))})
+        with _ACTION_HISTORY_LOCK:
+            actions = list(_action_history)[-limit:]
+            total = len(_action_history)
+        return jsonify({"actions": actions, "count": min(limit, total)})
 
     @app.route("/events", methods=["GET"])
     @require_auth

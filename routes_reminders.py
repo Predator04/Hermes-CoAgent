@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 
 from flask import Blueprint, jsonify
 
-from shared import COAGENT_DIR, _console, _json_body, _wrap_registered_blueprint_routes
+from shared import COAGENT_DIR, _console, _is_private_url, _json_body, _wrap_registered_blueprint_routes
 
 
 reminders_bp = Blueprint("reminders", __name__)
@@ -183,6 +183,8 @@ def _send_webhook(delivered_to, title, message, reminder):
     url = delivered_to.split(":", 1)[1] if ":" in delivered_to else ""
     if not url:
         return False, "webhook URL missing"
+    if _is_private_url(url):
+        return False, "webhook URL resolves to a blocked private or internal address"
     payload = json.dumps({
         "id": reminder.get("id"),
         "title": title,

@@ -96,10 +96,10 @@ def register_routes(app, state, require_auth):
             resolved = Path(path).resolve()
             if _is_protected_delete_path(resolved):
                 return jsonify({"error": "Refusing to delete a protected directory", "path": str(resolved)}), 403
+            if d.get("confirm") is not True:
+                return jsonify({"error": "Deletion requires confirm: true", "path": str(resolved)}), 400
             backup_path = backup_file(path)
             if os.path.isdir(path):
-                if d.get("confirm") is not True:
-                    return jsonify({"error": "Directory deletion requires confirm: true", "path": str(resolved)}), 400
                 import shutil
                 shutil.rmtree(path)
             else:

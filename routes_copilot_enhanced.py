@@ -1,6 +1,7 @@
 """Enhanced multi-step AI copilot goal execution routes."""
 
 import json
+import os
 import queue
 import re
 import secrets
@@ -10,6 +11,7 @@ import uuid
 import urllib.error
 import urllib.request
 from copy import deepcopy
+from pathlib import Path
 
 from flask import Blueprint, jsonify, request, stream_with_context
 
@@ -870,6 +872,13 @@ def _telegram_send(params):
     return {"status": "sent", "response": response} if ok else {"error": str(response)}
 
 
+def _local_appdata_path(*parts):
+    root = os.environ.get("LOCALAPPDATA")
+    if root:
+        return str(Path(root).joinpath(*parts))
+    return str(Path.home().joinpath("AppData", "Local", *parts))
+
+
 def _run_step(step, previous, stop_event, auth_header):
     action = step.get("action", "")
     params = _resolve_refs(deepcopy(step.get("params") or {}), previous)
@@ -886,7 +895,7 @@ def _run_step(step, previous, stop_event, auth_header):
             return {"status": "error", "result": {"error": "launch target is required"}}
         # Resolve common app names to known paths
         _APP_ALIASES = {
-            "telegram": r"C:\Users\Admin\AppData\Local\Telegram Desktop\Telegram.exe",
+            "telegram": _local_appdata_path("Telegram Desktop", "Telegram.exe"),
             "chrome": r"C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe",
             "brave": r"C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe",
             "notepad": "notepad.exe",
@@ -895,10 +904,10 @@ def _run_step(step, previous, stop_event, auth_header):
             "cmd": "cmd.exe",
             "terminal": "cmd.exe",
             "powershell": "powershell.exe",
-            "discord": r"C:\Users\Admin\AppData\Local\Discord\Update.exe --processStart Discord.exe",
+            "discord": f"{_local_appdata_path('Discord', 'Update.exe')} --processStart Discord.exe",
             "outlook": r"C:\Program Files\Microsoft Office\root\Office16\OUTLOOK.EXE",
-            "code": r"C:\Users\Admin\AppData\Local\Programs\Microsoft VS Code\Code.exe",
-            "vscode": r"C:\Users\Admin\AppData\Local\Programs\Microsoft VS Code\Code.exe",
+            "code": _local_appdata_path("Programs", "Microsoft VS Code", "Code.exe"),
+            "vscode": _local_appdata_path("Programs", "Microsoft VS Code", "Code.exe"),
         }
         query = str(query).strip()
         resolved = _APP_ALIASES.get(query.lower(), query)

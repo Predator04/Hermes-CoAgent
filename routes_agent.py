@@ -1,6 +1,7 @@
 """Agent gateway routes for invoking allowlisted local AI agent CLIs."""
 
 import json
+import logging
 import os
 import re
 import shutil
@@ -17,7 +18,7 @@ from urllib.parse import urlparse
 
 from flask import Blueprint, Response, jsonify, request, stream_with_context
 
-from shared import COAGENT_DIR, _console, _log, _wrap_registered_blueprint_routes
+from shared import COAGENT_DIR, _console, _is_private_url, _log, _wrap_registered_blueprint_routes
 
 
 def _userprofile():
@@ -35,6 +36,7 @@ def _resolve_npm_paths(name):
 
 
 agent_bp = Blueprint("agent_gateway", __name__)
+_LOGGER = logging.getLogger(__name__)
 
 MAX_PROMPT_CHARS = 100 * 1024
 MAX_OUTPUT_CHARS = 500 * 1024
@@ -53,6 +55,10 @@ _streams_lock = threading.Lock()
 EXECUTION_LOCKS = {}
 ACTIVE_STREAMS = {}
 AGENT_CACHE = {}
+
+
+def _debug_failure(context, exc):
+    _LOGGER.debug("%s failed: %s: %s", context, type(exc).__name__, exc, exc_info=True)
 DEFAULT_AGENT = None
 
 SUPPORTED_PROVIDERS = {"codex", "openai", "anthropic", "deepseek", "ollama", "generic"}
@@ -187,6 +193,8 @@ def _validate_base_url(value):
     parsed = urlparse(base_url)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         raise ValueError("base_url must be an http or https URL")
+    if _is_private_url(base_url):
+        raise ValueError("base_url resolves to a blocked private or internal address")
     return base_url
 
 
@@ -246,6 +254,7 @@ def _save_provider_config(config):
     with PROVIDER_CONFIG_LOCK:
         PROVIDER_CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
         tmp_path = PROVIDER_CONFIG_FILE.with_suffix(".json.tmp")
+        # Production deployments should encrypt this file before writing API keys.
         tmp_path.write_text(json.dumps(config, indent=2, ensure_ascii=False), encoding="utf-8")
         tmp_path.replace(PROVIDER_CONFIG_FILE)
 
@@ -583,6 +592,7 @@ def _ensure_stream(log_id):
 def _write_stream_event(log_id, event):
     if not log_id:
         return
+    event = _redact_for_log(event)
     event_json = json.dumps(event, ensure_ascii=False)
     with _streams_lock:
         state = ACTIVE_STREAMS.get(log_id)
@@ -760,7 +770,8 @@ def _auth_blueprint(bp, require_auth):
 def _norm_path(path):
     try:
         return os.path.normcase(str(Path(path).resolve()))
-    except Exception:
+    except (OSError, RuntimeError, ValueError) as exc:
+        _debug_failure("agent path normalization", exc)
         return os.path.normcase(str(path))
 
 
@@ -801,8 +812,8 @@ def _where_candidates(binary):
         )
         if result.returncode == 0:
             candidates.extend(line.strip() for line in result.stdout.splitlines() if line.strip())
-    except Exception:
-        pass
+    except (OSError, subprocess.SubprocessError) as exc:
+        _debug_failure("agent where.exe lookup", exc)
     return candidates
 
 
@@ -900,7 +911,8 @@ def _allowed_workdir_roots():
     for root in roots:
         try:
             resolved.append(Path(root).expanduser().resolve())
-        except Exception:
+        except (OSError, RuntimeError) as exc:
+            _debug_failure("agent safe root resolution", exc)
             continue
     return resolved
 
@@ -914,7 +926,8 @@ def _is_within(path, root):
         return common == os.path.normcase(str(Path(root).resolve()))
     except ValueError:
         return False
-    except Exception:
+    except (OSError, RuntimeError) as exc:
+        _debug_failure("agent safe root check", exc)
         return False
 
 
@@ -1080,12 +1093,12 @@ def _kill_process_tree(pid):
                 timeout=15,
             )
             return
-        except Exception:
-            pass
+        except (OSError, subprocess.SubprocessError) as exc:
+            _debug_failure("agent taskkill termination", exc)
     try:
         os.kill(pid, 9)
-    except Exception:
-        pass
+    except OSError as exc:
+        _debug_failure("agent os.kill termination", exc)
 
 
 def _execution_lock_for(workdir_path):
@@ -1110,8 +1123,8 @@ def _pump_pipe(pipe, path, log_id, line_type):
     finally:
         try:
             pipe.close()
-        except Exception:
-            pass
+        except OSError as exc:
+            _debug_failure("agent pipe close", exc)
 
 
 def _append_temp_line(path, text):
@@ -1183,12 +1196,12 @@ def _run_command(command, prompt_input, timeout, workdir_path, env, log_id=None)
             except subprocess.TimeoutExpired:
                 try:
                     proc.kill()
-                except Exception:
-                    pass
+                except OSError as exc:
+                    _debug_failure("agent process kill after timeout", exc)
                 try:
                     proc.wait(timeout=5)
-                except Exception:
-                    pass
+                except subprocess.SubprocessError as exc:
+                    _debug_failure("agent process wait after kill", exc)
             exit_code = -1
         finally:
             stdout_thread.join(timeout=5)
@@ -1237,6 +1250,36 @@ def _next_log_path(agent_name):
     return path
 
 
+_REDACT_PATTERNS = [
+    (re.compile(r"sk-[A-Za-z0-9][A-Za-z0-9_-]{15,}"), "sk-[REDACTED]"),
+    (re.compile(r"Bearer\s+[A-Za-z0-9._~+/=-]+", re.IGNORECASE), "Bearer [REDACTED]"),
+    (re.compile(r"(token=)[^&\s\"']+", re.IGNORECASE), r"\1[REDACTED]"),
+    (re.compile(r"(api[_-]?key\s*[:=]\s*)[A-Za-z0-9._~+/=-]+", re.IGNORECASE), r"\1[REDACTED]"),
+]
+_REDACT_KEY_RE = re.compile(r"^(authorization|bearer|token|api[_-]?key|secret)$", re.IGNORECASE)
+
+
+def _redact_text(text):
+    redacted = text
+    for pattern, replacement in _REDACT_PATTERNS:
+        redacted = pattern.sub(replacement, redacted)
+    return redacted
+
+
+def _redact_for_log(value, key=None):
+    if isinstance(value, str):
+        if key and _REDACT_KEY_RE.search(str(key)):
+            return "[REDACTED]" if value else value
+        return _redact_text(value)
+    if isinstance(value, dict):
+        return {k: _redact_for_log(v, k) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_redact_for_log(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_redact_for_log(item) for item in value)
+    return value
+
+
 def _write_log(record, log_id=None):
     with LOG_WRITE_LOCK:
         LOG_DIR.mkdir(parents=True, exist_ok=True)
@@ -1245,7 +1288,7 @@ def _write_log(record, log_id=None):
         else:
             path = _next_log_path(record.get("agent", "agent"))
             log_id = path.stem
-        record = {**record, "log_id": log_id}
+        record = _redact_for_log({**record, "log_id": log_id})
         path.write_text(json.dumps(record, indent=2, ensure_ascii=False), encoding="utf-8")
         return log_id
 

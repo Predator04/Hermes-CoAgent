@@ -104,7 +104,7 @@ def test_tray_menu_handlers(monkeypatch, tmp_path):
 
     tray_icon._open_dashboard(icon, None, state)
     tray_icon._open_url("http://example.test/settings")
-    assert opened[0].startswith("http://localhost:9123/?token=tok")
+    assert opened[0].startswith("http://localhost:9123/")
     assert opened[1] == "http://example.test/settings"
 
     monkeypatch.setattr(tray_icon, "_ping", lambda _state: (False, 0, "down"))

@@ -19,6 +19,7 @@ from shared import COAGENT_DIR, _console, _log, _json_body, _wrap_registered_blu
 
 telegram_bp = Blueprint("telegram_relay", __name__)
 CONFIG_FILE = COAGENT_DIR / "telegram_config.json"
+# TODO: Encrypt Telegram bot tokens at rest before using this config in production.
 TELEGRAM_API = "https://api.telegram.org/bot{token}/sendMessage"
 FINDING_PREFIXES = ("## FINDING:", "Severity:", "Issue:", "Fix:", "---")
 

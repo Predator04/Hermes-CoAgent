@@ -14,7 +14,7 @@ Features:
 Token is saved to COAGENT_DIR/.token on first --secure launch.
 Subsequent --secure launches read the saved token.
 """
-import os, sys, secrets, functools, hashlib, time
+import os, sys, secrets, functools, hashlib, time, threading
 from flask import jsonify, request
 from pathlib import Path
 
@@ -27,6 +27,9 @@ COAGENT_DIR = None
 _CSRF_TOKENS: dict[str, float] = {}
 _CSRF_CLEANUP_INTERVAL = 300  # seconds between stale cleanup
 _CSRF_TTL = 3600  # 1 hour
+_DASHBOARD_HANDOFFS: dict[str, tuple[str, float]] = {}
+_DASHBOARD_HANDOFF_LOCK = threading.Lock()
+_DASHBOARD_HANDOFF_TTL = 60
 
 
 def csrf_token_store():
@@ -39,6 +42,13 @@ def csrf_token_store():
     token = secrets.token_urlsafe(32)
     _CSRF_TOKENS[hashlib.sha256(token.encode()).hexdigest()] = now + _CSRF_TTL
     return token
+
+
+def _prune_dashboard_handoffs(now=None):
+    now = time.time() if now is None else now
+    stale = [code for code, (_token, expires_at) in _DASHBOARD_HANDOFFS.items() if expires_at < now]
+    for code in stale:
+        _DASHBOARD_HANDOFFS.pop(code, None)
 
 
 def csrf_check():
@@ -290,6 +300,37 @@ def register_auth_routes(app):
             "token": new_token,
             "token_preview": f"{pre}...{suf}",
         })
+
+    @app.route("/auth/dashboard-handoff", methods=["POST"])
+    @require_auth
+    def auth_dashboard_handoff_create():
+        """Create a short-lived one-time dashboard token handoff code."""
+        if not AUTH_ENABLED or not AUTH_TOKEN:
+            return jsonify({"error": "Auth not enabled"}), 400
+        now = time.time()
+        code = secrets.token_urlsafe(24)
+        with _DASHBOARD_HANDOFF_LOCK:
+            _prune_dashboard_handoffs(now)
+            _DASHBOARD_HANDOFFS[code] = (AUTH_TOKEN, now + _DASHBOARD_HANDOFF_TTL)
+        return jsonify({"code": code, "expires_in": _DASHBOARD_HANDOFF_TTL})
+
+    @app.route("/auth/dashboard-handoff/exchange", methods=["POST"])
+    def auth_dashboard_handoff_exchange():
+        """Exchange a dashboard handoff code once, then discard it."""
+        data = request.get_json(silent=True) or {}
+        code = str(data.get("code") or "").strip()
+        if not code:
+            return jsonify({"error": "code is required"}), 400
+        now = time.time()
+        with _DASHBOARD_HANDOFF_LOCK:
+            _prune_dashboard_handoffs(now)
+            entry = _DASHBOARD_HANDOFFS.pop(code, None)
+        if not entry:
+            return jsonify({"error": "Invalid or expired handoff code"}), 404
+        token, expires_at = entry
+        if expires_at < now:
+            return jsonify({"error": "Invalid or expired handoff code"}), 404
+        return jsonify({"token": token})
 
     @app.route("/csrf-token", methods=["GET"])
     @require_auth

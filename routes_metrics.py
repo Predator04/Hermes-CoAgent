@@ -1,5 +1,6 @@
 """Prometheus-style metrics endpoint for Hermes CoAgent."""
 
+import logging
 import os
 import time
 from collections import Counter
@@ -10,6 +11,7 @@ from shared import _sse_clients, _sse_lock
 
 
 metrics_bp = Blueprint("metrics", __name__)
+_LOGGER = logging.getLogger(__name__)
 
 REQUESTS = Counter()
 ERRORS = Counter()
@@ -31,6 +33,10 @@ LATENCY_COUNT = Counter()
 LATENCY_SUM = Counter()
 
 _METRICS_LOCK = None
+
+
+def _debug_failure(context, exc):
+    _LOGGER.debug("%s failed: %s: %s", context, type(exc).__name__, exc, exc_info=True)
 
 
 def _lock():
@@ -55,8 +61,8 @@ def _route_path():
     try:
         if request.url_rule and request.url_rule.rule:
             return request.url_rule.rule
-    except Exception:
-        pass
+    except (AttributeError, RuntimeError) as exc:
+        _debug_failure("metrics route path lookup", exc)
     return request.path or "unknown"
 
 
@@ -64,8 +70,8 @@ def _memory_rss_bytes():
     try:
         import psutil
         return int(psutil.Process(os.getpid()).memory_info().rss)
-    except Exception:
-        pass
+    except (ImportError, OSError, RuntimeError) as exc:
+        _debug_failure("metrics psutil RSS lookup", exc)
 
     proc_status = "/proc/self/status"
     try:
@@ -75,8 +81,8 @@ def _memory_rss_bytes():
                     parts = line.split()
                     if len(parts) >= 2:
                         return int(parts[1]) * 1024
-    except Exception:
-        pass
+    except (OSError, ValueError) as exc:
+        _debug_failure("metrics procfs RSS lookup", exc)
 
     try:
         import ctypes
@@ -103,8 +109,8 @@ def _memory_rss_bytes():
             handle, ctypes.byref(counters), counters.cb
         ):
             return int(counters.WorkingSetSize)
-    except Exception:
-        pass
+    except (AttributeError, OSError, TypeError, ValueError) as exc:
+        _debug_failure("metrics Win32 RSS lookup", exc)
 
     return 0
 
@@ -114,8 +120,8 @@ def _active_sse_connections():
     try:
         with _sse_lock:
             total += len(_sse_clients)
-    except Exception:
-        pass
+    except (AttributeError, RuntimeError) as exc:
+        _debug_failure("metrics shared SSE count", exc)
 
     try:
         from routes_agent import ACTIVE_STREAMS, _streams_lock
@@ -123,15 +129,15 @@ def _active_sse_connections():
         with _streams_lock:
             for stream_state in ACTIVE_STREAMS.values():
                 total += int(stream_state.get("connections", 0) or 0)
-    except Exception:
-        pass
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+        _debug_failure("metrics agent stream count", exc)
 
     try:
         from routes_stream import _active_stream_count
 
         total += int(_active_stream_count())
-    except Exception:
-        pass
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+        _debug_failure("metrics screen stream count", exc)
 
     return total
 
@@ -250,8 +256,8 @@ def register_routes(app, state, require_auth):
                 for bucket in LATENCY_HISTOGRAM:
                     if duration <= bucket:
                         LATENCY_BUCKETS[request_key + (_bucket_label(bucket),)] += 1
-        except Exception:
-            pass
+        except (RuntimeError, TypeError, ValueError) as exc:
+            _debug_failure("metrics after_request accounting", exc)
         return response
 
     app.register_blueprint(metrics_bp)

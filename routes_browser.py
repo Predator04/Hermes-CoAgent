@@ -2,12 +2,13 @@
 
 import base64
 import threading
+import urllib.parse
 from pathlib import Path
 
 from flask import Blueprint, jsonify
 
 from routes_bypass import _json_payload
-from shared import _sanitize_path, _wrap_registered_blueprint_routes
+from shared import _is_private_url, _sanitize_path, _wrap_registered_blueprint_routes
 
 
 browser_bp = Blueprint("browser", __name__)
@@ -55,6 +56,15 @@ def _playwright_missing():
         501,
         package="patchright-python",
     )
+
+
+def _navigation_url_error(url):
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme not in {"http", "https"}:
+        return "url must be an http or https URL"
+    if _is_private_url(url):
+        return "url resolves to a blocked private or internal address"
+    return None
 
 
 def _load_playwright():
@@ -140,6 +150,10 @@ def route_browser_navigate():
     url = data.get("url")
     if not isinstance(url, str) or not url:
         return _error("url is required")
+    url = url.strip()
+    url_error = _navigation_url_error(url)
+    if url_error:
+        return _error(url_error, 403)
     new_page = _as_bool(data.get("new_page"), True)
     with _BROWSER_LOCK:
         page, error = _ensure_browser(new_page=new_page)

@@ -13,7 +13,7 @@ from copy import deepcopy
 
 from flask import Blueprint, jsonify
 
-from shared import _json_body, _log
+from shared import _is_private_url, _json_body, _log
 
 
 webhooks_bp = Blueprint("webhooks", __name__)
@@ -81,6 +81,8 @@ def _dispatch_one(webhook_id, record, event_type, data, timestamp):
     }
     response_info = {"ok": False, "status": None, "body": "", "error": None}
     try:
+        if _is_private_url(record["url"]):
+            raise ValueError("webhook URL resolves to a blocked private or internal address")
         request = urllib.request.Request(
             record["url"],
             data=body,
@@ -163,6 +165,8 @@ def route_webhooks_register():
         return jsonify({"error": "url is required"}), 400
     if not _valid_url(url):
         return jsonify({"error": "url must be an http or https URL"}), 400
+    if _is_private_url(url):
+        return jsonify({"error": "url resolves to a blocked private or internal address"}), 400
     if not events:
         return jsonify({"error": "events must contain at least one event name"}), 400
 

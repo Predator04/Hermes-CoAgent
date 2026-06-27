@@ -719,9 +719,15 @@ tr:hover td { background: rgba(45, 212, 191, .04); }
   "use strict";
   const params = new URLSearchParams(location.search);
   const queryToken = (params.get("token") || "").replace(/^Bearer\s+/i, "");
+  const handoffCode = (params.get("handoff") || "").trim();
   if (queryToken) {
     sessionStorage.setItem("hermes_token", queryToken);
     params.delete("token");
+  }
+  if (handoffCode) {
+    params.delete("handoff");
+  }
+  if (queryToken || handoffCode) {
     const cleanUrl = location.pathname + (params.toString() ? "?" + params.toString() : "") + location.hash;
     history.replaceState(null, document.title, cleanUrl);
   }
@@ -765,6 +771,18 @@ tr:hover td { background: rgba(45, 212, 191, .04); }
       throw new Error(msg);
     }
     return data;
+  }
+  async function exchangeHandoff() {
+    if (!handoffCode || token) return;
+    const res = await fetch("/auth/dashboard-handoff/exchange", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code: handoffCode })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.token) throw new Error(data.error || "dashboard handoff failed");
+    token = String(data.token).replace(/^Bearer\s+/i, "");
+    sessionStorage.setItem("hermes_token", token);
   }
   function toast(message) {
     const wrap = $("toasts");
@@ -1418,6 +1436,11 @@ tr:hover td { background: rgba(45, 212, 191, .04); }
     bindScreen();
   }
   async function init() {
+    try {
+      await exchangeHandoff();
+    } catch (err) {
+      toast("Dashboard auth failed: " + err.message);
+    }
     setText("authState", token ? "token" : "missing");
     bindEvents();
     updateRegionText();

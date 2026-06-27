@@ -18,6 +18,7 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 import webbrowser
@@ -449,10 +450,35 @@ class TrayState:
 
 def _dashboard_url(state: TrayState) -> str:
     base = f"http://localhost:{state.port}/"
-    token = state.current_token()
-    if token:
-        return base + "?token=" + urllib.parse.quote(token)
+    handoff_url = _dashboard_handoff_url(state, base)
+    if handoff_url:
+        return handoff_url
     return base
+
+
+def _dashboard_handoff_url(state: TrayState, base: str) -> str:
+    token = state.current_token()
+    if not token:
+        return ""
+    try:
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{state.port}/auth/dashboard-handoff",
+            data=b"{}",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=PING_TIMEOUT_SECONDS) as response:
+            payload = json.loads(response.read().decode("utf-8", errors="replace") or "{}")
+        code = str(payload.get("code") or "").strip()
+        if not code:
+            return ""
+        return base + "?handoff=" + urllib.parse.quote(code)
+    except (OSError, TimeoutError, urllib.error.URLError, json.JSONDecodeError) as exc:
+        state.log(f"dashboard handoff failed: {type(exc).__name__}: {exc}")
+        return ""
 
 
 def _headers(state: TrayState) -> dict[str, str]:

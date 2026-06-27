@@ -7,7 +7,7 @@ adversarial augmentation, and blacklist scanning tools.
 All routes under /bypass/
 """
 
-import base64, json, math, random, re, unicodedata
+import base64, json, math, os, random, re, unicodedata
 from flask import Blueprint, request, jsonify
 from pathlib import Path
 
@@ -678,6 +678,8 @@ def route_bypass_index():
 # ── Registration (auth-aware) ─────────────────────────────────
 def register_routes(app, state, require_auth):
     """Register bypass routes with auth middleware."""
+    if not os.environ.get("COAGENT_ENABLE_BYPASS") and not app.config.get("TESTING"):
+        return
     # Register the blueprint — auth is handled by the main server's
     # @app.before_request auth gate, so /bypass/* routes are protected.
     app.register_blueprint(bypass_bp)

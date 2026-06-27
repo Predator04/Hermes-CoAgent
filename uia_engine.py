@@ -9,11 +9,18 @@ Provides:
 - send_input_background(keys): send keystrokes WITHOUT stealing focus
 """
 
-import base64, time, threading, hashlib
+import base64, time, threading, hashlib, logging
 from io import BytesIO
 import ctypes
 from ctypes import wintypes, windll
 import traceback
+
+_LOGGER = logging.getLogger(__name__)
+
+
+def _debug_failure(context, exc):
+    _LOGGER.debug("%s failed: %s: %s", context, type(exc).__name__, exc, exc_info=True)
+
 
 _UIA_SNAPSHOT_SEMAPHORE = threading.BoundedSemaphore(1)
 _UIA_CHILD_SEMAPHORE = threading.BoundedSemaphore(4)
@@ -33,8 +40,8 @@ def _get_element_key(elem) -> str:
         rid = elem.element_info.runtime_id
         if rid:
             return "rid:" + hashlib.md5(str(rid).encode()).hexdigest()
-    except Exception:
-        pass
+    except (AttributeError, TypeError, ValueError) as e:
+        _debug_failure("UIA runtime id lookup", e)
     try:
         aid = elem.element_info.automation_id or ""
         ct = elem.element_info.control_type or ""
@@ -43,8 +50,8 @@ def _get_element_key(elem) -> str:
         raw = f"{aid}|{ct}|{nm}|{cn}"
         if raw != "|||":
             return "fallback:" + hashlib.md5(raw.encode()).hexdigest()
-    except Exception:
-        pass
+    except (AttributeError, TypeError, ValueError) as e:
+        _debug_failure("UIA fallback key lookup", e)
     return None
 
 def _get_stable_id(elem) -> int:
@@ -73,8 +80,8 @@ def _get_stable_id(elem) -> int:
 try:
     import pythoncom
     pythoncom.CoInitialize()
-except Exception:
-    pass
+except (ImportError, OSError, RuntimeError) as e:
+    _debug_failure("pythoncom initialization", e)
 
 UIA_READY = False
 _uia_error = ""
@@ -88,7 +95,8 @@ try:
         try:
             r = elem.rectangle()
             return {"left": r.left, "top": r.top, "width": r.width(), "height": r.height()}
-        except Exception:
+        except Exception as e:
+            _debug_failure("UIA element rectangle", e)
             return None
 
     def _uia_element_state(elem, method_name: str, default: bool = True) -> bool:
@@ -96,7 +104,8 @@ try:
         try:
             method = getattr(elem, method_name)
             return bool(method())
-        except Exception:
+        except Exception as e:
+            _debug_failure(f"UIA element state {method_name}", e)
             return default
 
     def _uia_child_info(elem):
@@ -116,7 +125,8 @@ try:
                 "enabled": _uia_element_state(elem, "is_enabled"),
                 "visible": _uia_element_state(elem, "is_visible"),
             }
-        except Exception:
+        except Exception as e:
+            _debug_failure("UIA child info", e)
             return None
 
     def _uia_find_info(elem):
@@ -130,7 +140,8 @@ try:
                 "name": elem.element_info.name or "",
                 "rect": _uia_element_rect(elem),
             }
-        except Exception:
+        except Exception as e:
+            _debug_failure("UIA find info", e)
             return None
 
     def _get_children(element, depth=0, max_depth=3) -> list:
@@ -143,7 +154,8 @@ try:
                 descendants = element.descendants(depth=max_depth - depth)
             except TypeError:
                 descendants = element.descendants()
-        except Exception:
+        except Exception as e:
+            _debug_failure("UIA child enumeration", e)
             return results
         for descendant in descendants:
             child_info = _uia_child_info(descendant)
@@ -158,8 +170,8 @@ try:
             try:
                 if not _uia_element_state(elem, "is_visible", True):
                     return None
-            except Exception:
-                pass
+            except Exception as e:
+                _debug_failure("UIA visibility check", e)
             info = {
                 "control_type": elem.element_info.control_type or "",
                 "automation_id": elem.element_info.automation_id or "",
@@ -177,10 +189,11 @@ try:
                         child_info = _uia_element_info(child, depth+1)
                         if child_info:
                             info["children"].append(child_info)
-                except Exception:
-                    pass
+                except Exception as e:
+                    _debug_failure("UIA recursive child expansion", e)
             return info
-        except Exception:
+        except Exception as e:
+            _debug_failure("UIA element info", e)
             return None
     def uia_snapshot(timeout=12) -> dict:
         """Get full accessibility tree with timeout. Sets UIA_READY on failure."""
@@ -229,8 +242,8 @@ try:
                                 def _crawl_window_children(w=_target_win):
                                     try:
                                         children_result.extend(_get_children(w, max_depth=2))
-                                    except Exception:
-                                        pass
+                                    except Exception as e:
+                                        _debug_failure("UIA window child crawl", e)
                                     finally:
                                         try:
                                             _UIA_CHILD_SEMAPHORE.release()
@@ -242,15 +255,15 @@ try:
                                     ct.join(timeout=_WINDOW_CHILD_JOIN_TIMEOUT)
                                 win_info["children"] = children_result
                             info["children"].append(win_info)
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            _debug_failure("UIA window crawl", e)
                     result = {"success": True, "tree": info}
                     # v7.3: Cache successful result for next call
                     _UIA_LAST_CRAWL_RESULT = info
                 except Exception as e:
                     result = {"success": False, "error": str(e), "traceback": traceback.format_exc()}
-            except Exception:
-                pass
+            except Exception as e:
+                _debug_failure("UIA snapshot worker", e)
         try:
             t = threading.Thread(target=_run, daemon=True)
             t.start()
@@ -276,13 +289,14 @@ try:
                         win_info = _uia_find_info(win)
                         if win_info:
                             results.append(win_info)
-                except Exception:
-                    pass
+                except Exception as e:
+                    _debug_failure("UIA deep window info", e)
                 if len(results) >= 50:
                     break
                 try:
                     descendants = win.descendants()
-                except Exception:
+                except Exception as e:
+                    _debug_failure("UIA deep descendants", e)
                     descendants = []
                 for child in descendants:
                     try:
@@ -293,8 +307,8 @@ try:
                                 results.append(child_info)
                                 if len(results) >= 50:
                                     break
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        _debug_failure("UIA deep child info", e)
                 if len(results) >= 50:
                     break
             return results[:50]
@@ -311,8 +325,8 @@ try:
                 try:
                     if name.lower() in (win.element_info.name or "").lower():
                         results.append(_uia_element_info(win))
-                except Exception:
-                    pass
+                except Exception as e:
+                    _debug_failure("UIA named window search", e)
                 # Search children
                 try:
                     for child in win.descendants():
@@ -320,10 +334,10 @@ try:
                             cname = child.element_info.name or ""
                             if name.lower() in cname.lower():
                                 results.append(_uia_element_info(child))
-                        except Exception:
-                            pass
-                except Exception:
-                    pass
+                        except Exception as e:
+                            _debug_failure("UIA named child search", e)
+                except Exception as e:
+                    _debug_failure("UIA named descendants", e)
             return results
         except Exception as e:
             return [{"error": str(e)}]
@@ -343,10 +357,10 @@ try:
                         for child in win.descendants():
                             try:
                                 all_elements.append(child)
-                            except Exception:
-                                pass
-                    except Exception:
-                        pass
+                            except Exception as e:
+                                _debug_failure("UIA collect child", e)
+                    except Exception as e:
+                        _debug_failure("UIA collect descendants", e)
                 for win in desktop.windows():
                     collect(win)
                 if target < len(all_elements):
@@ -362,16 +376,16 @@ try:
                             if target.lower() in (win.element_info.name or "").lower():
                                 win.click_input()
                                 return {"success": True, "method": "name"}
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            _debug_failure("UIA click window by name", e)
                         for child in win.descendants():
                             try:
                                 cname = child.element_info.name or ""
                                 if target.lower() in cname.lower():
                                     child.click_input()
                                     return {"success": True, "method": "name_descendant"}
-                            except Exception:
-                                pass
+                            except Exception as e:
+                                _debug_failure("UIA click descendant by name", e)
                 return {"success": False, "error": f"Element '{target}' not found"}
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -398,7 +412,8 @@ def _uia_winlist_changed(win_list: list) -> bool:
                 return False
             _UIA_WIN_CACHE[:] = sig
         return True
-    except Exception:
+    except Exception as e:
+        _debug_failure("UIA window cache signature", e)
         return True
 
 if "uia_find_deep" not in globals():
@@ -410,10 +425,12 @@ def _som_monitor_bounds(monitor_index, fallback_size):
     try:
         from routes_ocr import _coerce_monitor_index, _monitor_bounds
         return dict(_monitor_bounds(_coerce_monitor_index(monitor_index)))
-    except Exception:
+    except Exception as e:
+        _debug_failure("UIA monitor bounds lookup", e)
         try:
             width, height = fallback_size
-        except Exception:
+        except (TypeError, ValueError) as e:
+            _debug_failure("UIA fallback monitor size", e)
             width, height = 1920, 1080
         try:
             monitor_index = max(0, int(monitor_index))
@@ -491,7 +508,8 @@ def som_overlay(screenshot_bytes: bytes, monitor_index=0) -> dict:
         draw = ImageDraw.Draw(img)
         try:
             font = ImageFont.truetype("arial.ttf", 14)
-        except Exception:
+        except OSError as e:
+            _debug_failure("UIA overlay font load", e)
             font = ImageFont.load_default()
         
         labeled = []
@@ -659,8 +677,8 @@ def per_window_som(window_title: str = None) -> dict:
                 rect = _uia_element_rect(win)
                 if title and rect and rect["width"] > 100 and rect["height"] > 100:
                     windows.append({"handle": win, "title": title, "rect": rect})
-            except Exception:
-                pass
+            except Exception as e:
+                _debug_failure("UIA per-window enumerate", e)
 
         if not windows:
             return {"success": False, "error": "No suitable windows found"}
@@ -673,7 +691,8 @@ def per_window_som(window_title: str = None) -> dict:
             screen_bytes = BytesIO()
             img_full.save(screen_bytes, format="PNG")
             screen_bytes = screen_bytes.getvalue()
-        except Exception:
+        except Exception as e:
+            _debug_failure("UIA per-window screen capture", e)
             return {"success": False, "error": "Cannot capture screen"}
 
         if window_title:
@@ -685,7 +704,8 @@ def per_window_som(window_title: str = None) -> dict:
         img_base = Image.open(BytesIO(screen_bytes)).convert("RGBA")
         try:
             font = ImageFont.truetype("arial.ttf", 12)
-        except Exception:
+        except OSError as e:
+            _debug_failure("UIA per-window font load", e)
             font = ImageFont.load_default()
 
         per_window_results = []
@@ -810,8 +830,8 @@ def find_on_screen(text: str) -> dict:
         from io import BytesIO
         # We'll get screenshot from the caller
         results["method"] = "combined"
-    except Exception:
-        pass
+    except (ImportError, OSError, RuntimeError) as e:
+        _debug_failure("OCR/UIA combined setup", e)
     
     results["total"] = len(results["matches"])
     results["found"] = results["total"] > 0

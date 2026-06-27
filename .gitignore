@@ -1,38 +1,69 @@
+# Python
 *.pyc
 __pycache__/
-screenshots/
-macros/
-*.apk
-screen_temp*.png
-test_mcp*.py
+*.pyo
+*.egg-info/
+dist/
+build/
+*.spec
+
+# Runtime
 *.log
-coagent.pid
 agent_logs/
-.codex_path
-*.bat
-*.vbs
+screenshots/
+screen_temp*.png
+coagent.pid
+hud_status.json
+
+# Config & Secrets
 *.token
 .token_*
-telegram_config.json
-codex_audit_result.txt
 .env*
+telegram_config.json
+agent_providers_config.json
+config.json
 google_token.json
 google_credentials.json
-config.json
 client_secret*.json
+recipes.json
+
+# Keys & Certs
 *.pem
 *.key
 *.pfx
 *.p12
+
+# DB
 *.sqlite
 *.db
 *.bak
 *.tmp
-nul
 
-# Codex temp audit files
-codex_audit_result.txt
+# Generated / Temp
+macros/
+*.apk
+test_mcp*.py
+.codex_path
+nul
+screenshot_v73.jpg
+screenshot_relay.py
+
+# Build docs / plans
+BUILD_*.md
+CODEX_AUDIT_RESULTS.md
+OPTIMIZATION_REPORT.md
+ROUTE_MAP.py
+
+# Test artifacts
+test_compile.py
+test_ocr.py
+tests/test_results.txt
 codex_audit_result.txt
 "codex_audit_result.txt"
-codex_audit_result.txt
-recipes.json
+
+# OS
+*.bat
+*.vbs
+*~
+.DS_Store
+Thumbs.db

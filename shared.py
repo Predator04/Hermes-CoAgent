@@ -1,6 +1,7 @@
 """Shared utilities for CoAgent route modules."""
 
-import atexit, getpass, json, os, queue, shlex, socket, subprocess, sys, threading, tempfile
+import atexit, getpass, ipaddress, json, os, queue, shlex, socket, subprocess, sys, threading, tempfile
+import urllib.parse
 import urllib.request
 from pathlib import Path
 from xml.sax.saxutils import escape as _xml_escape
@@ -23,11 +24,67 @@ TRAY_PORT = 9124
 SERVER_DIR = COAGENT_DIR
 PYTHON = sys.executable
 
-SAFE_ALLOWED_ROOTS = [
-    Path.home().resolve(),
-    Path(tempfile.gettempdir()).resolve(),
-    COAGENT_DIR.resolve(),
-]
+_BLOCKED_IP_NETWORKS = tuple(
+    ipaddress.ip_network(value)
+    for value in (
+        "127.0.0.0/8",
+        "10.0.0.0/8",
+        "172.16.0.0/12",
+        "192.168.0.0/16",
+        "169.254.0.0/16",
+        "::1/128",
+        "fc00::/7",
+    )
+)
+_BLOCKED_IP_ADDRESSES = {ipaddress.ip_address("100.100.100.200")}
+
+
+def _configured_safe_roots():
+    roots = [COAGENT_DIR.resolve()]
+    raw_roots = os.environ.get("COAGENT_SAFE_ALLOWED_ROOTS", "").strip()
+    if raw_roots:
+        for raw_root in raw_roots.split(os.pathsep):
+            raw_root = raw_root.strip()
+            if not raw_root:
+                continue
+            try:
+                roots.append(Path(raw_root).expanduser().resolve())
+            except OSError:
+                print(f"[WARN] Ignoring invalid safe root: {raw_root}", file=sys.stderr)
+    return roots
+
+
+SAFE_ALLOWED_ROOTS = _configured_safe_roots()
+
+
+def _is_private_ip(value):
+    try:
+        ip = ipaddress.ip_address(str(value))
+    except ValueError:
+        return True
+    if ip in _BLOCKED_IP_ADDRESSES:
+        return True
+    if ip.is_private or ip.is_loopback or ip.is_link_local:
+        return True
+    return any(ip in network for network in _BLOCKED_IP_NETWORKS)
+
+
+def _is_private_url(url):
+    try:
+        parsed = urllib.parse.urlparse(str(url))
+        host = parsed.hostname
+        if parsed.scheme not in {"http", "https"} or not host:
+            return True
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        addresses = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    except Exception:
+        return True
+    if not addresses:
+        return True
+    for address in addresses:
+        if _is_private_ip(address[4][0]):
+            return True
+    return False
 
 DANGEROUS_CMD_CHARS = set(';&|`$(){}[]\n\r')
 

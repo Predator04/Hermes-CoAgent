@@ -299,7 +299,7 @@ def route_mobile_key():
 
 def register_routes(app, state, require_auth):
     for endpoint, view_func in list(mobile_bp.view_functions.items()):
-        if endpoint.endswith("route_mobile_page") or endpoint.endswith("route_mobile_view"):
+        if endpoint.endswith("route_mobile_page"):
             continue
         if getattr(view_func, "_hermes_auth_wrapped", False):
             continue

@@ -57,6 +57,15 @@ def register_routes(app, state, require_auth):
     @app.route("/dashboard", methods=["GET"])
     @require_auth
     def route_dashboard():
-        response = Response(DASHBOARD_HTML, mimetype="text/html")
+        # Inject Bearer token into the HTML so the JS can use it directly
+        import urllib.parse
+        import auth
+        token = auth.AUTH_TOKEN or ""
+        safe_token = urllib.parse.quote(token, safe='')
+        html = DASHBOARD_HTML.replace(
+            'const token=queryToken||sessionStorage.getItem("hermes_token")||"";',
+            f'const token="{safe_token}"||queryToken||sessionStorage.getItem("hermes_token")||"";'
+        )
+        response = Response(html, mimetype="text/html")
         response.headers["Content-Security-Policy"] = CSP
         return response

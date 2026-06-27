@@ -1,15 +1,17 @@
 """Thread-owned Patchright/Playwright browser automation routes."""
 
 import json
+import os
 import queue
 import re
 import threading
 import time
+import urllib.parse
 import uuid
 
 from flask import Blueprint, Response, jsonify
 
-from shared import _json_body, _wrap_registered_blueprint_routes
+from shared import _is_private_url, _json_body, _wrap_registered_blueprint_routes
 
 
 browser_v2_bp = Blueprint("browser_v2", __name__)
@@ -41,6 +43,17 @@ def _error(message, status=400, **extra):
     payload = {"error": message}
     payload.update(extra)
     return jsonify(payload), status
+
+
+def _navigation_url_error(url, allow_blank=False):
+    if allow_blank and url == "about:blank":
+        return None
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme not in {"http", "https"}:
+        return "url must be an http or https URL"
+    if _is_private_url(url):
+        return "url resolves to a blocked private or internal address"
+    return None
 
 
 def _as_bool(value, default=False):
@@ -231,6 +244,9 @@ def _one_shot_browser(data, callback):
     if not isinstance(url, str) or not url.strip():
         return _error("url is required")
     url = url.strip()
+    url_error = _navigation_url_error(url)
+    if url_error:
+        return _error(url_error, 403)
     sync_playwright, PlaywrightError, missing = _load_playwright()
     if missing:
         return _error(missing, 501, package="patchright-python")
@@ -356,6 +372,9 @@ def _browser_worker(browser_id, options, ready_queue):
         warning = None
         if options["url"]:
             try:
+                url_error = _navigation_url_error(options["url"], allow_blank=True)
+                if url_error:
+                    raise ValueError(url_error)
                 page.goto(options["url"], wait_until="load", timeout=options["timeout_ms"])
             except Exception as exc:
                 warning = f"{type(exc).__name__}: {exc}"
@@ -373,6 +392,10 @@ def _browser_worker(browser_id, options, ready_queue):
                     url = payload.get("url")
                     if not isinstance(url, str) or not url:
                         raise ValueError("url is required")
+                    url = url.strip()
+                    url_error = _navigation_url_error(url)
+                    if url_error:
+                        raise ValueError(url_error)
                     page.goto(
                         url,
                         wait_until=payload.get("wait_until", "load"),
@@ -473,10 +496,17 @@ def route_browser_open():
     if missing:
         return _error(missing, 501, package="playwright")
     data = _json_body()
+    url = data.get("url") or "about:blank"
+    if not isinstance(url, str):
+        return _error("url must be a string")
+    url = url.strip() or "about:blank"
+    url_error = _navigation_url_error(url, allow_blank=True)
+    if url_error:
+        return _error(url_error, 403)
     browser_id = uuid.uuid4().hex
     command_queue = queue.Queue()
     options = {
-        "url": data.get("url") or "about:blank",
+        "url": url,
         "headless": _as_bool(data.get("headless"), False),
         "width": _clamp_int(data.get("width"), 1280, 320, 7680),
         "height": _clamp_int(data.get("height"), 720, 240, 4320),
@@ -527,6 +557,13 @@ def route_browser_open():
 @browser_v2_bp.route("/browser/navigate/<browser_id>", methods=["POST"])
 def route_browser_navigate(browser_id):
     data = _json_body()
+    url = data.get("url")
+    if not isinstance(url, str) or not url.strip():
+        return _error("url is required")
+    data["url"] = url.strip()
+    url_error = _navigation_url_error(data["url"])
+    if url_error:
+        return _error(url_error, 403, browser_id=browser_id)
     try:
         return jsonify(_command(browser_id, "navigate", data, timeout=180))
     except KeyError as exc:
@@ -588,8 +625,11 @@ def route_browser_extract(browser_id):
 
 @browser_v2_bp.route("/browser/evaluate/<browser_id>", methods=["POST"])
 def route_browser_evaluate(browser_id):
+    config = _json_body()
+    if not os.environ.get("COAGENT_ENABLE_JS_EVAL") and not config.get("enable_js_eval"):
+        return _error("Browser JavaScript evaluation is disabled", 403, browser_id=browser_id)
     try:
-        return jsonify(_command(browser_id, "evaluate", _json_body(), timeout=60))
+        return jsonify(_command(browser_id, "evaluate", config, timeout=60))
     except KeyError as exc:
         return _error(str(exc), 404, browser_id=browser_id)
     except TimeoutError as exc:

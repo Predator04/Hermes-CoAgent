@@ -1,21 +1,20 @@
-# Hermes CoAgent
+# Hermes CoAgent v8.1
 
 [![CI — Syntax Check & Compile](https://github.com/Predator04/Hermes-CoAgent/actions/workflows/ci.yml/badge.svg)](https://github.com/Predator04/Hermes-CoAgent/actions/workflows/ci.yml)
 [![GitHub stars](https://img.shields.io/github/stars/Predator04/Hermes-CoAgent?style=social)](https://github.com/Predator04/Hermes-CoAgent/stargazers)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-blue.svg)](https://www.python.org/)
 
-Hermes CoAgent is a local Windows desktop automation REST API server for agents and operator dashboards. It controls mouse, keyboard, screenshots, OCR, UI Automation, browser sessions, processes, windows, files, notifications, recipes, mobile remote control, and AI agent gateway workflows from one Flask service.
+Hermes CoAgent is a **local Windows desktop automation REST API server** for AI agents and operator dashboards. It controls mouse, keyboard, screenshots, OCR, UI Automation, browser sessions, processes, windows, files, notifications, mobile remote control, and AI agent gateway workflows — all from a single Flask service.
 
-![Hermes CoAgent dashboard](docs/demo.png)
+Key highlights in v8.1:
+- 🖥️ **Goal Runner UI** — progress bars, live duration ticker, SSE events, timeline cards, activity log
+- 🔒 **Single-instance lock** — PID + port + mutex prevents duplicate servers
+- 📸 **Screenshot relay** — zero-flash PIL.ImageGrab from Session 1, ~30ms local
+- 🧪 **79-unit test suite** — comprehensive coverage across all modules
+- 🚀 **Standalone tray binary** — compiled CoAgentTray.exe with full system tray menu
 
 ## Install
-
-```bash
-pip install hermes-coagent && hermes-coagent
-```
-
-For local development:
 
 ```bash
 git clone https://github.com/Predator04/Hermes-CoAgent.git
@@ -35,9 +34,6 @@ python hermes_coagent.py --secure
 # Confirm it is alive
 curl http://127.0.0.1:9123/ping
 
-# Read your generated token locally
-TOKEN=$(cat .token)
-
 # View capabilities
 curl http://127.0.0.1:9123/version
 
@@ -52,18 +48,12 @@ curl -X POST http://127.0.0.1:9123/mouse/click \
   -H "Content-Type: application/json" \
   -d '{"x":960,"y":540,"button":"left"}'
 
-# Type text
-curl -X POST http://127.0.0.1:9123/key/type \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"text":"hello from Hermes"}'
-
 # Get a screenshot
 curl http://127.0.0.1:9123/screen/base64 \
   -H "Authorization: Bearer $TOKEN"
 ```
 
-Open the dashboard at `http://127.0.0.1:9123/dashboard`. Full API documentation is available from `http://127.0.0.1:9123/help`.
+Open the dashboard at `http://127.0.0.1:9123/dashboard`. Full API documentation at `http://127.0.0.1:9123/help`.
 
 ## Features
 
@@ -78,6 +68,7 @@ Open the dashboard at `http://127.0.0.1:9123/dashboard`. Full API documentation 
 | 🧩 Automation kits | Scheduled recipes, macro recording, GIF recording, undo, visual diff |
 | 🩺 Reliability | Watchdog, endpoint health tracking, self-healing checks, dependency helper |
 | 📱 Remote UI | Web dashboard, mobile remote view, SSE screen stream, notifications |
+| 🎯 Goal Runner | Progress bars, live duration ticker, SSE events, timeline cards, activity log |
 | 🔐 Local security | Bearer auth, CSRF helpers, rate limiting, local CORS, secret file ignores |
 
 ## Authentication
@@ -95,8 +86,6 @@ curl http://127.0.0.1:9123/agent/status \
   -H "Authorization: Bearer $TOKEN"
 ```
 
-Useful auth options:
-
 | Option | Behavior |
 |---|---|
 | `--secure` | Enable auth using `./.token`, creating it if missing |
@@ -108,41 +97,42 @@ The token file is ignored by git. Do not expose port `9123` to untrusted network
 
 ## API Docs
 
-`GET /help` returns the full endpoint catalog as JSON. Use `GET /help?format=text` for a terminal-friendly version.
+`GET /help` returns the full endpoint catalog as JSON. `GET /help?format=text` for terminal-friendly output.
 
-Common endpoints:
+Key endpoints:
 
 | Method | Path | Purpose |
 |---|---|---|
 | `GET` | `/ping` | Liveness check |
 | `GET` | `/version` | Version, modules, feature list |
 | `GET` | `/dashboard` | Operator dashboard |
-| `GET` | `/healer/status` | Self-healing status |
+| `POST` | `/goal-runner/start` | Start a goal with progress tracking |
+| `GET` | `/goal-runner/status` | Live goal progress via SSE |
 | `POST` | `/mouse/click` | Click at screen coordinates |
 | `POST` | `/key/type` | Type text |
 | `GET` | `/uia/tree` | Accessibility tree |
 | `POST` | `/agent/exec` | Run an installed agent CLI |
+| `GET` | `/screen/relay/health` | Screenshot relay health check |
 
-## Docker
+## Launch on Windows
 
-Docker packaging is planned. Hermes controls the native Windows desktop, so the supported launch path today is a local Windows Python process. A future image can still run syntax checks, docs generation, and non-desktop API tests.
+For WSL or remote access, the recommended launch method:
 
-Placeholder:
-
-```bash
-docker build -t hermes-coagent .
-docker run --rm -p 9123:9123 hermes-coagent
+```powershell
+# Launch on Session 1 (interactive desktop)
+C:\Users\Admin\Desktop\Hermes CoAgent\launch_all.ps1
 ```
+
+This starts the server on `0.0.0.0:9123` with `--secure --allow-external`.
 
 ## Development
 
 ```bash
 python -m pip install -r requirements.txt
-python test_compile.py
 python hermes_coagent.py --secure
 ```
 
-CI runs a syntax/compile smoke check on Python 3.11 and 3.12 across Windows and Ubuntu. Windows is the production runtime for desktop-control features.
+CI runs syntax/compile checks on Python 3.11 and 3.12 across Windows and Ubuntu. Windows is the production runtime for desktop-control features.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution workflow and [SECURITY.md](SECURITY.md) for security reporting.
 
