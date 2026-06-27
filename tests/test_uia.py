@@ -1,3 +1,4 @@
+"""Tests for the UIA engine and element-finding routes (uia_engine.py, routes_uia.py)."""
 import functools
 import sys
 from pathlib import Path

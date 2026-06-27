@@ -1,3 +1,4 @@
+"""Tests for the enhanced copilot goal execution routes (routes_copilot_enhanced.py)."""
 import functools
 import sys
 import threading

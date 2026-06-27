@@ -1,13 +1,12 @@
-# ================================================================
-# HERMES COAGENT v7.3 - PERFORMANCE OPTIMIZATIONS
-# ================================================================
 """
-Hermes CoAgent - Windows Desktop Co-Pilot (Flask REST + MCP server)
+Hermes CoAgent — Windows Desktop Co-Pilot (Flask REST + MCP server)
 ====================================================================
-Primary server for the CoAgent desktop automation system.
+Primary entry point for the CoAgent desktop automation system.
+Registers all modular route blueprints and starts the Flask/MCP server.
 
-v7.3: Performance and reliability optimizations on the modular route layout.
-v7.3: Codebase split into modular route files:
+v8.1: UI overhaul, screenshot relay, single-instance lock, goal runner progress UI.
+v8.0: MCP mode, cross-session memory, hybrid UIA+Vision, HUD overlay.
+v7.3: Codebase split into modular route files, performance optimizations.
   shared.py          - Shared utilities (logging, auth, path safety, SSE)
   routes_mouse.py    - Mouse, keyboard, chain, emergency
   routes_ocr.py      - Screenshots, OCR, crop, describe

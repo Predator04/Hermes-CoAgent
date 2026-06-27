@@ -1,3 +1,4 @@
+"""Tests for the agent gateway routes (routes_agent.py)."""
 import sys
 from pathlib import Path
 

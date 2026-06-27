@@ -1,3 +1,4 @@
+"""Tests for the scheduled automation recipes (routes_recipes.py)."""
 import functools
 import sys
 from pathlib import Path

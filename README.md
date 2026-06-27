@@ -114,6 +114,108 @@ Key endpoints:
 | `POST` | `/agent/exec` | Run an installed agent CLI |
 | `GET` | `/screen/relay/health` | Screenshot relay health check |
 
+## File Manifest
+
+The codebase is organized into a main server file, shared utilities, modular route handlers, a UI Automation engine, support utilities, test files, and documentation.
+
+### Core Server
+
+| File | Lines | Purpose |
+|---|---|---|
+| `hermes_coagent.py` | 1111 | Main entry point — registers all route modules and starts Flask/MCP server |
+
+### Shared Utilities
+
+| File | Lines | Purpose |
+|---|---|---|
+| `auth.py` | 340 | Token-based Bearer auth + CSRF protection |
+| `shared.py` | 553 | Common helpers: logging, JSON body parsing, path sanitization, SSE helpers |
+| `shared_fallbacks.py` | 43 | Fallback method chain system — try operations in order until one succeeds |
+| `uia_engine.py` | 1029 | Windows UI Automation tree, SOM overlays, background SendInput |
+
+### Route Modules (Python files in root)
+
+| File | Lines | Purpose |
+|---|---|---|
+| `routes_agent.py` | 1840 | Agent gateway — invoke allowlisted local AI CLIs (Codex, Claude, Gemini, OpenCode) |
+| `routes_browser.py` | 326 | Patchright/Playwright browser control (window-level) |
+| `routes_browser_final.py` | 669 | Thread-owned browser automation sessions |
+| `routes_buddy.py` | 163 | Ember Desktop Buddy integration |
+| `routes_bypass.py` | 685 | AI bypass toolkit — prompt encoding, prefill generation, model routing |
+| `routes_config.py` | 140 | Config backup and rollback |
+| `routes_copilot.py` | 461 | Pattern-based AI co-pilot actions |
+| `routes_copilot_enhanced.py` | 1521 | Multi-step goal execution with SSE progress |
+| `routes_cua.py` | 93 | Cua Driver desktop automation integration |
+| `routes_dashboard.py` | 71 | Real-time HTML operator dashboard |
+| `routes_deps.py` | 252 | Dependency inspection and pip installation |
+| `routes_diff.py` | 218 | Before/after screenshot diffing |
+| `routes_docs.py` | 581 | OpenAPI spec and Swagger UI |
+| `routes_file.py` | 180 | File operations, app launching, power management |
+| `routes_finder.py` | 346 | OCR-backed smart element finder |
+| `routes_git.py` | 323 | Git backup, commit, push, and rollback |
+| `routes_google.py` | 265 | Google Workspace (Gmail, Calendar, Drive) API bridge |
+| `routes_healer.py` | 474 | Self-healing health monitor and auto-recovery |
+| `routes_help.py` | 134 | System help and API documentation |
+| `routes_hud.py` | 494 | Transparent desktop HUD overlay |
+| `routes_logs.py` | 112 | Log analyzer with counters and patterns |
+| `routes_mcp.py` | 665 | MCP JSON-RPC bridge for CoAgent routes |
+| `routes_media.py` | 821 | Wallpaper, windows, clipboard, scheduler, macro, tunnel, voice, misc |
+| `routes_memory.py` | 531 | Persistent cross-session memory via SQLite FTS5 |
+| `routes_metrics.py` | 263 | Prometheus-style metrics endpoint |
+| `routes_mobile.py` | 310 | Mobile remote-control page and touch translation |
+| `routes_mouse.py` | 383 | Mouse, keyboard, input, and action chains |
+| `routes_obsidian.py` | 181 | Obsidian vault bridge |
+| `routes_ocr.py` | 709 | Screenshots, OCR, crop, describe, screen relay |
+| `routes_palmreject.py` | 181 | Palm and broad-touch rejection settings |
+| `routes_phone.py` | 175 | Android phone bridge via ADB |
+| `routes_plugins.py` | 263 | Hot-loadable plugin system |
+| `routes_process.py` | 360 | Process listing, control, and resource monitoring |
+| `routes_recipes.py` | 872 | Scheduled multi-step automation recipes |
+| `routes_recorder.py` | 530 | Keyboard and mouse macro recorder |
+| `routes_recorder_gif.py` | 267 | Animated GIF desktop session recorder |
+| `routes_reminders.py` | 454 | Timed reminders and push alerts |
+| `routes_stream.py` | 165 | Screen streaming for WebSocket/SSE clients |
+| `routes_telegram.py` | 445 | Telegram bot relay for Codex output delivery |
+| `routes_toast.py` | 167 | Windows toast notifications |
+| `routes_uia.py` | 616 | UIA accessibility tree, SOM overlay, element finding |
+| `routes_undo.py` | 213 | Action history tracking and undo |
+| `routes_updates.py` | 261 | Self-update and restart |
+| `routes_v63.py` | 107 | v7.3 feature routes: cursor overlay, recording, stabilization |
+| `routes_voice.py` | 277 | Voice command recognition and execution |
+| `routes_webhooks.py` | 229 | Webhook registration and async dispatch |
+| `routes_webrtc.py` | 97 | Remote desktop MJPEG stream and WebSocket frames |
+| `routes_wol.py` | 145 | Wake-on-LAN |
+
+### Support Utilities
+
+| File | Lines | Purpose |
+|---|---|---|
+| `browser_automation.py` | 279 | Undetectable browser launch via patchright |
+| `cua_mcp_bridge.py` | 122 | Transparent stdio bridge for cua-driver MCP from WSL |
+| `screenshot_relay.py` | 217 | Lightweight screenshot server for interactive desktop session |
+| `tray_icon.py` | 813 | Windows system tray icon with Dashboard/Settings/Health menu |
+| `test_tray.py` | 25 | Quick pystray import and basic test |
+| `setup.py` | 52 | Pip-installable package metadata |
+| `launch_all.ps1` | — | PowerShell launcher — starts server, relay, and tray on Session 1 |
+| `start_coagent.bat` | — | Batch file launcher for windows double-click |
+
+### Test Suite
+
+| File | Lines | Purpose |
+|---|---|---|
+| `tests/test_agent.py` | 98 | Agent gateway route tests |
+| `tests/test_bypass.py` | 217 | Bypass toolset route tests |
+| `tests/test_copilot_enhanced.py` | 164 | Enhanced copilot goal route tests |
+| `tests/test_hud.py` | 95 | HUD overlay route tests |
+| `tests/test_launch.py` | 93 | Process launch control tests |
+| `tests/test_memory.py` | 75 | Cross-session memory route tests |
+| `tests/test_recipes.py` | 107 | Scheduled recipe tests |
+| `tests/test_reminders.py` | 80 | Reminder and alert tests |
+| `tests/test_screenshot_relay.py` | 58 | Screenshot relay tests |
+| `tests/test_shared.py` | 54 | Shared utility tests |
+| `tests/test_uia.py` | 128 | UIA engine and element-finding tests |
+| `tests/test_tray.py` | — | Tray icon test (same as root test_tray.py) |
+
 ## Launch on Windows
 
 For WSL or remote access, the recommended launch method:

@@ -1,3 +1,4 @@
+"""Tests for process and application launch control."""
 import os
 import shutil
 import subprocess

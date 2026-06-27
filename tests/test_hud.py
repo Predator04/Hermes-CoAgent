@@ -1,3 +1,4 @@
+"""Tests for the desktop HUD overlay routes (routes_hud.py)."""
 import functools
 import sys
 from pathlib import Path

@@ -1,3 +1,4 @@
+"""Tests for the screenshot relay server (screenshot_relay.py)."""
 import sys
 import threading
 import urllib.error

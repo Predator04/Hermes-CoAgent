@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Setuptools metadata for Hermes CoAgent."""
+"""Setuptools metadata for Hermes CoAgent — pip-installable package definition."""
 
 from pathlib import Path
 

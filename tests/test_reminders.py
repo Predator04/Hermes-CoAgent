@@ -1,3 +1,4 @@
+"""Tests for the timed reminder and push alert routes (routes_reminders.py)."""
 import functools
 import sys
 from pathlib import Path
