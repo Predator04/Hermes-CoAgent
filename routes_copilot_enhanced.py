@@ -704,6 +704,7 @@ def _normalize_batch_actions(raw_actions, max_actions):
 
 
 def _decompose_goal(goal, max_steps, auth_header, agent=None, model=None):
+    # First try the agent gateway (Codex CLI)
     prompt = (
         "Break this goal into step-by-step actions using available CoAgent API endpoints. "
         "Return only a JSON array. Each item must be an object with action and params. "
@@ -719,24 +720,97 @@ def _decompose_goal(goal, max_steps, auth_header, agent=None, model=None):
         "prompt": prompt,
         "agent": agent or "codex",
         "model": model,
-        "timeout": 120,
+        "timeout": 60,
         "workdir": str(COAGENT_DIR),
     }
     payload = {key: value for key, value in payload.items() if value not in (None, "")}
-    response = _coagent_request("POST", "/agent/exec", payload, auth_header=auth_header, timeout=150)
-    output = ""
-    if isinstance(response, dict):
-        output = response.get("output") or response.get("stdout") or response.get("text") or ""
     try:
-        steps = _normalize_steps(_first_json_array(output), max_steps)
-        return steps, {"source": "agent_gateway", "agent_response": response}
+        response = _coagent_request("POST", "/agent/exec", payload, auth_header=auth_header, timeout=90)
+        output = ""
+        if isinstance(response, dict):
+            output = response.get("output") or response.get("stdout") or response.get("text") or ""
+        if output:
+            try:
+                steps = _normalize_steps(_first_json_array(output), max_steps)
+                return steps, {"source": "agent_gateway", "agent_response": response}
+            except Exception as exc:
+                _console(f"[copilot_enhanced] agent parse failed: {type(exc).__name__}: {exc}")
     except Exception as exc:
-        fallback = _normalize_steps(_fallback_steps(goal), max_steps)
-        return fallback, {
-            "source": "fallback",
-            "warning": f"agent decomposition failed: {type(exc).__name__}: {exc}",
-            "agent_response": response,
+        _console(f"[copilot_enhanced] agent request failed: {type(exc).__name__}: {exc}")
+
+    # Fallback: use local planner (fast, no external dependency)
+    return _local_planner(goal, max_steps), {"source": "local_planner"}
+
+
+def _local_planner(goal, max_steps):
+    """Simple local planner that converts common goals to steps without Codex."""
+    import re
+    goal_lower = goal.lower()
+    steps = []
+
+    # Detect app launch patterns
+    app_match = re.search(r'(?:open|launch|start|run)\s+(\w+(?:\s+\w+)?)', goal_lower)
+    if app_match:
+        app = app_match.group(1)
+        # Map common names to search queries
+        app_map = {
+            "telegram": "telegram",
+            "notepad": "notepad",
+            "brave": "brave",
+            "chrome": "chrome",
+            "firefox": "firefox",
+            "calculator": "calculator",
+            "spotify": "spotify",
+            "discord": "discord",
+            "explorer": "file explorer",
         }
+        query = app_map.get(app, app)
+        steps.append({"action": "launch", "params": {"query": query}})
+        steps.append({"action": "wait", "params": {"seconds": 3}})
+        steps.append({"action": "screenshot", "params": {}})
+
+    # Detect search patterns
+    search_match = re.search(r'(?:search|find|look\s+for)\s+(.+?)(?:\s+and\s+|$)', goal_lower)
+    search_target = search_match.group(1).strip() if search_match else None
+    
+    # Detect "say X" or "send X" or "type X"
+    say_match = re.search(r'(?:say|type|send|write|enter)\s+(.+?)(?:\s+to\s+|$)', goal_lower)
+    type_text = say_match.group(1).strip().strip('"').strip("'") if say_match else None
+
+    # Detect "click on X" or "press X"
+    click_match = re.search(r'(?:click|press|tap|hit)\s+(?:on\s+)?(.+)', goal_lower)
+    click_target = click_match.group(1).strip() if click_match else None
+
+    # Construct steps based on detected patterns
+    if "telegram" in goal_lower or "discord" in goal_lower:
+        if not app_match:
+            steps.append({"action": "launch", "params": {"query": "telegram" if "telegram" in goal_lower else "discord"}})
+            steps.append({"action": "wait", "params": {"seconds": 5}})
+
+    if search_target:
+        steps.append({"action": "finder_click", "params": {"text": "search" if "telegram" in goal_lower else search_target}})
+        steps.append({"action": "wait", "params": {"seconds": 1}})
+        if type_text:
+            steps.append({"action": "finder_type", "params": {"text": type_text}})
+            steps.append({"action": "key", "params": {"keys": ["enter"]}})
+    elif type_text:
+        # Just type the text
+        steps.append({"action": "click", "params": {}})
+        steps.append({"action": "type", "params": {"text": type_text}})
+        steps.append({"action": "key", "params": {"keys": ["enter"]}})
+
+    if click_target and not search_target:
+        steps.append({"action": "finder_click", "params": {"text": click_target}})
+
+    # If no patterns matched, return a generic sequence
+    if not steps:
+        steps = [
+            {"action": "screenshot", "params": {}},
+            {"action": "ocr_find", "params": {"text": goal}},
+        ]
+
+    # Cap at max_steps
+    return steps[:max_steps]
 
 
 def _plan_batch_actions(
