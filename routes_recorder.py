@@ -528,3 +528,154 @@ def register_routes(app, state, require_auth):
             _RECORDING.clear()
             _RECORDING.extend(recording)
         return jsonify({"status": "loaded", "name": path.stem, "file": str(path), "count": len(recording), "recording": recording})
+
+    # ── Macro Auto-Verification (v8.2) ──────────────────────────────────
+
+    def _verify_replay(macro_name, before_path, after_path):
+        """
+        Compare before/after screenshots and return verification result.
+        Uses PIL pixel-diff to compute difference score.
+        """
+        try:
+            from PIL import Image, ImageChops, ImageDraw
+        except ImportError:
+            return {"verified": None, "error": "Pillow not available"}
+
+        try:
+            before = Image.open(before_path).convert("RGB")
+            after = Image.open(after_path).convert("RGB")
+        except Exception as e:
+            return {"verified": None, "error": f"Failed to open images: {e}"}
+
+        if before.size != after.size:
+            after = after.resize(before.size)
+
+        try:
+            diff = ImageChops.difference(before, after)
+            bbox = diff.getbbox()
+            changed_pixels = sum(1 for p in diff.getdata() if p != (0, 0, 0))
+            total_pixels = before.width * before.height
+            diff_score = round(changed_pixels / max(total_pixels, 1), 4)
+
+            # Create highlighted diff image
+            highlighted = after.copy()
+            draw = ImageDraw.Draw(highlighted, "RGBA")
+            # Only highlight if there's a meaningful change
+            if bbox and diff_score > 0.01:
+                # Red overlay on changed regions
+                changed_data = [
+                    (255, 0, 0, 80) if p != (0, 0, 0) else (0, 0, 0, 0)
+                    for p in diff.getdata()
+                ]
+                overlay = Image.new("RGBA", before.size)
+                overlay.putdata(changed_data)
+                highlighted = Image.alpha_composite(highlighted.convert("RGBA"), overlay)
+                highlighted = highlighted.convert("RGB")
+
+            diff_dir = Path(RECORDINGS_DIR) / macro_name
+            diff_dir.mkdir(parents=True, exist_ok=True)
+            diff_path = str(diff_dir / "verification_diff.png")
+            highlighted.save(diff_path)
+
+            result = {
+                "verified": diff_score < 0.1,  # < 10% change = same screen
+                "diff_score": diff_score,
+                "changed_pixels": changed_pixels,
+                "total_pixels": total_pixels,
+                "before_path": before_path,
+                "after_path": after_path,
+                "diff_image_path": diff_path,
+            }
+
+            # Save verification result
+            ver_path = diff_dir / "verification.json"
+            ver_path.write_text(json.dumps(result, indent=2), encoding="utf-8")
+
+            return result
+        except Exception as e:
+            return {"verified": None, "error": str(e)}
+
+    @app.route("/macro/verify/<name>", methods=["GET"])
+    @require_auth
+    def route_macro_verify(name):
+        """Retrieve macro verification results."""
+        try:
+            name = _safe_recording_name(name)
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 400
+        ver_path = RECORDINGS_DIR / name / "verification.json"
+        if not ver_path.exists():
+            return jsonify({"error": "No verification found", "name": name}), 404
+        try:
+            data = json.loads(ver_path.read_text(encoding="utf-8"))
+            return jsonify(data)
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/macro/verify/<name>/run", methods=["POST"])
+    @require_auth
+    def route_macro_verify_run(name):
+        """Run verification on the most recent replay of a macro."""
+        try:
+            from routes_ocr import _capture_raw
+        except ImportError:
+            return jsonify({"error": "OCR module not available"}), 500
+
+        try:
+            name = _safe_recording_name(name)
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 400
+
+        # Take before screenshot
+        try:
+            before_data = _capture_raw(force=True)
+            before_path = str(RECORDINGS_DIR / name / "verify_before.png")
+            if isinstance(before_data, bytes):
+                with open(before_path, "wb") as f:
+                    f.write(before_data)
+            else:
+                PIL_before = ImageGrab.grab()
+                PIL_before.save(before_path)
+        except Exception as e:
+            return jsonify({"error": f"Before screenshot failed: {e}"}), 500
+
+        # Load and replay the macro
+        rec_path = RECORDINGS_DIR / f"{name}.json"
+        if not rec_path.exists():
+            return jsonify({"error": "Recording not found", "name": name}), 404
+        recording = json.loads(rec_path.read_text(encoding="utf-8"))
+        if isinstance(recording, dict):
+            recording = recording.get("recording", [])
+
+        auth_header = request.headers.get("Authorization", "")
+        results = []
+        with app.test_client() as client:
+            for event in recording:
+                delay_ms = max(0, int(event.get("delay_ms", 0)))
+                if delay_ms > 0:
+                    time.sleep(min(delay_ms / 1000.0, 5.0))
+                result = _replay_event(client, event, auth_header)
+                results.append(result)
+
+        # Take after screenshot
+        try:
+            after_data = _capture_raw(force=True)
+            after_path = str(RECORDINGS_DIR / name / "verify_after.png")
+            if isinstance(after_data, bytes):
+                with open(after_path, "wb") as f:
+                    f.write(after_data)
+            else:
+                PIL_after = ImageGrab.grab()
+                PIL_after.save(after_path)
+        except Exception as e:
+            return jsonify({"error": f"After screenshot failed: {e}"}), 500
+
+        # Verify
+        verification = _verify_replay(name, before_path, after_path)
+        return jsonify({
+            "status": "verified",
+            "name": name,
+            "events_replayed": len(recording),
+            "verification": verification,
+            "results": results[:5],  # First 5 event results
+        })

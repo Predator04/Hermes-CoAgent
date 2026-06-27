@@ -614,3 +614,45 @@ def register_routes(app, state, require_auth):
         if hasattr(ue, "_ACCEL_REGIONS"):
             return jsonify({"regions": {k: v for k, v in ue._ACCEL_REGIONS.items()}})
         return jsonify({"regions": {}})
+
+    # ── Adaptive Find (v8.2) ───────────────────────────────────────────
+    @app.route("/uia/adaptive-find", methods=["POST"])
+    @require_auth
+    def route_adaptive_find():
+        d = _json_body()
+        target = d.get("target", "")
+        screenshot = d.get("screenshot")
+        result = ue.adaptive_find(target, screenshot)
+        return jsonify(result)
+
+    # ── SoM Visual Fallback (v8.2) ─────────────────────────────────────
+    @app.route("/uia/som-fallback", methods=["GET", "POST"])
+    @require_auth
+    def route_som_fallback():
+        if request.method == "POST":
+            d = _json_body()
+            screenshot = d.get("screenshot")
+        else:
+            screenshot = request.args.get("screenshot")
+        result = ue.som_visual_fallback(screenshot)
+        return jsonify(result)
+
+    # ── Icon/Logo Click by Template Matching (v8.2) ───────────────────
+    @app.route("/icon/find", methods=["POST"])
+    @require_auth
+    def route_icon_find():
+        d = _json_body()
+        icon_path = d.get("icon_path", "")
+        threshold = float(d.get("threshold", 0.8))
+        result = ue.find_icon_by_template(icon_path, threshold)
+        return jsonify(result)
+
+    @app.route("/icon/click", methods=["POST"])
+    @require_auth
+    def route_icon_click():
+        d = _json_body()
+        icon_path = d.get("icon_path", "")
+        threshold = float(d.get("threshold", 0.8))
+        button = d.get("button", "left")
+        result = ue.click_icon_by_template(icon_path, threshold, button)
+        return jsonify(result)

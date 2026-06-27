@@ -1027,3 +1027,417 @@ if __name__ == "__main__":
         print("\n--- UIA Snapshot ---")
         snap = uia_snapshot(timeout=10)
         print(json.dumps(snap, indent=2)[:5000])
+
+
+# ── Adaptive Element Location ───────────────────────────────────────────
+
+def adaptive_find(target: str, screenshot_path: str = None) -> dict:
+    """
+    Cascade through element location strategies:
+    1. UIA exact name/automation_id
+    2. UIA control_type + class
+    3. UIA regex match
+    4. OCR text find
+    5. Vision model describe (if enabled)
+
+    Returns {'found': True, 'strategy': 'uia_exact', ...}
+    or {'found': False, 'reason': '...'}
+    """
+    if not target or not target.strip():
+        return {"found": False, "reason": "empty target"}
+
+    target = target.strip()
+
+    # Strategy 1: UIA exact name/automation_id match
+    try:
+        if UIA_READY:
+            results = uia_find_deep(target)
+            if results:
+                match = results[0]
+                rect = match.get("rect")
+                if rect and len(rect) >= 4:
+                    cx = rect[0] + rect[2] // 2
+                    cy = rect[1] + rect[3] // 2
+                    return {
+                        "found": True,
+                        "strategy": "uia_exact",
+                        "x": cx,
+                        "y": cy,
+                        "bounds": rect,
+                        "name": match.get("name"),
+                        "control_type": match.get("control_type"),
+                        "element_index": match.get("id"),
+                    }
+    except Exception as e:
+        _debug_failure("adaptive_find strategy 1 (UIA exact)", e)
+
+    # Strategy 2: UIA control_type + class match
+    try:
+        if UIA_READY:
+            from pywinauto import Desktop as PyWinDesktop
+            desktop = PyWinDesktop(backend="uia")
+            for win in desktop.windows():
+                try:
+                    name = win.element_info.name or ""
+                    if target.lower() in name.lower():
+                        rect = _uia_element_rect(win)
+                        if rect and len(rect) >= 4:
+                            cx = rect[0] + rect[2] // 2
+                            cy = rect[1] + rect[3] // 2
+                            return {
+                                "found": True,
+                                "strategy": "uia_window",
+                                "x": cx,
+                                "y": cy,
+                                "bounds": rect,
+                                "name": name,
+                                "control_type": win.element_info.control_type or "",
+                            }
+                except Exception:
+                    continue
+    except Exception as e:
+        _debug_failure("adaptive_find strategy 2 (UIA window)", e)
+
+    # Strategy 3: OCR text find
+    try:
+        img = screenshot_path
+        if img is None:
+            # Capture screenshot
+            try:
+                from PIL import ImageGrab
+                tmp = ImageGrab.grab()
+                img_path = Path(__file__).parent / "screenshots" / "adaptive_find_tmp.png"
+                img_path.parent.mkdir(parents=True, exist_ok=True)
+                tmp.save(str(img_path))
+                img = str(img_path)
+            except Exception:
+                pass
+
+        if img:
+            try:
+                import subprocess
+                result = subprocess.run(
+                    ["tesseract", img, "stdout", "-l", "eng", "--psm", "6"],
+                    capture_output=True, text=True, timeout=15
+                )
+                if target.lower() in result.stdout.lower():
+                    # Found via OCR — return approximate position from image center
+                    from PIL import Image as PILImage
+                    with PILImage.open(img) as im:
+                        w, h = im.size
+                    return {
+                        "found": True,
+                        "strategy": "ocr",
+                        "x": w // 2,
+                        "y": h // 2,
+                        "bounds": [0, 0, w, h],
+                        "reason": f"text '{target}' found on screen via OCR",
+                    }
+            except Exception as e:
+                _debug_failure("adaptive_find strategy 3 (OCR)", e)
+
+    except Exception as e:
+        _debug_failure("adaptive_find strategy 3 setup (OCR)", e)
+
+    # Strategy 4: SoM visual fallback
+    try:
+        som_result = som_visual_fallback(screenshot_path)
+        if som_result.get("found") and som_result.get("element_count", 0) > 0:
+            for elem in som_result.get("elements", []):
+                if target.lower() in elem.get("text", "").lower():
+                    eb = elem.get("bounds", [0, 0, 0, 0])
+                    cx = eb[0] + eb[2] // 2
+                    cy = eb[1] + eb[3] // 2
+                    return {
+                        "found": True,
+                        "strategy": "som",
+                        "x": cx,
+                        "y": cy,
+                        "bounds": eb,
+                        "text": elem.get("text"),
+                        "element_id": elem.get("id"),
+                    }
+    except Exception as e:
+        _debug_failure("adaptive_find strategy 4 (SoM)", e)
+
+    return {"found": False, "reason": f"could not locate '{target}' via any strategy"}
+
+
+# ── SoM Visual Fallback ─────────────────────────────────────────────────
+
+def som_visual_fallback(screenshot_path: str = None) -> dict:
+    """
+    Set-of-Marks visual fallback when UIA returns no elements.
+    1. Take screenshot (or use provided one)
+    2. Run OCR to find all text with positions
+    3. Cluster nearby text into logical groups
+    4. Assign numbers to each group
+    5. Overlay numbered badges on screenshot
+    6. Return marked screenshot + text index
+    """
+    try:
+        from PIL import Image, ImageDraw, ImageFont, ImageGrab
+
+        if screenshot_path:
+            img = Image.open(screenshot_path)
+        else:
+            img = ImageGrab.grab()
+
+        w, h = img.size
+
+        # Run OCR with tesseract to get bounding boxes
+        import subprocess, tempfile, os
+
+        tmp_png = str(Path(tempfile.gettempdir()) / "som_fallback_input.png")
+        img.save(tmp_png)
+
+        result = subprocess.run(
+            ["tesseract", tmp_png, "stdout", "-l", "eng", "--psm", "6"],
+            capture_output=True, text=True, timeout=15
+        )
+
+        text_lines = [l.strip() for l in result.stdout.split("\n") if l.strip()]
+
+        # Try tesseract with TSV output for bounding boxes
+        tsv_path = str(Path(tempfile.gettempdir()) / "som_fallback_tsv")
+        subprocess.run(
+            ["tesseract", tmp_png, tsv_path, "-l", "eng", "--psm", "6", "tsv"],
+            capture_output=True, text=True, timeout=15
+        )
+
+        elements = []
+        tsv_file = tsv_path + ".tsv"
+        if os.path.exists(tsv_file):
+            with open(tsv_file, encoding="utf-8") as f:
+                lines = f.readlines()
+            # Skip header line
+            for line in lines[1:]:
+                parts = line.strip().split("\t")
+                if len(parts) >= 12:
+                    try:
+                        level = int(parts[0])
+                        if level != 5:  # word level
+                            continue
+                        x = int(parts[6])
+                        y = int(parts[7])
+                        bw = int(parts[8])
+                        bh = int(parts[9])
+                        text = parts[11].strip()
+                        conf = float(parts[10]) if parts[10] != "-1" else 0
+                        if text and conf > 20:
+                            elements.append({
+                                "id": len(elements) + 1,
+                                "text": text,
+                                "bounds": [x, y, bw, bh],
+                                "confidence": conf,
+                            })
+                    except (ValueError, IndexError):
+                        continue
+
+            # Cluster nearby elements by Y proximity
+            if elements:
+                elements.sort(key=lambda e: (e["bounds"][1], e["bounds"][0]))
+
+                # Draw numbered overlays
+                draw = ImageDraw.Draw(img.copy(), "RGBA")
+                try:
+                    font = ImageFont.truetype("arial.ttf", 16)
+                except Exception:
+                    font = ImageFont.load_default()
+
+                marked = img.copy()
+                draw = ImageDraw.Draw(marked, "RGBA")
+                for elem in elements:
+                    eb = elem["bounds"]
+                    label = str(elem["id"])
+                    # Number badge
+                    try:
+                        bbox = draw.textbbox((0, 0), label, font=font)
+                        tw = bbox[2] - bbox[0]
+                        th = bbox[3] - bbox[1]
+                    except Exception:
+                        tw, th = 16, 16
+                    bx, by = eb[0], eb[1]
+                    draw.ellipse([bx - 10, by - 10, bx + tw + 6, by + th + 6], fill=(255, 50, 50, 220))
+                    draw.text((bx - 6, by - 4), label, fill=(255, 255, 255, 255), font=font)
+                    # Bounding box
+                    draw.rectangle(
+                        [eb[0], eb[1], eb[0] + eb[2], eb[1] + eb[3]],
+                        outline=(255, 50, 50, 180), width=2
+                    )
+
+                marked_path = str(Path(tempfile.gettempdir()) / "som_fallback_marked.png")
+                marked.save(marked_path)
+
+                try:
+                    os.remove(tmp_png)
+                    if os.path.exists(tsv_file):
+                        os.remove(tsv_file)
+                except Exception:
+                    pass
+
+                return {
+                    "found": True,
+                    "element_count": len(elements),
+                    "elements": elements[:50],  # Max 50
+                    "marked_image": marked_path,
+                    "strategy": "som_visual",
+                    "screenshot_size": [w, h],
+                }
+
+    except Exception as e:
+        _debug_failure("som_visual_fallback", e)
+
+    return {"found": False, "element_count": 0, "elements": []}
+
+
+# ── Icon/Logo Click by Image Template Matching ─────────────────────────
+
+def find_icon_by_template(icon_path: str, threshold: float = 0.8) -> dict:
+    """
+    Find an icon/logo on screen by OpenCV template matching.
+    
+    Takes a path to an image file (PNG preferred with transparency) and
+    scans the current screen for matching regions.
+    
+    Args:
+        icon_path: Path to the icon image file to find
+        threshold: Matching confidence threshold (0.0-1.0, default 0.8)
+        
+    Returns:
+        dict with 'found', 'matches' (list of {x, y, w, h, confidence}),
+        'strategy': 'template_match'
+    """
+    try:
+        import cv2
+        import numpy as np
+        from PIL import ImageGrab
+    except ImportError:
+        return {"found": False, "error": "OpenCV or numpy not available", "strategy": "template_match"}
+
+    if not icon_path or not Path(icon_path).exists():
+        return {"found": False, "error": f"Icon file not found: {icon_path}", "strategy": "template_match"}
+
+    try:
+        # Load template
+        template = cv2.imread(str(icon_path), cv2.IMREAD_UNCHANGED)
+        if template is None:
+            return {"found": False, "error": "Failed to load icon image", "strategy": "template_match"}
+
+        # If template has alpha channel, use only RGB for matching
+        if template.shape[2] == 4:
+            template_rgb = cv2.cvtColor(template, cv2.COLOR_BGRA2BGR)
+        else:
+            template_rgb = template
+
+        # Capture screen
+        screen = ImageGrab.grab()
+        screen_cv = cv2.cvtColor(np.array(screen), cv2.COLOR_RGB2BGR)
+
+        th, tw = template_rgb.shape[:2]
+        sh, sw = screen_cv.shape[:2]
+
+        if th > sh or tw > sw:
+            return {"found": False, "error": "Icon is larger than screen", "strategy": "template_match"}
+
+        # Try multiple scales for better matching
+        matches = []
+        for scale in [1.0, 0.9, 0.8, 1.1, 1.2]:
+            scaled_w = int(tw * scale)
+            scaled_h = int(th * scale)
+            if scaled_w < 10 or scaled_h < 10 or scaled_w > sw or scaled_h > sh:
+                continue
+            scaled_tpl = cv2.resize(template_rgb, (scaled_w, scaled_h))
+
+            result = cv2.matchTemplate(screen_cv, scaled_tpl, cv2.TM_CCOEFF_NORMED)
+            locations = np.where(result >= threshold)
+
+            for pt in zip(*locations[::-1]):
+                cx = pt[0] + scaled_w // 2
+                cy = pt[1] + scaled_h // 2
+                conf = float(result[pt[1], pt[0]])
+                matches.append({
+                    "x": cx,
+                    "y": cy,
+                    "w": scaled_w,
+                    "h": scaled_h,
+                    "confidence": round(conf, 4),
+                    "scale": scale,
+                })
+
+        # Non-maximum suppression — keep only the best match in overlapping regions
+        if matches:
+            matches.sort(key=lambda m: m["confidence"], reverse=True)
+            kept = []
+            for m in matches:
+                if not kept:
+                    kept.append(m)
+                    continue
+                # Check if this match overlaps too much with already-kept ones
+                mx, my, mw, mh = m["x"], m["y"], m["w"], m["h"]
+                is_duplicate = False
+                for k in kept:
+                    kx, ky, kw, kh = k["x"], k["y"], k["w"], k["h"]
+                    # Check overlap
+                    overlap_x = max(0, min(mx + mw//2, kx + kw//2) - max(mx - mw//2, kx - kw//2))
+                    overlap_y = max(0, min(my + mh//2, ky + kh//2) - max(my - mh//2, ky - kh//2))
+                    if overlap_x > 0.5 * min(mw, kw) and overlap_y > 0.5 * min(mh, kh):
+                        is_duplicate = True
+                        break
+                if not is_duplicate:
+                    kept.append(m)
+
+            return {
+                "found": True,
+                "matches": kept[:5],  # Top 5
+                "total_matches": len(matches),
+                "best_match": kept[0],
+                "strategy": "template_match",
+                "icon_path": icon_path,
+            }
+
+        return {"found": False, "matches": [], "strategy": "template_match",
+                "reason": f"No match above threshold {threshold}"}
+
+    except Exception as e:
+        _debug_failure("find_icon_by_template", e)
+        return {"found": False, "error": str(e), "strategy": "template_match"}
+
+
+def click_icon_by_template(icon_path: str, threshold: float = 0.8,
+                           button: str = "left") -> dict:
+    """
+    Find an icon/logo on screen by template matching and click it.
+    
+    Args:
+        icon_path: Path to the icon image
+        threshold: Matching confidence (0.0-1.0)
+        button: Mouse button ('left', 'right', 'middle')
+        
+    Returns dict with 'success', 'x', 'y', 'confidence', 'strategy'
+    """
+    result = find_icon_by_template(icon_path, threshold)
+    if not result.get("found"):
+        return {
+            "success": False,
+            "error": result.get("reason") or result.get("error", "Icon not found"),
+            "strategy": "template_match",
+        }
+
+    match = result["best_match"]
+    x, y = match["x"], match["y"]
+
+    # Click at center of match
+    send_mouse_move(x, y)
+    time.sleep(0.05)
+    click_result = send_mouse_click(x, y, button)
+
+    return {
+        "success": True,
+        "x": x,
+        "y": y,
+        "confidence": match["confidence"],
+        "strategy": "template_match",
+        "icon_path": icon_path,
+        "click_result": click_result,
+    }

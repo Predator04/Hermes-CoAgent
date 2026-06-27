@@ -554,6 +554,44 @@ def _start_watchdog(port):
         _WATCHDOG_THREAD = threading.Thread(target=_watchdog_loop, args=(port,), name="watchdog", daemon=True)
         _WATCHDOG_THREAD.start()
 
+
+def _start_office_mcp_servers():
+    """Background-thread init of Office MCP servers (Excel, Word, PowerPoint).
+    These mount MCP servers via npx for document automation capabilities.
+    Non-blocking — failures are logged but don't crash the server.
+    """
+    office_servers = [
+        {"name": "excel", "command": "npx", "args": ["-y", "@harismusa/excel-mcp-server"]},
+        {"name": "word", "command": "npx", "args": ["-y", "@gongrzhe/office-word-mcp-server"]},
+        {"name": "powerpoint", "command": "npx", "args": ["-y", "@gongrzhe/office-powerpoint-mcp-server"]},
+    ]
+
+    def _start_one(srv):
+        name = srv["name"]
+        try:
+            _console(f"  [Office MCP] Starting {name}...")
+            import subprocess
+            proc = subprocess.Popen(
+                [srv["command"]] + srv["args"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0,
+            )
+            # Store for later reference
+            if not hasattr(_start_office_mcp_servers, "procs"):
+                _start_office_mcp_servers.procs = {}
+            _start_office_mcp_servers.procs[name] = proc
+            _console(f"  [OK] Office MCP {name} started (PID {proc.pid})")
+        except Exception as e:
+            _console(f"  [WARN] Office MCP {name} failed: {e}")
+
+    def _start_all():
+        for srv in office_servers:
+            _start_one(srv)
+
+    t = threading.Thread(target=_start_all, name="office-mcp-init", daemon=True)
+    t.start()
+
 # -- Register route modules --------------------------------------
 from routes_mouse import register_routes as reg_mouse
 from routes_ocr import register_routes as reg_ocr
@@ -685,6 +723,22 @@ except ImportError:
     HELP_AVAILABLE = False
     _console("[WARN] routes_help.py not found")
 
+# Telemetry module
+try:
+    from telemetry import telem_bp, init_telem
+    TELEMETRY_AVAILABLE = True
+except ImportError:
+    TELEMETRY_AVAILABLE = False
+    _console("[WARN] telemetry.py not found")
+
+# Diff capture module
+try:
+    from diff_capture import diff_bp
+    DIFF_CAPTURE_AVAILABLE = True
+except ImportError:
+    DIFF_CAPTURE_AVAILABLE = False
+    _console("[WARN] diff_capture.py not found")
+
 features = {}
 
 reg_mouse(app, state, require_auth)
@@ -725,6 +779,13 @@ reg_reminders(app, state, require_auth)
 features["reminders"] = True
 reg_hud(app, state, require_auth)
 features["hud_overlay"] = True
+if TELEMETRY_AVAILABLE:
+    app.register_blueprint(telem_bp)
+    features["telemetry"] = True
+    init_telem(str(COAGENT_DIR))
+if DIFF_CAPTURE_AVAILABLE:
+    app.register_blueprint(diff_bp)
+    features["diff_capture"] = True
 if RECORDER_GIF_AVAILABLE:
     reg_recorder_gif(app, state, require_auth)
     features["recorder_gif"] = True
@@ -1072,7 +1133,7 @@ def start_server():
         return
 
     _console(f"  Server: http://{bind_host}:{port}/")
-    _console(f"  Modules: mouse ocr uia file media v63 stream process voice cua copilot buddy bypass toast deps config browser google logs recorder mcp git dashboard obsidian wol phone webrtc plugins palmreject agent memory batching reminders hud copilot_enhanced recipes healer browser_v2 mobile")
+    _console(f"  Modules: mouse ocr uia file media v63 stream process voice cua copilot buddy bypass toast deps config browser google logs recorder mcp git dashboard obsidian wol phone webrtc plugins palmreject agent memory batching reminders hud copilot_enhanced recipes healer browser_v2 mobile telemetry diff_capture office_mcp")
     gateway = getattr(state, "agent_gateway", {})
     _console(f"  Agent Gateway: default={gateway.get('default_agent') or 'none'}")
     _console()
@@ -1092,6 +1153,9 @@ def start_server():
 
     # Tray icon disabled — v7.13 doesn't need it, and schtasks /Run causes popup windows
     # _start_tray()
+
+    # Start Office MCP servers (background, non-blocking)
+    _start_office_mcp_servers()
 
     # Start auto-healing watchdog
     _start_watchdog(port)
