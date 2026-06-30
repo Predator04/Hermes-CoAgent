@@ -10,7 +10,7 @@ import ctypes
 from flask import Response, jsonify, request
 
 COAGENT_DIR = Path(__file__).parent.resolve()
-VERSION = "8.5"
+VERSION = "8.6"
 BUILD = "2026-06-27"
 AGENT_NAME = "Hermes CoAgent"
 MACROS_DIR = COAGENT_DIR / "macros"
