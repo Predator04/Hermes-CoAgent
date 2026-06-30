@@ -1,5 +1,7 @@
-"""System control routes: volume, brightness, mute, monitor, media playback."""
-import os, subprocess, ctypes, re, time
+"""System control routes: volume, brightness, mute, monitor, media playback,
+   Wi-Fi, Bluetooth, night light, audio output, DND, camera, microphone,
+   proxy, VPN, dark mode, power mode, keyboard backlight, battery info."""
+import os, subprocess, ctypes, re, time, json as _json
 from flask import jsonify, request
 from shared import _json_body, _log, _missing_field
 
@@ -285,6 +287,345 @@ def register_routes(app, state, require_auth):
             "current_brightness": brightness,
         })
 
+    # ── Wi-Fi ─────────────────────────────────────────────────
+    @app.route("/system/wifi", methods=["POST"])
+    @require_auth
+    def route_system_wifi():
+        d = _json_body()
+        action = d.get("action", "status") if d else "status"
+        if action == "status":
+            out, _, _ = _ps("netsh wlan show interfaces | findstr /R \"SSID.*:$\" | findstr /V \"BSSID\"")
+            out2, _, _ = _ps("netsh wlan show interfaces | findstr /C:\"State\"")
+            connected = "connected" in out2.lower()
+            ssid = out.split(":")[-1].strip() if ":" in out else None
+            return jsonify({"status": "ok", "connected": connected, "ssid": ssid})
+        elif action == "off":
+            _ps("netsh wlan disconnect", timeout=5)
+            _log("Wi-Fi disconnected")
+            return jsonify({"status": "ok", "wifi": "disconnected"})
+        elif action == "on":
+            _ps('netsh wlan connect name=\"' + d.get("ssid", "").replace("\"", "\\\"") + '\"', timeout=10)
+            _log(f"Wi-Fi connecting to {d.get('ssid', 'last network')}")
+            return jsonify({"status": "ok", "wifi": "connecting", "ssid": d.get("ssid")})
+        elif action == "list":
+            out, _, _ = _ps("netsh wlan show profiles | findstr /R \"^\\s*All User Profile\"")
+            networks = [l.split(":")[-1].strip() for l in out.splitlines() if ":" in l]
+            return jsonify({"status": "ok", "networks": networks})
+        return jsonify({"error": "Unknown action"}), 400
+
+    @app.route("/system/wifi/toggle", methods=["POST"])
+    @require_auth
+    def route_system_wifi_toggle():
+        # Radio toggle via netsh
+        cur, _, _ = _ps("netsh wlan show interfaces | findstr /C:\"State\"")
+        if "connected" in cur.lower() or "disconnected" in cur.lower():
+            _ps("netsh wlan disconnect", timeout=5)
+            return jsonify({"status": "ok", "wifi": "disconnected"})
+        _ps("netsh wlan connect", timeout=10)
+        return jsonify({"status": "ok", "wifi": "connecting"})
+
+    # ── Bluetooth ────────────────────────────────────────────
+    @app.route("/system/bluetooth", methods=["POST"])
+    @require_auth
+    def route_system_bluetooth():
+        d = _json_body() or {}
+        action = d.get("action", "status")
+        if action == "status":
+            out, _, _ = _ps("Get-PnpDevice -Class Bluetooth | Select-Object Status,FriendlyName | ConvertTo-Json")
+            try:
+                devices = _json.loads(out) if out else []
+                if isinstance(devices, dict):
+                    devices = [devices]
+            except Exception:
+                devices = []
+            return jsonify({"status": "ok", "devices": devices})
+        elif action == "on":
+            _ps("Enable-PnpDevice -InstanceId (Get-PnpDevice -Class Bluetooth | Where-Object {$_.Status -eq 'Error'}).InstanceId -Confirm:$false", timeout=10)
+            return jsonify({"status": "ok", "bluetooth": "enabled"})
+        elif action == "off":
+            _ps("Disable-PnpDevice -InstanceId (Get-PnpDevice -Class Bluetooth | Where-Object {$_.Status -ne 'Error'}).InstanceId -Confirm:$false", timeout=10)
+            return jsonify({"status": "ok", "bluetooth": "disabled"})
+        return jsonify({"error": "Unknown action"}), 400
+
+    # ── Night light (blue light filter) ──────────────────────
+    @app.route("/system/nightlight", methods=["POST"])
+    @require_auth
+    def route_system_nightlight():
+        d = _json_body() or {}
+        action = d.get("action", "status")
+        if action == "status":
+            out, _, _ = _ps("(Get-ItemProperty -Path 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\CloudStore\\Store\\Cache\\DefaultAccount\\$$windows.data.bluelightreduction.bluelightreductionstate\\Current' -Name 'Data' -ErrorAction SilentlyContinue).Data")
+            on = "01" in out if out else False
+            return jsonify({"status": "ok", "nightlight": on})
+        elif action in ("on", "off"):
+            _ps(f"""
+$regPath = 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\CloudStore\\Store\\Cache\\DefaultAccount\\$$windows.data.bluelightreduction.bluelightreductionstate'
+try {{
+    $cur = Get-ItemProperty -Path \"$regPath\\Current\" -Name 'Data' -ErrorAction Stop
+    $bytes = [byte[]]$cur.Data
+    $bytes[8] = {'1' if action == 'on' else '0'}
+    Set-ItemProperty -Path \"$regPath\\Current\" -Name 'Data' -Value $bytes -ErrorAction Stop
+    Set-ItemProperty -Path \"$regPath\\Current\" -Name 'Data' -Value $bytes -ErrorAction Stop
+    Start-Sleep -Milliseconds 500
+    # Try toggle via action center
+    [Windows.UI.ViewManagement.UISettings,Windows.UI.ViewManagement,ContentType=WindowsRuntime] | Out-Null
+}} catch {{ }}
+# Also try via settings shortcut
+Start-Process ms-settings:nightlight -WindowStyle Hidden
+Start-Sleep 1
+[System.Windows.Forms.SendKeys]::SendWait('{{TAB}}')
+Start-Sleep 0.3
+[System.Windows.Forms.SendKeys]::SendWait(' ')
+Start-Sleep 0.5
+[System.Windows.Forms.SendKeys]::SendWait('%(F4)')
+""", timeout=10)
+            _log(f"Nightlight {'on' if action == 'on' else 'off'}")
+            return jsonify({"status": "ok", "nightlight": action == "on"})
+        return jsonify({"error": "Unknown action"}), 400
+
+    # ── Audio output device ──────────────────────────────────
+    @app.route("/system/audio/output", methods=["POST"])
+    @require_auth
+    def route_system_audio_output():
+        d = _json_body() or {}
+        action = d.get("action", "list")
+        if action == "list":
+            out, _, _ = _ps("Get-AudioDevice -Playback | Select-Object Index,Default,Type,Name | ConvertTo-Json 2>$null")
+            try:
+                devs = _json.loads(out) if out else []
+                if isinstance(devs, dict):
+                    devs = [devs]
+            except Exception:
+                devs = []
+            return jsonify({"status": "ok", "devices": devs})
+        elif action == "set":
+            idx = d.get("index")
+            if idx is None:
+                return _missing_field("index")
+            out, _, _ = _ps(f"Set-AudioDevice -Playback -Index {int(idx)} 2>&1 | Out-String", timeout=5)
+            _log(f"Audio output set to index {idx}")
+            return jsonify({"status": "ok", "index": idx})
+        elif action == "switch":
+            # Cycle to next audio device
+            _ps("""
+$devs = Get-AudioDevice -Playback
+$current = $devs | Where-Object {$_.Default -eq $true}
+if ($current) {
+    $nextIdx = [Math]::Max(1, ($current.Index % $devs.Count) + 1)
+    Set-AudioDevice -Playback -Index $nextIdx
+    Write-Output $nextIdx
+}
+""", timeout=5)
+            return jsonify({"status": "ok", "action": "switched"})
+        return jsonify({"error": "Unknown action"}), 400
+
+    # ── Do Not Disturb / Focus Assist ─────────────────────────
+    @app.route("/system/dnd", methods=["POST"])
+    @require_auth
+    def route_system_dnd():
+        d = _json_body() or {}
+        action = d.get("action", "status")
+        if action == "status":
+            out, _, _ = _ps("(Get-ItemProperty 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Notifications\\Settings' -Name 'NUI_GUIDE_SETTING_DND_ENABLED' -ErrorAction SilentlyContinue).NUI_GUIDE_SETTING_DND_ENABLED")
+            on = out.strip() == "1"
+            return jsonify({"status": "ok", "dnd": on})
+        elif action in ("on", "off"):
+            _ps(f"New-ItemProperty -Path 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Notifications\\Settings' -Name 'NUI_GUIDE_SETTING_DND_ENABLED' -Value {'1' if action == 'on' else '0'} -PropertyType DWord -Force", timeout=5)
+            _log(f"DND {'on' if action == 'on' else 'off'}")
+            return jsonify({"status": "ok", "dnd": action == "on"})
+        return jsonify({"error": "Unknown action"}), 400
+
+    # ── Camera ─────────────────────────────────────────────────
+    @app.route("/system/camera", methods=["POST"])
+    @require_auth
+    def route_system_camera():
+        d = _json_body() or {}
+        action = d.get("action", "status")
+        # Find camera devices
+        cam_ps = "Get-PnpDevice -Class Camera -ErrorAction SilentlyContinue | Where-Object {$_.FriendlyName -notmatch 'IR|Windows Hello'} | Select-Object InstanceId,FriendlyName,Status | ConvertTo-Json"
+        if action == "status":
+            out, _, _ = _ps(cam_ps)
+            try:
+                devs = _json.loads(out) if out else []
+                if isinstance(devs, dict):
+                    devs = [devs]
+            except Exception:
+                devs = []
+            return jsonify({"status": "ok", "devices": devs})
+        elif action == "off":
+            _ps(f"$ids = Get-PnpDevice -Class Camera | Where-Object {{$_.Status -ne 'Error'}}; foreach ($d in $ids) {{ Disable-PnpDevice -InstanceId $d.InstanceId -Confirm:$false }}", timeout=10)
+            _log("Camera disabled")
+            return jsonify({"status": "ok", "camera": "off"})
+        elif action == "on":
+            _ps(f"$ids = Get-PnpDevice -Class Camera | Where-Object {{$_.Status -eq 'Error'}}; foreach ($d in $ids) {{ Enable-PnpDevice -InstanceId $d.InstanceId -Confirm:$false }}", timeout=10)
+            _log("Camera enabled")
+            return jsonify({"status": "ok", "camera": "on"})
+        return jsonify({"error": "Unknown action"}), 400
+
+    # ── Microphone privacy ─────────────────────────────────────
+    @app.route("/system/microphone", methods=["POST"])
+    @require_auth
+    def route_system_microphone():
+        d = _json_body() or {}
+        action = d.get("action", "status")
+        if action == "status":
+            out, _, _ = _ps("(Get-ItemProperty 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\microphone' -Name 'Value' -ErrorAction SilentlyContinue).Value")
+            return jsonify({"status": "ok", "mic_access": out.strip() if out else "Allow"})
+        elif action in ("deny", "allow"):
+            _ps(f"Set-ItemProperty 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\microphone' -Name 'Value' -Value '{(action == 'allow') * 'Allow' or 'Deny'}' -Force", timeout=5)
+            _log(f"Microphone access: {action}")
+            return jsonify({"status": "ok", "mic_access": action.title()})
+        return jsonify({"error": "Unknown action"}), 400
+
+    # ── Proxy ──────────────────────────────────────────────────
+    @app.route("/system/proxy", methods=["POST"])
+    @require_auth
+    def route_system_proxy():
+        d = _json_body() or {}
+        action = d.get("action", "status")
+        if action == "status":
+            out, _, _ = _ps("(Get-ItemProperty 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings' -Name 'ProxyEnable' -ErrorAction SilentlyContinue).ProxyEnable")
+            server, _, _ = _ps("(Get-ItemProperty 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings' -Name 'ProxyServer' -ErrorAction SilentlyContinue).ProxyServer")
+            enabled = out.strip() == "1"
+            return jsonify({"status": "ok", "proxy_enabled": enabled, "proxy_server": server if enabled else None})
+        elif action == "on":
+            server = d.get("server", "127.0.0.1:8080")
+            _ps(f"Set-ItemProperty 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings' -Name 'ProxyEnable' -Value 1; Set-ItemProperty 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings' -Name 'ProxyServer' -Value '{server}'", timeout=5)
+            _log(f"Proxy enabled: {server}")
+            return jsonify({"status": "ok", "proxy": "on", "server": server})
+        elif action == "off":
+            _ps("Set-ItemProperty 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings' -Name 'ProxyEnable' -Value 0", timeout=5)
+            _log("Proxy disabled")
+            return jsonify({"status": "ok", "proxy": "off"})
+        return jsonify({"error": "Unknown action"}), 400
+
+    # ── VPN ────────────────────────────────────────────────────
+    @app.route("/system/vpn", methods=["POST"])
+    @require_auth
+    def route_system_vpn():
+        d = _json_body() or {}
+        action = d.get("action", "status")
+        if action == "status":
+            out, _, _ = _ps("Get-VpnConnection | Select-Object Name,ServerAddress,ConnectionStatus | ConvertTo-Json")
+            try:
+                conns = _json.loads(out) if out else []
+                if isinstance(conns, dict):
+                    conns = [conns]
+            except Exception:
+                conns = []
+            return jsonify({"status": "ok", "connections": conns})
+        elif action == "connect":
+            name = d.get("name", "")
+            if not name:
+                return _missing_field("name")
+            _ps(f"rasdial \"{name}\"", timeout=30)
+            _log(f"VPN connecting: {name}")
+            return jsonify({"status": "ok", "vpn": "connecting", "name": name})
+        elif action == "disconnect":
+            name = d.get("name", "")
+            if name:
+                _ps(f"rasdial \"{name}\" /d", timeout=15)
+            else:
+                _ps("rasdial /d", timeout=15)
+            _log(f"VPN disconnect: {name or 'all'}")
+            return jsonify({"status": "ok", "vpn": "disconnected"})
+        return jsonify({"error": "Unknown action"}), 400
+
+    # ── Dark mode ──────────────────────────────────────────────
+    @app.route("/system/theme", methods=["POST"])
+    @require_auth
+    def route_system_theme():
+        d = _json_body() or {}
+        action = d.get("action", "status")
+        if action == "status":
+            apps, _, _ = _ps("(Get-ItemProperty 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize' -Name 'AppsUseLightTheme' -ErrorAction SilentlyContinue).AppsUseLightTheme")
+            sys, _, _ = _ps("(Get-ItemProperty 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize' -Name 'SystemUsesLightTheme' -ErrorAction SilentlyContinue).SystemUsesLightTheme")
+            return jsonify({"status": "ok", "dark_mode_apps": apps.strip() == "0", "dark_mode_system": sys.strip() == "0"})
+        elif action in ("dark", "light"):
+            val = "0" if action == "dark" else "1"
+            _ps(f"Set-ItemProperty 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize' -Name 'AppsUseLightTheme' -Value {val}; Set-ItemProperty 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize' -Name 'SystemUsesLightTheme' -Value {val}", timeout=5)
+            _log(f"Theme: {action}")
+            return jsonify({"status": "ok", "theme": action})
+        return jsonify({"error": "Unknown action"}), 400
+
+    # ── Power mode / plan ──────────────────────────────────────
+    @app.route("/system/power/mode", methods=["POST"])
+    @require_auth
+    def route_system_power_mode():
+        d = _json_body() or {}
+        action = d.get("action", "status")
+        if action == "status":
+            out, _, _ = _ps("powercfg /getactivescheme")
+            # parse GUID
+            import re as _re
+            m = _re.search(r'\{([^}]+)\}', out)
+            guid = m.group(1) if m else None
+            name = out.strip()
+            # Determine mode from GUID
+            mode_map = {
+                "381b4222-f694-41f0-9685-ff5bb260df2f": "balanced",
+                "a1841308-3541-4fab-bc81-f71556f20b4a": "power_saver",
+                "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c": "high_performance",
+                "e9a42b02-d5df-448d-aa00-03f14749eb61": "ultimate_performance",
+            }
+            mode = mode_map.get(guid, "unknown")
+            return jsonify({"status": "ok", "mode": mode, "guid": guid, "name": name})
+        elif action == "set":
+            mode_map = {
+                "balanced": "381b4222-f694-41f0-9685-ff5bb260df2f",
+                "power_saver": "a1841308-3541-4fab-bc81-f71556f20b4a",
+                "high_performance": "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c",
+                "ultimate_performance": "e9a42b02-d5df-448d-aa00-03f14749eb61",
+            }
+            mode = d.get("mode", "balanced")
+            guid = mode_map.get(mode)
+            if not guid:
+                return jsonify({"error": f"Unknown mode: {mode}. Use: balanced, power_saver, high_performance, ultimate_performance"}), 400
+            _ps(f"powercfg /setactive {guid}", timeout=5)
+            _log(f"Power mode: {mode}")
+            return jsonify({"status": "ok", "mode": mode})
+        return jsonify({"error": "Unknown action"}), 400
+
+    # ── Battery info ───────────────────────────────────────────
+    @app.route("/system/battery", methods=["GET"])
+    @require_auth
+    def route_system_battery():
+        out, _, _ = _ps("(Get-WmiObject -Class BatteryStatus -Namespace root\\WMI -ErrorAction SilentlyContinue) | Select-Object PowerOnline,RemainingCapacity,MaxCapacity,ChargeRate | ConvertTo-Json")
+        try:
+            batt = _json.loads(out) if out else {}
+            if isinstance(batt, list) and batt:
+                batt = batt[0]
+        except Exception:
+            batt = {}
+        # Fallback to system info
+        if not batt:
+            out2, _, _ = _ps("(Get-WmiObject Win32_Battery -ErrorAction SilentlyContinue) | Select-Object EstimatedChargeRemaining,BatteryStatus,EstimatedRunTime | ConvertTo-Json")
+            try:
+                batt = _json.loads(out2) if out2 else {}
+                if isinstance(batt, list) and batt:
+                    batt = batt[0]
+            except Exception:
+                batt = {}
+        return jsonify({"status": "ok", "battery": batt if batt else {"error": "No battery found"}})
+
+    # ── Keyboard backlight (OEM/laptop specific) ──────────────
+    @app.route("/system/keyboard/backlight", methods=["POST"])
+    @require_auth
+    def route_system_keyboard_backlight():
+        d = _json_body() or {}
+        action = d.get("action", "status")
+        if action == "status":
+            out, _, _ = _ps("Get-WmiObject -Namespace root/WMI -Class WmiMonitorBrightness -ErrorAction SilentlyContinue | Select-Object *")
+            has_kb = out.strip() != ""
+            # Try OEM-specific
+            out2, _, _ = _ps("(Get-WmiObject -Namespace root/WMI -Class MBI10_Device -ErrorAction SilentlyContinue) | Select-Object *")
+            return jsonify({"status": "ok", "supported": bool(has_kb or out2.strip()), "keyboard_brightness": None})
+        elif action in ("on", "off"):
+            _ps(f"nircmd setbrightness {100 if action == 'on' else 0}" if _has_nircmd() else "", timeout=5)
+            _log(f"Keyboard backlight: {action}")
+            return jsonify({"status": "ok", "keyboard_backlight": action == "on"})
+        return jsonify({"error": "Unknown action"}), 400
+
     # ── Media keys ───────────────────────────────────────────
     @app.route("/system/media/playpause", methods=["POST"])
     @require_auth
@@ -316,6 +657,11 @@ def register_routes(app, state, require_auth):
     def route_system_info():
         bright = _ps_get_brightness()
         vol, muted = _ps_get_volume()
+        # Grab a few more statuses
+        wifi_out, _, _ = _ps("netsh wlan show interfaces | findstr /C:\"State\"")
+        wifi_connected = "connected" in wifi_out.lower()
+        dnd_out, _, _ = _ps("(Get-ItemProperty 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Notifications\\Settings' -Name 'NUI_GUIDE_SETTING_DND_ENABLED' -ErrorAction SilentlyContinue).NUI_GUIDE_SETTING_DND_ENABLED")
+        theme_apps, _, _ = _ps("(Get-ItemProperty 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize' -Name 'AppsUseLightTheme' -ErrorAction SilentlyContinue).AppsUseLightTheme")
         return jsonify({
             "volume": vol,
             "muted": muted,
@@ -323,6 +669,9 @@ def register_routes(app, state, require_auth):
             "brightness_supported": bright is not None,
             "nircmd_available": _has_nircmd(),
             "monitor_brightness_available": _has_monitor_info(),
+            "wifi_connected": wifi_connected,
+            "dnd_enabled": dnd_out.strip() == "1",
+            "dark_mode": theme_apps.strip() == "0" if theme_apps else None,
         })
 
 
