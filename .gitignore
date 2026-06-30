@@ -55,11 +55,6 @@ OPTIMIZATION_REPORT.md
 ROUTE_MAP.py
 
 # Test artifacts
-test_compile.py
-test_ocr.py
-tests/test_results.txt
-codex_audit_result.txt
-"codex_audit_result.txt"
 
 # OS
 *.bat

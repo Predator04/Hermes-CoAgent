@@ -32,4 +32,4 @@ jobs:
         run: python -c "compile(open('hermes_coagent.py').read(), 'hermes_coagent.py', 'exec')"
 
       - name: Run syntax smoke test
-        run: python test_compile.py
+        run: python -c "exec(open('test_compile.py').read())"
