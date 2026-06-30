@@ -749,6 +749,9 @@ from routes_auto_ghidra import register_routes as reg_auto_ghidra
 from routes_auto_playwright import register_routes as reg_auto_playwright
 from routes_auto_apktool import register_routes as reg_auto_apktool
 from routes_auto_devika import register_routes as reg_auto_devika
+from routes_auto_plandex import register_routes as reg_auto_plandex
+from routes_auto_tmuxp import register_routes as reg_auto_tmuxp
+from routes_auto_pywinauto import register_routes as reg_auto_pywinauto
 features = {}
 
 reg_mouse(app, state, require_auth)
@@ -849,6 +852,9 @@ reg_auto_ghidra(app, state, require_auth)
 reg_auto_playwright(app, state, require_auth)
 reg_auto_apktool(app, state, require_auth)
 reg_auto_devika(app, state, require_auth)
+reg_auto_plandex(app, state, require_auth)
+reg_auto_tmuxp(app, state, require_auth)
+reg_auto_pywinauto(app, state, require_auth)
 features["web_dashboard_overhaul"] = True
 features["mcp_mode"] = True
 features["dom_mode"] = True
@@ -871,6 +877,9 @@ features["auto_ghidra"] = True
 features["auto_playwright"] = True
 features["auto_apktool"] = True
 features["auto_devika"] = True
+features["auto_plandex"] = True
+features["auto_tmuxp"] = True
+features["auto_pywinauto"] = True
 state.backup_file = backup_file
 
 # -- Core routes (stay in main) ----------------------------------
