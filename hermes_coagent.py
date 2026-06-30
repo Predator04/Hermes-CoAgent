@@ -752,6 +752,7 @@ from routes_auto_devika import register_routes as reg_auto_devika
 from routes_auto_plandex import register_routes as reg_auto_plandex
 from routes_auto_tmuxp import register_routes as reg_auto_tmuxp
 from routes_auto_pywinauto import register_routes as reg_auto_pywinauto
+from routes_auto_rapidocr import register_routes as reg_auto_rapidocr
 features = {}
 
 reg_mouse(app, state, require_auth)
@@ -855,6 +856,7 @@ reg_auto_devika(app, state, require_auth)
 reg_auto_plandex(app, state, require_auth)
 reg_auto_tmuxp(app, state, require_auth)
 reg_auto_pywinauto(app, state, require_auth)
+reg_auto_rapidocr(app, state, require_auth)
 features["web_dashboard_overhaul"] = True
 features["mcp_mode"] = True
 features["dom_mode"] = True
@@ -880,6 +882,7 @@ features["auto_devika"] = True
 features["auto_plandex"] = True
 features["auto_tmuxp"] = True
 features["auto_pywinauto"] = True
+features["auto_rapidocr"] = True
 state.backup_file = backup_file
 
 # -- Core routes (stay in main) ----------------------------------
