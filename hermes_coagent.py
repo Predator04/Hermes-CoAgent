@@ -740,6 +740,9 @@ except ImportError:
     _console("[WARN] diff_capture.py not found")
 
 from routes_auto_winchronicle import register_routes as reg_auto_winchronicle
+from routes_auto_gpt4all import register_routes as reg_auto_gpt4all
+from routes_auto_open_interpreter import register_routes as reg_auto_open_interpreter
+from routes_auto_windows_ai_toolkit import register_routes as reg_auto_windows_ai_toolkit
 features = {}
 
 reg_mouse(app, state, require_auth)
@@ -831,6 +834,9 @@ if HELP_AVAILABLE:
     reg_help(app, state, require_auth)
     features["help"] = True
 reg_auto_winchronicle(app, state, require_auth)
+reg_auto_gpt4all(app, state, require_auth)
+reg_auto_open_interpreter(app, state, require_auth)
+reg_auto_windows_ai_toolkit(app, state, require_auth)
 features["web_dashboard_overhaul"] = True
 features["mcp_mode"] = True
 features["dom_mode"] = True
@@ -844,6 +850,9 @@ features["recipe_verification"] = True
 features["reminders"] = True
 features["hud_overlay"] = True
 features["auto_winchronicle"] = True
+features["auto_gpt4all"] = True
+features["auto_open_interpreter"] = True
+features["auto_windows_ai_toolkit"] = True
 state.backup_file = backup_file
 
 # -- Core routes (stay in main) ----------------------------------
