@@ -746,6 +746,9 @@ from routes_auto_windows_ai_toolkit import register_routes as reg_auto_windows_a
 from routes_auto_powertoys import register_routes as reg_auto_powertoys
 from routes_auto_obs_studio import register_routes as reg_auto_obs_studio
 from routes_auto_ghidra import register_routes as reg_auto_ghidra
+from routes_auto_playwright import register_routes as reg_auto_playwright
+from routes_auto_apktool import register_routes as reg_auto_apktool
+from routes_auto_devika import register_routes as reg_auto_devika
 features = {}
 
 reg_mouse(app, state, require_auth)
@@ -843,6 +846,9 @@ reg_auto_windows_ai_toolkit(app, state, require_auth)
 reg_auto_powertoys(app, state, require_auth)
 reg_auto_obs_studio(app, state, require_auth)
 reg_auto_ghidra(app, state, require_auth)
+reg_auto_playwright(app, state, require_auth)
+reg_auto_apktool(app, state, require_auth)
+reg_auto_devika(app, state, require_auth)
 features["web_dashboard_overhaul"] = True
 features["mcp_mode"] = True
 features["dom_mode"] = True
@@ -862,6 +868,9 @@ features["auto_windows_ai_toolkit"] = True
 features["auto_powertoys"] = True
 features["auto_obs_studio"] = True
 features["auto_ghidra"] = True
+features["auto_playwright"] = True
+features["auto_apktool"] = True
+features["auto_devika"] = True
 state.backup_file = backup_file
 
 # -- Core routes (stay in main) ----------------------------------
