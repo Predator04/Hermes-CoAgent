@@ -598,6 +598,7 @@ from routes_ocr import register_routes as reg_ocr
 from routes_uia import register_routes as reg_uia
 from routes_file import register_routes as reg_file
 from routes_media import register_routes as reg_media
+from routes_system import register_routes as reg_system
 from routes_v63 import register_routes as reg_v63
 from routes_stream import register_routes as reg_stream
 from routes_process import register_routes as reg_process
@@ -760,6 +761,7 @@ reg_ocr(app, state, require_auth)
 reg_uia(app, state, require_auth)
 reg_file(app, state, require_auth)
 reg_media(app, state, require_auth)
+reg_system(app, state, require_auth)
 reg_v63(app, state, require_auth)
 reg_stream(app, state, require_auth)
 reg_process(app, state, require_auth)
