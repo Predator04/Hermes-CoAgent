@@ -739,9 +739,6 @@ except ImportError:
     DIFF_CAPTURE_AVAILABLE = False
     _console("[WARN] diff_capture.py not found")
 
-from routes_auto_test_tool import register_routes as reg_auto_test_tool
-from routes_auto_winchronicle import register_routes as reg_auto_winchronicle
-from routes_auto_winchronicle import register_routes as reg_auto_winchronicle
 from routes_auto_winchronicle import register_routes as reg_auto_winchronicle
 features = {}
 
@@ -833,9 +830,6 @@ if MOBILE_AVAILABLE:
 if HELP_AVAILABLE:
     reg_help(app, state, require_auth)
     features["help"] = True
-reg_auto_test_tool(app, state, require_auth)
-reg_auto_winchronicle(app, state, require_auth)
-reg_auto_winchronicle(app, state, require_auth)
 reg_auto_winchronicle(app, state, require_auth)
 features["web_dashboard_overhaul"] = True
 features["mcp_mode"] = True
@@ -849,9 +843,6 @@ features["hybrid_detection"] = True
 features["recipe_verification"] = True
 features["reminders"] = True
 features["hud_overlay"] = True
-features["auto_test_tool"] = True
-features["auto_winchronicle"] = True
-features["auto_winchronicle"] = True
 features["auto_winchronicle"] = True
 state.backup_file = backup_file
 
