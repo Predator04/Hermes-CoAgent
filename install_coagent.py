@@ -530,6 +530,68 @@ def cmd_update(args):
         return 1
 
 
+def cmd_build_exe(args):
+    """Build CoAgent.exe using PyInstaller."""
+    install_dir = Path(args.install_dir).resolve()
+    console("CoAgent EXE Builder", "bold")
+    console(f"  Source: {install_dir}")
+    console(f"  Output: {install_dir / 'dist' / 'CoAgent.exe'}\n")
+
+    # Check PyInstaller
+    r = run([sys.executable, "-m", "pip", "list"], timeout=15, capture=True)
+    if r and "pyinstaller" not in (r.stdout or "").lower():
+        console("Installing PyInstaller...")
+        run([sys.executable, "-m", "pip", "install", "pyinstaller", "-q"], timeout=120, check=False)
+
+    # Clean
+    for d in ["build", "dist"]:
+        p = install_dir / d
+        if p.exists():
+            shutil.rmtree(p, ignore_errors=True)
+    for f in install_dir.glob("*.spec"):
+        f.unlink()
+
+    # Build
+    pyinstaller = [sys.executable, "-m", "PyInstaller",
+        "--onefile", "--windowed",
+        "--name", "CoAgent",
+        "--icon", "NONE",
+        "--hidden-import", "flask",
+        "--hidden-import", "waitress",
+        "--hidden-import", "PIL",
+        "--hidden-import", "pyautogui",
+        "--hidden-import", "pygetwindow",
+        "--hidden-import", "pyperclip",
+        "--hidden-import", "pystray",
+        "--hidden-import", "mss",
+        "--hidden-import", "pytesseract",
+        "--hidden-import", "requests",
+        "--collect-all", "flask",
+        "--collect-all", "waitress",
+        "--collect-all", "PIL",
+    ]
+
+    console("Building CoAgent.exe (this takes 2-3 minutes)...")
+    r = run(pyinstaller + [str(install_dir / "hermes_coagent.py")],
+            timeout=600, check=False)
+
+    exe_path = install_dir / "dist" / "CoAgent.exe"
+    if exe_path.exists():
+        size_mb = exe_path.stat().st_size / (1024 * 1024)
+        console(f"\n✓ Build complete! CoAgent.exe ({size_mb:.0f} MB)", "green")
+        console(f"  Location: {exe_path}")
+
+        # Copy to Desktop
+        desktop = Path.home() / "Desktop" / "CoAgent.exe"
+        try:
+            shutil.copy2(exe_path, desktop)
+            console(f"  Copied to Desktop for easy access", "green")
+        except Exception:
+            pass
+        return 0
+    else:
+        console("\n✗ Build failed", "red")
+        return 1
 def cmd_uninstall(args):
     """Uninstall CoAgent."""
     install_dir = Path(args.install_dir).resolve()
@@ -645,6 +707,8 @@ Examples:
                         help="Check for and apply updates")
     parser.add_argument("--uninstall", action="store_true",
                         help="Remove CoAgent")
+    parser.add_argument("--build-exe", action="store_true",
+                        help="Build standalone CoAgent.exe with PyInstaller")
     parser.add_argument("--status", action="store_true",
                         help="Check CoAgent status")
     parser.add_argument("--version", action="store_true",
@@ -659,6 +723,8 @@ Examples:
         return cmd_update(args)
     if args.uninstall:
         return cmd_uninstall(args)
+    if args.build_exe:
+        return cmd_build_exe(args)
     if args.status:
         return cmd_status(args)
 
