@@ -62,3 +62,6 @@ ROUTE_MAP.py
 *~
 .DS_Store
 Thumbs.db
+
+# Codex CLI test artifacts
+.codex/

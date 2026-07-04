@@ -366,7 +366,17 @@ def _browser_worker(browser_id, options, ready_queue):
     command_queue = options["queue"]
     try:
         pw = sync_playwright().start()
-        browser = pw.chromium.launch(headless=options["headless"])
+        launch_kwargs = {"headless": options["headless"]}
+        executable_path = options.get("executable_path")
+        channel = options.get("channel")
+        browser_args = options.get("browser_args") or []
+        if executable_path:
+            launch_kwargs["executable_path"] = executable_path
+        if channel:
+            launch_kwargs["channel"] = channel
+        if browser_args:
+            launch_kwargs["args"] = browser_args
+        browser = pw.chromium.launch(**launch_kwargs)
         context = browser.new_context(viewport={"width": options["width"], "height": options["height"]})
         page = context.new_page()
         warning = None
@@ -511,6 +521,9 @@ def route_browser_open():
         "width": _clamp_int(data.get("width"), 1280, 320, 7680),
         "height": _clamp_int(data.get("height"), 720, 240, 4320),
         "timeout_ms": _clamp_int(data.get("timeout"), 30000, 1000, 180000),
+        "executable_path": data.get("executable"),
+        "channel": data.get("channel"),
+        "browser_args": data.get("args") or [],
         "queue": command_queue,
     }
     ready_queue = queue.Queue(maxsize=1)

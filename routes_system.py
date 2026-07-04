@@ -453,14 +453,119 @@ if ($current) {
                 devs = []
             return jsonify({"status": "ok", "devices": devs})
         elif action == "off":
-            _ps(f"$ids = Get-PnpDevice -Class Camera | Where-Object {{$_.Status -ne 'Error'}}; foreach ($d in $ids) {{ Disable-PnpDevice -InstanceId $d.InstanceId -Confirm:$false }}", timeout=10)
+            ps_off = "$ids = Get-PnpDevice -Class Camera | Where-Object {$_.Status -ne 'Error'}; foreach ($d in $ids) { Disable-PnpDevice -InstanceId $d.InstanceId -Confirm:$false }"
+            _ps(ps_off, timeout=10)
             _log("Camera disabled")
             return jsonify({"status": "ok", "camera": "off"})
         elif action == "on":
-            _ps(f"$ids = Get-PnpDevice -Class Camera | Where-Object {{$_.Status -eq 'Error'}}; foreach ($d in $ids) {{ Enable-PnpDevice -InstanceId $d.InstanceId -Confirm:$false }}", timeout=10)
+            ps_on = "$ids = Get-PnpDevice -Class Camera | Where-Object {$_.Status -eq 'Error'}; foreach ($d in $ids) { Enable-PnpDevice -InstanceId $d.InstanceId -Confirm:$false }"
+            _ps(ps_on, timeout=10)
             _log("Camera enabled")
             return jsonify({"status": "ok", "camera": "on"})
         return jsonify({"error": "Unknown action"}), 400
+
+    @app.route("/system/camera/snapshot", methods=["POST"])
+    @require_auth
+    def route_camera_snapshot():
+        """Take a photo with the webcam and save it."""
+        import subprocess, tempfile, base64
+        from pathlib import Path
+        
+        shots_dir = COAGENT_DIR / "camera_shots"
+        shots_dir.mkdir(exist_ok=True)
+        fname = f"snapshot_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
+        path = shots_dir / fname
+        
+        # Use PowerShell MediaCapture via a minimal C#/PS script
+        ps_script = '''
+Add-Type -AssemblyName System.Drawing
+Add-Type -AssemblyName System.Windows.Forms
+
+# Create a temporary Windows Forms form with a PictureBox
+$form = New-Object System.Windows.Forms.Form
+$form.WindowState = "Minimized"
+$form.ShowInTaskbar = $false
+$form.Opacity = 0
+
+$picBox = New-Object System.Windows.Forms.PictureBox
+$picBox.Dock = "Fill"
+$form.Controls.Add($picBox)
+
+$timer = New-Object System.Windows.Forms.Timer
+$timer.Interval = 500
+$timer.Add_Tick({
+    $timer.Stop()
+    $form.Close()
+})
+
+$capture = New-Object System.Windows.Forms.Timer
+$capture.Interval = 100
+$capture.Add_Tick({
+    $capture.Stop()
+    # Use native webcam capture via Windows.Media.Capture
+})
+
+$form.Add_Shown({
+    $form.Activate()
+    $timer.Start()
+})
+
+[System.Windows.Forms.Application]::Run($form)
+'''
+        # Simpler: use PowerShell's built-in camera access via Windows.Media.Capture
+        # Fall back to a simple Windows.Media.Capture approach
+        try:
+            # Use ffmpeg if available (most reliable)
+            ffmpeg_paths = [
+                r"C:\ffmpeg\bin\ffmpeg.exe",
+                r"C:\Program Files\ffmpeg\bin\ffmpeg.exe",
+            ]
+            ffmpeg = None
+            for fp in ffmpeg_paths:
+                if Path(fp).exists():
+                    ffmpeg = fp
+                    break
+            if not ffmpeg:
+                # Check PATH
+                import shutil
+                ffmpeg = shutil.which("ffmpeg")
+            
+            if ffmpeg:
+                cmd = [ffmpeg, "-f", "dshow", "-i", "video=@device_cm_", 
+                       "-frames:v", "1", "-q:v", "3", str(path), "-y"]
+                # Try common camera names
+                import subprocess
+                for cam_name in ["USB Camera", "HD Camera", "Integrated Camera", "USB2.0 Camera"]:
+                    cmd[4] = f"video={cam_name}"
+                    r = subprocess.run(cmd, capture_output=True, timeout=10)
+                    if path.exists() and path.stat().st_size > 1000:
+                        break
+                else:
+                    # Try enumerating with ffmpeg -list_devices
+                    enum = subprocess.run(
+                        [ffmpeg, "-list_devices", "true", "-f", "dshow", "-i", "dummy"],
+                        capture_output=True, text=True, timeout=10
+                    )
+                    _log(f"FFmpeg devices: {enum.stderr[:500]}")
+                    return jsonify({"success": False, "error": "Could not find camera via ffmpeg"}), 500
+            
+            if path.exists() and path.stat().st_size > 1000:
+                _log(f"Camera snapshot saved: {fname} ({path.stat().st_size} bytes)")
+                with open(path, "rb") as f:
+                    b64 = base64.b64encode(f.read()).decode()
+                return jsonify({
+                    "success": True,
+                    "path": str(path),
+                    "filename": fname,
+                    "size_bytes": path.stat().st_size,
+                    "image": b64,
+                    "timestamp": datetime.now().isoformat(),
+                })
+            else:
+                return jsonify({"success": False, "error": "FFmpeg not available or capture failed"}), 500
+        except Exception as e:
+            _log(f"Camera snapshot error: {e}")
+            return jsonify({"success": False, "error": str(e)}), 500
 
     # ── Microphone privacy ─────────────────────────────────────
     @app.route("/system/microphone", methods=["POST"])
