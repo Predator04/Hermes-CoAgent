@@ -760,6 +760,8 @@ from routes_auto_cognee import register_routes as reg_auto_cognee
 from routes_auto_sharpdxscreencapture import register_routes as reg_auto_sharpdxscreencapture
 from routes_auto_excel_mcp_server import register_routes as reg_auto_excel_mcp_server
 from routes_auto_photoshop_mcp import register_routes as reg_auto_photoshop_mcp
+from routes_auto_komorebi import register_routes as reg_auto_komorebi
+from routes_auto_copyq import register_routes as reg_auto_copyq
 features = {}
 
 reg_mouse(app, state, require_auth)
@@ -872,6 +874,8 @@ reg_auto_cognee(app, state, require_auth)
 reg_auto_sharpdxscreencapture(app, state, require_auth)
 reg_auto_excel_mcp_server(app, state, require_auth)
 reg_auto_photoshop_mcp(app, state, require_auth)
+reg_auto_komorebi(app, state, require_auth)
+reg_auto_copyq(app, state, require_auth)
 features["web_dashboard_overhaul"] = True
 features["mcp_mode"] = True
 features["dom_mode"] = True
@@ -902,6 +906,8 @@ features["auto_cognee"] = True
 features["auto_sharpdxscreencapture"] = True
 features["auto_excel_mcp_server"] = True
 features["auto_photoshop_mcp"] = True
+features["auto_komorebi"] = True
+features["auto_copyq"] = True
 state.backup_file = backup_file
 
 # -- Core routes (stay in main) ----------------------------------
