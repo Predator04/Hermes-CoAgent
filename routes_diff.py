@@ -25,12 +25,23 @@ def _new_id():
 
 
 def _capture_image():
-    from PIL import ImageGrab
+    import mss as _mss_mod
+    from PIL import Image as _PILImage
 
     try:
-        image = ImageGrab.grab(all_screens=True)
+        with _mss_mod.mss() as _sct:
+            _mon = _sct.monitors[0]
+            _sct_img = _sct.grab(_mon)
+            image = _PILImage.frombytes("RGB", _sct_img.size, _sct_img.rgb)
     except TypeError:
-        image = ImageGrab.grab()
+        try:
+            with _mss_mod.mss() as _sct:
+                _mon = _sct.monitors[1] if len(_sct.monitors) > 1 else _sct.monitors[0]
+                _sct_img = _sct.grab(_mon)
+                image = _PILImage.frombytes("RGB", _sct_img.size, _sct_img.rgb)
+        except Exception:
+            from PIL import ImageGrab
+            image = ImageGrab.grab()
     return image.convert("RGB")
 
 

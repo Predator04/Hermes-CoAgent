@@ -139,7 +139,9 @@ def _grab_screen_mss(force=False, monitor_index=0):
         return b""
 
 def _screenshot_dxcam(force=False, monitor_index=0):
-    """Capture via DXCam and return JPEG bytes, or None on failure."""
+    """Capture via DXCam and return JPEG bytes, or None on failure.
+    Handles monitor_index=0 (all monitors/virtual screen) by falling through
+    to MSS/PIL which handle virtual screen capture correctly."""
     global HAS_DXCAM, _DXCAM_MODULE
     if not HAS_DXCAM and _DXCAM_MODULE is None:
         try:
@@ -154,6 +156,10 @@ def _screenshot_dxcam(force=False, monitor_index=0):
     if _DXCAM_MODULE in (None, "__failed__") or not HAS_PIL:
         return None
     monitor_index = _coerce_monitor_index(monitor_index)
+    # monitor_index=0 means "all monitors" (virtual screen) — DXCAM can only capture
+    # individual monitors, not the virtual screen. Fall through so MSS/PIL can handle it.
+    if monitor_index == 0:
+        return None
     output_idx = max(0, monitor_index - 1)
     try:
         with _DXCAM_LOCK:
@@ -290,7 +296,9 @@ def _ensure_png_bytes(data):
         return data
 
 def _capture_raw(force=False, monitor_index=0):
-    """Capture full screen as PNG bytes through the configured fallback chain."""
+    """Capture full screen as PNG bytes through the configured fallback chain.
+    Flash-causing methods (PIL ImageGrab, Win32 BitBlt) are only used as
+    absolute last resort and gated behind HERMES_COAGENT_ALLOW_FLASH_CAPTURE=1."""
     global _last_screenshot_time, _last_screenshot_raw, _PIXEL_HASH_CACHE
     monitor_index = _coerce_monitor_index(monitor_index)
     now = time.time()
@@ -304,8 +312,11 @@ def _capture_raw(force=False, monitor_index=0):
         screenshot_chain = FallbackChain("screenshot")
         screenshot_chain.add_method("dxcam", _screenshot_dxcam, force, monitor_index)
         screenshot_chain.add_method("mss", _screenshot_mss, force, monitor_index)
-        screenshot_chain.add_method("pil", _screenshot_pil, force, monitor_index)
-        screenshot_chain.add_method("win32", _screenshot_win32, force, monitor_index)
+        # PIL and Win32 cause window flashes — only use if explicitly enabled
+        if os.environ.get("HERMES_COAGENT_ALLOW_FLASH_CAPTURE", "").lower() in ("1", "true", "yes"):
+            screenshot_chain.add_method("pil", _screenshot_pil, force, monitor_index)
+            screenshot_chain.add_method("win32", _screenshot_win32, force, monitor_index)
+        # PowerShell relay is the last resort fallback
         screenshot_chain.add_method("powershell_relay", _screenshot_relay, force, monitor_index)
         try:
             img_bytes = _ensure_png_bytes(screenshot_chain.execute())

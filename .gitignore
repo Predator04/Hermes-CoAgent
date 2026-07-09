@@ -1,67 +1,15 @@
-# Python
+# Runtime data files (auto-generated per-session)
+rag_index.json
+semantic_memory.json
 *.pyc
 __pycache__/
-*.pyo
 *.egg-info/
 dist/
 build/
-*.spec
-
-# Runtime
-*.log
-agent_logs/
-screenshots/
-screen_temp*.png
-coagent.pid
-hud_status.json
-
-# Config & Secrets
+.venv/
+venv/
+env/
+*.secret
 *.token
-.token_*
-.env*
-telegram_config.json
-agent_providers_config.json
-config.json
-google_token.json
-google_credentials.json
-client_secret*.json
-recipes.json
-
-# Keys & Certs
-*.pem
-*.key
-*.pfx
-*.p12
-
-# DB
-*.sqlite
-*.db
-*.bak
-*.tmp
-
-# Generated / Temp
-macros/
-*.apk
-test_mcp*.py
-.codex_path
-nul
-screenshot_v73.jpg
-screenshot_relay.py
-
-# Build docs / plans
-BUILD_*.md
-CODEX_AUDIT_RESULTS.md
-OPTIMIZATION_REPORT.md
-ROUTE_MAP.py
-
-# Test artifacts
-
-# OS
-*.bat
-*.vbs
-*~
-.DS_Store
-Thumbs.db
-
-# Codex CLI test artifacts
-.codex/
+config.local.yaml
+*.log

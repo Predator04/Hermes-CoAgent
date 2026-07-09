@@ -247,6 +247,145 @@ def register_routes(app, state, require_auth):
         return _mouse_action("click", int(d.get("x", 0)), int(d.get("y", 0)),
                              d.get("button", "left"), d.get("background", True), state)
 
+    @app.route("/mouse/click/focus", methods=["POST"])
+    @require_auth
+    def route_mouse_click_focus():
+        """Click with focus transfer. Uses pyautogui.click() which naturally transfers window focus
+        to the clicked window, enabling subsequent keyboard input to go there.
+        NOTE: MOUSEEVENTF_ABSOLUTE via ctypes requires normalized 0-65535 coordinates, not raw pixels.
+        pyautogui handles this correctly internally, so we use it directly."""
+        d = _json_body()
+        x = int(d.get("x", 0))
+        y = int(d.get("y", 0))
+        button = d.get("button", "left")
+        if state and state.emergency_stop:
+            return jsonify({"error": "Emergency stop engaged"}), 503
+        try:
+            pyautogui.click(x, y, button=button)
+        except Exception as e:
+            _log(f"Focus-click pyautogui failed: {e}")
+            return jsonify({"error": str(e)}), 500
+        if state:
+            state.last_action_time = time.time()
+        _log(f"Mouse focus-click ({x},{y}) button={button}")
+        return jsonify({"status": "ok", "action": "focus_click", "x": x, "y": y, "button": button})
+
+    @app.route("/window/list", methods=["GET"])
+    @require_auth
+    def route_window_list():
+        """List all visible windows on the desktop with their titles and PIDs."""
+        try:
+            windows = []
+            def _enum_cb(hwnd, _lparam):
+                length = ctypes.windll.user32.GetWindowTextLengthW(hwnd)
+                if length > 0:
+                    buff = ctypes.create_unicode_buffer(length + 1)
+                    ctypes.windll.user32.GetWindowTextW(hwnd, buff, length + 1)
+                    title = buff.value
+                    if title.strip():
+                        pid = ctypes.c_ulong()
+                        ctypes.windll.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+                        rect = ctypes.wintypes.RECT()
+                        ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(rect))
+                        visible = ctypes.windll.user32.IsWindowVisible(hwnd)
+                        windows.append({
+                            "hwnd": hwnd,
+                            "pid": pid.value,
+                            "title": title[:200],
+                            "visible": bool(visible),
+                            "rect": {"left": rect.left, "top": rect.top, "right": rect.right, "bottom": rect.bottom}
+                        })
+                return True
+            WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_int, ctypes.c_int)
+            ctypes.windll.user32.EnumWindows(WNDENUMPROC(_enum_cb), 0)
+            return jsonify({"status": "ok", "count": len(windows), "windows": windows})
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/window/focus", methods=["POST"])
+    @require_auth
+    def route_window_focus():
+        """Bring a window to the foreground by PID or title substring match.
+        POST body: {"pid": 1234} or {"title": "Shopify"} or {"name": "msedge"}"""
+        d = _json_body()
+        target_pid = d.get("pid")
+        target_title = d.get("title")
+        target_name = d.get("name")
+        if not any([target_pid, target_title, target_name]):
+            return jsonify({"error": "Provide pid, title, or name"}), 400
+        try:
+            windows = []
+            def _enum_cb(hwnd, _lparam):
+                length = ctypes.windll.user32.GetWindowTextLengthW(hwnd)
+                if length > 0:
+                    buff = ctypes.create_unicode_buffer(length + 1)
+                    ctypes.windll.user32.GetWindowTextW(hwnd, buff, length + 1)
+                    title = buff.value
+                    if title.strip():
+                        pid = ctypes.c_ulong()
+                        ctypes.windll.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+                        windows.append((hwnd, title, pid.value))
+                return True
+            WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_int, ctypes.c_int)
+            ctypes.windll.user32.EnumWindows(WNDENUMPROC(_enum_cb), 0)
+
+            matches = []
+            for hwnd, title, pid in windows:
+                if target_pid and pid == target_pid:
+                    matches.append((hwnd, title, pid))
+                elif target_title and target_title.lower() in title.lower():
+                    matches.append((hwnd, title, pid))
+                elif target_name:
+                    proc_name = ""
+                    try:
+                        import psutil
+                        proc_name = psutil.Process(pid).name().lower()
+                    except Exception:
+                        pass
+                    if target_name.lower() in title.lower() or target_name.lower() in proc_name:
+                        matches.append((hwnd, title, pid))
+
+            if not matches:
+                return jsonify({"error": f"No window found matching criteria", "windows_found": len(windows)}), 404
+
+            hwnd, title, pid = matches[0]
+
+            # Suppress known overlay/blocker windows that can prevent focus transfer
+            overlay_keywords = ["Windows Input Experience", "NVIDIA GeForce Overlay"]
+            for ohwnd, otitle, opid in windows:
+                for kw in overlay_keywords:
+                    if kw.lower() in otitle.lower():
+                        ctypes.windll.user32.ShowWindow(ohwnd, 0)  # SW_HIDE
+                        _log(f"Hidden overlay: '{otitle[:60]}' HWND={ohwnd}")
+                        break
+
+            time.sleep(0.1)
+            SW_RESTORE = 9
+            SW_SHOW = 5
+            ctypes.windll.user32.ShowWindow(hwnd, SW_RESTORE)
+            time.sleep(0.05)
+            ctypes.windll.user32.ShowWindow(hwnd, SW_SHOW)
+            time.sleep(0.05)
+            ctypes.windll.user32.SetForegroundWindow(hwnd)
+            time.sleep(0.1)
+            ctypes.windll.user32.BringWindowToTop(hwnd)
+            time.sleep(0.05)
+
+            fg_hwnd = ctypes.windll.user32.GetForegroundWindow()
+            success = (fg_hwnd == hwnd)
+            _log(f"Window focus: '{title}' PID={pid} HWND={hwnd} success={success}")
+            return jsonify({
+                "status": "ok",
+                "action": "window_focus",
+                "hwnd": hwnd,
+                "pid": pid,
+                "title": title[:200],
+                "foreground_matches": success,
+                "total_matches": len(matches)
+            })
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
     @app.route("/mouse/click/smart", methods=["POST"])
     @require_auth
     def route_mouse_click_smart():

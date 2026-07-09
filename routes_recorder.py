@@ -634,7 +634,12 @@ def register_routes(app, state, require_auth):
                 with open(before_path, "wb") as f:
                     f.write(before_data)
             else:
-                PIL_before = ImageGrab.grab()
+                import mss as _mss_mod
+                from PIL import Image as _PILImage
+                with _mss_mod.mss() as _sct:
+                    _mon = _sct.monitors[0]
+                    _sct_img = _sct.grab(_mon)
+                    PIL_before = _PILImage.frombytes("RGB", _sct_img.size, _sct_img.rgb)
                 PIL_before.save(before_path)
         except Exception as e:
             return jsonify({"error": f"Before screenshot failed: {e}"}), 500
@@ -665,7 +670,12 @@ def register_routes(app, state, require_auth):
                 with open(after_path, "wb") as f:
                     f.write(after_data)
             else:
-                PIL_after = ImageGrab.grab()
+                import mss as _mss_mod
+                from PIL import Image as _PILImage
+                with _mss_mod.mss() as _sct:
+                    _mon = _sct.monitors[0]
+                    _sct_img = _sct.grab(_mon)
+                    PIL_after = _PILImage.frombytes("RGB", _sct_img.size, _sct_img.rgb)
                 PIL_after.save(after_path)
         except Exception as e:
             return jsonify({"error": f"After screenshot failed: {e}"}), 500

@@ -11,8 +11,9 @@ Features:
   POST /auth/token    Regenerates token (requires current token)
   GET /csrf-token     Returns a CSRF token for browser forms
 
-Token is saved to COAGENT_DIR/.token on first --secure launch.
+Token is saved to COAGENT_DIR/.token on first --secure launch (or when --token=KEY is specified).
 Subsequent --secure launches read the saved token.
+When HERMES_COAGENT_TOKEN env var is used with --secure, the token is NOT persisted to disk.
 """
 import os, sys, secrets, functools, hashlib, time, threading
 from flask import jsonify, request
@@ -20,7 +21,6 @@ from pathlib import Path
 
 AUTH_TOKEN = None
 AUTH_ENABLED = False
-SETUP_REQUIRED = False
 COAGENT_DIR = None
 
 # CSRF token store — maps token_hash -> expiry timestamp
@@ -52,15 +52,18 @@ def _prune_dashboard_handoffs(now=None):
 
 
 def csrf_check():
-    """Check CSRF token from X-CSRF-Token header."""
+    """Check CSRF token from X-CSRF-Token header.
+
+    Atomically pops the token from the store to avoid TOCTOU race where
+    two concurrent requests could both pass the same check.
+    """
     token = request.headers.get("X-CSRF-Token") or ""
     if not token:
         return False
     token_hash = hashlib.sha256(token.encode()).hexdigest()
-    if token_hash in _CSRF_TOKENS and _CSRF_TOKENS[token_hash] > time.time():
-        _CSRF_TOKENS.pop(token_hash, None)  # Single-use
-        return True
-    return False
+    # Atomic check-and-remove: pop returns expiry or None
+    expiry = _CSRF_TOKENS.pop(token_hash, None)
+    return expiry is not None and expiry > time.time()
 
 
 def csrf_protect(f):
@@ -96,11 +99,18 @@ def _load_token():
 
 
 def _save_token(token):
+    """Persist token to disk with best-effort restrictive permissions.
+    
+    NOTE: On Windows, os.chmod for Unix permission bits is a no-op.
+    Windows uses ACLs (icacls). For strict protection on Windows:
+        icacls "<COAGENT_DIR>\\.token" /inheritance:r /grant:r "%USERNAME%:R"
+    """
     tp = _token_path()
     if tp:
         tp.write_text(token, encoding="utf-8")
         try:
-            os.chmod(tp, 0o600)
+            if os.name != "nt":
+                os.chmod(tp, 0o600)
         except OSError:
             pass
         old_suffix = tp.with_suffix(".token_tok")
@@ -122,23 +132,27 @@ def _token_from_password(password):
 
 
 def init_auth(port=9123, coag_dir=None):
-    global AUTH_TOKEN, AUTH_ENABLED, SETUP_REQUIRED, COAGENT_DIR
+    global AUTH_TOKEN, AUTH_ENABLED, COAGENT_DIR
     COAGENT_DIR = coag_dir
-    SETUP_REQUIRED = False
     if COAGENT_DIR:
         old_suffix = COAGENT_DIR / ".token_tok"
         if old_suffix.exists():
             old_suffix.unlink()
 
     token = None
+    token_from_arg = False
     for arg in sys.argv:
         if arg.startswith("--token="):
             token = arg.split("=", 1)[1]
+            token_from_arg = bool(token)
             break
     if not token:
         token = os.environ.get("HERMES_COAGENT_TOKEN", "")
 
-    if "--secure" in sys.argv:
+    secure = "--secure" in sys.argv
+    allow_external = "--allow-external" in sys.argv
+
+    if secure:
         if not token:
             saved = _load_token()
             if saved:
@@ -147,12 +161,21 @@ def init_auth(port=9123, coag_dir=None):
                 token = generate_token()
                 print(f"[Auth] Generated token and saved it to {_token_path()}")
         else:
-            _save_token(token)
+            # Only persist to disk when token came from --token= arg, not env
+            if token_from_arg:
+                _save_token(token)
+            else:
+                print(f"[Auth] --secure with env-provided token: not persisting to disk")
         AUTH_ENABLED = True
         AUTH_TOKEN = token
     elif token:
         AUTH_ENABLED = True
         AUTH_TOKEN = token
+
+    # Enforce --allow-external requires --secure
+    if allow_external and not (secure and AUTH_ENABLED):
+        print("[Auth] FATAL: --allow-external requires --secure. Refusing to start.")
+        sys.exit(1)
 
     if AUTH_ENABLED:
         print("[Auth] Auth enabled")
@@ -168,9 +191,10 @@ def require_auth(f):
     @functools.wraps(f)
     def wrapper(*args, **kwargs):
         if not AUTH_ENABLED:
-            if SETUP_REQUIRED:
-                return jsonify({"error": "Setup required", "setup": "/setup"}), 403
             return f(*args, **kwargs)
+        # Fail closed if auth is enabled but token is empty
+        if not AUTH_TOKEN:
+            return jsonify({"error": "Server auth misconfigured (empty token)"}), 500
         auth_header = request.headers.get("Authorization", "")
         if not auth_header.startswith("Bearer "):
             return jsonify({"error": "Unauthorized - provide Bearer token"}), 401
@@ -191,13 +215,12 @@ def register_auth_routes(app):
         return jsonify({
             "configured": configured,
             "auth": AUTH_ENABLED,
-            "setup_required": SETUP_REQUIRED,
         })
 
     @app.route("/setup", methods=["POST"])
     def setup_first_boot():
         """Configure the first token from a user-chosen password."""
-        global AUTH_TOKEN, AUTH_ENABLED, SETUP_REQUIRED
+        global AUTH_TOKEN, AUTH_ENABLED
         if _load_token():
             return jsonify({"error": "Already configured"}), 403
         data = request.get_json(silent=True) or {}
@@ -208,7 +231,6 @@ def register_auth_routes(app):
         _save_token(token)
         AUTH_TOKEN = token
         AUTH_ENABLED = True
-        SETUP_REQUIRED = False
         return jsonify({
             "status": "configured",
             "token": token,

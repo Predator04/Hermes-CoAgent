@@ -32,8 +32,12 @@ _stats = {"key_frames": 0, "diff_frames": 0, "total_bytes_saved": 0}
 def _capture_screen():
     """Capture the full screen as a PIL Image."""
     try:
-        from PIL import ImageGrab
-        return ImageGrab.grab()
+        import mss as _mss_mod
+        from PIL import Image as _PILImage
+        with _mss_mod.mss() as _sct:
+            _mon = _sct.monitors[0]
+            _sct_img = _sct.grab(_mon)
+            return _PILImage.frombytes("RGB", _sct_img.size, _sct_img.rgb)
     except Exception as e:
         _LOGGER.error("Screen capture failed: %s", e)
         return None

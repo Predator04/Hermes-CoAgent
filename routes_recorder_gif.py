@@ -80,7 +80,12 @@ def _capture_loop(recording_id, fps, max_seconds, bbox):
                 _STOP_EVENT.wait(min(next_capture - now, 0.2))
                 continue
             try:
-                image = ImageGrab.grab(bbox=bbox).convert("RGB")
+                import mss as _mss_mod
+                from PIL import Image as _PILImage
+                with _mss_mod.mss() as _sct:
+                    _mon = _sct.monitors[0]
+                    _sct_img = _sct.grab(_mon)
+                    image = _PILImage.frombytes("RGB", _sct_img.size, _sct_img.rgb).crop(bbox).convert("RGB")
                 with _LOCK:
                     if not _ACTIVE or _ACTIVE.get("recording_id") != recording_id:
                         break

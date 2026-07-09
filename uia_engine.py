@@ -683,11 +683,14 @@ def per_window_som(window_title: str = None) -> dict:
         if not windows:
             return {"success": False, "error": "No suitable windows found"}
 
-        # Grab full screenshot once
+        # Grab full screenshot once (MSS — no window flash)
         from PIL import Image, ImageDraw, ImageFont
         try:
-            from PIL import ImageGrab
-            img_full = ImageGrab.grab()
+            import mss as _mss_mod
+            with _mss_mod.mss() as _sct:
+                _mon = _sct.monitors[0]
+                _sct_img = _sct.grab(_mon)
+                img_full = Image.frombytes("RGB", _sct_img.size, _sct_img.rgb)
             screen_bytes = BytesIO()
             img_full.save(screen_bytes, format="PNG")
             screen_bytes = screen_bytes.getvalue()
@@ -1102,10 +1105,13 @@ def adaptive_find(target: str, screenshot_path: str = None) -> dict:
     try:
         img = screenshot_path
         if img is None:
-            # Capture screenshot
+            # Capture screenshot (MSS — no window flash)
             try:
-                from PIL import ImageGrab
-                tmp = ImageGrab.grab()
+                import mss as _mss_mod
+                with _mss_mod.mss() as _sct:
+                    _mon = _sct.monitors[0]
+                    _sct_img = _sct.grab(_mon)
+                    tmp = Image.frombytes("RGB", _sct_img.size, _sct_img.rgb)
                 img_path = Path(__file__).parent / "screenshots" / "adaptive_find_tmp.png"
                 img_path.parent.mkdir(parents=True, exist_ok=True)
                 tmp.save(str(img_path))
@@ -1176,12 +1182,16 @@ def som_visual_fallback(screenshot_path: str = None) -> dict:
     6. Return marked screenshot + text index
     """
     try:
-        from PIL import Image, ImageDraw, ImageFont, ImageGrab
+        from PIL import Image, ImageDraw, ImageFont
 
         if screenshot_path:
             img = Image.open(screenshot_path)
         else:
-            img = ImageGrab.grab()
+            import mss as _mss_mod
+            with _mss_mod.mss() as _sct:
+                _mon = _sct.monitors[0]
+                _sct_img = _sct.grab(_mon)
+                img = Image.frombytes("RGB", _sct_img.size, _sct_img.rgb)
 
         w, h = img.size
 
@@ -1330,8 +1340,12 @@ def find_icon_by_template(icon_path: str, threshold: float = 0.8) -> dict:
         else:
             template_rgb = template
 
-        # Capture screen
-        screen = ImageGrab.grab()
+        # Capture screen (MSS — no window flash)
+        import mss as _mss_mod
+        with _mss_mod.mss() as _sct:
+            _mon = _sct.monitors[0]
+            _sct_img = _sct.grab(_mon)
+            screen = Image.frombytes("RGB", _sct_img.size, _sct_img.rgb)
         screen_cv = cv2.cvtColor(np.array(screen), cv2.COLOR_RGB2BGR)
 
         th, tw = template_rgb.shape[:2]
