@@ -34,16 +34,8 @@ from shutil import which
 try:
     import auth as _auth
     from auth import require_auth as _require_auth, init_auth as _init_auth, register_auth_routes
-    import functools
-    from flask import g
-    def require_auth(f):
-        @functools.wraps(f)
-        def wrapper(*args, **kwargs):
-            ap = getattr(g, '_auth_passed', False)
-            if ap: return f(*args, **kwargs)
-            return _require_auth(f)(*args, **kwargs)
-        wrapper._hermes_auth_wrapped = True
-        return wrapper
+    # Use auth module's require_auth directly (no g._auth_passed attribute pollution)
+    require_auth = _require_auth
 except Exception as e:
     print(f"[FATAL] auth.py failed to import; refusing to start unprotected: {e}", file=sys.stderr)
     raise
@@ -56,7 +48,10 @@ if _platform.system() != "Windows":
 else:
     HAS_SENDINPUT = True
 
-os.environ["PYAUTOGUI_FAILSAFE"] = "false"
+# Failsafe safety — allow user override via env var
+# WARNING: Setting to "true" enables pyautogui's corner-failsafe (top-left corner)
+# but prevents reliable automated mouse control from that corner.
+os.environ["PYAUTOGUI_FAILSAFE"] = os.environ.get("HERMES_COAGENT_FAILSAFE", "false")
 
 # -- Shared utilities --------------------------------------------
 from shared import COAGENT_DIR, SERVER_PORT, TRAY_PORT, SERVER_LOG, _console, _log, _json_body
@@ -64,7 +59,7 @@ from shared import acquire_single_instance_lock
 from shared import VERSION, AGENT_NAME, BUILD
 
 # -- Flask setup --------------------------------------------------
-from flask import Flask, request, jsonify, Response, g
+from flask import Flask, request, jsonify, Response
 import waitress
 
 app = Flask(__name__, static_folder=None)
@@ -99,6 +94,7 @@ def record_endpoint_health(path: str, ok: bool, error: str = ""):
         entry["last_time"] = now
 
 def _endpoint_health_snapshot():
+    _reset_endpoint_health_window_if_needed()
     with _ENDPOINT_HEALTH_LOCK:
         rows = {}
         for path, entry in ENDPOINT_HEALTH.items():
@@ -214,13 +210,8 @@ def _cors_preflight():
 @app.before_request
 def _auth_gate():
     if _is_auth_exempt(request.path):
-        g._auth_passed = True
         return None
-    result = _require_auth(lambda: None)()
-    if result is not None:
-        return result
-    g._auth_passed = True
-    return None
+    return _require_auth(lambda: None)()
 
 @app.after_request
 def _security_headers(response):
@@ -627,6 +618,15 @@ from routes_webrtc import register_routes as reg_webrtc
 from routes_plugins import register_routes as reg_plugins
 from routes_palmreject import register_routes as reg_palmreject
 from routes_agent import register_routes as reg_agent
+from routes_hybrid_agent import register_routes as reg_hybrid_agent
+from routes_hitl_hud import register_routes as reg_hitl_hud
+from routes_recovery_daemon import register_routes as reg_recovery_daemon
+from routes_semantic_memory import register_routes as reg_semantic_memory
+from routes_pii_redact import register_routes as reg_pii_redact
+from routes_brainstem import register_routes as reg_brainstem
+from routes_com_toolkit import register_routes as reg_com_toolkit
+from routes_screen_vision import register_routes as reg_screen_vision
+from routes_rag_workspace import register_routes as reg_rag_workspace
 from routes_telegram import register_routes as reg_telegram
 from routes_memory import register_routes as reg_memory, memory_stats
 from routes_reminders import register_routes as reg_reminders
@@ -767,6 +767,8 @@ from routes_auto_windows_mcp import register_routes as reg_auto_windows_mcp
 from routes_auto_winget_cli import register_routes as reg_auto_winget_cli
 from routes_auto_powercfg import register_routes as reg_auto_powercfg
 from routes_auto_netsh import register_routes as reg_auto_netsh
+from routes_auto_dism import register_routes as reg_auto_dism
+from routes_auto_sfc import register_routes as reg_auto_sfc
 features = {}
 
 reg_mouse(app, state, require_auth)
@@ -803,6 +805,15 @@ reg_webrtc(app, state, require_auth)
 reg_plugins(app, state, require_auth)
 reg_palmreject(app, state, require_auth)
 reg_agent(app, state, require_auth)
+reg_hybrid_agent(app, state, require_auth)
+reg_hitl_hud(app, state, require_auth)
+reg_recovery_daemon(app, state, require_auth)
+reg_semantic_memory(app, state, require_auth)
+reg_pii_redact(app, state, require_auth)
+reg_brainstem(app, state, require_auth)
+reg_com_toolkit(app, state, require_auth)
+reg_screen_vision(app, state, require_auth)
+reg_rag_workspace(app, state, require_auth)
 reg_telegram(app, state, require_auth)
 reg_mcp(app, state, require_auth)
 reg_memory(app, state, require_auth)
@@ -886,6 +897,8 @@ reg_auto_windows_mcp(app, state, require_auth)
 reg_auto_winget_cli(app, state, require_auth)
 reg_auto_powercfg(app, state, require_auth)
 reg_auto_netsh(app, state, require_auth)
+reg_auto_dism(app, state, require_auth)
+reg_auto_sfc(app, state, require_auth)
 features["web_dashboard_overhaul"] = True
 features["mcp_mode"] = True
 features["dom_mode"] = True
@@ -923,6 +936,8 @@ features["auto_windows_mcp"] = True
 features["auto_winget_cli"] = True
 features["auto_powercfg"] = True
 features["auto_netsh"] = True
+features["auto_dism"] = True
+features["auto_sfc"] = True
 state.backup_file = backup_file
 
 # -- Core routes (stay in main) ----------------------------------
