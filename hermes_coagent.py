@@ -770,6 +770,8 @@ from routes_auto_powercfg import register_routes as reg_auto_powercfg
 from routes_auto_netsh import register_routes as reg_auto_netsh
 from routes_auto_dism import register_routes as reg_auto_dism
 from routes_auto_sfc import register_routes as reg_auto_sfc
+from routes_auto_reg import register_routes as reg_auto_reg
+from routes_auto_certutil import register_routes as reg_auto_certutil
 features = {}
 
 reg_mouse(app, state, require_auth)
@@ -901,6 +903,8 @@ reg_auto_powercfg(app, state, require_auth)
 reg_auto_netsh(app, state, require_auth)
 reg_auto_dism(app, state, require_auth)
 reg_auto_sfc(app, state, require_auth)
+reg_auto_reg(app, state, require_auth)
+reg_auto_certutil(app, state, require_auth)
 features["web_dashboard_overhaul"] = True
 features["mcp_mode"] = True
 features["dom_mode"] = True
@@ -940,6 +944,8 @@ features["auto_powercfg"] = True
 features["auto_netsh"] = True
 features["auto_dism"] = True
 features["auto_sfc"] = True
+features["auto_reg"] = True
+features["auto_certutil"] = True
 state.backup_file = backup_file
 
 # -- Core routes (stay in main) ----------------------------------
