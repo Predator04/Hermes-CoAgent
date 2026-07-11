@@ -772,6 +772,8 @@ from routes_auto_dism import register_routes as reg_auto_dism
 from routes_auto_sfc import register_routes as reg_auto_sfc
 from routes_auto_reg import register_routes as reg_auto_reg
 from routes_auto_certutil import register_routes as reg_auto_certutil
+from routes_auto_yt_dlp import register_routes as reg_auto_yt_dlp
+from routes_auto_choco import register_routes as reg_auto_choco
 features = {}
 
 reg_mouse(app, state, require_auth)
@@ -905,6 +907,8 @@ reg_auto_dism(app, state, require_auth)
 reg_auto_sfc(app, state, require_auth)
 reg_auto_reg(app, state, require_auth)
 reg_auto_certutil(app, state, require_auth)
+reg_auto_yt_dlp(app, state, require_auth)
+reg_auto_choco(app, state, require_auth)
 features["web_dashboard_overhaul"] = True
 features["mcp_mode"] = True
 features["dom_mode"] = True
@@ -946,6 +950,8 @@ features["auto_dism"] = True
 features["auto_sfc"] = True
 features["auto_reg"] = True
 features["auto_certutil"] = True
+features["auto_yt_dlp"] = True
+features["auto_choco"] = True
 state.backup_file = backup_file
 
 # -- Core routes (stay in main) ----------------------------------
