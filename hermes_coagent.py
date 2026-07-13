@@ -776,6 +776,8 @@ from routes_auto_yt_dlp import register_routes as reg_auto_yt_dlp
 from routes_auto_choco import register_routes as reg_auto_choco
 from routes_auto_imagemagick import register_routes as reg_auto_imagemagick
 from routes_auto_nmap import register_routes as reg_auto_nmap
+from routes_auto_tasklist import register_routes as reg_auto_tasklist
+from routes_auto_systeminfo import register_routes as reg_auto_systeminfo
 features = {}
 
 reg_mouse(app, state, require_auth)
@@ -913,6 +915,8 @@ reg_auto_yt_dlp(app, state, require_auth)
 reg_auto_choco(app, state, require_auth)
 reg_auto_imagemagick(app, state, require_auth)
 reg_auto_nmap(app, state, require_auth)
+reg_auto_tasklist(app, state, require_auth)
+reg_auto_systeminfo(app, state, require_auth)
 features["web_dashboard_overhaul"] = True
 features["mcp_mode"] = True
 features["dom_mode"] = True
@@ -958,6 +962,8 @@ features["auto_yt_dlp"] = True
 features["auto_choco"] = True
 features["auto_imagemagick"] = True
 features["auto_nmap"] = True
+features["auto_tasklist"] = True
+features["auto_systeminfo"] = True
 state.backup_file = backup_file
 
 # -- Core routes (stay in main) ----------------------------------
