@@ -782,6 +782,8 @@ from routes_auto_sc import register_routes as reg_auto_sc
 from routes_auto_ipconfig import register_routes as reg_auto_ipconfig
 from routes_auto_icacls import register_routes as reg_auto_icacls
 from routes_auto_shutdown import register_routes as reg_auto_shutdown
+from routes_auto_wevtutil import register_routes as reg_auto_wevtutil
+from routes_auto_taskkill import register_routes as reg_auto_taskkill
 features = {}
 
 reg_mouse(app, state, require_auth)
@@ -925,6 +927,8 @@ reg_auto_sc(app, state, require_auth)
 reg_auto_ipconfig(app, state, require_auth)
 reg_auto_icacls(app, state, require_auth)
 reg_auto_shutdown(app, state, require_auth)
+reg_auto_wevtutil(app, state, require_auth)
+reg_auto_taskkill(app, state, require_auth)
 features["web_dashboard_overhaul"] = True
 features["mcp_mode"] = True
 features["dom_mode"] = True
@@ -976,6 +980,8 @@ features["auto_sc"] = True
 features["auto_ipconfig"] = True
 features["auto_icacls"] = True
 features["auto_shutdown"] = True
+features["auto_wevtutil"] = True
+features["auto_taskkill"] = True
 state.backup_file = backup_file
 
 # -- Core routes (stay in main) ----------------------------------
