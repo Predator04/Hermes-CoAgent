@@ -788,6 +788,8 @@ from routes_auto_fsutil import register_routes as reg_auto_fsutil
 from routes_auto_schtasks import register_routes as reg_auto_schtasks
 from routes_auto_vssadmin import register_routes as reg_auto_vssadmin
 from routes_auto_bitsadmin import register_routes as reg_auto_bitsadmin
+from routes_auto_chkdsk import register_routes as reg_auto_chkdsk
+from routes_auto_diskpart import register_routes as reg_auto_diskpart
 features = {}
 
 reg_mouse(app, state, require_auth)
@@ -937,6 +939,8 @@ reg_auto_fsutil(app, state, require_auth)
 reg_auto_schtasks(app, state, require_auth)
 reg_auto_vssadmin(app, state, require_auth)
 reg_auto_bitsadmin(app, state, require_auth)
+reg_auto_chkdsk(app, state, require_auth)
+reg_auto_diskpart(app, state, require_auth)
 features["web_dashboard_overhaul"] = True
 features["mcp_mode"] = True
 features["dom_mode"] = True
@@ -994,6 +998,8 @@ features["auto_fsutil"] = True
 features["auto_schtasks"] = True
 features["auto_vssadmin"] = True
 features["auto_bitsadmin"] = True
+features["auto_chkdsk"] = True
+features["auto_diskpart"] = True
 state.backup_file = backup_file
 
 # -- Core routes (stay in main) ----------------------------------
