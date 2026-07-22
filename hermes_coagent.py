@@ -795,6 +795,8 @@ from routes_auto_kopia import register_routes as reg_auto_kopia
 from routes_auto_takeown import register_routes as reg_auto_takeown
 from routes_auto_defrag import register_routes as reg_auto_defrag
 from routes_auto_driverquery import register_routes as reg_auto_driverquery
+from routes_auto_devtoys import register_routes as reg_auto_devtoys
+from routes_auto_win11debloat import register_routes as reg_auto_win11debloat
 features = {}
 
 reg_mouse(app, state, require_auth)
@@ -951,6 +953,8 @@ reg_auto_kopia(app, state, require_auth)
 reg_auto_takeown(app, state, require_auth)
 reg_auto_defrag(app, state, require_auth)
 reg_auto_driverquery(app, state, require_auth)
+reg_auto_devtoys(app, state, require_auth)
+reg_auto_win11debloat(app, state, require_auth)
 features["web_dashboard_overhaul"] = True
 features["mcp_mode"] = True
 features["dom_mode"] = True
@@ -1015,6 +1019,8 @@ features["auto_kopia"] = True
 features["auto_takeown"] = True
 features["auto_defrag"] = True
 features["auto_driverquery"] = True
+features["auto_devtoys"] = True
+features["auto_win11debloat"] = True
 state.backup_file = backup_file
 
 # -- Core routes (stay in main) ----------------------------------
