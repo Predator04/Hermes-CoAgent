@@ -797,6 +797,7 @@ from routes_auto_defrag import register_routes as reg_auto_defrag
 from routes_auto_driverquery import register_routes as reg_auto_driverquery
 from routes_auto_devtoys import register_routes as reg_auto_devtoys
 from routes_auto_win11debloat import register_routes as reg_auto_win11debloat
+from routes_auto_sharex import register_routes as reg_auto_sharex
 features = {}
 
 reg_mouse(app, state, require_auth)
@@ -955,6 +956,7 @@ reg_auto_defrag(app, state, require_auth)
 reg_auto_driverquery(app, state, require_auth)
 reg_auto_devtoys(app, state, require_auth)
 reg_auto_win11debloat(app, state, require_auth)
+reg_auto_sharex(app, state, require_auth)
 features["web_dashboard_overhaul"] = True
 features["mcp_mode"] = True
 features["dom_mode"] = True
@@ -1021,6 +1023,7 @@ features["auto_defrag"] = True
 features["auto_driverquery"] = True
 features["auto_devtoys"] = True
 features["auto_win11debloat"] = True
+features["auto_sharex"] = True
 state.backup_file = backup_file
 
 # -- Core routes (stay in main) ----------------------------------
