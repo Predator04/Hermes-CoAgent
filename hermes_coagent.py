@@ -800,6 +800,8 @@ from routes_auto_win11debloat import register_routes as reg_auto_win11debloat
 from routes_auto_sharex import register_routes as reg_auto_sharex
 from routes_auto_ventoy import register_routes as reg_auto_ventoy
 from routes_auto_rufus import register_routes as reg_auto_rufus
+from routes_auto_gsudo import register_routes as reg_auto_gsudo
+from routes_auto_trippy import register_routes as reg_auto_trippy
 features = {}
 
 reg_mouse(app, state, require_auth)
@@ -961,6 +963,8 @@ reg_auto_win11debloat(app, state, require_auth)
 reg_auto_sharex(app, state, require_auth)
 reg_auto_ventoy(app, state, require_auth)
 reg_auto_rufus(app, state, require_auth)
+reg_auto_gsudo(app, state, require_auth)
+reg_auto_trippy(app, state, require_auth)
 features["web_dashboard_overhaul"] = True
 features["mcp_mode"] = True
 features["dom_mode"] = True
@@ -1030,6 +1034,8 @@ features["auto_win11debloat"] = True
 features["auto_sharex"] = True
 features["auto_ventoy"] = True
 features["auto_rufus"] = True
+features["auto_gsudo"] = True
+features["auto_trippy"] = True
 state.backup_file = backup_file
 
 # -- Core routes (stay in main) ----------------------------------
