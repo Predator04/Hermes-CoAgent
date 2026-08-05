@@ -735,6 +735,77 @@ def _exit(icon, item, state: TrayState) -> None:
         return
 
 
+def _copy_token(icon, item, state: TrayState) -> None:
+    try:
+        import pyperclip
+        token = state.current_token()
+        if token:
+            pyperclip.copy(token)
+            _notify(icon, "Token copied to clipboard")
+        else:
+            _notify(icon, "No token found")
+    except Exception as e:
+        _notify(icon, f"Copy failed: {e}")
+
+
+def _show_token(icon, item, state: TrayState) -> None:
+    try:
+        token = state.current_token()
+        if token:
+            preview = token[:8] + "..." + token[-8:]
+            ctypes.windll.user32.MessageBoxW(0, token, f"Auth Token ({preview})", 0x40)
+        else:
+            _notify(icon, "No token found")
+    except Exception as e:
+        _notify(icon, f"Error: {e}")
+
+
+def _start_tunnel_menu(icon, item, state: TrayState) -> None:
+    threading.Thread(target=_start_tunnel, args=(state, icon), daemon=True).start()
+
+
+def _start_tunnel(state: TrayState, icon=None) -> None:
+    try:
+        port = state.port or DEFAULT_PORT
+        token = state.current_token()
+        headers = {"Authorization": f"Bearer {token}"} if token else {}
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{port}/tunnel/start",
+            data=json.dumps({"method": "ngrok", "port": port}).encode(),
+            headers={**headers, "Content-Type": "application/json"},
+        )
+        resp = urllib.request.urlopen(req, timeout=10)
+        result = json.loads(resp.read())
+        if icon:
+            url = result.get("url", "")
+            if url:
+                _notify(icon, f"Tunnel: {url}")
+            else:
+                _notify(icon, "Tunnel started (check /tunnel/status for URL)")
+    except Exception as e:
+        if icon:
+            _notify(icon, f"Tunnel failed: {e}")
+
+
+def _copy_tunnel_url(icon, item, state: TrayState) -> None:
+    try:
+        import pyperclip
+        port = state.port or DEFAULT_PORT
+        token = state.current_token()
+        headers = {"Authorization": f"Bearer {token}"} if token else {}
+        req = urllib.request.Request(f"http://127.0.0.1:{port}/tunnel/status", headers=headers)
+        resp = urllib.request.urlopen(req, timeout=5)
+        status = json.loads(resp.read())
+        url = status.get("url", "")
+        if url:
+            pyperclip.copy(url)
+            _notify(icon, "Tunnel URL copied")
+        else:
+            _notify(icon, "No active tunnel")
+    except Exception as e:
+        _notify(icon, f"Error: {e}")
+
+
 def _health_loop(icon, state: TrayState) -> None:
     while True:
         with state.lock:
@@ -792,6 +863,13 @@ def main() -> int:
         pystray.MenuItem("Open Dashboard", lambda icon, item: _open_dashboard(icon, item, state), default=True),
         pystray.MenuItem("Settings", lambda icon, item: _open_url(f"http://127.0.0.1:{state.port or DEFAULT_PORT}/#settings")),
         pystray.MenuItem("Check Health", lambda icon, item: _check_health(icon, item, state)),
+        pystray.Menu.SEPARATOR,
+        pystray.MenuItem("Copy Token", lambda icon, item: _copy_token(icon, item, state)),
+        pystray.MenuItem("Show Token", lambda icon, item: _show_token(icon, item, state)),
+        pystray.Menu.SEPARATOR,
+        pystray.MenuItem("Start Tunnel (ngrok)", lambda icon, item: _start_tunnel_menu(icon, item, state)),
+        pystray.MenuItem("Copy Tunnel URL", lambda icon, item: _copy_tunnel_url(icon, item, state)),
+        pystray.Menu.SEPARATOR,
         pystray.MenuItem("Start/Open Server", lambda icon, item: _start_or_open_server_menu(icon, item, state)),
         pystray.MenuItem("Restart Server", lambda icon, item: _restart_server_menu(icon, item, state)),
         pystray.MenuItem("Exit", lambda icon, item: _exit(icon, item, state)),
