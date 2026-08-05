@@ -40,7 +40,12 @@ _BLOCKED_IP_ADDRESSES = {ipaddress.ip_address("100.100.100.200")}
 
 
 def _configured_safe_roots():
-    roots = [COAGENT_DIR.resolve()]
+    roots = [COAGENT_DIR.resolve(), Path.home().resolve()]
+    # Add common user directories
+    for sub in ("Desktop", "Documents", "Downloads", "Pictures", "Videos", "Music"):
+        p = Path.home() / sub
+        if p.is_dir():
+            roots.append(p.resolve())
     raw_roots = os.environ.get("COAGENT_SAFE_ALLOWED_ROOTS", "").strip()
     if raw_roots:
         for raw_root in raw_roots.split(os.pathsep):
