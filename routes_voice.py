@@ -108,7 +108,13 @@ def _normalize_open_target(target):
     lowered = target.lower()
     if lowered in _OPEN_ALIASES:
         return _OPEN_ALIASES[lowered]
-    if "." in target and not re.match(r"^[a-z]+://", target, flags=re.I):
+    if re.match(r"^[a-z]+://", target, flags=re.I):
+        return target
+    # Executables (not URLs)
+    if lowered.endswith((".exe", ".lnk", ".msi", ".bat", ".cmd", ".ps1")):
+        return target
+    # Domain-like strings get https:// prefix
+    if "." in target and re.match(r"^[A-Za-z0-9][A-Za-z0-9.-]*\.[A-Za-z]{2,}$", target):
         return "https://" + target
     return target
 
@@ -118,7 +124,7 @@ def _match_command(text):
     if not normalized:
         return None
 
-    if _word(normalized, "stop"):
+    if normalized in ("stop", "stop listening", "stop voice", "exit", "quit"):
         return {"kind": "stop", "label": "stop"}
 
     if _word(normalized, "screenshot") or (_word(normalized, "screen") and _word(normalized, "shot")):

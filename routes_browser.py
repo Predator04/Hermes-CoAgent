@@ -301,24 +301,20 @@ def route_browser_cookies():
 def route_browser_close():
     global _PW, _BROWSER, _CONTEXT, _PAGE
     with _BROWSER_LOCK:
-        try:
-            if _CONTEXT is not None:
-                _CONTEXT.close()
-            if _BROWSER is not None:
-                _BROWSER.close()
-            if _PW is not None:
-                _PW.stop()
-            _PW = None
-            _BROWSER = None
-            _CONTEXT = None
-            _PAGE = None
-            return jsonify({"status": "closed"})
-        except Exception as e:
-            _PW = None
-            _BROWSER = None
-            _CONTEXT = None
-            _PAGE = None
-            return _error(str(e), 500, type=type(e).__name__)
+        errors = []
+        for closer in (
+            ("context", lambda: _CONTEXT.close() if _CONTEXT else None),
+            ("browser", lambda: _BROWSER.close() if _BROWSER else None),
+            ("playwright", lambda: _PW.stop() if _PW else None),
+        ):
+            try:
+                closer[1]()
+            except Exception as e:
+                errors.append(f"{closer[0]}: {e}")
+        _PW = _BROWSER = _CONTEXT = _PAGE = None
+        if errors:
+            return _error("; ".join(errors), 500)
+        return jsonify({"status": "closed"})
 
 
 def register_routes(app, state, require_auth):

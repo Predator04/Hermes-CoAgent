@@ -105,6 +105,8 @@ def _process_list_powershell(limit=None):
     if r.returncode != 0 or not r.stdout.strip():
         return rows
     data = json.loads(r.stdout)
+    if data is None:
+        return rows
     if isinstance(data, dict):
         data = [data]
     for item in data:
@@ -171,9 +173,12 @@ def _kill_with_psutil(data):
     for proc in targets:
         if proc.pid == current_pid:
             continue
-        name = proc.name()
-        proc.kill()
-        killed.append({"pid": proc.pid, "name": name})
+        try:
+            name = proc.name()
+            proc.kill()
+            killed.append({"pid": proc.pid, "name": name})
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
     return killed
 
 

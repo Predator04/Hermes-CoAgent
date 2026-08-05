@@ -75,7 +75,9 @@ def register_routes(app, state, require_auth):
             return jsonify({"error": str(e)}), 403
         content = d.get("content", "")
         try:
-            os.makedirs(os.path.dirname(path), exist_ok=True)
+            parent = os.path.dirname(path)
+            if parent:
+                os.makedirs(parent, exist_ok=True)
             backup_path = backup_file(path)
             with open(path, "w", encoding="utf-8") as f:
                 f.write(content)
@@ -115,7 +117,7 @@ def register_routes(app, state, require_auth):
         d = _json_body()
         app_path = d.get("path", "")
         try:
-            if app_path.startswith("http"):
+            if app_path.startswith(("http://", "https://")):
                 import webbrowser
                 webbrowser.open_new_tab(app_path)
             elif ("/" not in app_path and "\\" not in app_path and ":" not in app_path
