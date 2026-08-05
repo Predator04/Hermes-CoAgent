@@ -110,7 +110,12 @@ def _extract_tunnel_url(text):
         lowered = match.lower().rstrip(".,);]")
         if lowered.startswith("http://127.") or lowered.startswith("http://localhost"):
             continue
-        if any(host in lowered for host in _TUNNEL_PUBLIC_HOSTS):
+        try:
+            parsed = urllib.parse.urlparse(match)
+            hostname = parsed.hostname or ""
+        except Exception:
+            continue
+        if hostname.endswith(_TUNNEL_PUBLIC_HOSTS):
             return match.rstrip(".,);]")
     return None
 

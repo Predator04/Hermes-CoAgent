@@ -1,5 +1,5 @@
 """Mouse, keyboard, input, and action-chain routes."""
-import threading, time, json, ctypes, hashlib
+import threading, time, json, ctypes, hashlib, subprocess, re
 from flask import jsonify
 from shared import _json_body, _log, _console, _missing_field, _result_response, COAGENT_DIR, SCREENSHOTS_DIR, _interactive_task_xml
 
@@ -132,6 +132,8 @@ def _mouse_click_with_retry(x, y, button="left", background=True, state=None):
         "warning": "Screen appeared unchanged after all retry positions",
     })
 
+_GLOBAL_INPUT_LOCK = threading.RLock()
+
 def _background_sendinput(action, x, y, button="left"):
     """Send input without stealing focus using SendInput."""
     if action == "move":
@@ -142,22 +144,34 @@ def _background_sendinput(action, x, y, button="left"):
         import ctypes.wintypes as w
         MOUSEEVENTF_LEFTDOWN = 0x0002; MOUSEEVENTF_LEFTUP = 0x0004
         MOUSEEVENTF_RIGHTDOWN = 0x0008; MOUSEEVENTF_RIGHTUP = 0x0010
+        MOUSEEVENTF_ABSOLUTE = 0x8000
+        MOUSEEVENTF_MOVE = 0x0001
         btn_down = MOUSEEVENTF_LEFTDOWN if button == "left" else MOUSEEVENTF_RIGHTDOWN
         btn_up = MOUSEEVENTF_LEFTUP if button == "left" else MOUSEEVENTF_RIGHTUP
-        extra = 0
+        # Normalize coordinates for absolute positioning
+        screen_w = ctypes.windll.user32.GetSystemMetrics(0)
+        screen_h = ctypes.windll.user32.GetSystemMetrics(1)
+        nx = int((x * 65535) / screen_w) if screen_w else 0
+        ny = int((y * 65535) / screen_h) if screen_h else 0
+        # Move cursor to absolute position first
+        ctypes.windll.user32.mouse_event(MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_MOVE, nx, ny, 0, 0)
+        time.sleep(0.01)
         if action == "doubleclick":
-            ctypes.windll.user32.mouse_event(btn_down, x, y, extra, 0)
-            ctypes.windll.user32.mouse_event(btn_up, x, y, extra, 0)
-        ctypes.windll.user32.mouse_event(btn_down, x, y, extra, 0)
-        ctypes.windll.user32.mouse_event(btn_up, x, y, extra, 0)
+            ctypes.windll.user32.mouse_event(btn_down, 0, 0, 0, 0)
+            ctypes.windll.user32.mouse_event(btn_up, 0, 0, 0, 0)
+        ctypes.windll.user32.mouse_event(btn_down, 0, 0, 0, 0)
+        ctypes.windll.user32.mouse_event(btn_up, 0, 0, 0, 0)
     except Exception:
         pyautogui.click(x, y, button=button)
 
 def _mouse_action(action, x, y, button="left", background=True, state=None):
     if state and state.emergency_stop:
         return jsonify({"error": "Emergency stop engaged"}), 503
-    lock = state.input_lock if state else threading.Lock()
+    lock = state.input_lock if (state and hasattr(state, 'input_lock')) else _GLOBAL_INPUT_LOCK
     with lock:
+        # Re-check emergency stop after acquiring lock
+        if state and state.emergency_stop:
+            return jsonify({"error": "Emergency stop engaged"}), 503
         now = time.time()
         gap = now - (state.last_action_time if state else 0)
         if gap < (state.min_action_gap if state else 0.05):
@@ -200,21 +214,26 @@ def _execute_action_wrapper(action, state=None):
 def _key_action(action, data, state=None):
     if state and state.emergency_stop:
         return jsonify({"error": "Emergency stop engaged"}), 503
-    try:
-        if action == "type":
-            pyautogui.typewrite(str(data), interval=0.02)
-        elif action == "hotkey":
-            if isinstance(data, list):
-                pyautogui.hotkey(*data)
-            else:
-                pyautogui.write(str(data))
-        _log(f"Key {action}: {data}")
-        payload = {"status": "ok", "action": action}
-        record_data = {"text": str(data)} if action == "type" else {"keys": data if isinstance(data, list) else str(data)}
-        _record_action(action, record_data, payload)
-        return jsonify(payload)
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    lock = state.input_lock if (state and hasattr(state, 'input_lock')) else _GLOBAL_INPUT_LOCK
+    with lock:
+        if state and state.emergency_stop:
+            return jsonify({"error": "Emergency stop engaged"}), 503
+        try:
+            if action == "type":
+                text = str(data)
+                pyautogui.typewrite(text, interval=0.01)
+            elif action == "hotkey":
+                if isinstance(data, list):
+                    pyautogui.hotkey(*data)
+                else:
+                    pyautogui.write(str(data))
+            _log(f"Key {action}: {data}")
+            payload = {"status": "ok", "action": action}
+            record_data = {"text": str(data)} if action == "type" else {"keys": data if isinstance(data, list) else str(data)}
+            _record_action(action, record_data, payload)
+            return jsonify(payload)
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
 
 def _scroll_action(clicks, state=None):
     if state and state.emergency_stop:
@@ -240,11 +259,17 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_mouse_click():
         d = _json_body()
+        x = int(d.get("x", 0))
+        y = int(d.get("y", 0))
+        # Guard: block (0,0) clicks — likely a rogue automation call
+        if x == 0 and y == 0:
+            _log(f"[GUARD] Blocked click at (0,0) from caller")
+            return jsonify({"status": "blocked", "reason": "click_at_origin_blocked", "x": 0, "y": 0})
         retry = _as_bool(d.get("retry"), True)
         if retry:
-            return _mouse_click_with_retry(int(d.get("x", 0)), int(d.get("y", 0)),
+            return _mouse_click_with_retry(x, y,
                                            d.get("button", "left"), d.get("background", True), state)
-        return _mouse_action("click", int(d.get("x", 0)), int(d.get("y", 0)),
+        return _mouse_action("click", x, y,
                              d.get("button", "left"), d.get("background", True), state)
 
     @app.route("/mouse/click/focus", methods=["POST"])
@@ -390,7 +415,11 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_mouse_click_smart():
         d = _json_body()
-        return _mouse_click_with_retry(int(d.get("x", 0)), int(d.get("y", 0)),
+        x = int(d.get("x", 0))
+        y = int(d.get("y", 0))
+        if x == 0 and y == 0:
+            return jsonify({"status": "blocked", "reason": "click_at_origin_blocked"})
+        return _mouse_click_with_retry(x, y,
                                        d.get("button", "left"), d.get("background", True), state)
 
     @app.route("/mouse/dblclick", methods=["POST"])
@@ -446,7 +475,11 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_key_type():
         d = _json_body()
-        return _key_action("type", d.get("text", ""), state)
+        text = d.get("text", "")
+        if len(text) <= 5:
+            _log(f"[GUARD] Blocked short/trivial keystroke: '{text}'")
+            return jsonify({"status": "blocked", "reason": "trivial_keystroke_blocked"})
+        return _key_action("type", text, state)
 
     @app.route("/key/press", methods=["POST"])
     @require_auth

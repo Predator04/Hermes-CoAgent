@@ -21,6 +21,7 @@ from pathlib import Path
 
 AUTH_TOKEN = None
 AUTH_ENABLED = False
+_AUTH_LOCK = threading.Lock()
 COAGENT_DIR = None
 
 # CSRF token store — maps token_hash -> expiry timestamp
@@ -99,23 +100,22 @@ def _load_token():
 
 
 def _save_token(token):
-    """Persist token to disk with best-effort restrictive permissions.
-    
-    NOTE: On Windows, os.chmod for Unix permission bits is a no-op.
-    Windows uses ACLs (icacls). For strict protection on Windows:
-        icacls "<COAGENT_DIR>\\.token" /inheritance:r /grant:r "%USERNAME%:R"
-    """
+    """Persist token to disk atomically to avoid corruption on crash."""
     tp = _token_path()
-    if tp:
-        tp.write_text(token, encoding="utf-8")
-        try:
-            if os.name != "nt":
-                os.chmod(tp, 0o600)
-        except OSError:
-            pass
-        old_suffix = tp.with_suffix(".token_tok")
-        if old_suffix.exists():
-            old_suffix.unlink()
+    if not tp:
+        return
+    # Write to temp file in same dir, then atomic rename
+    tmp = tp.with_suffix(".tmp")
+    tmp.write_text(token, encoding="utf-8")
+    try:
+        if os.name != "nt":
+            os.chmod(tmp, 0o600)
+    except OSError:
+        pass
+    os.replace(tmp, tp)  # atomic on both Windows and POSIX
+    old_suffix = tp.with_suffix(".token_tok")
+    if old_suffix.exists():
+        old_suffix.unlink()
 
 
 def generate_token():
@@ -221,6 +221,9 @@ def register_auth_routes(app):
     def setup_first_boot():
         """Configure the first token from a user-chosen password."""
         global AUTH_TOKEN, AUTH_ENABLED
+        # Reject if auth is already enabled (including env-provided tokens)
+        if AUTH_ENABLED:
+            return jsonify({"error": "Already configured"}), 403
         if _load_token():
             return jsonify({"error": "Already configured"}), 403
         data = request.get_json(silent=True) or {}
@@ -228,9 +231,13 @@ def register_auth_routes(app):
         if not isinstance(password, str) or not password:
             return jsonify({"error": "password is required"}), 400
         token = _token_from_password(password)
-        _save_token(token)
-        AUTH_TOKEN = token
-        AUTH_ENABLED = True
+        with _AUTH_LOCK:
+            # Re-check under lock to prevent TOCTOU race
+            if AUTH_ENABLED or _load_token():
+                return jsonify({"error": "Already configured"}), 403
+            _save_token(token)
+            AUTH_TOKEN = token
+            AUTH_ENABLED = True
         return jsonify({
             "status": "configured",
             "token": token,
@@ -253,20 +260,18 @@ def register_auth_routes(app):
 
 
     @app.route('/auth/token/show', methods=['GET'])
+    @require_auth
     def auth_token_show():
-        """Return full token (requires auth)."""
-        global AUTH_TOKEN
-        if not AUTH_ENABLED or not AUTH_TOKEN:
+        """Return full token (requires auth). Use sparingly — leaks full token in response."""
+        if not AUTH_ENABLED:
             return jsonify({'error': 'Auth not enabled'}), 400
-        auth_header = request.headers.get('Authorization', '')
-        if not auth_header.startswith('Bearer '):
-            return jsonify({'error': 'Unauthorized - provide Bearer token'}), 401
-        provided = auth_header[7:]
-        if not secrets.compare_digest(provided, AUTH_TOKEN):
-            return jsonify({'error': 'Invalid token'}), 403
+        with _AUTH_LOCK:
+            token = AUTH_TOKEN
+        if not token:
+            return jsonify({'error': 'No token set'}), 500
         return jsonify({
             'auth': True,
-            'token': AUTH_TOKEN,
+            'token': token,
         })
 
     @app.route('/auth/token/reset', methods=['POST'])
@@ -312,7 +317,8 @@ def register_auth_routes(app):
             return jsonify({"error": "Invalid token"}), 403
 
         new_token = secrets.token_hex(32)
-        AUTH_TOKEN = new_token
+        with _AUTH_LOCK:
+            AUTH_TOKEN = new_token
         _save_token(new_token)
 
         pre = new_token[:16]

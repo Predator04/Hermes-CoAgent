@@ -91,7 +91,7 @@ def _is_private_url(url):
             return True
     return False
 
-DANGEROUS_CMD_CHARS = set(';&|`$(){}[]\n\r')
+DANGEROUS_CMD_CHARS = set(';&|`$(){}[]\\n\\r<>^!')
 
 _sse_clients = []
 _sse_lock = threading.Lock()

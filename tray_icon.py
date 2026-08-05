@@ -72,7 +72,7 @@ def _acquire_tray_mutex() -> bool:
     handle = kernel32.CreateMutexW(None, True, mutex_name)
     last_error = ctypes.get_last_error()
     if not handle:
-        return True
+        return False  # creation failed — treat as instance conflict
     if last_error == ERROR_ALREADY_EXISTS:
         kernel32.CloseHandle(handle)
         return False
@@ -96,12 +96,12 @@ def _release_tray_mutex() -> None:
     kernel32.CloseHandle.restype = wintypes.BOOL
     try:
         kernel32.ReleaseMutex(handle)
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[tray] ReleaseMutex failed: {e}", file=sys.stderr)
     try:
         kernel32.CloseHandle(handle)
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[tray] CloseHandle failed: {e}", file=sys.stderr)
     _TRAY_MUTEX_HANDLE = None
 
 

@@ -207,11 +207,29 @@ def _cors_preflight():
             resp.headers["Access-Control-Max-Age"] = "86400"
         return resp
 
-@app.before_request
+# Rate-limiting for failed auth attempts (prevents brute-force)
+_AUTH_FAILURES: dict[str, list] = {}  # ip -> [timestamps]
+_AUTH_FAIL_LOCK = threading.Lock()
+_AUTH_FAIL_MAX = 5       # max failures before throttling
+_AUTH_FAIL_WINDOW = 30   # seconds
+
+@ app.before_request
 def _auth_gate():
     if _is_auth_exempt(request.path):
         return None
-    return _require_auth(lambda: None)()
+    result = _require_auth(lambda: None)()
+    if result is not None:
+        # Track and throttle failed auth attempts
+        ip = request.remote_addr or "unknown"
+        now = time.time()
+        with _AUTH_FAIL_LOCK:
+            failures = _AUTH_FAILURES.setdefault(ip, [])
+            failures[:] = [t for t in failures if now - t < _AUTH_FAIL_WINDOW]
+            failures.append(now)
+            if len(failures) > _AUTH_FAIL_MAX:
+                time.sleep(0.5)  # throttle brute-force attempts
+        return result
+    return None
 
 @app.after_request
 def _security_headers(response):
@@ -315,7 +333,7 @@ def _h500(e): _log(f"[500] Internal error: {e}"); return jsonify({"error": "Inte
 def _h_exc(e):
     _log(f"[UNHANDLED] {type(e).__name__}: {e}")
     traceback.print_exc()
-    return jsonify({"error": "Internal error", "type": type(e).__name__, "detail": str(e)[:200]}), 500
+    return jsonify({"error": "Internal server error"}), 500
 
 # -- State --------------------------------------------------------
 @dataclass
