@@ -41,7 +41,13 @@ def _clean_output_path(value):
     suffix = Path(output).suffix.lower()
     if suffix not in {".png", ".jpg", ".jpeg", ".bmp"}:
         raise ValueError("output must end with .png, .jpg, .jpeg, or .bmp")
-    return output
+    # Block path traversal — only allow relative filenames or paths within screenshots dir
+    resolved = Path(output).resolve()
+    try:
+        resolved.relative_to(SCREENSHOTS_DIR.resolve())
+    except ValueError:
+        raise ValueError("output path must be within screenshots directory")
+    return str(resolved)
 
 
 def _optional_int(value, field, default, minimum, maximum):

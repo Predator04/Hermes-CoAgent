@@ -96,22 +96,22 @@ def _parse_section_blocks(output):
     for line in output.splitlines():
         if not line.strip():
             continue
-        # Section headers like "Deployment Image Servicing and Management" or blank lines
         stripped = line.strip()
-        if ":" not in stripped or stripped.startswith(" ") and ":" in stripped:
+        # Section headers have no colon and no leading whitespace
+        # Key:value lines either have a colon or are indented
+        has_colon = ":" in stripped
+        is_indented = line.startswith(" ") or line.startswith("\t")
+        if has_colon:
             key, val = _parse_online_line(stripped)
             if key and current_section:
                 current_items[key] = val
-            continue
-        if ":" in stripped:
-            key, val = _parse_online_line(stripped)
-            if key:
-                current_items[key] = val
-        else:
+        elif not is_indented:
+            # Section header — save previous section
             if current_section and current_items:
                 sections[current_section] = current_items
             current_section = stripped
             current_items = {}
+        # indented lines without colons are continuation lines — ignore
     if current_section and current_items:
         sections[current_section] = current_items
     return sections

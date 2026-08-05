@@ -132,7 +132,11 @@ def _grab_screen_mss(force=False, monitor_index=0):
         pil_img = Image.frombytes("RGB", size, raw)
         buf = BytesIO()
         pil_img.save(buf, format="PNG")
-        return buf.getvalue()
+        png_bytes = buf.getvalue()
+        # Cache the encoded PNG so next identical-frame request skips encode
+        with _PIXEL_HASH_LOCK:
+            _SCREENSHOT_CACHE[monitor_index] = {"raw": png_bytes, "ts": time.time()}
+        return png_bytes
     except Exception as e:
         _debug_backend_failure("MSS capture", e)
         _log(f"MSS capture failed: {type(e).__name__}: {e}")
@@ -143,16 +147,16 @@ def _screenshot_dxcam(force=False, monitor_index=0):
     Handles monitor_index=0 (all monitors/virtual screen) by falling through
     to MSS/PIL which handle virtual screen capture correctly."""
     global HAS_DXCAM, _DXCAM_MODULE
-    if not HAS_DXCAM and _DXCAM_MODULE is None:
-        try:
-            import dxcam as m
-            _DXCAM_MODULE = m
-            HAS_DXCAM = True
-        except Exception as e:
-            _debug_backend_failure("DXCam import", e)
-            # DXCam crashes from Session 0 (no GPU access)
-            _DXCAM_MODULE = "__failed__"
-            return None
+    with _DXCAM_LOCK:
+        if not HAS_DXCAM and _DXCAM_MODULE is None:
+            try:
+                import dxcam as m
+                _DXCAM_MODULE = m
+                HAS_DXCAM = True
+            except Exception as e:
+                _debug_backend_failure("DXCam import", e)
+                _DXCAM_MODULE = "__failed__"
+            dxcam_module = _DXCAM_MODULE
     if _DXCAM_MODULE in (None, "__failed__") or not HAS_PIL:
         return None
     monitor_index = _coerce_monitor_index(monitor_index)
