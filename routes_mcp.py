@@ -17,6 +17,8 @@ from shared import AGENT_NAME, BUILD, VERSION
 
 MCP_PROTOCOL_VERSION = "2025-06-18"
 
+_MAX_SSE_SUBSCRIBERS = 32
+
 _SUBSCRIBERS = []
 _SUBSCRIBERS_LOCK = threading.Lock()
 
@@ -374,7 +376,14 @@ def _dispatch_route(app, row, path, view_args, method, query, body, headers):
     if method not in {"GET", "HEAD"}:
         kwargs["json"] = body
     with app.test_request_context(path, **kwargs):
-        g._auth_passed = True
+        # Match URL rule so url_rule and view_args are populated correctly
+        request.url_rule = row["rule"]
+        request.view_args = view_args
+        # Run before_request handlers (auth gate lives here)
+        rv = app.preprocess_request()
+        if rv is not None:
+            return rv  # before_request returned a response (auth failed)
+        # Dispatch to view function
         rv = app.view_functions[row["rule"].endpoint](**view_args)
         return app.make_response(rv)
 
@@ -397,13 +406,15 @@ def _call_tool(app, params):
         return {"isError": True, "content": [{"type": "text", "text": f"invalid path argument: {missing}"}]}
 
     headers = {}
-    if has_request_context():
-        auth_header = request.headers.get("Authorization", "")
-        if auth_header:
-            headers["Authorization"] = auth_header
+    # NEVER forward inbound Authorization — internal dispatch uses its own auth model
     extra_headers = args.get("_headers")
     if isinstance(extra_headers, dict):
-        headers.update({str(k): str(v) for k, v in extra_headers.items()})
+        # Block dangerous headers from MCP callers
+        blocked = {"host", "cookie", "authorization", "content-length", "transfer-encoding",
+                   "x-forwarded-for", "x-forwarded-host", "x-forwarded-proto", "x-real-ip"}
+        for k, v in extra_headers.items():
+            if str(k).lower() not in blocked:
+                headers[str(k)] = str(v)
     query = args.get("_query") if isinstance(args.get("_query"), dict) else {}
     body = _prepare_body(args, consumed)
     method = row["method"]
@@ -527,26 +538,32 @@ def _initialize_result(params):
 def _handle_rpc(app, message):
     if not isinstance(message, dict):
         return _jsonrpc_error(None, -32600, "Invalid Request")
-    if message.get("jsonrpc") not in (None, "2.0"):
-        return _jsonrpc_error(message.get("id"), -32600, "Invalid JSON-RPC version")
+    if message.get("jsonrpc") != "2.0":
+        return _jsonrpc_error(message.get("id"), -32600, "jsonrpc must be exactly '2.0'")
 
     method = message.get("method")
     request_id = message.get("id")
     params = message.get("params") or {}
     is_notification = request_id is None
 
+    # Validate params type per JSON-RPC 2.0
+    if not isinstance(params, (dict, list)):
+        return _jsonrpc_error(request_id, -32602, "params must be an Object or Array")
+
     try:
         if method == "initialize":
             _broadcast("initialized", {"time": time.time(), "client": params})
             return _jsonrpc_result(request_id, _initialize_result(params))
         if method == "notifications/initialized":
+            if request_id is not None:
+                return _jsonrpc_error(request_id, -32600, "notifications must not have an id")
             _broadcast("initialized", {"time": time.time()})
-            return None if is_notification else _jsonrpc_result(request_id, {})
+            return None
         if method == "ping":
             return _jsonrpc_result(request_id, {})
-        if method in {"tools/list", "list_tools"}:
+        if method == "tools/list":
             return _jsonrpc_result(request_id, {"tools": _tools_list(app)})
-        if method in {"tools/call", "call_tool"}:
+        if method == "tools/call":
             result = _call_tool(app, params)
             _broadcast("tool_call", {
                 "time": time.time(),
@@ -563,13 +580,18 @@ def _handle_rpc(app, message):
             return _jsonrpc_result(request_id, result)
         return None if is_notification else _jsonrpc_error(request_id, -32601, f"Method not found: {method}")
     except Exception as exc:
-        return _jsonrpc_error(request_id, -32603, f"{type(exc).__name__}: {exc}")
+        import logging
+        logging.getLogger("coagent.mcp").error("MCP tool call failed: %s", exc, exc_info=True)
+        return _jsonrpc_error(request_id, -32603, "Internal error")
 
 
 def _mcp_events_response():
     def generate():
         q = queue.Queue(maxsize=100)
         with _SUBSCRIBERS_LOCK:
+            if len(_SUBSCRIBERS) >= _MAX_SSE_SUBSCRIBERS:
+                yield f"event: error\\ndata: {json.dumps({'error': 'max subscribers reached'})}\\n\\n"
+                return
             _SUBSCRIBERS.append(q)
         try:
             yield f"event: ready\ndata: {json.dumps({'server': AGENT_NAME, 'version': VERSION})}\n\n"
@@ -662,12 +684,18 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_mcp_config():
         """Generate MCP client config for Claude Desktop, Cursor, VS Code, Hermes."""
-        host = request.host.split(":")[0] if request.host else "127.0.0.1"
-        port = request.host.split(":")[1] if ":" in (request.host or "") else "9123"
-        lan_ip = host if host != "127.0.0.1" else "127.0.0.1"
-
-        auth_header = request.headers.get("Authorization", "")
-        token = auth_header.replace("Bearer ", "") if auth_header.startswith("Bearer ") else "YOUR_TOKEN"
+        from shared import _get_host_ip
+        lan_ip = getattr(_get_host_ip, '__call__', lambda: "127.0.0.1")()
+        if not lan_ip or lan_ip == "127.0.0.1":
+            try:
+                import socket
+                s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                s.connect(("8.8.8.8", 80))
+                lan_ip = s.getsockname()[0]
+                s.close()
+            except Exception:
+                lan_ip = "127.0.0.1"
+        port = getattr(app.config, "SERVER_NAME", "").split(":")[-1] if getattr(app.config, "SERVER_NAME", "") else "9123"
 
         return jsonify({
             "server": AGENT_NAME,
@@ -680,7 +708,7 @@ def register_routes(app, state, require_auth):
                         "coagent": {
                             "url": f"http://{lan_ip}:{port}/mcp",
                             "headers": {
-                                "Authorization": f"Bearer {token}"
+                                "Authorization": "Bearer YOUR_TOKEN_HERE"
                             }
                         }
                     }
@@ -690,7 +718,7 @@ def register_routes(app, state, require_auth):
                         "coagent": {
                             "url": f"http://{lan_ip}:{port}/mcp",
                             "headers": {
-                                "Authorization": f"Bearer {token}"
+                                "Authorization": "Bearer YOUR_TOKEN_HERE"
                             }
                         }
                     }
@@ -699,7 +727,7 @@ def register_routes(app, state, require_auth):
   coagent:
     url: \"http://{lan_ip}:{port}/mcp\"
     headers:
-      Authorization: \"Bearer {token}\"
+      Authorization: \"Bearer YOUR_TOKEN_HERE\"
     timeout: 120
     connect_timeout: 30""",
                 "vscode_copilot": {
@@ -708,13 +736,13 @@ def register_routes(app, state, require_auth):
                             "type": "http",
                             "url": f"http://{lan_ip}:{port}/mcp",
                             "headers": {
-                                "Authorization": f"Bearer {token}"
+                                "Authorization": "Bearer YOUR_TOKEN_HERE"
                             }
                         }
                     }
                 }
             },
-            "note": "Copy the config for your client. Replace YOUR_TOKEN with 'hermesrockstar2024' or your actual bearer token."
+            "note": "Replace YOUR_TOKEN_HERE with your actual bearer token from the .token file."
         })
 
     state.mcp = {

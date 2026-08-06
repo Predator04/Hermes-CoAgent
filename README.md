@@ -1,4 +1,4 @@
-# Hermes CoAgent v8.1
+# Hermes CoAgent v8.2
 
 [![CI — Syntax Check & Compile](https://github.com/Predator04/Hermes-CoAgent/actions/workflows/ci.yml/badge.svg)](https://github.com/Predator04/Hermes-CoAgent/actions/workflows/ci.yml)
 [![GitHub stars](https://img.shields.io/github/stars/Predator04/Hermes-CoAgent?style=social)](https://github.com/Predator04/Hermes-CoAgent/stargazers)
@@ -7,12 +7,10 @@
 
 Hermes CoAgent is a **local Windows desktop automation REST API server** for AI agents and operator dashboards. It controls mouse, keyboard, screenshots, OCR, UI Automation, browser sessions, processes, windows, files, notifications, mobile remote control, and AI agent gateway workflows — all from a single Flask service.
 
-Key highlights in v8.1:
-- 🖥️ **Goal Runner UI** — progress bars, live duration ticker, SSE events, timeline cards, activity log
-- 🔒 **Single-instance lock** — PID + port + mutex prevents duplicate servers
-- 📸 **Screenshot relay** — zero-flash PIL.ImageGrab from Session 1, ~30ms local
-- 🧪 **79-unit test suite** — comprehensive coverage across all modules
-- 🚀 **Standalone tray binary** — compiled CoAgentTray.exe with full system tray menu
+Key highlights in v8.2:
+- 🚀 **One-click deploy** — `/deploy/oneclick` installs, generates token, launches CoAgent. Optional ngrok for NAT/cellular.
+- 🔍 **Stealth browser engine** — 13 anti-detection patches, Cloudflare bypass, persistent profiles, self-test scoring
+- 🔌 **MCP server bridge** — Full JSON-RPC MCP server. Auto-discovers 60+ CoAgent endpoints as MCP tools. `/mcp/config` generates configs for Claude Desktop, Cursor, Hermes.
 
 ## Install
 
@@ -66,6 +64,9 @@ Open the dashboard at `http://127.0.0.1:9123/dashboard`. Full API documentation 
 | ⚙️ System control | Process list/start/kill, window list/activate/move/resize, clipboard, power |
 | 🤖 AI workflows | Copilot goal runner, agent gateway for Codex/Claude/Gemini/OpenCode CLIs |
 | 🧩 Automation kits | Scheduled recipes, macro recording, GIF recording, undo, visual diff |
+| 🚀 One-click deploy | Full pipeline: deps → token → launch. Optional ngrok for NAT/cellular |
+| 🔍 Stealth browser | 13 anti-detection patches, Cloudflare bypass, persistent profiles, self-test |
+| 🔌 MCP bridge | Full JSON-RPC MCP server. Auto-discovers routes as tools. Config generator |
 | 🩺 Reliability | Watchdog, endpoint health tracking, self-healing checks, dependency helper |
 | 📱 Remote UI | Web dashboard, mobile remote view, SSE screen stream, notifications |
 | 🎯 Goal Runner | Progress bars, live duration ticker, SSE events, timeline cards, activity log |
@@ -112,6 +113,10 @@ Key endpoints:
 | `POST` | `/key/type` | Type text |
 | `GET` | `/uia/tree` | Accessibility tree |
 | `POST` | `/agent/exec` | Run an installed agent CLI |
+| `POST` | `/deploy/oneclick` | One-click deploy: deps → token → launch |
+| `POST` | `/stealth/navigate` | Undetectable browser navigation |
+| `GET`  | `/stealth/health` | Browser detectability self-test |
+| `GET`  | `/mcp/config` | Generate MCP client configs |
 | `GET` | `/screen/relay/health` | Screenshot relay health check |
 
 ## File Manifest
@@ -148,6 +153,7 @@ The codebase is organized into a main server file, shared utilities, modular rou
 | `routes_cua.py` | 93 | Cua Driver desktop automation integration |
 | `routes_dashboard.py` | 71 | Real-time HTML operator dashboard |
 | `routes_deps.py` | 252 | Dependency inspection and pip installation |
+| `routes_deploy.py` | 582 | One-click deploy pipeline — install, token gen, launch, optional ngrok |
 | `routes_diff.py` | 218 | Before/after screenshot diffing |
 | `routes_docs.py` | 581 | OpenAPI spec and Swagger UI |
 | `routes_file.py` | 180 | File operations, app launching, power management |
@@ -158,7 +164,7 @@ The codebase is organized into a main server file, shared utilities, modular rou
 | `routes_help.py` | 134 | System help and API documentation |
 | `routes_hud.py` | 494 | Transparent desktop HUD overlay |
 | `routes_logs.py` | 112 | Log analyzer with counters and patterns |
-| `routes_mcp.py` | 665 | MCP JSON-RPC bridge for CoAgent routes |
+| `routes_mcp.py` | 745 | MCP JSON-RPC bridge for CoAgent routes |
 | `routes_media.py` | 821 | Wallpaper, windows, clipboard, scheduler, macro, tunnel, voice, misc |
 | `routes_memory.py` | 531 | Persistent cross-session memory via SQLite FTS5 |
 | `routes_metrics.py` | 263 | Prometheus-style metrics endpoint |
@@ -174,6 +180,7 @@ The codebase is organized into a main server file, shared utilities, modular rou
 | `routes_recorder.py` | 530 | Keyboard and mouse macro recorder |
 | `routes_recorder_gif.py` | 267 | Animated GIF desktop session recorder |
 | `routes_reminders.py` | 454 | Timed reminders and push alerts |
+| `routes_stealth_browser.py` | 709 | Undetectable Playwright browser — 13 anti-detection patches, CF bypass |
 | `routes_stream.py` | 165 | Screen streaming for WebSocket/SSE clients |
 | `routes_telegram.py` | 445 | Telegram bot relay for Codex output delivery |
 | `routes_toast.py` | 167 | Windows toast notifications |
