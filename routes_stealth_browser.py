@@ -138,8 +138,6 @@ STEALTH_LAUNCH_ARGS = [
     "--disable-blink-features=AutomationControlled",
     "--disable-features=IsolateOrigins,site-per-process",
     "--disable-site-isolation-trials",
-    "--disable-web-security",
-    "--disable-features=BlockInsecurePrivateNetworkRequests",
     "--no-sandbox",
     "--disable-infobars",
     "--disable-breakpad",
@@ -217,12 +215,19 @@ def _ensure_browser(new_page: bool = False, profile: str = None):
     pw = _load_playwright()
 
     if _BROWSER is None or not _BROWSER.is_connected():
+        # Also skip if we have a persistent context already alive
+        has_persistent = _CONTEXT is not None and _PAGE is not None and not _PAGE.is_closed()
+        if has_persistent and not new_page:
+            return _PAGE
+
         # Set up profiles dir for persistent sessions
         if not _PROFILES_DIR:
             _PROFILES_DIR = Path.home() / "Hermes CoAgent" / "stealth_profiles"
             _PROFILES_DIR.mkdir(parents=True, exist_ok=True)
 
         if profile:
+            if not _safe_profile_name(profile):
+                raise ValueError(f"Invalid profile name: {profile}")
             profile_dir = _PROFILES_DIR / profile
             profile_dir.mkdir(parents=True, exist_ok=True)
             _CONTEXT = pw.chromium.launch_persistent_context(
@@ -263,6 +268,17 @@ def _inject_stealth(page):
     for name, script in STEALTH_SCRIPTS.items():
         page.add_init_script(script)
     page.add_init_script(CLOUDFLARE_BYPASS_INIT)
+
+
+def _safe_profile_name(name: str) -> bool:
+    """Reject path traversal in profile names."""
+    if not name or not isinstance(name, str):
+        return False
+    if ".." in name or "/" in name or "\\" in name:
+        return False
+    if len(name) > 64:
+        return False
+    return bool(__import__("re").match(r"^[A-Za-z0-9_-]+$", name))
 
 
 def _current_status() -> dict:
@@ -460,11 +476,12 @@ def route_stealth_extract():
                 return jsonify({"mode": "html", "content": content, "length": len(content)})
 
             elif mode == "selector" and selector:
-                elements = page.evaluate(f"""
-                    () => Array.from(document.querySelectorAll('{selector}')).map(el =>
-                        el.innerText.trim()
-                    ).filter(t => t).slice(0, {min(limit, 50)})
-                """)
+                # SAFE: pass selector as Playwright arg, never interpolate into JS
+                elements = page.evaluate(
+                    "(sel) => Array.from(document.querySelectorAll(sel)).map(el => el.innerText.trim()).filter(t => t).slice(0, 50)",
+                    selector
+                )
+                elements = elements[:min(limit, 50)]
                 return jsonify({"mode": "selector", "selector": selector, "results": elements, "count": len(elements)})
 
             else:
@@ -563,8 +580,7 @@ def route_stealth_health():
     """Check if the stealth browser is detectable using common fingerprint tests."""
     with _STEALTH_LOCK:
         try:
-            page = _ensure_browser()
-            # Navigate to a blank page to run checks
+            page = _ensure_browser(new_page=True)  # fresh tab, don't destroy user's session
             page.goto("about:blank", timeout=5000)
 
             checks = page.evaluate("""
@@ -644,6 +660,9 @@ def route_stealth_profile():
     payload = _json_payload()
     action = payload.get("action", "create")  # create | list | delete
     name = payload.get("name", "default")
+
+    if not _safe_profile_name(name):
+        return _error(f"Invalid profile name: {name}. Use only A-Z, a-z, 0-9, _, - (max 64 chars)", status=400)
 
     global _PROFILES_DIR
 

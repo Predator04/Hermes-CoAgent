@@ -34,10 +34,13 @@ _DEPLOY_STATE = {
     "step": "",
     "log": [],
     "token": None,
+    "token_preview": None,
     "port": 9123,
     "lan_url": None,
     "ngrok_url": None,
     "error": None,
+    "coagent_pid": None,
+    "ngrok_pid": None,
 }
 
 
@@ -114,6 +117,7 @@ def _pip_install(python: str, packages: list[str]) -> bool:
             r2 = _run([python, "-m", "pip", "install", pkg], timeout=120)
             if r2.returncode != 0:
                 _log(f"  WARNING: {pkg} install returned code {r2.returncode}")
+                return False
     return True
 
 
@@ -164,8 +168,10 @@ def route_deploy_status():
         "port": state["port"],
         "lan_url": state["lan_url"],
         "ngrok_url": state["ngrok_url"],
-        "token": state["token"][:8] + "..." if state["token"] else None,
+        "token": state["token_preview"] or (state["token"][:8] + "..." if state["token"] else None),
         "log": state["log"][-30:],
+        "coagent_pid": state.get("coagent_pid"),
+        "ngrok_pid": state.get("ngrok_pid"),
         "tunnel_explanation": TUNNEL_EXPLANATION.strip(),
     })
 
@@ -232,7 +238,12 @@ def route_deploy_oneclick():
 
     # Step 1: Install deps
     try:
-        _pip_install(python, ["patchright"])
+        ok = _pip_install(python, ["patchright"])
+        if not ok:
+            with _DEPLOY_LOCK:
+                _DEPLOY_STATE["phase"] = "error"
+                _DEPLOY_STATE["error"] = "pip install failed — check logs"
+            return _error("pip install failed", status=500)
     except Exception as e:
         with _DEPLOY_LOCK:
             _DEPLOY_STATE["phase"] = "error"
@@ -256,6 +267,7 @@ def route_deploy_oneclick():
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
+        _DEPLOY_STATE["coagent_pid"] = proc.pid
         time.sleep(3)
 
         # Verify it's up
@@ -275,6 +287,7 @@ def route_deploy_oneclick():
         lan_url = f"http://127.0.0.1:{port}"
         _DEPLOY_STATE["lan_url"] = lan_url
         _DEPLOY_STATE["token"] = token
+        _DEPLOY_STATE["token_preview"] = token[:8] + "..."
 
         # Step 4: Optional ngrok
         ngrok_url = None
@@ -283,10 +296,11 @@ def route_deploy_oneclick():
             ngrok = shutil.which("ngrok") or shutil.which("ngrok.exe")
             if ngrok:
                 _log("Starting ngrok tunnel...")
-                subprocess.Popen(
+                ngrok_proc = subprocess.Popen(
                     [ngrok, "http", str(port), "--log=stdout"],
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                 )
+                _DEPLOY_STATE["ngrok_pid"] = ngrok_proc.pid
                 time.sleep(3)
                 try:
                     resp = urllib.request.urlopen("http://127.0.0.1:4040/api/tunnels", timeout=10)
@@ -309,7 +323,6 @@ def route_deploy_oneclick():
             "status": "ok",
             "lan_url": lan_url,
             "ngrok_url": ngrok_url,
-            "token": token,
             "token_preview": token[:8] + "...",
             "port": port,
             "phase": "done",
@@ -367,12 +380,15 @@ def route_deploy_tunnel():
         })
 
     if action == "stop":
-        try:
-            subprocess.run(["taskkill", "/f", "/im", "ngrok.exe"],
-                           capture_output=True, timeout=10)
-        except Exception:
-            pass
+        ngrok_pid = _DEPLOY_STATE.get("ngrok_pid")
+        if ngrok_pid:
+            try:
+                subprocess.run(["taskkill", "/PID", str(ngrok_pid), "/f"],
+                               capture_output=True, timeout=10)
+            except Exception:
+                pass
         _DEPLOY_STATE["ngrok_url"] = None
+        _DEPLOY_STATE["ngrok_pid"] = None
         return jsonify({"status": "stopped"})
 
     if action == "start":
@@ -385,10 +401,11 @@ def route_deploy_tunnel():
 
         port = payload.get("port", _DEPLOY_STATE.get("port", 9123))
         try:
-            subprocess.Popen(
+            ngrok_proc = subprocess.Popen(
                 [ngrok, "http", str(port), "--log=stdout"],
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             )
+            _DEPLOY_STATE["ngrok_pid"] = ngrok_proc.pid
             time.sleep(3)
 
             import urllib.request
@@ -489,7 +506,7 @@ Write-Host "  Dependencies installed." -ForegroundColor Green
 
 # Phase 4: Generate token + launch
 Write-Host "[4/4] Launching CoAgent..." -ForegroundColor Yellow
-$token = -join ((48..57) + (97..102) | Get-Random -Count 64 | ForEach-Object { [char]$_ })
+$token = -join (1..64 | ForEach-Object { '{0:x}' -f (Get-Random -Maximum 16) })
 Set-Location $CoAgentDir
 
 Write-Host ""
