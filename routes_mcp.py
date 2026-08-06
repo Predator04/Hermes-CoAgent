@@ -658,6 +658,65 @@ def register_routes(app, state, require_auth):
         tools = _tools_list(app)
         return jsonify({"tools": tools, "count": len(tools)})
 
+    @app.route("/mcp/config", methods=["GET"])
+    @require_auth
+    def route_mcp_config():
+        """Generate MCP client config for Claude Desktop, Cursor, VS Code, Hermes."""
+        host = request.host.split(":")[0] if request.host else "127.0.0.1"
+        port = request.host.split(":")[1] if ":" in (request.host or "") else "9123"
+        lan_ip = host if host != "127.0.0.1" else "127.0.0.1"
+
+        auth_header = request.headers.get("Authorization", "")
+        token = auth_header.replace("Bearer ", "") if auth_header.startswith("Bearer ") else "YOUR_TOKEN"
+
+        return jsonify({
+            "server": AGENT_NAME,
+            "version": VERSION,
+            "protocol_version": MCP_PROTOCOL_VERSION,
+            "endpoint": f"http://{lan_ip}:{port}/mcp",
+            "configs": {
+                "claude_desktop": {
+                    "mcpServers": {
+                        "coagent": {
+                            "url": f"http://{lan_ip}:{port}/mcp",
+                            "headers": {
+                                "Authorization": f"Bearer {token}"
+                            }
+                        }
+                    }
+                },
+                "cursor": {
+                    "mcpServers": {
+                        "coagent": {
+                            "url": f"http://{lan_ip}:{port}/mcp",
+                            "headers": {
+                                "Authorization": f"Bearer {token}"
+                            }
+                        }
+                    }
+                },
+                "hermes": f"""mcp_servers:
+  coagent:
+    url: \"http://{lan_ip}:{port}/mcp\"
+    headers:
+      Authorization: \"Bearer {token}\"
+    timeout: 120
+    connect_timeout: 30""",
+                "vscode_copilot": {
+                    "servers": {
+                        "coagent": {
+                            "type": "http",
+                            "url": f"http://{lan_ip}:{port}/mcp",
+                            "headers": {
+                                "Authorization": f"Bearer {token}"
+                            }
+                        }
+                    }
+                }
+            },
+            "note": "Copy the config for your client. Replace YOUR_TOKEN with 'hermesrockstar2024' or your actual bearer token."
+        })
+
     state.mcp = {
         "protocol_version": MCP_PROTOCOL_VERSION,
         "transport": ["http", "sse", "stdio"],
