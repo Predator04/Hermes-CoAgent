@@ -649,6 +649,8 @@ from routes_deps import register_routes as reg_deps
 from routes_config import register_routes as reg_config, backup_file
 from routes_browser import register_routes as reg_browser
 from browser_automation import register_routes as reg_browser_automation
+from routes_deploy import register_routes as reg_deploy
+from routes_stealth_browser import register_routes as reg_stealth_browser
 from routes_google import register_routes as reg_google
 from routes_logs import register_routes as reg_logs
 from routes_recorder import register_routes as reg_recorder
@@ -949,6 +951,10 @@ if MOBILE_AVAILABLE:
 if HELP_AVAILABLE:
     reg_help(app, state, require_auth)
     features["help"] = True
+reg_deploy(app, state, require_auth)
+features["deploy"] = True
+reg_stealth_browser(app, state, require_auth)
+features["stealth_browser"] = True
 reg_auto_winchronicle(app, state, require_auth)
 reg_auto_gpt4all(app, state, require_auth)
 reg_auto_open_interpreter(app, state, require_auth)
