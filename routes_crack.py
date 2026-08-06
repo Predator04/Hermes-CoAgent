@@ -6,19 +6,16 @@ captures a screenshot, and returns the result as a CoAgent endpoint.
 
 from __future__ import annotations
 
-import io
 import os
 import shutil
 import subprocess
-import sys
-import tempfile
 import time
 from datetime import datetime
 from pathlib import Path
 
 from flask import Blueprint, jsonify, send_file
 
-from shared import COAGENT_DIR, _console, _json_body, _wrap_registered_blueprint_routes
+from shared import _console, _json_body, _wrap_registered_blueprint_routes
 
 crack_bp = Blueprint("crack", __name__)
 
@@ -283,9 +280,10 @@ def crack_run():
 def crack_screenshot(filename):
     """Serve the last captured crack screenshot."""
     safe = Path(filename).name  # prevent path traversal
-    screenshot_path = CRACK_DIR / safe
-    if not screenshot_path.is_file():
-        screenshot_path = SCREENSHOT
+    # Only serve FROM the actual SCREENSHOT path — no arbitrary file reads
+    if safe != os.path.basename(SCREENSHOT):
+        return jsonify({"error": "screenshot not found"}), 404
+    screenshot_path = SCREENSHOT
     if not screenshot_path.is_file():
         return jsonify({"error": "no screenshot available"}), 404
     return send_file(

@@ -1,6 +1,7 @@
 """Wake-on-LAN routes."""
 
 import json
+import os
 import re
 import socket
 import threading
@@ -53,7 +54,9 @@ def _load_machines():
 
 def _save_machines(machines):
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    MACHINES_FILE.write_text(json.dumps(machines, indent=2), encoding="utf-8")
+    tmp_file = MACHINES_FILE.with_suffix(".tmp")
+    tmp_file.write_text(json.dumps(machines, indent=2), encoding="utf-8")
+    os.replace(str(tmp_file), str(MACHINES_FILE))
 
 
 def _send_wol(mac, broadcast="255.255.255.255", port=9):
@@ -89,7 +92,11 @@ def register_routes(app, state, require_auth):
         except ValueError as e:
             return _error(str(e))
         broadcast = str(data.get("broadcast") or data.get("ip") or "255.255.255.255")
-        port = max(1, min(int(data.get("port", 9) or 9), 65535))
+        try:
+            port = int(data.get("port", 9) if data.get("port") is not None else 9)
+        except (ValueError, TypeError):
+            return _error("port must be an integer", 400)
+        port = max(1, min(port, 65535))
         if not _MACHINES_LOCK.acquire(blocking=False):
             return _machines_busy()
         try:
@@ -113,7 +120,7 @@ def register_routes(app, state, require_auth):
             machines = _load_machines()
             key = name.strip()
             machine = machines.pop(key, None)
-            if not machine:
+            if machine is None:
                 return _error("saved machine not found", 404)
             _save_machines(machines)
             return jsonify({"status": "deleted", "machine": machine, "count": len(machines), "file": str(MACHINES_FILE)})
@@ -136,8 +143,14 @@ def register_routes(app, state, require_auth):
             if not machine:
                 return _error("saved machine not found", 404)
         mac = data.get("mac") or (machine or {}).get("mac")
+        if not mac:
+            return _error("mac is required", 400)
         broadcast = data.get("broadcast") or data.get("ip") or (machine or {}).get("broadcast") or "255.255.255.255"
-        port = max(1, min(int(data.get("port") or (machine or {}).get("port") or 9), 65535))
+        try:
+            port = int(data.get("port") if data.get("port") is not None else (machine or {}).get("port", 9))
+        except (ValueError, TypeError):
+            return _error("port must be an integer", 400)
+        port = max(1, min(port, 65535))
         try:
             sent = _send_wol(mac, str(broadcast), port)
             return jsonify({"status": "sent", "mac": _normalize_mac(mac), "broadcast": broadcast, "port": port, "bytes": sent})

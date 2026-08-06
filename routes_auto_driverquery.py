@@ -115,6 +115,9 @@ def register_routes(app, state, require_auth):
         show_signed = request.args.get("signed", "").lower() in ("1", "true", "yes")
         verbose = request.args.get("verbose", "").lower() in ("1", "true", "yes")
 
+        if show_signed and verbose:
+            return jsonify({"ok": False, "error": "/SI and /V are mutually exclusive"}), 400
+
         if show_signed:
             args.append("/SI")
         if verbose:
@@ -164,6 +167,9 @@ def register_routes(app, state, require_auth):
 
         show_signed = request.args.get("signed", "").lower() in ("1", "true", "yes")
         verbose = request.args.get("verbose", "").lower() in ("1", "true", "yes")
+
+        if show_signed and verbose:
+            return jsonify({"ok": False, "error": "/SI and /V are mutually exclusive"}), 400
 
         if show_signed:
             args.append("/SI")
