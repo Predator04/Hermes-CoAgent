@@ -94,7 +94,8 @@ def _winapi_windows(limit=80):
                 pass
             return len(wins) < limit
 
-        ctypes.windll.user32.EnumWindows(enum_proc(enum_cb), 0)
+        cb = enum_proc(enum_cb)
+        ctypes.windll.user32.EnumWindows(cb, 0)
     except Exception:
         pass
     return wins[:limit]

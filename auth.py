@@ -26,6 +26,7 @@ COAGENT_DIR = None
 
 # CSRF token store — maps token_hash -> expiry timestamp
 _CSRF_TOKENS: dict[str, float] = {}
+_CSRF_LOCK = threading.Lock()
 _CSRF_CLEANUP_INTERVAL = 300  # seconds between stale cleanup
 _CSRF_TTL = 3600  # 1 hour
 _DASHBOARD_HANDOFFS: dict[str, tuple[str, float]] = {}
@@ -37,11 +38,12 @@ def csrf_token_store():
     """Get or initialize the CSRF token store, cleaning stale entries."""
     global _CSRF_TOKENS
     now = time.time()
-    stale = [k for k, v in list(_CSRF_TOKENS.items()) if v < now]
-    for k in stale:
-        _CSRF_TOKENS.pop(k, None)
-    token = secrets.token_urlsafe(32)
-    _CSRF_TOKENS[hashlib.sha256(token.encode()).hexdigest()] = now + _CSRF_TTL
+    with _CSRF_LOCK:
+        stale = [k for k, v in list(_CSRF_TOKENS.items()) if v < now]
+        for k in stale:
+            _CSRF_TOKENS.pop(k, None)
+        token = secrets.token_urlsafe(32)
+        _CSRF_TOKENS[hashlib.sha256(token.encode()).hexdigest()] = now + _CSRF_TTL
     return token
 
 
@@ -63,7 +65,8 @@ def csrf_check():
         return False
     token_hash = hashlib.sha256(token.encode()).hexdigest()
     # Atomic check-and-remove: pop returns expiry or None
-    expiry = _CSRF_TOKENS.pop(token_hash, None)
+    with _CSRF_LOCK:
+        expiry = _CSRF_TOKENS.pop(token_hash, None)
     return expiry is not None and expiry > time.time()
 
 

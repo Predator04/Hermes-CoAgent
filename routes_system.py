@@ -72,7 +72,7 @@ def _ps_set_volume(level):
     level = _coerce_int(level, 50, 0, 100)
     # Use nircmd if available, else PowerShell volume slider
     if _has_nircmd():
-        _ps(f"nircmd setsysvolume {int(level * 655.35)}", timeout=5)
+        _ps(f"nircmd setsysvolume {round(level * 655.35)}", timeout=5)
     else:
         # Use SendKeys (volume up/down) — less precise but no deps
         _ps(f"""

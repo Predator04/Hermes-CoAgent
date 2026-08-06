@@ -117,17 +117,16 @@ def log_action(tool, endpoint=None, input_summary=None, success=True,
 @telem_bp.route("/telemetry", methods=["GET"])
 def get_telemetry():
     """List recent actions with pagination and filters."""
-    limit = min(int(request.args.get("limit", 50)), 500)
-    offset = int(request.args.get("offset", 0))
-    tool_filter = request.args.get("tool")
-    success_filter = request.args.get("success")
-    since = request.args.get("since")
-
     db = _get_db()
     if db is None:
         return jsonify({"error": "Telemetry not initialized"}), 500
 
     try:
+        limit = min(int(request.args.get("limit", 50)), 500)
+        offset = int(request.args.get("offset", 0))
+        tool_filter = request.args.get("tool")
+        success_filter = request.args.get("success")
+        since = request.args.get("since")
         where_clauses = []
         params = []
         if tool_filter:
