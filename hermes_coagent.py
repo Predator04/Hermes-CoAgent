@@ -335,6 +335,31 @@ def _h_exc(e):
     traceback.print_exc()
     return jsonify({"error": "Internal server error"}), 500
 
+# -- Metrics Collection ---------------------------------------------
+_METRICS = {}  # path -> {"hits": int, "times": [float], "statuses": {}}
+_METRICS_LOCK = threading.Lock()
+_METRICS_MAX_SAMPLES = 100  # keep last 100 response times per endpoint
+
+@app.before_request
+def _metrics_start():
+    request._metrics_start = time.time()
+
+@app.after_request
+def _metrics_record(response):
+    if request.method == "OPTIONS":
+        return response
+    elapsed = (time.time() - getattr(request, "_metrics_start", time.time())) * 1000
+    path = request.path
+    status = str(response.status_code)
+    with _METRICS_LOCK:
+        entry = _METRICS.setdefault(path, {"hits": 0, "times": [], "statuses": {}})
+        entry["hits"] += 1
+        entry["times"].append(elapsed)
+        if len(entry["times"]) > _METRICS_MAX_SAMPLES:
+            entry["times"] = entry["times"][-_METRICS_MAX_SAMPLES:]
+        entry["statuses"][status] = entry["statuses"].get(status, 0) + 1
+    return response
+
 # -- State --------------------------------------------------------
 @dataclass
 class CoPilotState:
@@ -1069,6 +1094,36 @@ def route_ping():
 @app.route("/health", methods=["GET"])
 def route_health():
     return jsonify({"status": "ok", "agent": AGENT_NAME, "version": VERSION})
+
+@app.route("/metrics", methods=["GET"])
+def route_metrics():
+    """Performance metrics — response time percentiles per endpoint."""
+    import statistics
+    with _METRICS_LOCK:
+        summary = {}
+        for path, entry in _METRICS.items():
+            times = entry["times"]
+            if not times:
+                continue
+            times_sorted = sorted(times)
+            n = len(times_sorted)
+            summary[path] = {
+                "hits": entry["hits"],
+                "avg_ms": round(statistics.mean(times), 1),
+                "p50_ms": round(times_sorted[int(n * 0.5)], 1),
+                "p95_ms": round(times_sorted[int(n * 0.95)], 1),
+                "p99_ms": round(times_sorted[int(n * 0.99)], 1) if n > 10 else None,
+                "max_ms": round(times_sorted[-1], 1),
+                "samples": n,
+                "status_codes": entry["statuses"],
+            }
+    # Sort slowest first
+    sorted_summary = dict(sorted(summary.items(), key=lambda x: x[1]["p95_ms"], reverse=True))
+    return jsonify({
+        "uptime_s": int(time.time() - state.start_time),
+        "endpoints_tracked": len(sorted_summary),
+        "endpoints": sorted_summary,
+    })
 
 @app.route("/health/endpoints", methods=["GET"])
 @require_auth
