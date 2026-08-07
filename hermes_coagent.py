@@ -847,8 +847,12 @@ from routes_auto_ventoy import register_routes as reg_auto_ventoy
 from routes_auto_rufus import register_routes as reg_auto_rufus
 from routes_auto_gsudo import register_routes as reg_auto_gsudo
 from routes_auto_trippy import register_routes as reg_auto_trippy
+from routes_background import register_routes as reg_background
+
 features = {}
 
+reg_background(app, state, require_auth)
+features["background_control"] = True
 reg_mouse(app, state, require_auth)
 reg_ocr(app, state, require_auth)
 reg_uia(app, state, require_auth)
