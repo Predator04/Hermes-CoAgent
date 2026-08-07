@@ -570,12 +570,19 @@ def _tooltip(state: TrayState) -> str:
         last_error = state.last_error
 
     if healthy:
-        return f"{APP_NAME} v{VERSION} {TOOLTIP_DASH} Running {_format_duration(server_uptime or tray_uptime)}"
-    if healthy is None:
-        return f"{APP_NAME} v{VERSION} {TOOLTIP_DASH} Checking {_format_duration(tray_uptime)}"
-    if last_error:
-        return f"{APP_NAME} v{VERSION} {TOOLTIP_DASH} Down"
-    return f"{APP_NAME} v{VERSION} {TOOLTIP_DASH} Down"
+        base = f"{APP_NAME} v{VERSION} {TOOLTIP_DASH} Running {_format_duration(server_uptime or tray_uptime)}"
+    elif healthy is None:
+        base = f"{APP_NAME} v{VERSION} {TOOLTIP_DASH} Checking {_format_duration(tray_uptime)}"
+    elif last_error:
+        base = f"{APP_NAME} v{VERSION} {TOOLTIP_DASH} Down"
+    else:
+        base = f"{APP_NAME} v{VERSION} {TOOLTIP_DASH} Down"
+    # Append background task status (quick check, don't block on failures)
+    try:
+        bg_line = _bg_tooltip_line(state)
+    except Exception:
+        bg_line = ""
+    return base + bg_line
 
 
 def _notify(icon, message: str, title: str = APP_NAME) -> None:
@@ -743,6 +750,56 @@ def _exit(icon, item, state: TrayState) -> None:
         return
 
 
+# ── Background task tray integration ───────────────────────────────────
+
+def _bg_api(state: TrayState, path: str) -> Optional[dict]:
+    """Call a /background/* endpoint on the CoAgent server."""
+    try:
+        token = state.current_token()
+        port = state.port or DEFAULT_PORT
+        if not token:
+            return None
+        url = f"http://127.0.0.1:{port}{path}"
+        req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            return json.loads(resp.read())
+    except Exception:
+        return None
+
+
+def _check_background_status(icon, item, state: TrayState) -> None:
+    """Show current background task status as a notification."""
+    data = _bg_api(state, "/background/status")
+    if not data:
+        _notify(icon, "CoAgent not reachable")
+        return
+    if data.get("active"):
+        _notify(icon,
+            f"🫥 Running: {data['task']}\n"
+            f"Actions: {data['actions']} | Elapsed: {data['elapsed_seconds']}s\n"
+            f"Last: {data['last_action']}"
+        )
+    else:
+        _notify(icon, "🫥 No background task running — co-pilot idle")
+
+
+def _stop_background(icon, item, state: TrayState) -> None:
+    """Emergency stop any running background task."""
+    data = _bg_api(state, "/background/stop")
+    if data and data.get("success"):
+        _notify(icon, "🫥 Background task stopped")
+    else:
+        _notify(icon, "Failed to stop background task")
+
+
+def _bg_tooltip_line(state: TrayState) -> str:
+    """Get a tooltip line showing background task status."""
+    data = _bg_api(state, "/background/status")
+    if data and data.get("active"):
+        return f"\n🫥 {data['task']} ({data['actions']} actions)"
+    return ""
+
+
 def _copy_token(icon, item, state: TrayState) -> None:
     try:
         import pyperclip
@@ -871,6 +928,9 @@ def main() -> int:
         pystray.MenuItem("Open Dashboard", lambda icon, item: _open_dashboard(icon, item, state), default=True),
         pystray.MenuItem("Settings", lambda icon, item: _open_url(f"http://127.0.0.1:{state.port or DEFAULT_PORT}/#settings")),
         pystray.MenuItem("Check Health", lambda icon, item: _check_health(icon, item, state)),
+        pystray.Menu.SEPARATOR,
+        pystray.MenuItem("🫥 Background Status", lambda icon, item: _check_background_status(icon, item, state)),
+        pystray.MenuItem("🛑 Stop Background", lambda icon, item: _stop_background(icon, item, state)),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("Copy Token", lambda icon, item: _copy_token(icon, item, state)),
         pystray.MenuItem("Show Token", lambda icon, item: _show_token(icon, item, state)),
