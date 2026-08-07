@@ -917,6 +917,9 @@ def _copy_tunnel_url(icon, item, state: TrayState) -> None:
 
 
 def _health_loop(icon, state: TrayState) -> None:
+    update_ticks = 0
+    UPDATE_CHECK_INTERVAL = 240  # Check for updates every 240 health checks (≈2 hours at 30s intervals)
+
     while True:
         with state.lock:
             if state.shutting_down:
@@ -947,11 +950,104 @@ def _health_loop(icon, state: TrayState) -> None:
         if should_restart:
             _restart_server(state, icon=None, automatic=True)
 
+        # Auto-update check (every ~2 hours)
+        update_ticks += 1
+        if ok and update_ticks >= UPDATE_CHECK_INTERVAL:
+            update_ticks = 0
+            try:
+                _check_and_auto_update(state, icon)
+            except Exception:
+                pass
+
         for _ in range(HEALTH_INTERVAL_SECONDS):
             time.sleep(1)
             with state.lock:
                 if state.shutting_down:
                     return
+
+
+# ── Auto-update ───────────────────────────────────────────────────────────
+
+GITHUB_API_RELEASES = "https://api.github.com/repos/Predator04/Hermes-CoAgent/releases/latest"
+
+
+def _fetch_latest_version(state: TrayState) -> Optional[str]:
+    """Get the latest version tag from GitHub releases."""
+    try:
+        token = state.current_token()
+        headers = {"Accept": "application/vnd.github+json"}
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        req = urllib.request.Request(GITHUB_API_RELEASES, headers=headers)
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read())
+            return data.get("tag_name", "").lstrip("v")
+    except Exception:
+        return None
+
+
+def _check_and_auto_update(state: TrayState, icon=None) -> None:
+    """Check GitHub for newer version. If found, auto git pull + restart."""
+    latest = _fetch_latest_version(state)
+    if not latest:
+        return
+
+    current = _load_version()
+    if latest == current:
+        return  # Already up to date
+
+    state.log(f"auto-update: v{current} → v{latest} available")
+
+    # Try git pull
+    coagent_dir = state.coagent_dir or _find_coagent_dir()
+    if not coagent_dir or not (Path(coagent_dir) / ".git").exists():
+        if icon:
+            _notify(icon, f"Update v{latest} available but not a git install — re-run installer")
+        return
+
+    if icon:
+        _notify(icon, f"Updating v{current} → v{latest}...")
+
+    try:
+        result = subprocess.run(
+            ["git", "pull", "origin", "main"],
+            cwd=str(coagent_dir),
+            capture_output=True,
+            text=True,
+            timeout=30,
+            creationflags=_creationflags(),
+        )
+        if result.returncode != 0:
+            state.log(f"auto-update: git pull failed: {result.stderr.strip()}")
+            return
+
+        # Check if anything was pulled
+        if "Already up to date" in result.stdout:
+            return
+
+        state.log(f"auto-update: pulled successfully: {result.stdout.strip()[:200]}")
+        new_version = _load_version()
+        if new_version != current:
+            state.log(f"auto-update: updated v{current} → v{new_version}")
+            _notify(icon, f"Updated to v{new_version} — restarting...")
+            time.sleep(1)
+            _restart_server(state, icon=None, automatic=True)
+    except Exception as e:
+        state.log(f"auto-update: error: {e}")
+
+
+def _check_updates_menu(icon, item, state: TrayState) -> None:
+    """Manual 'Check for Updates' menu item."""
+    current = _load_version()
+    latest = _fetch_latest_version(state)
+    if not latest:
+        _notify(icon, "Could not check for updates")
+        return
+    if latest == current:
+        _notify(icon, f"Up to date (v{current})")
+    else:
+        _notify(icon, f"Update available: v{current} → v{latest}. Auto-updating...")
+        _check_and_auto_update(state, icon)
 
 
 def main() -> int:
@@ -982,6 +1078,8 @@ def main() -> int:
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("Start Tunnel (ngrok)", lambda icon, item: _start_tunnel_menu(icon, item, state)),
         pystray.MenuItem("Copy Tunnel URL", lambda icon, item: _copy_tunnel_url(icon, item, state)),
+        pystray.Menu.SEPARATOR,
+        pystray.MenuItem("Check for Updates", lambda icon, item: _check_updates_menu(icon, item, state)),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("Start/Open Server", lambda icon, item: _start_or_open_server_menu(icon, item, state)),
         pystray.MenuItem("Restart Server", lambda icon, item: _restart_server_menu(icon, item, state)),
