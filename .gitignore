@@ -13,6 +13,7 @@ env/
 *.token
 config.local.yaml
 *.log
+*.log.*
 *.pid
 
 # Session data (never commit)
