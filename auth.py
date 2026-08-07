@@ -39,6 +39,7 @@ def csrf_token_store():
     global _CSRF_TOKENS
     now = time.time()
     with _CSRF_LOCK:
+        # Purge stale tokens inline
         stale = [k for k, v in list(_CSRF_TOKENS.items()) if v < now]
         for k in stale:
             _CSRF_TOKENS.pop(k, None)

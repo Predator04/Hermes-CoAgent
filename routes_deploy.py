@@ -66,7 +66,8 @@ def _find_python() -> str | None:
         if found:
             candidates.append(found)
     # Also check common install dirs
-    for base in [r"C:\Program Files", r"C:\Users\Admin\AppData\Local\Programs"]:
+    for base in [r"C:\Program Files",
+                 os.path.expanduser(r"~\AppData\Local\Programs")]:
         for d in Path(base).glob("Python3*"):
             exe = d / "python.exe"
             if exe.exists():
@@ -506,7 +507,7 @@ Write-Host "  Dependencies installed." -ForegroundColor Green
 
 # Phase 4: Generate token + launch
 Write-Host "[4/4] Launching CoAgent..." -ForegroundColor Yellow
-$token = -join (1..64 | ForEach-Object { '{0:x}' -f (Get-Random -Maximum 16) })
+$token = -join (1..64 | ForEach-Object { '{0:x}' -f ([System.Security.Cryptography.RandomNumberGenerator]::GetInt32(0, 16)) })
 Set-Location $CoAgentDir
 
 Write-Host ""
