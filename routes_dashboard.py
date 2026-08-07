@@ -5,6 +5,8 @@ from flask import Response
 
 CSP = "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'"
 
+TOKEN_PLACEHOLDER = "__HERMES_TOKEN_PLACEHOLDER__"
+
 DASHBOARD_HTML = r"""<!doctype html>
 <html lang="en">
 <head>
@@ -38,7 +40,7 @@ pre{white-space:pre-wrap;overflow:auto;max-height:390px;margin:0;background:#090
 </main>
 <!-- sessionStorage keeps URL-provided tokens scoped to the current tab. -->
 <script>
-const params=new URLSearchParams(location.search);const queryToken=params.get("token")||"";if(queryToken){sessionStorage.setItem("hermes_token",queryToken);params.delete("token");const cleanUrl=location.pathname+(params.toString()?"?"+params.toString():"")+location.hash;history.replaceState(null,document.title,cleanUrl)}const token=queryToken||sessionStorage.getItem("hermes_token")||"";
+const params=new URLSearchParams(location.search);const queryToken=params.get("token")||"";if(queryToken){sessionStorage.setItem("hermes_token",queryToken);params.delete("token");const cleanUrl=location.pathname+(params.toString()?"?"+params.toString():"")+location.hash;history.replaceState(null,document.title,cleanUrl)}const token="__HERMES_TOKEN_PLACEHOLDER__"||queryToken||sessionStorage.getItem("hermes_token")||"";
 function headers(json=false){const h={};if(token)h.Authorization="Bearer "+token;if(json)h["Content-Type"]="application/json";return h}
 async function getJson(path){const r=await fetch(path,{headers:headers(false)});if(!r.ok)throw new Error(path+" "+r.status);return await r.json()}
 function setSummary(ok,text){document.getElementById("dot").className="dot"+(ok?" ok":"");document.getElementById("summary").textContent=text}
@@ -58,14 +60,13 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_dashboard():
         # Inject Bearer token into the HTML so the JS can use it directly
-        import urllib.parse
+        import json as _json
         import auth
         token = auth.AUTH_TOKEN or ""
-        safe_token = urllib.parse.quote(token, safe='')
-        html = DASHBOARD_HTML.replace(
-            'const token=queryToken||sessionStorage.getItem("hermes_token")||"";',
-            f'const token="{safe_token}"||queryToken||sessionStorage.getItem("hermes_token")||"";'
-        )
+        html = DASHBOARD_HTML.replace(TOKEN_PLACEHOLDER, _json.dumps(token)[1:-1])
         response = Response(html, mimetype="text/html")
         response.headers["Content-Security-Policy"] = CSP
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["X-Content-Type-Options"] = "nosniff"
         return response

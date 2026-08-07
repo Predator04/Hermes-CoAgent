@@ -3,6 +3,7 @@
 # Source: https://github.com/chocolatey/choco
 
 import os
+import re
 import shutil
 import subprocess
 
@@ -55,17 +56,17 @@ def _is_choco_available():
 
 def _clean_package_name(value):
     """Validate and sanitize a Chocolatey package name/ID."""
-    name = str(value or "").strip().lower()
+    name = str(value or "").strip()
     if not name:
         raise ValueError("package name must not be empty")
     if len(name) > 256:
         raise ValueError("package name too long (max 256 chars)")
     if "\x00" in name:
         raise ValueError("package name cannot contain null bytes")
-    # Chocolatey package names are alphanumeric with dots and dashes
-    forbidden = set('<>"|?*!@#$%^&')
-    if any(c in name for c in forbidden):
-        raise ValueError(f"package name contains forbidden characters: {forbidden & set(name)}")
+    # Chocolatey package names are alphanumeric with dots and dashes.
+    # Reject anything outside [a-zA-Z0-9._-] and leading dashes.
+    if not re.fullmatch(r'[a-zA-Z0-9][a-zA-Z0-9._-]*', name):
+        raise ValueError(f"package name contains invalid characters: {name!r}")
     return name
 
 
@@ -208,7 +209,7 @@ def register_routes(app, state, require_auth):
             return jsonify({"ok": False, "error": "choco not found"}), 503
 
         version = body.get("version", "")
-        force = body.get("force", False)
+        force = body.get("force") is True
         params = body.get("params", "")
         install_args = body.get("install_args", "")
 
@@ -257,6 +258,8 @@ def register_routes(app, state, require_auth):
                 package_name = _clean_package_name(package_name)
             except ValueError as e:
                 return jsonify({"ok": False, "error": str(e)}), 400
+        elif body.get("all") is not True:
+            return jsonify({"ok": False, "error": "package_name required, or set all=true to upgrade all"}), 400
 
         exe = _find_choco()
         if not exe:

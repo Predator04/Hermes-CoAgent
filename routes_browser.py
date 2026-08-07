@@ -67,6 +67,18 @@ def _navigation_url_error(url):
     return None
 
 
+BRWOSER_TIMEOUT_MAX_MS = 60_000  # clamp user-supplied timeouts to 60s max
+
+
+def _clamp_timeout(data, key="timeout", default=10000):
+    val = data.get(key, default)
+    try:
+        val = int(val)
+    except (TypeError, ValueError):
+        return default
+    return max(1, min(val, BRWOSER_TIMEOUT_MAX_MS))
+
+
 def _load_playwright():
     try:
         from patchright.sync_api import Error as PlaywrightError
@@ -92,6 +104,11 @@ def _ensure_browser(new_page=False):
         if _PW is None:
             _PW = sync_playwright().start()
         if _BROWSER is None or not _BROWSER.is_connected():
+            if _CONTEXT is not None:
+                try:
+                    _CONTEXT.close()
+                except Exception:
+                    pass
             _BROWSER = _PW.chromium.launch(headless=False)
             _CONTEXT = _BROWSER.new_context()
             _PAGE = None
@@ -160,7 +177,7 @@ def route_browser_navigate():
         if error:
             return error
         try:
-            page.goto(url, wait_until=data.get("wait_until", "load"), timeout=int(data.get("timeout", 30000)))
+            page.goto(url, wait_until=data.get("wait_until", "load"), timeout=_clamp_timeout(data, "timeout", 30000))
             return jsonify({"status": "navigated", "url": page.url})
         except Exception as e:
             return _error(str(e), 500, type=type(e).__name__)
@@ -177,10 +194,10 @@ def route_browser_click():
             return error
         try:
             if isinstance(selector, str) and selector:
-                page.click(selector, timeout=int(data.get("timeout", 10000)))
+                page.click(selector, timeout=_clamp_timeout(data))
                 target = {"selector": selector}
             elif isinstance(text, str) and text:
-                page.get_by_text(text).click(timeout=int(data.get("timeout", 10000)))
+                page.get_by_text(text).click(timeout=_clamp_timeout(data))
                 target = {"text": text}
             else:
                 return _error("selector or text is required")
@@ -203,7 +220,7 @@ def route_browser_fill():
         if error:
             return error
         try:
-            page.fill(selector, str(value), timeout=int(data.get("timeout", 10000)))
+            page.fill(selector, str(value), timeout=_clamp_timeout(data))
             return jsonify({"status": "filled", "selector": selector, "url": page.url})
         except Exception as e:
             return _error(str(e), 500, type=type(e).__name__)
@@ -219,9 +236,9 @@ def route_browser_extract():
             return error
         try:
             if isinstance(selector, str) and selector:
-                text = page.locator(selector).inner_text(timeout=int(data.get("timeout", 10000)))
+                text = page.locator(selector).inner_text(timeout=_clamp_timeout(data))
             else:
-                text = page.inner_text("body", timeout=int(data.get("timeout", 10000)))
+                text = page.inner_text("body", timeout=_clamp_timeout(data))
             return jsonify({"text": text, "selector": selector, "url": page.url, "chars": len(text)})
         except Exception as e:
             return _error(str(e), 500, type=type(e).__name__)

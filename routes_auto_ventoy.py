@@ -9,7 +9,7 @@ import shutil
 import subprocess
 import json as json_lib
 
-from flask import jsonify
+from flask import jsonify, request
 from shared import _json_body, _log, _missing_field
 
 FEATURE_INFO = {
@@ -170,6 +170,10 @@ def register_routes(app, state, require_auth):
 
         if not disk:
             return jsonify({"ok": False, "error": _missing_field("disk (e.g. /Drive:F: or /PhyDrive:1)")}), 400
+        if not isinstance(disk, str) or not re.match(r'^(/Drive:[A-Z]:|/PhyDrive:\d+)$', disk):
+            return jsonify({"ok": False, "error": "disk must be /Drive:X: or /PhyDrive:N"}), 400
+        if not isinstance(cmd, str):
+            return jsonify({"ok": False, "error": "cmd must be 'I' or 'U'"}), 400
         if cmd.upper() not in ("I", "U"):
             return jsonify({"ok": False, "error": "cmd must be 'I' (install) or 'U' (update)"}), 400
 

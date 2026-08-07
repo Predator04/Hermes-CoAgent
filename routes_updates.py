@@ -25,6 +25,7 @@ GITHUB_LATEST_URL = "https://api.github.com/repos/Predator04/Hermes-CoAgent/rele
 GITHUB_TARBALL_URL = "https://api.github.com/repos/Predator04/Hermes-CoAgent/tarball/main"
 PRESERVE_FILES = {".token", "telegram_config.json", "config.json"}
 RESTART_FLAG = COAGENT_DIR / ".restart_requested"
+_UPDATE_LOCK = threading.Lock()
 
 
 def _request_json(url):
@@ -35,8 +36,13 @@ def _request_json(url):
             "User-Agent": "Hermes-CoAgent-Updater/1.0",
         },
     )
-    with urllib.request.urlopen(request, timeout=20) as response:
-        return json.loads(response.read().decode("utf-8"))
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        if exc.code == 403 and "rate limit" in str(exc).lower():
+            raise RuntimeError("GitHub API rate limit exceeded (403)") from exc
+        raise
 
 
 def _download(url, destination):
@@ -103,6 +109,9 @@ def _safe_tar_members(tar, destination):
                 continue
         except ValueError:
             continue
+        # Strip dangerous mode bits (setuid, setgid, world-writable)
+        if member.mode:
+            member.mode = member.mode & 0o755
         safe.append(member)
     return safe
 
@@ -203,45 +212,50 @@ def route_update_check():
 
 @updates_bp.route("/update/apply", methods=["POST"])
 def route_update_apply():
+    if not _UPDATE_LOCK.acquire(blocking=False):
+        return jsonify({"error": "update already in progress"}), 409
     try:
-        latest = _latest_release()
-    except Exception as exc:
-        return jsonify({"error": "update check failed", "detail": str(exc)}), 502
+        try:
+            latest = _latest_release()
+        except Exception as exc:
+            return jsonify({"error": "update check failed", "detail": str(exc)}), 502
 
-    if not latest.get("update_available"):
+        if not latest.get("update_available"):
+            return jsonify(
+                {
+                    "status": "current",
+                    "current": VERSION,
+                    "latest": latest.get("latest") or VERSION,
+                    "update_available": False,
+                }
+            ), 304
+
+        try:
+            with tempfile.TemporaryDirectory(prefix="coagent-update-") as tmp:
+                tmp_path = Path(tmp)
+                tarball_path = tmp_path / "coagent.tar.gz"
+                extract_dir = tmp_path / "extract"
+                extract_dir.mkdir()
+                _download(GITHUB_TARBALL_URL, tarball_path)
+                update_root = _extract_tarball(tarball_path, extract_dir)
+                copied = _copy_update_tree(update_root, COAGENT_DIR)
+        except Exception as exc:
+            _console(f"[updates] apply failed: {exc}")
+            return jsonify({"error": "update apply failed", "detail": str(exc)}), 500
+
+        _touch_restart_flag("update_apply")
+        _restart_after_delay(1.0)
         return jsonify(
             {
-                "status": "current",
-                "current": VERSION,
-                "latest": latest.get("latest") or VERSION,
-                "update_available": False,
+                "status": "ok",
+                "version": latest.get("latest") or VERSION,
+                "restarting": True,
+                "files_copied": len(copied),
+                "preserved": sorted(PRESERVE_FILES),
             }
-        ), 304
-
-    try:
-        with tempfile.TemporaryDirectory(prefix="coagent-update-") as tmp:
-            tmp_path = Path(tmp)
-            tarball_path = tmp_path / "coagent.tar.gz"
-            extract_dir = tmp_path / "extract"
-            extract_dir.mkdir()
-            _download(GITHUB_TARBALL_URL, tarball_path)
-            update_root = _extract_tarball(tarball_path, extract_dir)
-            copied = _copy_update_tree(update_root, COAGENT_DIR)
-    except Exception as exc:
-        _console(f"[updates] apply failed: {exc}")
-        return jsonify({"error": "update apply failed", "detail": str(exc)}), 500
-
-    _touch_restart_flag("update_apply")
-    _restart_after_delay(1.0)
-    return jsonify(
-        {
-            "status": "ok",
-            "version": latest.get("latest") or VERSION,
-            "restarting": True,
-            "files_copied": len(copied),
-            "preserved": sorted(PRESERVE_FILES),
-        }
-    )
+        )
+    finally:
+        _UPDATE_LOCK.release()
 
 
 @updates_bp.route("/update/restart", methods=["POST"])
