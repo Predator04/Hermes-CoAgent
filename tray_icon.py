@@ -28,7 +28,15 @@ from typing import Optional
 
 
 APP_NAME = "Hermes CoAgent"
-VERSION = "8.1"
+
+def _load_version() -> str:
+    """Read version from VERSION file (single source of truth)."""
+    vf = Path(__file__).resolve().parent / "VERSION"
+    if vf.is_file():
+        return vf.read_text().strip()
+    return "0.0.0"
+
+VERSION = _load_version()
 DEFAULT_PORT = 9123
 PID_FILE_NAME = "coagent.pid"
 HEALTH_INTERVAL_SECONDS = 30

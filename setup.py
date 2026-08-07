@@ -33,7 +33,7 @@ def root_modules():
 
 setup(
     name="hermes-coagent",
-    version="7.12.0",
+    version=(ROOT / "VERSION").read_text(encoding="utf-8").strip() if (ROOT / "VERSION").exists() else "0.0.0",
     description="Local Windows desktop automation REST API server",
     long_description=(ROOT / "README.md").read_text(encoding="utf-8") if (ROOT / "README.md").exists() else "",
     long_description_content_type="text/markdown",

@@ -10,8 +10,16 @@ import ctypes
 from flask import Response, jsonify, request
 
 COAGENT_DIR = Path(__file__).parent.resolve()
-VERSION = "8.41"
-BUILD = "2026-07-17"
+
+def _load_version() -> str:
+    """Read version from VERSION file (single source of truth)."""
+    vf = COAGENT_DIR / "VERSION"
+    if vf.is_file():
+        return vf.read_text().strip()
+    return "0.0.0"
+
+VERSION = _load_version()
+BUILD = "2026-08-07"
 AGENT_NAME = "Hermes CoAgent"
 MACROS_DIR = COAGENT_DIR / "macros"
 SCREENSHOTS_DIR = COAGENT_DIR / "screenshots"

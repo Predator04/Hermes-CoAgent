@@ -36,7 +36,7 @@ BRANCH = "main"
 GITHUB_TARBALL = f"https://api.github.com/repos/{REPO}/tarball/{BRANCH}"
 NIRCMD_URL = "https://www.nirsoft.net/utils/nircmd-x64.zip"
 
-INSTALLER_VERSION = "1.0.0"
+INSTALLER_VERSION = (Path(__file__).resolve().parent / "VERSION").read_text().strip() if (Path(__file__).resolve().parent / "VERSION").exists() else "0.0.0"
 
 # Default paths
 if platform.system() == "Windows":
@@ -374,13 +374,18 @@ def step_verify(install_dir):
         print("  ⚠  No auth token generated")
         ok = False
 
-    versions_file = install_dir / "shared.py"
-    if versions_file.exists():
-        for line in versions_file.read_text().splitlines():
-            if line.startswith("VERSION ="):
+    version_file = install_dir / "VERSION"
+    if version_file.exists():
+        print(f"  ✓ Version: {version_file.read_text().strip()}")
+        build_file = install_dir / "shared.py"
+        if build_file.exists():
+            for line in build_file.read_text().splitlines():
+                if line.startswith("BUILD ="):
+                    print(f"    {line.strip().strip(',')}")
+    elif (install_dir / "shared.py").exists():
+        for line in (install_dir / "shared.py").read_text().splitlines():
+            if line.startswith("VERSION =") or line.startswith("BUILD ="):
                 print(f"  ✓ {line.strip().strip(',')}")
-            if line.startswith("BUILD ="):
-                print(f"    {line.strip().strip(',')}")
 
     print(f"\n  Total files: {len(list(install_dir.rglob('*.py')))} Python files")
 
