@@ -98,14 +98,17 @@ def register_routes(app, state, require_auth):
             resolved = Path(path).resolve()
             if _is_protected_delete_path(resolved):
                 return jsonify({"error": "Refusing to delete a protected directory", "path": str(resolved)}), 403
+            # Verify path is within allowed delete roots
+            if not any(resolved == root or str(resolved).startswith(str(root) + os.sep) for root in _ALLOWED_DELETE_ROOTS):
+                return jsonify({"error": "Path outside allowed delete roots", "path": str(resolved)}), 403
             if d.get("confirm") is not True:
                 return jsonify({"error": "Deletion requires confirm: true", "path": str(resolved)}), 400
-            backup_path = backup_file(path)
-            if os.path.isdir(path):
+            backup_path = backup_file(str(resolved))
+            if os.path.isdir(str(resolved)):
                 import shutil
-                shutil.rmtree(path)
+                shutil.rmtree(str(resolved))
             else:
-                os.remove(path)
+                os.remove(str(resolved))
             _log(f"File deleted: {path}")
             return jsonify({"status": "ok", "path": path, "backup": backup_path})
         except Exception as e:
