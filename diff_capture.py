@@ -47,7 +47,9 @@ def _compute_hash(img):
     """Compute a simple perceptual hash for change detection."""
     if img is None:
         return None
-    small = img.resize((32, 32), Image.LANCZOS).convert("L")
+    resample = getattr(Image, "Resampling", None)
+    lanczos = getattr(resample, "LANCZOS", None) if resample else getattr(Image, "LANCZOS", None)
+    small = img.resize((32, 32), lanczos or Image.LANCZOS).convert("L")
     return hashlib.md5(small.tobytes()).hexdigest()
 
 
@@ -72,7 +74,7 @@ def _find_changed_regions(prev, curr, grid_size=8, threshold=30):
             hist = diff.histogram()
             # Sum across ALL 768 bins (256 per RGB channel), not just 256
             total_bins = len(hist)
-            diff_sum = sum(hist[i] * i for i in range(total_bins)) / max(255 * 3 * cell_w * cell_h, 1)
+            diff_sum = sum(hist[i] * (i % 256) for i in range(total_bins)) / max(255 * 3 * cell_w * cell_h, 1)
             if diff_sum > threshold:
                 changed.append((left, top, right - left, bottom - top))
 
