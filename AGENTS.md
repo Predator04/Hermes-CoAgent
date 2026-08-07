@@ -20,8 +20,8 @@ All other endpoints require Bearer auth when `--secure` is active.
 ## Version
 
 Version is stored in `VERSION` file (single source of truth). All Python modules read it at runtime.
-- Check: `python bump_version.py`
-- Bump: `python bump_version.py patch|minor|major`
+- Check: `python scripts/bump_version.py`
+- Bump: `python scripts/bump_version.py patch|minor|major`
 
 ## Architecture
 

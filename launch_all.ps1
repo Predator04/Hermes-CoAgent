@@ -13,7 +13,7 @@ $coagentDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $pidFile = Join-Path $coagentDir "coagent.pid"
 $serverScript = Join-Path $coagentDir "hermes_coagent.py"
 $trayScript = Join-Path $coagentDir "tray_icon.py"
-$relayScript = Join-Path $coagentDir "screenshot_relay.py"
+$relayScript = Join-Path $coagentDir "scripts\screenshot_relay.py"
 
 $pythonwCandidates = @(
     "$env:LOCALAPPDATA\Programs\Python\Python313\pythonw.exe"
@@ -214,7 +214,7 @@ if ($relayOk) {
         Write-Output "  Relay launch failed: $($_.Exception.Message)"
     }
 } else {
-    Write-Output "  screenshot_relay.py not found - live desktop unavailable"
+    Write-Output "  scripts/screenshot_relay.py not found - live desktop unavailable"
 }
 
 # Step 5: Verify server is running

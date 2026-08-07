@@ -10,7 +10,7 @@ Usage:
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parent.parent  # scripts/ → repo root
 VERSION_FILE = ROOT / "VERSION"
 
 FILES_TO_CHECK = [

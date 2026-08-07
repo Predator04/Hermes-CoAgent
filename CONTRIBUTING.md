@@ -38,7 +38,7 @@ Each `routes_*.py` module exports a `register_routes(app, state, require_auth)` 
 1. Create `routes_yourfeature.py` with a `register_routes()` function
 2. Import and register it in `hermes_coagent.py`
 3. Add tests in `tests/`
-4. Run `python test_compile.py` to verify syntax
+4. Run `python scripts/test_compile.py` to verify syntax
 
 ## Versioning
 
@@ -46,9 +46,9 @@ Version is stored in `VERSION` file. All modules read it at runtime via `shared.
 
 **Bumping the version:**
 ```bash
-python bump_version.py patch   # 8.50 → 8.51
-python bump_version.py minor   # 8.50 → 9.0
-python bump_version.py major   # 8.50 → 9.0.0
+python scripts/bump_version.py patch   # 8.50 → 8.51
+python scripts/bump_version.py minor   # 8.50 → 9.0
+python scripts/bump_version.py major   # 8.50 → 9.0.0
 ```
 
 Never hardcode version strings in source files.
@@ -66,7 +66,7 @@ Never hardcode version strings in source files.
 
 ```bash
 # Syntax check (fast)
-python test_compile.py
+python scripts/test_compile.py
 
 # Full test suite
 pytest tests/ -v
@@ -86,10 +86,10 @@ curl -H "Authorization: Bearer $(cat .token)" http://localhost:9123/version
 
 1. Create a feature branch from `main`
 2. Make your changes
-3. Run `python test_compile.py` to verify no syntax errors
+3. Run `python scripts/test_compile.py` to verify no syntax errors
 4. Run relevant tests with `pytest`
 5. Update `AGENTS.md` if adding/changing endpoints
-6. Bump version with `python bump_version.py patch`
+6. Bump version with `python scripts/bump_version.py patch`
 7. Submit PR with description of changes
 
 ## Security

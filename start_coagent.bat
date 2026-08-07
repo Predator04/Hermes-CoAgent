@@ -44,5 +44,5 @@ echo Checking screenshot relay...
 powershell -NoProfile -ExecutionPolicy Bypass -Command "try { $r = Invoke-WebRequest -Uri 'http://127.0.0.1:9124/health' -TimeoutSec 2 -UseBasicParsing; if ($r.StatusCode -eq 200) { exit 0 } } catch {}; exit 1" >nul 2>nul
 if errorlevel 1 (
     echo Starting screenshot relay fallback...
-    start "" "%PYTHON%" "%~dp0screenshot_relay.py"
+    start "" "%PYTHON%" "%~dp0scripts\screenshot_relay.py"
 )

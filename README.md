@@ -123,8 +123,13 @@ The `.token` file is gitignored. Do not expose port 9123 to untrusted networks w
 ```
 Hermes-CoAgent/
 ├── VERSION                    # Single source of truth for version
-├── bump_version.py            # Version bump utility
-├── hermes_coagent.py          # Main server — Flask + MCP entry point
+├── scripts/                   # Standalone utility scripts
+│   ├── bump_version.py        # Version bump utility
+│   ├── test_compile.py        # Quick syntax check
+│   ├── remote_agent.py        # Lightweight remote desktop agent
+│   ├── screenshot_relay.py    # Screenshot relay for session isolation
+│   ├── cua_mcp_bridge.py      # MCP stdio bridge for WSL
+│   └── oauth_server.py        # OAuth callback server
 ├── shared.py                  # Shared utilities, SSE helpers, logging
 ├── auth.py                    # Bearer auth + CSRF protection
 ├── uia_engine.py              # Windows UI Automation engine
@@ -139,15 +144,6 @@ Hermes-CoAgent/
 ├── install_coagent.bat        # Batch installer launcher
 ├── launch_all.ps1             # PowerShell Session 1 launcher
 ├── start_coagent.bat          # Double-click launcher
-├── oauth_server.py            # OAuth callback server
-├── remote_agent.py            # Lightweight remote desktop agent
-├── screenshot_relay.py        # Screenshot relay for session isolation
-├── cua_mcp_bridge.py          # MCP stdio bridge for WSL
-├── telemetry.py               # Usage telemetry
-├── shared_fallbacks.py        # Fallback method chains
-├── diff_capture.py            # Screenshot diff engine
-├── browser_automation.py      # Browser launch utilities
-├── test_compile.py            # Quick syntax check
 ├── routes_*.py                # Modular route handlers (see below)
 ├── tests/                     # Test suite
 ├── AGENTS.md                  # AI agent configuration
@@ -222,15 +218,15 @@ Plus **59 auto-route modules** (`routes_auto_*.py`) wrapping common Windows CLI 
 
 ```bash
 # Check current version
-python bump_version.py
+python scripts/bump_version.py
 
 # Bump version
-python bump_version.py patch   # 8.50 → 8.51
-python bump_version.py minor   # 8.50 → 9.0
-python bump_version.py major   # 8.50 → 9.0.0
+python scripts/bump_version.py patch   # 8.50 → 8.51
+python scripts/bump_version.py minor   # 8.50 → 9.0
+python scripts/bump_version.py major   # 8.50 → 9.0.0
 
 # Set exact version
-python bump_version.py 9.0.0
+python scripts/bump_version.py 9.0.0
 ```
 
 All Python files read from `VERSION` at runtime — no hardcoded version strings to chase down. Update `VERSION`, commit, and the `/version` endpoint reflects it automatically.
@@ -242,7 +238,7 @@ All Python files read from `VERSION` at runtime — no hardcoded version strings
 pip install -r requirements.txt
 
 # Run syntax check
-python test_compile.py
+python scripts/test_compile.py
 
 # Run tests
 pytest tests/ -v
