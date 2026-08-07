@@ -379,11 +379,10 @@ def _dispatch_route(app, row, path, view_args, method, query, body, headers):
         # Match URL rule so url_rule and view_args are populated correctly
         request.url_rule = row["rule"]
         request.view_args = view_args
-        # Run before_request handlers (auth gate lives here)
-        rv = app.preprocess_request()
-        if rv is not None:
-            return rv  # before_request returned a response (auth failed)
-        # Dispatch to view function
+        # Skip preprocess_request() to avoid double-auth:
+        # The MCP endpoint is already auth-protected; internal dispatch
+        # should NOT re-run before_request handlers (auth gate).
+        # Dispatch directly to the view function.
         rv = app.view_functions[row["rule"].endpoint](**view_args)
         return app.make_response(rv)
 
@@ -684,8 +683,8 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_mcp_config():
         """Generate MCP client config for Claude Desktop, Cursor, VS Code, Hermes."""
-        from shared import _get_host_ip
-        lan_ip = getattr(_get_host_ip, '__call__', lambda: "127.0.0.1")()
+        from shared import get_host_ip
+        lan_ip = get_host_ip()
         if not lan_ip or lan_ip == "127.0.0.1":
             try:
                 import socket
