@@ -285,6 +285,12 @@ def _rate_cleanup():
                      if now - last > _RATE_CLEANUP_INTERVAL * 2]
             for ip in stale:
                 del _RATE_LIMITS[ip]
+        # Also evict stale auth failure entries
+        with _AUTH_FAIL_LOCK:
+            stale_ips = [ip for ip, timestamps in _AUTH_FAILURES.items()
+                        if not timestamps or now - timestamps[-1] > _AUTH_FAIL_WINDOW * 2]
+            for ip in stale_ips:
+                del _AUTH_FAILURES[ip]
 
 threading.Thread(target=_rate_cleanup, daemon=True).start()
 
@@ -403,7 +409,7 @@ except ImportError:
     _psutil = None
 
 _MEMORY_LOCK = threading.Lock()
-_MEMORY_SAMPLES = deque(maxlen=12)
+_MEMORY_SAMPLES = deque(maxlen=5)  # 5 min at 60s interval = 300s window
 _MEMORY_STATE = {
     "psutil": _psutil is not None,
     "current_rss": 0,
@@ -468,11 +474,27 @@ def _watchdog_ping(port):
 def _ps_quote(value):
     return "'" + str(value).replace("'", "''") + "'"
 
+_RESTARTING = False
+_RESTARTING_LOCK = threading.Lock()
+
 def _restart_from_watchdog():
+    global _RESTARTING
+    # Prevent duplicate restarts from concurrent watchdog/health loops
+    with _RESTARTING_LOCK:
+        if _RESTARTING:
+            _log("[WATCHDOG] Restart already in progress; skipping duplicate")
+            return
+        _RESTARTING = True
     with _WATCHDOG_LOCK:
         _WATCHDOG_STATE["restart_attempts"] += 1
         _WATCHDOG_STATE["last_restart"] = datetime.now().isoformat(timespec="seconds")
     _log("[WATCHDOG] Failure threshold reached; restarting CoAgent")
+    # Clean up PID file before exit so replacement process can acquire lock
+    try:
+        if PID_FILE.exists():
+            PID_FILE.unlink()
+    except OSError:
+        pass
     create_flags = subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0
     script = str(Path(__file__).resolve())
     args = [script] + sys.argv[1:]
@@ -495,6 +517,8 @@ def _restart_from_watchdog():
     except Exception as e:
         _watchdog_update(last_error=f"restart failed: {type(e).__name__}: {e}")
         _log(f"[WATCHDOG] Restart launch failed: {type(e).__name__}: {e}")
+        with _RESTARTING_LOCK:
+            _RESTARTING = False
         return
     time.sleep(1)
     os._exit(75)
