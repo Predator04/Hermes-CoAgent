@@ -1,4 +1,4 @@
-﻿"""
+"""
 Store Automation Routes — Product Research, Page Generator, Shopify Publisher
 =============================================================================
 Fully automated product sourcing, page generation, and Shopify publishing pipeline.

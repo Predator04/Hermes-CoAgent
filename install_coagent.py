@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 r"""CoAgent Installer — Automated one-command setup for Hermes CoAgent.
 
 Usage:
