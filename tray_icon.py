@@ -1067,7 +1067,7 @@ def main() -> int:
 
     menu = pystray.Menu(
         pystray.MenuItem("Open Dashboard", lambda icon, item: _open_dashboard(icon, item, state), default=True),
-        pystray.MenuItem("Settings", lambda icon, item: _open_url(f"http://127.0.0.1:{state.port or DEFAULT_PORT}/#settings")),
+        pystray.MenuItem("Settings", lambda icon, item: _open_url(f"http://127.0.0.1:{state.port or DEFAULT_PORT}/dashboard2#settings")),
         pystray.MenuItem("Check Health", lambda icon, item: _check_health(icon, item, state)),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("🫥 Background Status", lambda icon, item: _check_background_status(icon, item, state)),
