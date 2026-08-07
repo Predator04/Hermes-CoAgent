@@ -131,39 +131,43 @@ def register_routes(app, state, require_auth):
             cmd = [exe, tmp_ahk]
             if wait:
                 try:
-                    result = subprocess.run(
+                    proc = subprocess.Popen(
                         cmd,
-                        capture_output=True,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
                         text=True,
-                        timeout=timeout_sec,
-                        shell=False,
+                        creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0,
                     )
-                except subprocess.TimeoutExpired as exc:
-                    # Kill lingering AHK process
-                    subprocess.run(
-                        ["taskkill", "/f", "/im", os.path.basename(exe)],
-                        capture_output=True,
-                        timeout=3,
-                    )
-                    _log(f"[autohotkey] script timed out after {timeout_sec}s")
-                    return jsonify({
-                        "ok": False,
-                        "error": "AutoHotkey script timed out",
-                        "stdout": exc.stdout or "",
-                        "stderr": exc.stderr or "",
-                    }), 504
+                    try:
+                        stdout, stderr = proc.communicate(timeout=timeout_sec)
+                        ok = proc.returncode == 0
+                        _log(f"[autohotkey] script exit={proc.returncode}")
+                        return jsonify({
+                            "ok": ok,
+                            "exit_code": proc.returncode,
+                            "stdout": stdout,
+                            "stderr": stderr,
+                        }), 200 if ok else 502
+                    except subprocess.TimeoutExpired:
+                        # Kill only the spawned AHK process by PID
+                        if hasattr(subprocess, "CREATE_NO_WINDOW"):
+                            subprocess.run(
+                                ["taskkill", "/f", "/t", "/pid", str(proc.pid)],
+                                capture_output=True,
+                                timeout=3,
+                                creationflags=subprocess.CREATE_NO_WINDOW,
+                            )
+                        else:
+                            proc.kill()
+                        proc.communicate()
+                        _log(f"[autohotkey] script timed out after {timeout_sec}s")
+                        return jsonify({
+                            "ok": False,
+                            "error": "AutoHotkey script timed out",
+                        }), 504
                 except OSError as exc:
                     _log(f"[autohotkey] launch failed: {exc}")
                     return jsonify({"ok": False, "error": str(exc)}), 500
-
-                ok = result.returncode == 0
-                _log(f"[autohotkey] script exit={result.returncode}")
-                return jsonify({
-                    "ok": ok,
-                    "exit_code": result.returncode,
-                    "stdout": result.stdout,
-                    "stderr": result.stderr,
-                }), 200 if ok else 502
             else:
                 # Fire-and-forget: launch detached, don't wait
                 try:
@@ -212,8 +216,10 @@ def register_routes(app, state, require_auth):
             return jsonify({"ok": False, "error": str(exc)}), 400
 
         out_name = str(data.get("output", "coagent_script.exe")).strip()
-        if not out_name.endswith(".exe"):
-            out_name += ".exe"
+        # Prevent path traversal: only allow basename, reject absolute paths
+        out_name = os.path.basename(out_name)
+        if not out_name.lower().endswith(".exe") or out_name in (".exe", ""):
+            out_name = "coagent_script.exe"
 
         tmp_ahk = None
         tmp_exe = None
@@ -258,7 +264,7 @@ def register_routes(app, state, require_auth):
             }), 200 if ok else 502
 
         finally:
-            for p in [tmp_ahk]:
+            for p in [tmp_ahk, tmp_exe]:
                 if p and os.path.exists(p):
                     try:
                         os.unlink(p)
