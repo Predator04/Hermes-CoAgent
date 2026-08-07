@@ -108,7 +108,7 @@ def _normalize_open_target(target):
     lowered = target.lower()
     if lowered in _OPEN_ALIASES:
         return _OPEN_ALIASES[lowered]
-    if re.match(r"^[a-z]+://", target, flags=re.I):
+    if re.match(r"^https?://", target, re.I):
         return target
     # Executables (not URLs)
     if lowered.endswith((".exe", ".lnk", ".msi", ".bat", ".cmd", ".ps1")):
