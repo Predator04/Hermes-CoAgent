@@ -13,3 +13,16 @@ env/
 *.token
 config.local.yaml
 *.log
+*.pid
+
+# Session data (never commit)
+agent_logs/
+agent_providers_config.json
+telegram_config.json
+recipes.json
+*.db
+coagent_token.txt
+
+# Build artifacts
+CoAgent.spec
+*.exe
