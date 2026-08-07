@@ -31,6 +31,9 @@ def get_version() -> str:
 
 def bump_version(current: str, part: str) -> str:
     parts = [int(x) for x in current.split(".")]
+    # Normalize to 3-part semver
+    while len(parts) < 3:
+        parts.append(0)
     if part == "major":
         parts[0] += 1
         parts[1] = 0
