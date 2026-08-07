@@ -830,9 +830,49 @@ def _start_tunnel_menu(icon, item, state: TrayState) -> None:
 
 
 def _start_tunnel(state: TrayState, icon=None) -> None:
+    port = state.port or DEFAULT_PORT
+    token = state.current_token()
+
+    # First check if server is running
+    server_ok = False
     try:
-        port = state.port or DEFAULT_PORT
-        token = state.current_token()
+        headers = {"Authorization": f"Bearer {token}"} if token else {}
+        req = urllib.request.Request(f"http://127.0.0.1:{port}/ping", headers=headers)
+        resp = urllib.request.urlopen(req, timeout=3)
+        if resp.status == 200:
+            server_ok = True
+    except Exception:
+        pass
+
+    # If not running, auto-start it
+    if not server_ok:
+        if icon:
+            _notify(icon, "Server not running — starting it first...")
+        state.log("tunnel: server not running, auto-starting")
+        _kill_server_processes(state)
+        time.sleep(1)
+        result = _start_server_process(state, open_existing=False)
+        state.log(f"tunnel: auto-start result: {result}")
+
+        # Wait for server to come up
+        for _ in range(30):
+            time.sleep(1)
+            try:
+                req = urllib.request.Request(f"http://127.0.0.1:{port}/ping", headers={"Authorization": f"Bearer {token}"} if token else {})
+                resp = urllib.request.urlopen(req, timeout=1)
+                if resp.status == 200:
+                    server_ok = True
+                    break
+            except Exception:
+                pass
+
+        if not server_ok:
+            if icon:
+                _notify(icon, "Server failed to start — tunnel cannot be created")
+            return
+
+    # Start the tunnel
+    try:
         headers = {"Authorization": f"Bearer {token}"} if token else {}
         req = urllib.request.Request(
             f"http://127.0.0.1:{port}/tunnel/start",
@@ -845,6 +885,11 @@ def _start_tunnel(state: TrayState, icon=None) -> None:
             url = result.get("url", "")
             if url:
                 _notify(icon, f"Tunnel: {url}")
+                try:
+                    import pyperclip
+                    pyperclip.copy(url)
+                except Exception:
+                    pass
             else:
                 _notify(icon, "Tunnel started (check /tunnel/status for URL)")
     except Exception as e:
