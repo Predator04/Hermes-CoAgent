@@ -14,6 +14,8 @@ from datetime import datetime
 
 from flask import Blueprint, Response, jsonify, request
 
+from shared import _wrap_registered_blueprint_routes
+
 _LOGGER = logging.getLogger(__name__)
 vision_bp = Blueprint("screen_vision", __name__)
 

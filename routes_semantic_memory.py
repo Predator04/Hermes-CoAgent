@@ -167,7 +167,7 @@ def _memory_clear():
 
 def register_routes(app, state, require_auth):
     try:
-        from shared import COAGENT_DIR
+        from shared import COAGENT_DIR, _wrap_registered_blueprint_routes
         _set_coagent_dir(str(COAGENT_DIR))
     except (ImportError, AttributeError):
         pass
