@@ -112,9 +112,18 @@ def main() -> int:
         thread.start()
 
     try:
-        return proc.wait()
+        code = proc.wait()
+        # Drain remaining output before daemon threads die
+        for t in threads[1:]:
+            t.join(timeout=5)
+        return code
     except KeyboardInterrupt:
         proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
         return 130
 
 

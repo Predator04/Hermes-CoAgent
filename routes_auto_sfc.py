@@ -23,16 +23,16 @@ FEATURE_INFO = {
 
 
 def _find_sfc():
-    """Locate sfc.exe — system32."""
+    """Locate sfc.exe — prefer system32, fall back to PATH."""
+    system32 = r"C:\Windows\system32\sfc.exe"
+    if os.path.isfile(system32):
+        return system32
     exe = shutil.which("sfc") or shutil.which("sfc.exe")
     if exe:
         return exe
-    for p in [
-        r"C:\Windows\system32\sfc.exe",
-        r"C:\Windows\SysWOW64\sfc.exe",
-    ]:
-        if os.path.isfile(p):
-            return p
+    syswow64 = r"C:\Windows\SysWOW64\sfc.exe"
+    if os.path.isfile(syswow64):
+        return syswow64
     return None
 
 
@@ -43,14 +43,14 @@ def _is_sfc_available():
         return False
     try:
         result = subprocess.run(
-            [exe, "/?",
-             "2>&1"],  # redirect stderr to stdout for /? which outputs to stderr
+            [exe, "/?"],
             capture_output=True,
             text=True,
             timeout=10,
-            shell=True,
         )
-        return result.returncode in (0, 1)
+        # sfc /? outputs to stderr; check both streams
+        output = (result.stdout or "") + (result.stderr or "")
+        return result.returncode in (0, 1) and len(output) > 0
     except (subprocess.TimeoutExpired, OSError):
         return False
 
@@ -94,9 +94,10 @@ def _parse_sfc_output(output):
             result["summary"] = stripped
         if "found corrupt files" in stripped.lower():
             result["found_corruption"] = True
-        if "repaired" in stripped.lower() and "unable" not in stripped.lower():
+        lowered = stripped.lower()
+        if "repaired" in lowered and "unable" not in lowered and "not repaired" not in lowered and "could not be repaired" not in lowered:
             result["repaired"] = True
-        if "unable to repair" in stripped.lower():
+        if "unable to repair" in lowered or "could not repair" in lowered:
             result["unable_to_repair"] = True
     return result
 
@@ -198,11 +199,16 @@ def register_routes(app, state, require_auth):
             # Read last 50 lines for SFC entries
             result = subprocess.run(
                 ["powershell.exe", "-NoProfile", "-Command",
-                 f"Get-Content '{cbs_log}' -Tail 100 | Select-String 'SFC|sfc|System File Checker|Windows Resource Protection'"],
+                 f"Get-Content '{cbs_log}' -Tail 100 -ErrorAction SilentlyContinue | Select-String 'SFC|sfc|System File Checker|Windows Resource Protection'"],
                 capture_output=True,
                 text=True,
                 timeout=15,
             )
+            if result.returncode != 0:
+                return jsonify({
+                    "ok": False,
+                    "error": f"CBS log read failed: {result.stderr.strip() or 'unknown error'}",
+                }), 503
             entries = [l.strip() for l in (result.stdout or "").splitlines() if l.strip()]
             return jsonify({
                 "ok": True,

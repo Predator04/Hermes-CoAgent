@@ -186,15 +186,23 @@ def _copy_tree(src, backup_dir):
     rel = src.resolve().relative_to(COAGENT_DIR)
     dst = backup_dir / rel
     if dst.exists():
+        # Copy to temp, then atomically replace
+        tmp_dst = dst.with_name(dst.name + ".tmp")
+        if tmp_dst.exists():
+            shutil.rmtree(tmp_dst)
+        shutil.copytree(src, tmp_dst)
         shutil.rmtree(dst)
-    shutil.copytree(src, dst)
+        tmp_dst.rename(dst)
+    else:
+        shutil.copytree(src, dst)
     return str(dst)
 
 
 def _make_backup():
-    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    import secrets
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S") + "-" + secrets.token_hex(4)
     backup_dir = _BACKUP_ROOT / stamp
-    backup_dir.mkdir(parents=True, exist_ok=True)
+    backup_dir.mkdir(parents=True, exist_ok=False)
     copied = []
     config = COAGENT_DIR / "config.json"
     if config.exists() and config.is_file():
@@ -242,7 +250,7 @@ def register_routes(app, state, require_auth):
                 "last_error": _LAST_ERROR,
             }
         return jsonify({
-            "git_available": status_result["ok"] or status_result["returncode"] != 9009,
+            "git_available": bool(status_result.get("ok")),
             "dirty": bool(lines),
             "dirty_files": lines,
             "status": status_result,
@@ -264,6 +272,12 @@ def register_routes(app, state, require_auth):
         data = _json_body()
         remote = str(data.get("remote", "origin") or "origin")
         branch = str(data.get("branch", "main") or "main")
+        # Validate to prevent git-argument injection
+        _SAFE_REF = re.compile(r"^[A-Za-z0-9._/-]{1,200}$")
+        if not _SAFE_REF.match(remote) or remote.startswith("-") or ":" in branch:
+            return jsonify({"error": "invalid remote or branch name"}), 400
+        if not _SAFE_REF.match(branch) or branch.startswith("-") or ":" in branch:
+            return jsonify({"error": "invalid remote or branch name"}), 400
         result = _run_git(["push", remote, branch], timeout=300)
         if result["ok"]:
             with _LOCK:
@@ -308,16 +322,22 @@ def register_routes(app, state, require_auth):
     @app.route("/git/rollback/<hash_value>", methods=["POST"])
     @require_auth
     def route_git_rollback(hash_value):
-        data = _json_body()
-        if not _HASH_RE.match(hash_value):
-            return jsonify({"error": "hash must be a git revision hash"}), 400
-        _status_result, dirty = _status_lines()
-        if dirty and not data.get("allow_dirty"):
-            return jsonify({"error": "working tree is dirty; pass allow_dirty=true to revert anyway", "dirty_files": dirty}), 409
-        args = ["revert", hash_value]
-        if data.get("no_edit", True):
-            args.insert(1, "--no-edit")
-        result = _run_git(args, timeout=300)
-        if result["ok"]:
-            return jsonify({"status": "reverted", "hash": hash_value, "result": result})
-        return jsonify({"status": "revert_failed", "hash": hash_value, "result": result}), 500
+        if not _FILE_LOCK.acquire(blocking=False):
+            payload, status = _file_busy_payload()
+            return jsonify(payload), status
+        try:
+            data = _json_body()
+            if not _HASH_RE.match(hash_value):
+                return jsonify({"error": "hash must be a git revision hash"}), 400
+            _status_result, dirty = _status_lines()
+            if dirty and not data.get("allow_dirty"):
+                return jsonify({"error": "working tree is dirty; pass allow_dirty=true to revert anyway", "dirty_files": dirty}), 409
+            args = ["revert", hash_value]
+            if data.get("no_edit", True):
+                args.insert(1, "--no-edit")
+            result = _run_git(args, timeout=300)
+            if result["ok"]:
+                return jsonify({"status": "reverted", "hash": hash_value, "result": result})
+            return jsonify({"status": "revert_failed", "hash": hash_value, "result": result}), 500
+        finally:
+            _FILE_LOCK.release()
