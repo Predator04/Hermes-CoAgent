@@ -135,7 +135,7 @@ def _grab_screen_mss(force=False, monitor_index=0):
         png_bytes = buf.getvalue()
         # Cache the encoded PNG so next identical-frame request skips encode
         with _PIXEL_HASH_LOCK:
-            _SCREENSHOT_CACHE[monitor_index] = {"raw": png_bytes, "ts": time.time()}
+            _SCREENSHOT_CACHE[monitor_index] = {"raw": png_bytes, "time": time.time()}
         return png_bytes
     except Exception as e:
         _debug_backend_failure("MSS capture", e)
@@ -398,7 +398,11 @@ def _probe_tray_relay(timeout=2.0):
     """Check tray relay health without fetching a full screenshot."""
     start = time.perf_counter()
     try:
-        with urllib.request.urlopen(f"http://127.0.0.1:{TRAY_PORT}/health", timeout=timeout) as resp:
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{TRAY_PORT}/health",
+            headers=_tray_relay_headers(),
+        )
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
             body = resp.read(4096)
             latency_ms = round((time.perf_counter() - start) * 1000, 1)
             payload = json.loads(body.decode("utf-8", errors="replace") or "{}")
@@ -695,7 +699,19 @@ def register_routes(app, state, require_auth):
             return jsonify({"error": "Cannot capture screen"}), 500
         region = d.get("region")
         if region:
-            img = img.crop((region[0], region[1], region[0]+region[2], region[1]+region[3]))
+            if not (isinstance(region, (list, tuple)) and len(region) == 4):
+                return jsonify({"error": "region must be [x, y, width, height]"}), 400
+            try:
+                rx, ry, rw, rh = [max(0, int(v)) for v in region]
+            except (ValueError, TypeError):
+                return jsonify({"error": "region values must be integers"}), 400
+            # Clamp to image bounds
+            iw, ih = img.size
+            rx, ry = min(rx, iw), min(ry, ih)
+            rw, rh = min(rw, iw - rx), min(rh, ih - ry)
+            if rw <= 0 or rh <= 0:
+                return jsonify({"error": "region has zero area after clamping"}), 400
+            img = img.crop((rx, ry, rx + rw, ry + rh))
         import pytesseract, pyperclip
         text = pytesseract.image_to_string(img)
         pyperclip.copy(text.strip())
