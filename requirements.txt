@@ -12,7 +12,6 @@ mouse>=0.7.1
 pynput>=1.7
 pyperclip>=1.8
 playwright>=1.42
-# patchright>=1.0  # optional stealth browser — install separately if needed
 anthropic>=0.30
 py-cpuinfo>=9.0
 croniter>=2.0
