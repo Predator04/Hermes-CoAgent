@@ -74,7 +74,7 @@ def _is_private_ip(value):
     try:
         ip = ipaddress.ip_address(str(value))
     except ValueError:
-        return True
+        return True  # malformed IP → treat as private (safe default)
     if ip in _BLOCKED_IP_ADDRESSES:
         return True
     if ip.is_private or ip.is_loopback or ip.is_link_local:
@@ -99,7 +99,7 @@ def _is_private_url(url):
             return True
     return False
 
-DANGEROUS_CMD_CHARS = set(';&|`$(){}[]\\n\\r<>^!')
+DANGEROUS_CMD_CHARS = set(';&|`$(){}[]<>^!' + '\n\r\x00\x1a')
 
 _sse_clients = []
 _sse_lock = threading.Lock()
