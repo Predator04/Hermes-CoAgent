@@ -19,11 +19,13 @@ def register_routes(app, state, require_auth):
     @app.route("/wait/element", methods=["POST"])
     @require_auth
     def route_wait_element():
-        d = _json_body()
-        query = d.get("query", "")
-        if not query or not isinstance(query, str) or len(query) > 200:
-            return jsonify({"error": "Invalid or missing 'query' field"}), 400
         try:
+            d = _json_body()
+            if not isinstance(d, dict):
+                return jsonify({"error": "Request body must be a JSON object"}), 400
+            query = d.get("query", "")
+            if not query or not isinstance(query, str) or len(query) > 200:
+                return jsonify({"error": "Invalid or missing 'query' field"}), 400
             import coagent_features as cf
             return jsonify(cf.wait_element(d))
         except Exception as e:
@@ -32,8 +34,10 @@ def register_routes(app, state, require_auth):
     @app.route("/wait/element-gone", methods=["POST"])
     @require_auth
     def route_wait_element_gone():
-        d = _json_body()
         try:
+            d = _json_body()
+            if not isinstance(d, dict):
+                return jsonify({"error": "Request body must be a JSON object"}), 400
             import coagent_features as cf
             return jsonify(cf.wait_element_gone(d))
         except Exception as e:
@@ -42,8 +46,10 @@ def register_routes(app, state, require_auth):
     @app.route("/stabilize", methods=["POST"])
     @require_auth
     def route_stabilize():
-        d = _json_body()
         try:
+            d = _json_body()
+            if not isinstance(d, dict):
+                return jsonify({"error": "Request body must be a JSON object"}), 400
             import coagent_features as cf
             return jsonify(cf.stabilize_action(d))
         except Exception as e:
@@ -52,10 +58,12 @@ def register_routes(app, state, require_auth):
     @app.route("/cursor/enable", methods=["POST"])
     @require_auth
     def route_cursor_enable():
-        d = _json_body()
-        if "enable" in d and "enabled" not in d:
-            d["enabled"] = d["enable"]
         try:
+            d = _json_body()
+            if not isinstance(d, dict):
+                return jsonify({"error": "Request body must be a JSON object"}), 400
+            if "enable" in d and "enabled" not in d:
+                d["enabled"] = bool(d["enable"])
             import coagent_features as cf
             return jsonify(cf.cursor_set_enabled(d))
         except Exception as e:

@@ -18,7 +18,7 @@ FEATURE_INFO = {
     "desc": "Built-in Windows Process Terminator — kill processes by PID, image name, or filter; force terminate, kill process trees, remote process termination, filter by window state/modules/services",
     "url": "https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/taskkill",
     "added": "2026-07-16",
-    "command": "taskkill [/s computer] [/u domain\\user [/p password]]] [/fi filter] [/pid pid|/im imagename] [/f] [/t]",
+    "command": "taskkill [/s computer] [/u domain\\user [/p password]] [/fi filter] [/pid pid|/im imagename] [/f] [/t]",
 }
 
 def _find_taskkill():
@@ -123,14 +123,14 @@ def register_routes(app, state, require_auth):
         except Exception:
             return jsonify({"ok": False, "error": _missing_field("Request body")}), 400
         pid = body.get("pid")
-        force = body.get("force", False)
-        tree = body.get("tree", False)
+        force = bool(body.get("force", False))
+        tree = bool(body.get("tree", False))
         if not pid:
             return jsonify({"ok": False, "error": _missing_field("pid")}), 400
-        try:
-            int(pid)
-        except (ValueError, TypeError):
-            return jsonify({"ok": False, "error": f"Invalid pid: {pid}"}), 400
+        if not isinstance(pid, int) or isinstance(pid, bool):
+            return jsonify({"ok": False, "error": f"Invalid pid: {pid} (must be an integer)"}), 400
+        if pid <= 0:
+            return jsonify({"ok": False, "error": "pid must be positive"}), 400
         args = ["/pid", str(pid)]
         if force:
             args.append("/f")
@@ -159,8 +159,8 @@ def register_routes(app, state, require_auth):
         except Exception:
             return jsonify({"ok": False, "error": _missing_field("Request body")}), 400
         name = (body.get("name") or "").strip()
-        force = body.get("force", False)
-        tree = body.get("tree", False)
+        force = bool(body.get("force", False))
+        tree = bool(body.get("tree", False))
         if not name:
             return jsonify({"ok": False, "error": _missing_field("name")}), 400
         if len(name) > 256:
@@ -197,8 +197,8 @@ def register_routes(app, state, require_auth):
         filters = body.get("filters")
         if not filters or not isinstance(filters, list):
             return jsonify({"ok": False, "error": _missing_field("filters (list)")}), 400
-        force = body.get("force", False)
-        tree = body.get("tree", False)
+        force = bool(body.get("force", False))
+        tree = bool(body.get("tree", False))
         if len(filters) > 10:
             return jsonify({"ok": False, "error": "Maximum 10 filters allowed"}), 400
         args = []

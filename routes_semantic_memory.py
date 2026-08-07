@@ -172,4 +172,7 @@ def register_routes(app, state, require_auth):
     except (ImportError, AttributeError):
         pass
     app.register_blueprint(memory_bp)
+    if require_auth:
+        from shared import _wrap_registered_blueprint_routes
+        _wrap_registered_blueprint_routes(app, memory_bp.name, require_auth)
     _LOGGER.info("Semantic memory routes registered")

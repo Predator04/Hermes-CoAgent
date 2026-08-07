@@ -60,6 +60,35 @@ def _load_browser_api():
             )
 
 
+def _validate_url(url):
+    """Validate URL: allow only http/https, block private/localhost IPs, allow about:blank."""
+    if url == "about:blank":
+        return None
+    from urllib.parse import urlparse
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        return f"Unsupported URL scheme: {parsed.scheme or 'none'}"
+    hostname = (parsed.hostname or "").lower()
+    if not hostname:
+        return "URL must include a hostname"
+    blocked = {
+        "localhost", "127.0.0.1", "0.0.0.0",
+        "169.254.169.254",  # AWS metadata
+        "metadata.google.internal",  # GCP metadata
+    }
+    if hostname in blocked:
+        return f"Access to {hostname} is blocked"
+    # Block private IP ranges
+    import ipaddress
+    try:
+        ip = ipaddress.ip_address(hostname)
+        if ip.is_private or ip.is_loopback or ip.is_link_local:
+            return f"Access to private IP {hostname} is blocked"
+    except ValueError:
+        pass  # Not an IP address, allow (DNS will resolve later)
+    return None
+
+
 def _error(message, status=400, **extra):
     payload = {"error": message}
     payload.update(extra)
@@ -168,6 +197,9 @@ def route_browser_undetectable():
     url = data.get("url") or "about:blank"
     if not isinstance(url, str) or not url:
         return _error("url must be a string")
+    url_err = _validate_url(url)
+    if url_err:
+        return _error(url_err, 400)
 
     viewport = _random_viewport(data)
     locale, accept_language = random.choice(_LANGUAGES)

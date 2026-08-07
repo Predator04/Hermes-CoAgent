@@ -126,7 +126,7 @@ def _screen_region_brief(screenshot_bytes):
 def _get_dominant_colors(img, num=3):
     """Sample the image and find dominant color ranges."""
     try:
-        small = img.resize((32, 32))
+        small = img.convert("RGB").resize((32, 32))
         pixels = list(small.getdata())
         # Rough color quantization
         buckets = {}
@@ -284,4 +284,6 @@ def _vision_quick_scan():
 
 def register_routes(app, state, require_auth):
     app.register_blueprint(vision_bp)
+    if require_auth:
+        _wrap_registered_blueprint_routes(app, vision_bp.name, require_auth)
     _LOGGER.info("Screen Understanding API routes registered")
