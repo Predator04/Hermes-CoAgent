@@ -157,6 +157,9 @@ def _kill_with_psutil(data):
         targets.append(psutil.Process(int(data["pid"])))
     elif data.get("name"):
         wanted = str(data["name"]).lower()
+        # Guard against killing Python processes by name
+        if wanted.rstrip(".exe") in {"python", "pythonw", "python3", "python3w"}:
+            raise ValueError("Use pid when killing Python processes")
         wanted_base = wanted[:-4] if wanted.endswith(".exe") else wanted
         for proc in psutil.process_iter(["pid", "name"]):
             try:
@@ -197,6 +200,8 @@ def _kill_fallback(data):
         raise ValueError("Missing pid or name")
     if name.lower() in {"python", "python.exe", "pythonw", "pythonw.exe"}:
         raise ValueError("Use pid when killing Python processes")
+    if any(c in name for c in ("*", "?", "/", "\\")):
+        raise ValueError("Process name contains invalid characters")
     r = subprocess.run(["taskkill", "/IM", name, "/F"],
                        capture_output=True, text=True, timeout=10)
     if r.returncode != 0:
