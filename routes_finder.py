@@ -22,13 +22,17 @@ POSITION_WORDS = {"top", "bottom", "left", "right", "middle", "center", "centre"
 
 
 def _auth_header():
-    token_file = COAGENT_DIR / ".token"
-    token = token_file.read_text(encoding="utf-8").strip() if token_file.exists() else ""
-    if token:
-        return f"Bearer {token}"
     try:
+        token_file = COAGENT_DIR / ".token"
+        if token_file.exists():
+            token = token_file.read_text(encoding="utf-8").strip()
+            # Validate token to prevent header injection
+            if token and "\n" not in token and "\r" not in token:
+                return f"Bearer {token}"
         return request.headers.get("Authorization", "")
     except RuntimeError:
+        return ""
+    except Exception:
         return ""
 
 
@@ -142,25 +146,32 @@ def _ocr_candidates_from_image(image):
 
     candidates = []
     lines = {}
+    n_texts = len(ocr.get("text", []))
     for index, text in enumerate(ocr.get("text", [])):
         text = str(text or "").strip()
         if not text:
             continue
         try:
-            confidence = float(ocr.get("conf", [0])[index])
-        except (TypeError, ValueError):
+            confidence = float(ocr.get("conf", [0] * n_texts)[index])
+        except (TypeError, ValueError, IndexError):
             confidence = 0.0
-        x = int(ocr["left"][index])
-        y = int(ocr["top"][index])
-        w = int(ocr["width"][index])
-        h = int(ocr["height"][index])
+        try:
+            x = int(ocr["left"][index])
+            y = int(ocr["top"][index])
+            w = int(ocr["width"][index])
+            h = int(ocr["height"][index])
+        except (IndexError, KeyError):
+            continue
         if w <= 0 or h <= 0:
             continue
         candidates.append({"text": text, "x": x, "y": y, "w": w, "h": h, "confidence": max(0.0, confidence)})
+        blk = ocr.get("block_num", [0] * n_texts)
+        par = ocr.get("par_num", [0] * n_texts)
+        lin = ocr.get("line_num", [0] * n_texts)
         line_key = (
-            ocr.get("block_num", [0])[index],
-            ocr.get("par_num", [0])[index],
-            ocr.get("line_num", [0])[index],
+            blk[index] if index < len(blk) else 0,
+            par[index] if index < len(par) else 0,
+            lin[index] if index < len(lin) else 0,
         )
         line = lines.setdefault(line_key, {"texts": [], "xs": [], "ys": [], "rights": [], "bottoms": [], "confs": []})
         line["texts"].append(text)
@@ -337,6 +348,8 @@ def register_routes(app, state, require_auth):
         text = data.get("text")
         if text is None:
             return jsonify({"error": "Missing required field: text"}), 400
+        if len(str(text)) > 4096:
+            return jsonify({"error": "text exceeds maximum length (4096 chars)"}), 400
         matches, error = _find_matches(description, data.get("screenshot"))
         if not matches:
             return jsonify({"found": False, "error": error or "no matching text field found", "matches": []}), 404
