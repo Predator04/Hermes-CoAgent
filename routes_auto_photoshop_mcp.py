@@ -3,6 +3,7 @@
 # Source: https://github.com/alisaitteke/photoshop-mcp
 
 import os
+import shlex
 import shutil
 import subprocess
 from pathlib import Path
@@ -102,7 +103,7 @@ def register_routes(app, state, require_auth):
         import json as _json
         try:
             result = subprocess.run(
-                cmd.split(),
+                shlex.split(cmd),
                 input=_json.dumps({
                     "jsonrpc": "2.0",
                     "method": "tools/call",
@@ -171,7 +172,7 @@ def register_routes(app, state, require_auth):
         import json as _json
         try:
             result = subprocess.run(
-                cmd.split(),
+                shlex.split(cmd),
                 input=_json.dumps({
                     "jsonrpc": "2.0",
                     "method": "tools/call",
