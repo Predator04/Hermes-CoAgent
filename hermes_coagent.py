@@ -1094,7 +1094,16 @@ state.backup_file = backup_file
 # -- Core routes (stay in main) ----------------------------------
 @app.route("/", methods=["GET"])
 def route_index():
-    return route_dashboard2()
+    """Root landing page — tunnel-friendly, no auth required."""
+    try:
+        html = Path(COAGENT_DIR / "dashboard.html").read_text(encoding="utf-8")
+        # Redirect to login if no token yet
+        return Response(html.replace(
+            'let token = (queryToken || sessionStorage.getItem("hermes_token") || sessionStorage.getItem("coagent_token") || "").replace(/^Bearer\\\\s+/i, "");',
+            'let token = (queryToken || sessionStorage.getItem("hermes_token") || sessionStorage.getItem("coagent_token") || "").replace(/^Bearer\\s+/i, "");'
+        ), mimetype="text/html")
+    except Exception:
+        return jsonify({"status": "ok", "agent": AGENT_NAME, "version": VERSION, "docs": "/dashboard2"})
 
 @app.route("/ping", methods=["GET"])
 def route_ping():
