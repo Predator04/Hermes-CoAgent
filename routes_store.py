@@ -84,6 +84,17 @@ def _log_store(msg):
 
 # ── Helpers ─────────────────────────────────────────────────────
 
+def _safe_product_id(pid: str) -> str:
+    """Reject path traversal in product IDs. Returns sanitized or raises ValueError."""
+    if not pid or not isinstance(pid, str) or len(pid) > 128:
+        raise ValueError("invalid product_id")
+    if ".." in pid or "/" in pid or "\\" in pid:
+        raise ValueError("invalid product_id")
+    if not re.match(r"^[A-Za-z0-9_\-\.]+$", pid):
+        raise ValueError("invalid product_id")
+    return pid
+
+
 def _clean_text(value: str) -> str:
     return re.sub(r"\s+", " ", _html.unescape(value or "")).strip()
 
@@ -729,6 +740,10 @@ def publish_product():
     product_id = body.get("product_id", "")
     if not product_id:
         return jsonify({"success": False, "error": "Missing product_id"})
+    try:
+        product_id = _safe_product_id(product_id)
+    except ValueError:
+        return jsonify({"success": False, "error": "Invalid product_id"}), 400
 
     product_path = PRODUCTS_DIR / f"{product_id}.json"
     if not product_path.exists():
@@ -976,6 +991,10 @@ def list_products():
 @store_bp.route("/store/products/<product_id>", methods=["GET"])
 def get_product(product_id):
     """Get a single product's full details."""
+    try:
+        product_id = _safe_product_id(product_id)
+    except ValueError:
+        return jsonify({"success": False, "error": "Invalid product_id"}), 400
     product_path = PRODUCTS_DIR / f"{product_id}.json"
     if not product_path.exists():
         return jsonify({"success": False, "error": "Not found"}), 404
@@ -985,6 +1004,10 @@ def get_product(product_id):
 @store_bp.route("/store/products/<product_id>", methods=["DELETE"])
 def delete_product(product_id):
     """Delete a generated product."""
+    try:
+        product_id = _safe_product_id(product_id)
+    except ValueError:
+        return jsonify({"success": False, "error": "Invalid product_id"}), 400
     product_path = PRODUCTS_DIR / f"{product_id}.json"
     if product_path.exists():
         product_path.unlink()
