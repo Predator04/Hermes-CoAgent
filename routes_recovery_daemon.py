@@ -88,7 +88,7 @@ def _recovery_loop():
                 with _RECOVERY_LOCK:
                     _RECOVERY_STATE["triggers"] += 1
                     _RECOVERY_STATE["last_seen_at"] = datetime.now().isoformat()
-                    _RECOVERY_STATE["last_popup"] = popups[0]["keyword"]
+                    _RECOVERY_STATE["last_popup"] = popups[0].get("keyword", "unknown")
                 for popup in popups:
                     for match in popup.get("matches", []):
                         if _dismiss_popup(match):
