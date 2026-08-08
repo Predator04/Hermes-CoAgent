@@ -676,9 +676,14 @@ def route_bypass_index():
 
 
 # ── Registration (auth-aware) ─────────────────────────────────
+def _is_bypass_enabled() -> bool:
+    """Check COAGENT_ENABLE_BYPASS env var. Only explicit truthy values enable it."""
+    val = os.environ.get("COAGENT_ENABLE_BYPASS", "")
+    return val.lower() in ("1", "true", "yes", "on")
+
 def register_routes(app, state, require_auth):
     """Register bypass routes with auth middleware."""
-    if not os.environ.get("COAGENT_ENABLE_BYPASS") and not app.config.get("TESTING"):
+    if not _is_bypass_enabled() and not app.config.get("TESTING"):
         return
     # Register the blueprint — auth is handled by the main server's
     # @app.before_request auth gate, so /bypass/* routes are protected.
