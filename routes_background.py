@@ -326,10 +326,10 @@ def type_via_uia(hwnd: int, text: str) -> dict:
         if not element:
             return {"success": False, "error": "Cannot get UIA element from window handle"}
 
-        # Try to find the focused element
+        # Try to get the focused element via property (not pattern)
         try:
-            focused = element.GetCurrentPattern(10011)  # FocusedElement
-            if hasattr(focused, 'GetCurrentPattern'):
+            focused = element.GetCurrentPropertyValue(30019)  # UIA_FocusedElementPropertyId
+            if focused:
                 element = focused
         except Exception:
             pass  # Use the window element itself
