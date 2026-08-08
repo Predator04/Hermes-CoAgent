@@ -83,13 +83,18 @@ def _dispatch_one(webhook_id, record, event_type, data, timestamp):
     try:
         if _is_private_url(record["url"]):
             raise ValueError("webhook URL resolves to a blocked private or internal address")
+        # Build opener that does NOT follow redirects (SSRF prevention)
+        class NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, req, fp, code, msg, headers, newurl):
+                return None
+        opener = urllib.request.build_opener(NoRedirectHandler)
         request = urllib.request.Request(
             record["url"],
             data=body,
             headers=headers,
             method="POST",
         )
-        with urllib.request.urlopen(request, timeout=15) as response:
+        with opener.open(request, timeout=15) as response:
             response_body = response.read(4096).decode("utf-8", errors="replace")
             response_info.update(
                 {
@@ -191,7 +196,9 @@ def route_webhooks_register():
     }
     with _WEBHOOK_LOCK:
         _WEBHOOKS[webhook_id] = record
-    return jsonify(_public_webhook(webhook_id, record)), 201
+    response = _public_webhook(webhook_id, record)
+    response["secret"] = record["secret"]  # one-time reveal
+    return jsonify(response), 201
 
 
 @webhooks_bp.route("/webhooks/<webhook_id>", methods=["DELETE"])
@@ -213,7 +220,10 @@ def route_webhooks_test(webhook_id):
     timestamp = _now()
 
     def _worker():
-        _dispatch_one(webhook_id, record, "test", {"ok": True}, timestamp)
+        try:
+            _dispatch_one(webhook_id, record, "test", {"ok": True}, timestamp)
+        except Exception as exc:
+            _log(f"[webhooks] test dispatch failed for {webhook_id}: {exc}")
 
     threading.Thread(target=_worker, name=f"webhook-test-{webhook_id}", daemon=True).start()
     return jsonify({"status": "queued", "id": webhook_id, "event": "test"})

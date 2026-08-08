@@ -1,5 +1,6 @@
 """Config backup and rollback routes."""
 
+import re
 import shutil
 import time
 from pathlib import Path
@@ -64,14 +65,27 @@ def backup_file(path):
     return str(backup_path)
 
 
+def _stat_safe(p):
+    """Safely get mtime, returning 0 on any OSError."""
+    try:
+        return p.stat().st_mtime
+    except OSError:
+        return 0
+
+
 def _list_backups():
     backups = []
     if not BACKUP_DIR.exists():
         return backups
-    for item in sorted(BACKUP_DIR.glob("*.bak"), key=lambda p: p.stat().st_mtime, reverse=True):
+    for item in sorted(BACKUP_DIR.glob("*.bak"), key=_stat_safe, reverse=True):
         try:
             stat = item.stat()
-            original = item.name.rsplit(".", 2)[0] if item.name.count(".") >= 2 else item.name
+            # Strip .bak suffix, then parse original filename from backup naming convention
+            name_no_bak = item.name[:-4] if item.name.endswith(".bak") else item.name
+            # Backup format: {original}.{timestamp}.bak or {original}.{timestamp}.{suffix}.bak
+            # Find the first dot that starts a YYYYMMDD-HHMMSS timestamp
+            m = re.match(r"^(.+?)\.\d{8}-\d{6}", name_no_bak)
+            original = m.group(1) if m else name_no_bak
             backups.append({
                 "backup": item.name,
                 "path": str(item),

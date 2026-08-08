@@ -5,6 +5,7 @@ import json
 from flask import Blueprint, jsonify, request
 
 help_bp = Blueprint("help", __name__)
+VERSION = "v7.12"
 
 
 @help_bp.route("/help", methods=["GET"])
@@ -14,12 +15,11 @@ def route_help():
 
     help_data = {
         "agent": "Hermes CoAgent",
-        "version": "v7.12",
+        "version": VERSION,
         "description": "Desktop automation agent — control Windows via REST API",
         "auth": {
             "method": "Bearer token",
-            "header": "Authorization: Bearer <your_token>",
-            "token_location": "C:\\Users\\Admin\\Desktop\\Hermes CoAgent\\.token",
+            "header": "Authorization: Bearer ***",
             "exempt_paths": ["/", "/health", "/ping", "/help", "/version", "/static/"],
         },
         "features": {
@@ -111,9 +111,8 @@ def route_help():
     }
 
     if fmt == "text":
-        lines = ["HERMES COAGENT v7.12 — HELP", "=" * 50, ""]
-        lines.append("AUTH: All endpoints require header: Authorization: Bearer <your_token>")
-        lines.append("Token file: C:\\Users\\Admin\\Desktop\\Hermes CoAgent\\.token")
+        lines = [f"HERMES COAGENT {VERSION} — HELP", "=" * 50, ""]
+        lines.append("AUTH: All endpoints require header: Authorization: Bearer ***")
         lines.append("")
         for category, endpoints in help_data["features"].items():
             lines.append(f"[{category}]")
@@ -131,4 +130,4 @@ def route_help():
 
 def register_routes(app, state, require_auth):
     app.register_blueprint(help_bp)
-    state.help = {"version": "v7.12"}
+    state.help = {"version": VERSION}

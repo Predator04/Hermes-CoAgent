@@ -21,6 +21,14 @@ else:
     _CUA_IMPORT_ERROR = None
 
 
+def _safe_json_body():
+    """Parse JSON body, returning (data, None) or (None, error_tuple)."""
+    try:
+        return _json_body(), None
+    except Exception as e:
+        return None, (jsonify({"error": "Invalid JSON body", "detail": str(e)}), 400)
+
+
 def _route_call(tool, data, success_status="ok"):
     try:
         result = cua_call(tool, data)
@@ -52,13 +60,17 @@ def register_routes(app, state, require_auth):
     @app.route("/cua/click", methods=["POST"])
     @require_auth
     def route_cua_click():
-        data = _json_body()
+        data, err = _safe_json_body()
+        if err:
+            return err
         return _route_call("click", data, "clicked")
 
     @app.route("/cua/move", methods=["POST"])
     @require_auth
     def route_cua_move():
-        data = _json_body()
+        data, err = _safe_json_body()
+        if err:
+            return err
         if data.get("x") is None:
             return _missing_field("x")
         if data.get("y") is None:
@@ -68,7 +80,9 @@ def register_routes(app, state, require_auth):
     @app.route("/cua/type", methods=["POST"])
     @require_auth
     def route_cua_type():
-        data = _json_body()
+        data, err = _safe_json_body()
+        if err:
+            return err
         if not data.get("text"):
             return _missing_field("text")
         return _route_call("type_text", data, "typed")
@@ -76,7 +90,9 @@ def register_routes(app, state, require_auth):
     @app.route("/cua/screenshot", methods=["POST"])
     @require_auth
     def route_cua_screenshot():
-        data = _json_body()
+        data, err = _safe_json_body()
+        if err:
+            return err
         if data.get("pid") is None or data.get("window_id") is None:
             return jsonify({
                 "ok": False,
