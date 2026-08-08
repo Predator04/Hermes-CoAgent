@@ -159,9 +159,6 @@ def register_routes(app, state, require_auth):
         except (TypeError, ValueError):
             limit = 10
 
-        command = [exe, "separator", "\\n---\\n",
-                   "read", str(min(limit - 1, 99)), "0"]
-
         try:
             result = subprocess.run(
                 [exe, "eval",
