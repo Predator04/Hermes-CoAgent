@@ -220,7 +220,6 @@ def _db():
         conn = _connect()
         try:
             _init_db(conn)
-            _archive_old_facts(conn)
             yield conn
             conn.commit()
         except Exception:
@@ -231,7 +230,9 @@ def _db():
 
 
 def _db_error(exc):
-    return jsonify({"error": "database error", "detail": str(exc)}), 500
+    from shared import _log
+    _log(f"[memory] database error: {type(exc).__name__}: {exc}")
+    return jsonify({"error": "internal database error"}), 500
 
 
 def _limit(default=20, maximum=200):

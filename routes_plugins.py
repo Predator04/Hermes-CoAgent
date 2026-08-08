@@ -1,6 +1,7 @@
 """Hot-loadable plugin routes."""
 
 import importlib
+import importlib.util
 import re
 import sys
 import threading
@@ -162,8 +163,12 @@ def _load_plugin(app, state, require_auth, name):
     if not spec or not spec.loader:
         raise ImportError(f"cannot create import spec for {path}")
     module = importlib.util.module_from_spec(spec)
-    sys.modules[module_name] = module
-    spec.loader.exec_module(module)
+    try:
+        sys.modules[module_name] = module
+        spec.loader.exec_module(module)
+    except Exception:
+        sys.modules.pop(module_name, None)
+        raise
     if not hasattr(module, "register_routes"):
         sys.modules.pop(module_name, None)
         raise AttributeError("plugin must define register_routes(app, state, require_auth)")
@@ -171,6 +176,12 @@ def _load_plugin(app, state, require_auth, name):
     try:
         app._got_first_request = False
         module.register_routes(app, state, require_auth)
+    except Exception:
+        # Clean up routes added before the failure
+        failed_endpoints = sorted(set(app.view_functions.keys()) - before_endpoints)
+        _remove_endpoints(app, failed_endpoints)
+        sys.modules.pop(module_name, None)
+        raise
     finally:
         app._got_first_request = got_first_request
     endpoints = sorted(set(app.view_functions.keys()) - before_endpoints)

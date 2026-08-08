@@ -201,8 +201,9 @@ def _http_get(path, timeout=5):
     except urllib.error.HTTPError as exc:
         return {
             "path": path,
-            "ok": exc.code < 500,
+            "ok": False,
             "status_code": exc.code,
+            "content_type": exc.headers.get("Content-Type", "") if hasattr(exc, "headers") else "",
             "latency_seconds": round(time.perf_counter() - started, 3),
             "error": str(exc),
         }

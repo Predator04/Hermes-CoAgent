@@ -59,7 +59,7 @@ def _is_no_changes(result):
 
 def _ensure_token_gitignored():
     ignore_path = COAGENT_DIR / ".gitignore"
-    required = [".token", ".token_*"]
+    required = [".token", ".token_*", ".env", ".env.*", "*.key", "*.pem", "credentials.json", "coagent_token.txt"]
     if ignore_path.exists():
         text = ignore_path.read_text(encoding="utf-8", errors="replace")
         lines = text.splitlines()
@@ -293,7 +293,10 @@ def register_routes(app, state, require_auth):
         global _AUTO_ENABLED, _AUTO_THREAD, _AUTO_INTERVAL_SECONDS
         data = _json_body()
         enabled = bool(data.get("enabled", True))
-        interval_minutes = float(data.get("interval_minutes", 30) or 30)
+        try:
+            interval_minutes = float(data.get("interval_minutes", 30) or 30)
+        except (TypeError, ValueError):
+            return jsonify({"error": "interval_minutes must be a number"}), 400
         interval_seconds = max(60, min(int(interval_minutes * 60), 24 * 3600))
         with _LOCK:
             _AUTO_ENABLED = enabled
