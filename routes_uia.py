@@ -14,6 +14,7 @@ def _get_uia_engine():
 
 HAS_PIL = False
 try:
+    from PIL import Image  # noqa: F401 — required for SOM overlays
     HAS_PIL = True
 except ImportError:
     pass
