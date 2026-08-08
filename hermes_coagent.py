@@ -691,6 +691,11 @@ from routes_agent import register_routes as reg_agent
 from routes_hybrid_agent import register_routes as reg_hybrid_agent
 from routes_hitl_hud import register_routes as reg_hitl_hud
 from routes_recovery_daemon import register_routes as reg_recovery_daemon
+from routes_discover import register_routes as reg_discover
+from routes_humanize import register_routes as reg_humanize
+from routes_approvals import register_routes as reg_approvals
+from routes_macro_builder import register_routes as reg_macro_builder
+from routes_uia_semantic import register_routes as reg_uia_semantic
 from routes_semantic_memory import register_routes as reg_semantic_memory
 from routes_pii_redact import register_routes as reg_pii_redact
 from routes_brainstem import register_routes as reg_brainstem
@@ -915,6 +920,11 @@ reg_agent(app, state, require_auth)
 reg_hybrid_agent(app, state, require_auth)
 reg_hitl_hud(app, state, require_auth)
 reg_recovery_daemon(app, state, require_auth)
+reg_discover(app, state, require_auth)
+reg_humanize(app, state, require_auth)
+reg_approvals(app, state, require_auth)
+reg_macro_builder(app, state, require_auth)
+reg_uia_semantic(app, state, require_auth)
 reg_semantic_memory(app, state, require_auth)
 reg_pii_redact(app, state, require_auth)
 reg_brainstem(app, state, require_auth)

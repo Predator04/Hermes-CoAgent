@@ -4,6 +4,37 @@ All notable changes to Hermes CoAgent are documented here. Versions follow
 `MAJOR.MINOR.PATCH`; every published change bumps `VERSION` (read at runtime by
 all modules and surfaced at the `/version` endpoint).
 
+## [8.52.0] - 2026-08-07
+
+### Added — 5 new capability modules (issues #5, #9, #13, #2, #8)
+
+- **Capability discovery (#5)** — `GET /discover` and `/capabilities` return a
+  machine-readable manifest of every route family, its endpoints, and whether
+  the Python deps / external CLI tools it needs are present, so an orchestrator
+  can plan around what's installed instead of hitting mid-task 404s.
+  (`routes_discover.py`)
+- **Humanized mouse movement (#9)** — `POST /mouse/humanized_move` drives the
+  cursor along a randomized cubic-Bezier arc with an eased, jittered velocity
+  profile instead of teleporting. Deterministic with a seed; returns the
+  computed path as a dry run on headless hosts. (`routes_humanize.py`)
+- **Human-in-the-loop approval gate (#13)** — an API-level, tunnel-friendly
+  approval queue: `POST /approvals/request`, `GET /approvals/pending`,
+  `POST /approvals/<id>/approve|reject`, `GET /approvals/<id>`, plus
+  `require_approval()` to block a programmatic action until a human decides
+  (fail-closed on timeout). Complements the existing win32 HUD overlay.
+  (`routes_approvals.py`)
+- **Natural-language macro builder (#2)** — `POST /macro/build` parses plain
+  step text (`click X,Y`, `type ...`, `press ctrl+s`, `wait 250ms`,
+  `scroll down 3`, ...) into a structured macro for the recorder/replay engine.
+  (`routes_macro_builder.py`)
+- **Semantic discover-then-act UIA (#8)** — `POST /uia/act` targets an element
+  by role + name, ranks candidates by match score, and acts on the best one
+  instead of using raw coordinates; returns ranked candidates as a dry run when
+  no live UIA tree is available. (`routes_uia_semantic.py`)
+
+Each module ships with unit tests (`tests/test_new_features.py`, 10 tests). Also
+fixed a latent `_missing_field` misuse on the netsh empty-command path.
+
 ## [8.51.15] - 2026-08-07
 
 ### Fixed

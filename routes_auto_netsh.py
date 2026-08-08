@@ -333,14 +333,14 @@ def register_routes(app, state, require_auth):
 
         # Validate command
         if not command:
-            return jsonify({"ok": False, "error": _missing_field("command")}), 400
+            return jsonify({"ok": False, "error": "Missing required field: command"}), 400
 
         # Only allow show/dump for safety. Default-deny: any context not
         # explicitly listed in READONLY_CONTEXTS (e.g. "ras") is rejected so
         # state-changing subcommands can never slip through.
         cmd_parts = command.split()
         if not cmd_parts:
-            return jsonify({"ok": False, "error": _missing_field("command")}), 400
+            return jsonify({"ok": False, "error": "Missing required field: command"}), 400
         allowed = READONLY_CONTEXTS.get(context)
         if not allowed or cmd_parts[0].lower() not in allowed:
             return jsonify({
