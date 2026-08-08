@@ -246,21 +246,18 @@ _PAGE = None
 _USER_DATA_DIR = None
 
 
-def _get_user_data_dir():
-    """Get or create persistent user data directory for cookie storage."""
+def _get_storage_path():
+    """Get path for Playwright storage state (cookies, localStorage)."""
     global _USER_DATA_DIR
     if _USER_DATA_DIR is None:
         import tempfile, os as _os
-        _USER_DATA_DIR = _os.path.join(tempfile.gettempdir(), "coagent_browser_profile")
-        _os.makedirs(_USER_DATA_DIR, exist_ok=True)
+        _USER_DATA_DIR = _os.path.join(tempfile.gettempdir(), "coagent_browser_storage.json")
     return _USER_DATA_DIR
 
 
 def _ensure_browser(cookies=None, stealth=False):
-    """Get or create browser with persistent context.
-    Uses a persistent user data directory so cookies/login survive across
-    CoAgent restarts. Creates a fresh Playwright instance each call to
-    avoid greenlet cross-thread errors.
+    """Create fresh browser+context. Uses storage_state for cookie persistence
+    across calls instead of launch_persistent_context to avoid Chromium lock issues.
     """
     global _PW, _CONTEXT, _PAGE
     sync_playwright, _playwright_error, missing = _load_playwright()
@@ -275,7 +272,7 @@ def _ensure_browser(cookies=None, stealth=False):
                 pass
         _PW = sync_playwright().start()
         
-        # Close previous context to free user_data_dir for new connection
+        # Close any existing context
         if _CONTEXT is not None:
             try:
                 for p in _CONTEXT.pages:
@@ -286,15 +283,10 @@ def _ensure_browser(cookies=None, stealth=False):
                 pass
             _CONTEXT = None
         
-        user_data_dir = _get_user_data_dir()
         launch_args = _STEALTH_ARGS if stealth else []
+        _BROWSER_LOCAL = _PW.chromium.launch(headless=False, args=launch_args)
         
-        context_kwargs = {
-            "headless": False,
-            "args": launch_args,
-            "user_data_dir": user_data_dir,
-        }
-        
+        context_kwargs = {}
         if stealth:
             import random as _srandom
             vp = _srandom.choice(_STEALTH_VIEWPORTS)
@@ -308,22 +300,34 @@ def _ensure_browser(cookies=None, stealth=False):
                 "permissions": ["geolocation"],
             })
         
-        _CONTEXT = _PW.chromium.launch_persistent_context(**context_kwargs)
+        # Load saved storage state if exists
+        storage_path = _get_storage_path()
+        import os as _os
+        if _os.path.exists(storage_path):
+            context_kwargs["storage_state"] = storage_path
+        
+        _CONTEXT = _BROWSER_LOCAL.new_context(**context_kwargs)
         
         if stealth:
             _CONTEXT.add_init_script(_STEALTH_SCRIPT)
         if cookies and isinstance(cookies, list):
             _CONTEXT.add_cookies(cookies)
         
-        pages = _CONTEXT.pages
-        if pages and not pages[0].is_closed():
-            _PAGE = pages[0]
-        else:
-            _PAGE = _CONTEXT.new_page()
-        
+        _PAGE = _CONTEXT.new_page()
         return _PAGE, None
     except Exception as e:
         return None, _error(str(e), 500, type=type(e).__name__)
+
+
+def _save_storage():
+    """Save current context storage state for future calls."""
+    if _CONTEXT is not None:
+        try:
+            _CONTEXT.storage_state(path=_get_storage_path())
+            return True
+        except Exception:
+            pass
+    return False
 
 
 def _current_status():
@@ -391,6 +395,7 @@ def route_browser_navigate():
         try:
             page.goto(url, wait_until=data.get("wait_until", "load"), timeout=_clamp_timeout(data, "timeout", 30000))
             result = {"status": "navigated", "url": page.url}
+            _save_storage()  # Persist cookies
             if isinstance(evaluate, str) and evaluate:
                 try:
                     eval_result = page.evaluate(evaluate)
@@ -944,6 +949,7 @@ def route_browser_workflow():
                 "steps_executed": len(results),
                 "results": results,
             }
+            _save_storage()  # Always save storage after workflow
             if save_msg:
                 response["session"] = save_msg
             return jsonify(response)
