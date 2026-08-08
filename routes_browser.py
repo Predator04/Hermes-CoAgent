@@ -275,6 +275,17 @@ def _ensure_browser(cookies=None, stealth=False):
                 pass
         _PW = sync_playwright().start()
         
+        # Close previous context to free user_data_dir for new connection
+        if _CONTEXT is not None:
+            try:
+                for p in _CONTEXT.pages:
+                    try: p.close()
+                    except Exception: pass
+                _CONTEXT.close()
+            except Exception:
+                pass
+            _CONTEXT = None
+        
         user_data_dir = _get_user_data_dir()
         launch_args = _STEALTH_ARGS if stealth else []
         
