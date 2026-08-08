@@ -1,6 +1,7 @@
 """Android phone bridge routes using ADB."""
 
 import base64
+import re
 import subprocess
 
 from flask import Response, jsonify, request
@@ -9,6 +10,23 @@ from shared import COAGENT_DIR, _json_body
 
 
 PHONE_SCREENSHOT = COAGENT_DIR / "phone.png"
+
+# Allowed Android keycodes (common subset)
+_KEYCODE_PATTERN = re.compile(r"^[A-Z][A-Z0-9_]+$")
+
+
+def _safe_int(val, default=0):
+    """Safely coerce a value to int, returning default on failure."""
+    try:
+        return int(val)
+    except (TypeError, ValueError):
+        return default
+
+
+def _safe_timeout(val, default=30, max_val=300):
+    """Safely coerce and clamp timeout value."""
+    t = _safe_int(val, default)
+    return max(1, min(t, max_val))
 
 
 def _error(message, status=400, **extra):
@@ -46,6 +64,8 @@ def _run_adb(data, args, timeout=30, binary=False):
         return {"cmd": cmd, "returncode": None, "stdout": b"" if binary else "", "stderr": "adb.exe not found in PATH", "ok": False}
     except subprocess.TimeoutExpired as e:
         return {"cmd": cmd, "returncode": None, "stdout": e.stdout or (b"" if binary else ""), "stderr": "adb command timed out", "ok": False}
+    except (ValueError, OSError) as e:
+        return {"cmd": cmd, "returncode": None, "stdout": b"" if binary else "", "stderr": str(e), "ok": False}
 
 
 def _json_result(result, status_ok=200):
@@ -58,6 +78,9 @@ def _json_result(result, status_ok=200):
 
 def _input_text(text):
     value = str(text)
+    # Reject shell metacharacters that could cause command injection via adb shell
+    if re.search(r'[;&|`$<>(){}\!\n\r]', value):
+        return None  # caller should reject the request
     return value.replace("%", "%25").replace(" ", "%s").replace("\\", "\\\\").replace('"', '\\"')
 
 
@@ -84,7 +107,9 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_phone_tap():
         data = _json_body()
-        return _json_result(_run_adb(data, ["shell", "input", "tap", str(int(data.get("x", 0))), str(int(data.get("y", 0)))]))
+        x = _safe_int(data.get("x"), 0)
+        y = _safe_int(data.get("y"), 0)
+        return _json_result(_run_adb(data, ["shell", "input", "tap", str(x), str(y)]))
 
     @app.route("/phone/type", methods=["POST"])
     @require_auth
@@ -93,16 +118,22 @@ def register_routes(app, state, require_auth):
         text = data.get("text")
         if text is None:
             return _error("text is required")
-        return _json_result(_run_adb(data, ["shell", "input", "text", _input_text(text)]))
+        safe_text = _input_text(text)
+        if safe_text is None:
+            return _error("text contains unsafe characters")
+        return _json_result(_run_adb(data, ["shell", "input", "text", safe_text]))
 
     @app.route("/phone/swipe", methods=["POST"])
     @require_auth
     def route_phone_swipe():
         data = _json_body()
-        args = ["shell", "input", "swipe", str(int(data.get("x1", 0))), str(int(data.get("y1", 0))),
-                str(int(data.get("x2", 0))), str(int(data.get("y2", 0)))]
+        x1 = _safe_int(data.get("x1"), 0)
+        y1 = _safe_int(data.get("y1"), 0)
+        x2 = _safe_int(data.get("x2"), 0)
+        y2 = _safe_int(data.get("y2"), 0)
+        args = ["shell", "input", "swipe", str(x1), str(y1), str(x2), str(y2)]
         if data.get("duration_ms") is not None:
-            args.append(str(int(data.get("duration_ms"))))
+            args.append(str(_safe_int(data.get("duration_ms"))))
         return _json_result(_run_adb(data, args))
 
     @app.route("/phone/key", methods=["POST"])
@@ -112,7 +143,10 @@ def register_routes(app, state, require_auth):
         keycode = data.get("keycode") or data.get("key")
         if keycode is None:
             return _error("keycode is required")
-        return _json_result(_run_adb(data, ["shell", "input", "keyevent", str(keycode)]))
+        keycode_str = str(keycode)
+        if not _KEYCODE_PATTERN.match(keycode_str):
+            return _error(f"invalid keycode: {keycode_str}")
+        return _json_result(_run_adb(data, ["shell", "input", "keyevent", keycode_str]))
 
     @app.route("/phone/shell", methods=["POST"])
     @require_auth
@@ -125,7 +159,7 @@ def register_routes(app, state, require_auth):
             shell_args = ["shell", command]
         else:
             return _error("command is required")
-        return _json_result(_run_adb(data, shell_args, timeout=int(data.get("timeout", 30) or 30)))
+        return _json_result(_run_adb(data, shell_args, timeout=_safe_timeout(data.get("timeout"), 30)))
 
     @app.route("/phone/app/start", methods=["POST"])
     @require_auth
@@ -134,6 +168,8 @@ def register_routes(app, state, require_auth):
         package = data.get("package")
         if not isinstance(package, str) or not package:
             return _error("package is required")
+        if re.search(r'[;&|`$<>(){}\s]', package):
+            return _error("invalid package name")
         return _json_result(_run_adb(data, ["shell", "monkey", "-p", package, "1"], timeout=20))
 
     @app.route("/phone/app/stop", methods=["POST"])
@@ -143,6 +179,8 @@ def register_routes(app, state, require_auth):
         package = data.get("package")
         if not isinstance(package, str) or not package:
             return _error("package is required")
+        if re.search(r'[;&|`$<>(){}\s]', package):
+            return _error("invalid package name")
         return _json_result(_run_adb(data, ["shell", "am", "force-stop", package], timeout=20))
 
     @app.route("/phone/sms/read", methods=["POST"])
@@ -151,7 +189,14 @@ def register_routes(app, state, require_auth):
         data = _json_body()
         projection = data.get("projection", "address,date,type,body")
         uri = data.get("uri", "content://sms")
-        result = _run_adb(data, ["shell", "content", "query", "--uri", str(uri), "--projection", str(projection), "--sort", "date DESC"], timeout=int(data.get("timeout", 20) or 20))
+        # Validate URI starts with content:// and has no shell metacharacters
+        uri_str = str(uri)
+        if not uri_str.startswith("content://") or re.search(r'[;&|`$<>(){}\n\r]', uri_str):
+            return _error("invalid URI")
+        proj_str = str(projection)
+        if re.search(r'[;&|`$<>(){}\n\r]', proj_str):
+            return _error("invalid projection")
+        result = _run_adb(data, ["shell", "content", "query", "--uri", uri_str, "--projection", proj_str, "--sort", "date DESC"], timeout=_safe_timeout(data.get("timeout"), 20))
         return _json_result(result)
 
     @app.route("/phone/status", methods=["POST", "GET"])
