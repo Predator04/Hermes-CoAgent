@@ -41,7 +41,8 @@ def _debug_failure(context, exc):
 def _find_pii_regions(text):
     """Find all PII matches in text with positions."""
     regions = []
-    config = _PII_CONFIG["patterns"]
+    with _PII_LOCK:
+        config = {k: dict(v) for k, v in _PII_CONFIG["patterns"].items()}
     for name, cfg in config.items():
         if not cfg.get("enabled") or not cfg.get("regex"):
             continue
@@ -106,10 +107,11 @@ def _redact_image(base64_str):
             result_base64 = base64.b64encode(buf.getvalue()).decode()
             return result_base64, regions_masked, len(regions_masked)
         except ImportError:
-            return base64_str, [], 0
+            _LOGGER.warning("pytesseract not installed — cannot redact image PII")
+            return None, [], -1  # error indicator: caller must block
     except Exception as exc:
         _debug_failure("redact_image", exc)
-        return base64_str, [], 0
+        return None, [], -1  # error indicator: caller must block
 
 
 @pii_bp.route("/pii/redact", methods=["POST"])
@@ -120,6 +122,8 @@ def _pii_redact():
         return jsonify({"ok": False, "error": "missing image_base64"}), 400
 
     result_b64, regions, count = _redact_image(img_b64)
+    if result_b64 is None:
+        return jsonify({"ok": False, "error": "image redaction failed — image blocked for safety"}), 500
     with _PII_LOCK:
         _PII_STATS["images_processed"] += 1
         _PII_STATS["regions_masked"] += count
@@ -167,6 +171,15 @@ def _pii_configure():
             for name, cfg in body["patterns"].items():
                 if name in _PII_CONFIG["patterns"]:
                     if isinstance(cfg, dict):
+                        # Validate regex before accepting
+                        new_regex = cfg.get("regex")
+                        if new_regex is not None and isinstance(new_regex, str):
+                            if len(new_regex) > 500:
+                                return jsonify({"ok": False, "error": "regex too long (max 500 chars)"}), 400
+                            try:
+                                re.compile(new_regex)
+                            except re.error as e:
+                                return jsonify({"ok": False, "error": f"invalid regex: {e}"}), 400
                         _PII_CONFIG["patterns"][name].update(cfg)
                     else:
                         _PII_CONFIG["patterns"][name]["enabled"] = bool(cfg)
@@ -191,5 +204,11 @@ def _pii_test():
 
 
 def register_routes(app, state, require_auth):
+    # Apply auth guard to all PII routes
+    @pii_bp.before_request
+    @require_auth
+    def _pii_auth_guard():
+        pass  # require_auth handles the actual check
+
     app.register_blueprint(pii_bp)
     _LOGGER.info("PII redaction routes registered")
