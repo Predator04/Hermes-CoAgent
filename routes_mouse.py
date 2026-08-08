@@ -187,7 +187,10 @@ def _mouse_action(action, x, y, button="left", background=True, state=None):
         if background:
             _background_sendinput(action, x, y, button)
         else:
-            getattr(pyautogui, action)(x, y) if action in ("click", "doubleClick", "rightClick") else pyautogui.click(x, y, button=button)
+            # Normalize action names: routes use lowercase, pyautogui uses camelCase
+            _action_map = {"click": "click", "doubleclick": "doubleClick", "rightclick": "rightClick"}
+            _pa_action = _action_map.get(action, "click")
+            getattr(pyautogui, _pa_action)(x, y) if _pa_action in ("click", "doubleClick", "rightClick") else pyautogui.click(x, y, button=button)
         if state: state.last_action_time = time.time()
     _log(f"Mouse {action} ({x},{y}) button={button} bg={background}")
     payload = {"status": "ok", "action": action, "x": x, "y": y}
@@ -321,8 +324,9 @@ def register_routes(app, state, require_auth):
                             "rect": {"left": rect.left, "top": rect.top, "right": rect.right, "bottom": rect.bottom}
                         })
                 return True
-            WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_int, ctypes.c_int)
-            ctypes.windll.user32.EnumWindows(WNDENUMPROC(_enum_cb), 0)
+            WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.wintypes.HWND, ctypes.wintypes.LPARAM)
+            cb = WNDENUMPROC(_enum_cb)
+            ctypes.windll.user32.EnumWindows(cb, 0)
             return jsonify({"status": "ok", "count": len(windows), "windows": windows})
         except Exception as e:
             return jsonify({"error": str(e)}), 500
@@ -334,6 +338,11 @@ def register_routes(app, state, require_auth):
         POST body: {"pid": 1234} or {"title": "Shopify"} or {"name": "msedge"}"""
         d = _json_body()
         target_pid = d.get("pid")
+        if target_pid is not None:
+            try:
+                target_pid = int(target_pid)
+            except (TypeError, ValueError):
+                return jsonify({"error": "pid must be an integer"}), 400
         target_title = d.get("title")
         target_name = d.get("name")
         if not any([target_pid, target_title, target_name]):
@@ -351,8 +360,9 @@ def register_routes(app, state, require_auth):
                         ctypes.windll.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
                         windows.append((hwnd, title, pid.value))
                 return True
-            WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_int, ctypes.c_int)
-            ctypes.windll.user32.EnumWindows(WNDENUMPROC(_enum_cb), 0)
+            WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.wintypes.HWND, ctypes.wintypes.LPARAM)
+            cb = WNDENUMPROC(_enum_cb)
+            ctypes.windll.user32.EnumWindows(cb, 0)
 
             matches = []
             for hwnd, title, pid in windows:
@@ -551,5 +561,6 @@ def register_routes(app, state, require_auth):
         return jsonify({"status": "resumed", "emergency": False})
 
     @app.route("/emergency/status", methods=["GET"])
+    @require_auth
     def route_emergency_status():
         return jsonify({"emergency": state.emergency_stop})
