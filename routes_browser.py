@@ -264,6 +264,18 @@ def _ensure_browser(cookies=None, stealth=False):
     if missing:
         return None, missing
     try:
+        # Handle case where current thread has a running asyncio event loop
+        try:
+            import asyncio
+            try:
+                loop = asyncio.get_running_loop()
+                # Running event loop detected - create a new one for this thread
+                asyncio.set_event_loop(asyncio.new_event_loop())
+            except RuntimeError:
+                pass  # No running loop, we're fine
+        except ImportError:
+            pass
+        
         # Always create fresh PW instance to avoid greenlet issues
         if _PW is not None:
             try:
