@@ -62,6 +62,7 @@ def register_routes(app, state, require_auth):
                 info["theme_count"] = len(info["themes"])
             except Exception:
                 info["themes"] = []
+                info["theme_count"] = 0
         return jsonify(info)
 
     @app.route("/auto/bat/ping", methods=["GET"])
@@ -93,7 +94,11 @@ def register_routes(app, state, require_auth):
         if not os.path.isfile(filepath):
             return jsonify({"error": f"File not found: {filepath}"}), 404
 
-        max_lines = int(body.get("max_lines", 500))
+        try:
+            max_lines = int(body.get("max_lines", 500))
+        except (TypeError, ValueError):
+            max_lines = 500
+        max_lines = max(0, max_lines)
         line_range = body.get("line_range", None)  # e.g. "10:30"
         show_line_numbers = body.get("line_numbers", True)
         language = body.get("language", None)  # force language override
