@@ -121,7 +121,7 @@ def register_routes(app, state, require_auth):
         Body: {"target": "google.com", "mode": "json", "cycles": 5, "protocol": "icmp", "timeout": 30}
         Returns: trace output in the requested format.
         """
-        body = _json_body(request)
+        body = _json_body()
         if not body:
             return jsonify({"error": "JSON body required"}), 400
         target = body.get("target", "").strip()

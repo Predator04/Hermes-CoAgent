@@ -335,15 +335,18 @@ def register_routes(app, state, require_auth):
         if not command:
             return jsonify({"ok": False, "error": _missing_field("command")}), 400
 
-        # Only allow show/dump for safety
+        # Only allow show/dump for safety. Default-deny: any context not
+        # explicitly listed in READONLY_CONTEXTS (e.g. "ras") is rejected so
+        # state-changing subcommands can never slip through.
         cmd_parts = command.split()
-        if context in READONLY_CONTEXTS:
-            allowed = READONLY_CONTEXTS[context]
-            if cmd_parts[0].lower() not in allowed:
-                return jsonify({
-                    "ok": False,
-                    "error": f"Context '{context}' only allows read-only subcommands: {', '.join(allowed)}",
-                }), 400
+        if not cmd_parts:
+            return jsonify({"ok": False, "error": _missing_field("command")}), 400
+        allowed = READONLY_CONTEXTS.get(context)
+        if not allowed or cmd_parts[0].lower() not in allowed:
+            return jsonify({
+                "ok": False,
+                "error": f"Context '{context}' only allows read-only subcommands: {', '.join(allowed or ['show'])}",
+            }), 400
 
         try:
             stdout, stderr, rc = _run_netsh(context, *cmd_parts, timeout=20)

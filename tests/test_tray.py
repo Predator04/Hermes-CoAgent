@@ -34,6 +34,8 @@ class FakeIcon:
 
 
 class FakeMenu:
+    SEPARATOR = object()
+
     def __init__(self, *items):
         self.items = items
 
@@ -65,11 +67,22 @@ def test_tray_icon_main_starts_without_errors_and_builds_menu(tmp_path, monkeypa
 
     assert tray_icon.main() == 0
     icon = FakeIcon.instances[-1]
-    labels = [item.text for item in icon.menu.items]
+    labels = [
+        item.text
+        for item in icon.menu.items
+        if item is not FakePystray.Menu.SEPARATOR
+    ]
     assert labels == [
         "Open Dashboard",
         "Settings",
         "Check Health",
+        "🫥 Background Status",
+        "🛑 Stop Background",
+        "Copy Token",
+        "Show Token",
+        "Start Tunnel (ngrok)",
+        "Copy Tunnel URL",
+        "Check for Updates",
         "Start/Open Server",
         "Restart Server",
         "Exit",

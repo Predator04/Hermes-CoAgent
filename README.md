@@ -249,7 +249,7 @@ python hermes_coagent.py --secure --allow-external
 
 CI runs syntax/compile checks on Python 3.11+ across Windows and Ubuntu. Windows is the production runtime for desktop-control features.
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution workflow and [SECURITY.md](SECURITY.md) for security reporting.
+See [CHANGELOG.md](CHANGELOG.md) for release history, [CONTRIBUTING.md](CONTRIBUTING.md) for contribution workflow, and [SECURITY.md](SECURITY.md) for security reporting.
 
 ## License
 

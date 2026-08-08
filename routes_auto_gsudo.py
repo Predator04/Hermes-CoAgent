@@ -79,7 +79,7 @@ def register_routes(app, state, require_auth):
         Body: {"command": "whoami", "timeout": 30, "accept_elevation": true}
         Returns: {"stdout": "...", "stderr": "...", "exit_code": 0}
         """
-        body = _json_body(request)
+        body = _json_body()
         if not body:
             return jsonify({"error": "JSON body required"}), 400
         command = body.get("command", "").strip()
@@ -129,7 +129,7 @@ def register_routes(app, state, require_auth):
                 "path": exe,
             }), 500
         except Exception as e:
-            _log("error", f"gsudo run failed: {e}")
+            _log(f"gsudo run failed: {e}")
             return jsonify({
                 "error": str(e),
                 "command": command,

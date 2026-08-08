@@ -147,7 +147,7 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_auto_imagemagick_identify():
         """Get detailed image information: format, dimensions, colorspace, size."""
-        body = _json_body(request)
+        body = _json_body()
         if body is None:
             return jsonify({"ok": False, "error": "request body must be JSON"}), 400
 
@@ -196,7 +196,7 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_auto_imagemagick_convert():
         """Convert an image from one format to another with optional resize."""
-        body = _json_body(request)
+        body = _json_body()
         if body is None:
             return jsonify({"ok": False, "error": "request body must be JSON"}), 400
 
@@ -266,7 +266,7 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_auto_imagemagick_compare():
         """Compare two images and produce a difference metric."""
-        body = _json_body(request)
+        body = _json_body()
         if body is None:
             return jsonify({"ok": False, "error": "request body must be JSON"}), 400
 
@@ -320,7 +320,7 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_auto_imagemagick_resize():
         """Resize an image to specified dimensions."""
-        body = _json_body(request)
+        body = _json_body()
         if body is None:
             return jsonify({"ok": False, "error": "request body must be JSON"}), 400
 

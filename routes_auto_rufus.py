@@ -167,7 +167,7 @@ def register_routes(app, state, require_auth):
             }), 503
 
         try:
-            body = _json_body(request)
+            body = _json_body()
             if body is None:
                 return jsonify({"ok": False, "error": _missing_field("request body")}), 400
         except Exception:

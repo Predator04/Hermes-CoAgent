@@ -187,7 +187,7 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_auto_nmap_scan():
         """Run a basic nmap scan against a target."""
-        body = _json_body(request)
+        body = _json_body()
         if body is None:
             return jsonify({"ok": False, "error": "request body must be JSON"}), 400
 
@@ -244,7 +244,7 @@ def register_routes(app, state, require_auth):
             args.append("-")
             args.append(target)
 
-            _log("nmap", f"Scanning {target} ({scan_type}, {speed})")
+            _log(f"nmap: Scanning {target} ({scan_type}, {speed})")
             stdout, stderr, code = _run_nmap(args, timeout=120)
 
             # Parse grepable output
@@ -279,7 +279,7 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_auto_nmap_quick_scan():
         """Quick ping scan to discover live hosts on a subnet."""
-        body = _json_body(request)
+        body = _json_body()
         if body is None:
             return jsonify({"ok": False, "error": "request body must be JSON"}), 400
 
@@ -291,7 +291,7 @@ def register_routes(app, state, require_auth):
             target = _validate_target(target)
 
             args = ["-sn", "-T4", "-oG", "-", target]
-            _log("nmap", f"Quick ping scan: {target}")
+            _log(f"nmap: Quick ping scan: {target}")
             stdout, stderr, code = _run_nmap(args, timeout=60)
 
             hosts = _parse_nmap_grepable(stdout) if stdout else []
@@ -319,7 +319,7 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_auto_nmap_version_scan():
         """Version detection scan — identifies service versions on open ports."""
-        body = _json_body(request)
+        body = _json_body()
         if body is None:
             return jsonify({"ok": False, "error": "request body must be JSON"}), 400
 
@@ -340,7 +340,7 @@ def register_routes(app, state, require_auth):
                 args.extend(["-p", ports])
             args.append(target)
 
-            _log("nmap", f"Version scan: {target}")
+            _log(f"nmap: Version scan: {target}")
             stdout, stderr, code = _run_nmap(args, timeout=180)
 
             hosts = _parse_nmap_grepable(stdout) if stdout else []

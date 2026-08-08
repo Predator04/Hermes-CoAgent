@@ -1406,7 +1406,17 @@ def start_server():
         bind_host = "0.0.0.0"
     if "--port" in sys.argv:
         idx = sys.argv.index("--port")
-        port = int(sys.argv[idx + 1])
+        if idx + 1 >= len(sys.argv):
+            _console("  [FATAL] --port requires a value.")
+            sys.exit(2)
+        try:
+            port = int(sys.argv[idx + 1])
+        except ValueError:
+            _console(f"  [FATAL] --port must be an integer, got: {sys.argv[idx + 1]!r}")
+            sys.exit(2)
+        if not (1 <= port <= 65535):
+            _console(f"  [FATAL] --port out of range (1-65535): {port}")
+            sys.exit(2)
     has_secure_arg = "--secure" in sys.argv
     has_token_arg = any(a == "--token" or a.startswith("--token=") for a in sys.argv)
 
