@@ -248,7 +248,7 @@ def route_agent_exec_and_send():
         msg += f"\n\n_Duration: {result.get('duration_seconds', '?')}s_"
         target_chat = _resolve_target_chat(config)
         ok, resp_data = _send_telegram(config["bot_token"], target_chat, msg)
-        all_errors = []
+        all_errors = [str(resp_data)] if not ok else []
         sent_count = 1
     else:
         # Send each finding as a separate message
