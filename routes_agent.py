@@ -161,7 +161,7 @@ def _error(message, status=400, **extra):
 
 def _validate_provider_name(provider):
     if provider in (None, ""):
-        return "codex"
+        return None  # No default agent — must be explicitly requested
     if not isinstance(provider, str):
         raise ValueError("provider must be a string")
     normalized = provider.strip().lower()
@@ -223,7 +223,7 @@ def _load_provider_config_unlocked():
     try:
         config["provider"] = _validate_provider_name(config.get("provider"))
     except ValueError:
-        config["provider"] = "codex"
+        config["provider"] = None  # No default agent
     providers = config.get("providers")
     if not isinstance(providers, dict):
         providers = {}

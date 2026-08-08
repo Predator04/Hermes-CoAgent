@@ -95,8 +95,33 @@ def _load_playwright():
             return None, Exception, _playwright_missing()
 
 
-def _ensure_browser(new_page=False):
-    global _PW, _BROWSER, _CONTEXT, _PAGE
+_STEALTH_SCRIPT = """
+// Remove automation detection
+Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]});
+Object.defineProperty(navigator, 'languages', {get: () => ['en-US', 'en']});
+window.chrome = {runtime: {}};
+const originalQuery = window.navigator.permissions.query;
+window.navigator.permissions.query = (parameters) => (
+    parameters.name === 'notifications' ?
+    Promise.resolve({state: Notification.permission}) :
+    originalQuery(parameters)
+);
+"""
+
+_STEALTH_ARGS = [
+    "--disable-blink-features=AutomationControlled",
+    "--disable-features=IsolateOrigins,site-per-process",
+    "--no-sandbox",
+    "--disable-setuid-sandbox",
+]
+
+
+def _ensure_browser(cookies=None, stealth=False):
+    """Always creates a fresh context+page to avoid greenlet cross-thread errors.
+    Optionally sets cookies before returning the page.
+    If stealth=True, applies anti-detection measures."""
+    global _PW, _BROWSER
     sync_playwright, _playwright_error, missing = _load_playwright()
     if missing:
         return None, missing
@@ -104,19 +129,24 @@ def _ensure_browser(new_page=False):
         if _PW is None:
             _PW = sync_playwright().start()
         if _BROWSER is None or not _BROWSER.is_connected():
-            if _CONTEXT is not None:
-                try:
-                    _CONTEXT.close()
-                except Exception:
-                    pass
-            _BROWSER = _PW.chromium.launch(headless=False)
-            _CONTEXT = _BROWSER.new_context()
-            _PAGE = None
-        if _CONTEXT is None:
-            _CONTEXT = _BROWSER.new_context()
-        if new_page or _PAGE is None or _PAGE.is_closed():
-            _PAGE = _CONTEXT.new_page()
-        return _PAGE, None
+            launch_args = _STEALTH_ARGS if stealth else []
+            _BROWSER = _PW.chromium.launch(headless=False, args=launch_args)
+        
+        context_kwargs = {}
+        if stealth:
+            context_kwargs.update({
+                "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+                "viewport": {"width": 1920, "height": 1080},
+                "locale": "en-US",
+            })
+        context = _BROWSER.new_context(**context_kwargs)
+        
+        if stealth:
+            context.add_init_script(_STEALTH_SCRIPT)
+        if cookies and isinstance(cookies, list):
+            context.add_cookies(cookies)
+        page = context.new_page()
+        return page, None
     except Exception as e:
         return None, _error(str(e), 500, type=type(e).__name__)
 
@@ -125,12 +155,10 @@ def _current_status():
     with _BROWSER_LOCK:
         try:
             open_browser = bool(_BROWSER and _BROWSER.is_connected())
-            pages = list(_CONTEXT.pages) if _CONTEXT else []
-            active_page = _PAGE if _PAGE and not _PAGE.is_closed() else (pages[-1] if pages else None)
             return {
                 "open": open_browser,
-                "pages": len(pages),
-                "current_url": active_page.url if active_page else None,
+                "pages": "?",
+                "current_url": None,
             }
         except Exception as e:
             return {"open": False, "pages": 0, "current_url": None, "error": str(e)}
@@ -143,13 +171,18 @@ def route_browser_index():
         "installed": installed,
         "endpoints": [
             {"path": "/browser", "method": "GET", "desc": "List browser endpoints"},
-            {"path": "/browser/navigate", "method": "POST", "desc": "Navigate to a URL"},
+            {"path": "/browser/navigate", "method": "POST", "desc": "Navigate to a URL, optionally with cookies + evaluate"},
+            {"path": "/browser/workflow", "method": "POST", "desc": "Execute multi-step workflow in one session"},
             {"path": "/browser/click", "method": "POST", "desc": "Click by selector or text"},
             {"path": "/browser/fill", "method": "POST", "desc": "Fill an input"},
             {"path": "/browser/extract", "method": "POST", "desc": "Extract page text"},
+            {"path": "/browser/elements", "method": "POST", "desc": "List interactive elements with selectors"},
             {"path": "/browser/screenshot", "method": "POST", "desc": "Capture browser screenshot"},
             {"path": "/browser/evaluate", "method": "POST", "desc": "Run JavaScript"},
             {"path": "/browser/cookies", "method": "POST", "desc": "Get or set cookies"},
+            {"path": "/browser/cookies/import", "method": "POST", "desc": "Import cookies from Brave/Chrome profile"},
+            {"path": "/browser/session/save", "method": "POST", "desc": "Save browser cookies to disk for persistence"},
+            {"path": "/browser/session/load", "method": "POST", "desc": "Load saved session cookies"},
             {"path": "/browser/close", "method": "POST", "desc": "Close browser"},
             {"path": "/browser/status", "method": "GET", "desc": "Browser status"},
         ],
@@ -171,14 +204,23 @@ def route_browser_navigate():
     url_error = _navigation_url_error(url)
     if url_error:
         return _error(url_error, 403)
-    new_page = _as_bool(data.get("new_page"), True)
+    cookies = data.get("cookies")
+    evaluate = data.get("evaluate")  # optional JS to run after navigation
+    stealth = _as_bool(data.get("stealth"), False)
     with _BROWSER_LOCK:
-        page, error = _ensure_browser(new_page=new_page)
+        page, error = _ensure_browser(cookies=cookies if isinstance(cookies, list) else None, stealth=stealth)
         if error:
             return error
         try:
             page.goto(url, wait_until=data.get("wait_until", "load"), timeout=_clamp_timeout(data, "timeout", 30000))
-            return jsonify({"status": "navigated", "url": page.url})
+            result = {"status": "navigated", "url": page.url}
+            if isinstance(evaluate, str) and evaluate:
+                try:
+                    eval_result = page.evaluate(evaluate)
+                    result["evaluate"] = eval_result
+                except Exception as e:
+                    result["evaluate_error"] = str(e)
+            return jsonify(result)
         except Exception as e:
             return _error(str(e), 500, type=type(e).__name__)
 
@@ -301,34 +343,524 @@ def route_browser_cookies():
         if error:
             return error
         try:
+            context = page.context
             if action == "get":
-                return jsonify({"cookies": _CONTEXT.cookies(), "url": page.url})
+                return jsonify({"cookies": context.cookies(), "url": page.url})
             if action == "set":
                 cookies = data.get("cookies")
                 if not isinstance(cookies, list):
                     return _error("cookies must be a list")
-                _CONTEXT.add_cookies(cookies)
+                context.add_cookies(cookies)
                 return jsonify({"status": "set", "count": len(cookies), "url": page.url})
             return _error("action must be get or set")
         except Exception as e:
             return _error(str(e), 500, type=type(e).__name__)
 
 
+@browser_bp.route("/browser/cookies/import", methods=["POST"])
+def route_browser_cookies_import():
+    """Import cookies from Brave/Chrome browser profile for a domain."""
+    import sqlite3, os, shutil, tempfile
+    data = _json_payload()
+    domain = data.get("domain", ".amazon.com")
+    browser = data.get("browser", "brave").lower()  # brave or chrome
+    
+    # Determine cookie DB path
+    localappdata = os.environ.get("LOCALAPPDATA", "")
+    if not localappdata:
+        localappdata = os.path.join(os.environ.get("USERPROFILE", ""), "AppData", "Local")
+    
+    if browser == "chrome":
+        cookie_path = os.path.join(localappdata, "Google", "Chrome", "User Data", "Default", "Network", "Cookies")
+    else:  # brave
+        cookie_path = os.path.join(localappdata, "BraveSoftware", "Brave-Browser", "User Data", "Default", "Network", "Cookies")
+    
+    if not os.path.exists(cookie_path):
+        return _error(f"Cookie database not found at {cookie_path}", 404)
+    
+    try:
+        # Copy the DB to avoid lock conflicts
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".db")
+        tmp.close()
+        shutil.copy2(cookie_path, tmp.name)
+        
+        conn = sqlite3.connect(tmp.name)
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+        
+        cur.execute(
+            "SELECT host_key, name, value, path, expires_utc, is_secure, is_httponly, same_site "
+            "FROM cookies WHERE host_key LIKE ?",
+            (f"%{domain}",)
+        )
+        
+        cookies = []
+        for row in cur.fetchall():
+            cookie = {
+                "name": row["name"],
+                "value": row["value"],
+                "domain": row["host_key"],
+                "path": row["path"] or "/",
+                "secure": bool(row["is_secure"]),
+                "httpOnly": bool(row["is_httponly"]),
+            }
+            if row["expires_utc"] and row["expires_utc"] > 0:
+                cookie["expires"] = row["expires_utc"]
+            if row["same_site"] >= 0:
+                same_site_map = {0: "Strict", 1: "Lax", 2: "None"}
+                cookie["sameSite"] = same_site_map.get(row["same_site"], "Lax")
+            cookies.append(cookie)
+        
+        conn.close()
+        os.unlink(tmp.name)
+        
+        return jsonify({"cookies": cookies, "count": len(cookies), "domain": domain})
+    except Exception as e:
+        return _error(str(e), 500, type=type(e).__name__)
+
+
+@browser_bp.route("/browser/network", methods=["POST"])
+def route_browser_network():
+    """Navigate to a URL and capture all network requests (XHR, fetch, etc)."""
+    data = _json_payload()
+    url = data.get("url")
+    if not isinstance(url, str) or not url:
+        return _error("url is required")
+    url_error = _navigation_url_error(url)
+    if url_error:
+        return _error(url_error, 403)
+    
+    cookies = data.get("cookies")
+    filter_url = data.get("filter")  # optional URL substring filter
+    stealth = _as_bool(data.get("stealth"), False)
+    
+    with _BROWSER_LOCK:
+        page, error = _ensure_browser(cookies=cookies if isinstance(cookies, list) else None, stealth=stealth)
+        if error:
+            return error
+        
+        requests_log = []
+        
+        def on_request(request):
+            requests_log.append({
+                "url": request.url,
+                "method": request.method,
+                "headers": dict(request.headers),
+                "post_data": request.post_data[:500] if request.post_data else None,
+                "resource_type": request.resource_type,
+                "timestamp": request.headers.get("date", ""),
+            })
+        
+        def on_response(response):
+            for req in requests_log:
+                if req["url"] == response.url:
+                    req["status"] = response.status
+                    req["status_text"] = response.status_text
+                    try:
+                        body = response.body()
+                        req["body"] = body[:2000].decode("utf-8", errors="replace") if body else None
+                        req["body_size"] = len(body) if body else 0
+                    except Exception:
+                        req["body"] = "(binary/streaming)"
+                    break
+        
+        try:
+            page.on("request", on_request)
+            page.on("response", on_response)
+            
+            page.goto(url, wait_until=data.get("wait_until", "networkidle"), timeout=_clamp_timeout(data, "timeout", 30000))
+            
+            # Filter if requested
+            results = requests_log
+            if isinstance(filter_url, str) and filter_url:
+                results = [r for r in results if filter_url.lower() in r["url"].lower()]
+            
+            return jsonify({
+                "url": page.url,
+                "total_requests": len(requests_log),
+                "filtered": len(results) if filter_url else len(requests_log),
+                "requests": results[-100:],  # last 100, most recent
+            })
+        except Exception as e:
+            return _error(str(e), 500, type=type(e).__name__)
+
+
+@browser_bp.route("/browser/workflow", methods=["POST"])
+def route_browser_workflow():
+    """Execute a sequence of browser actions in a single session.
+    
+    Accepts:
+      - cookies: optional list of cookies to set before any actions
+      - steps: list of action objects
+    
+    Each step: {"action": "...", ...params}
+    
+    Supported actions:
+      - navigate: {"action": "navigate", "url": "..."}
+      - click: {"action": "click", "selector": "..."} or {"action": "click", "text": "..."}
+      - fill: {"action": "fill", "selector": "...", "value": "..."}
+      - extract: {"action": "extract"} or {"action": "extract", "selector": "..."}
+      - evaluate: {"action": "evaluate", "script": "..."}
+      - screenshot: {"action": "screenshot"}
+      - wait: {"action": "wait", "ms": 1000} or {"action": "wait", "selector": "..."}
+      - scroll: {"action": "scroll", "pixels": 500} or {"action": "scroll", "direction": "down|up"}
+      - press: {"action": "press", "keys": ["Enter"]} or ["ctrl", "a"]
+      - select: {"action": "select", "selector": "...", "value": "..."}
+      - check: {"action": "check", "selector": "..."}
+      - uncheck: {"action": "uncheck", "selector": "..."}
+      - hover: {"action": "hover", "selector": "..."}
+    """
+    import traceback as _tb
+    data = _json_payload()
+    steps = data.get("steps")
+    if not isinstance(steps, list) or not steps:
+        return _error("steps (list) is required")
+    
+    cookies = data.get("cookies")
+    
+    # Auto-load session cookies if requested
+    if _as_bool(data.get("load_session"), False):
+        import os as _os2, json as _json2
+        sf = _get_session_file()
+        if _os2.path.exists(sf):
+            with open(sf) as f:
+                saved = _json2.load(f)
+            if isinstance(saved, list):
+                cookies = saved if not cookies else cookies + saved
+    
+    stealth = _as_bool(data.get("stealth"), False)
+    
+    with _BROWSER_LOCK:
+        page, error = _ensure_browser(cookies=cookies if isinstance(cookies, list) else None, stealth=stealth)
+        if error:
+            return error
+        
+        results = []
+        try:
+            for i, step in enumerate(steps):
+                action = step.get("action", "")
+                step_result = {"step": i, "action": action}
+                
+                try:
+                    if action == "navigate":
+                        url = step.get("url")
+                        if not url:
+                            step_result["error"] = "url required"
+                        else:
+                            url_error = _navigation_url_error(url)
+                            if url_error:
+                                step_result["error"] = url_error
+                            else:
+                                timeout = _clamp_timeout(step, "timeout", 30000)
+                                page.goto(url, wait_until=step.get("wait_until", "load"), timeout=timeout)
+                                step_result["url"] = page.url
+                    
+                    elif action == "click":
+                        selector = step.get("selector")
+                        text = step.get("text")
+                        timeout = _clamp_timeout(step, "timeout", 10000)
+                        if selector:
+                            page.click(selector, timeout=timeout)
+                            step_result["target"] = selector
+                        elif text:
+                            page.get_by_text(text).click(timeout=timeout)
+                            step_result["target"] = text
+                        else:
+                            step_result["error"] = "selector or text required"
+                    
+                    elif action == "fill":
+                        selector = step.get("selector")
+                        value = step.get("value")
+                        if not selector:
+                            step_result["error"] = "selector required"
+                        elif value is None:
+                            step_result["error"] = "value required"
+                        else:
+                            page.fill(selector, str(value), timeout=_clamp_timeout(step))
+                            step_result["filled"] = True
+                    
+                    elif action == "extract":
+                        selector = step.get("selector")
+                        if selector:
+                            text = page.locator(selector).inner_text(timeout=_clamp_timeout(step, "timeout", 10000))
+                        else:
+                            text = page.inner_text("body", timeout=_clamp_timeout(step, "timeout", 10000))
+                        step_result["text"] = text
+                        step_result["chars"] = len(text)
+                    
+                    elif action == "evaluate":
+                        script = step.get("script")
+                        if not script:
+                            step_result["error"] = "script required"
+                        else:
+                            result = page.evaluate(script)
+                            step_result["result"] = result
+                    
+                    elif action == "screenshot":
+                        full_page = _as_bool(step.get("full_page"), False)
+                        data_bytes = page.screenshot(full_page=full_page)
+                        step_result["data"] = base64.b64encode(data_bytes).decode("ascii")
+                        step_result["format"] = "png"
+                    
+                    elif action == "wait":
+                        ms = step.get("ms")
+                        selector = step.get("selector")
+                        if selector:
+                            page.wait_for_selector(selector, timeout=_clamp_timeout(step, "timeout", 15000))
+                            step_result["waited_for"] = selector
+                        elif ms:
+                            import time as _time
+                            _time.sleep(ms / 1000.0)
+                            step_result["waited_ms"] = ms
+                        else:
+                            step_result["error"] = "ms or selector required"
+                    
+                    elif action == "scroll":
+                        pixels = step.get("pixels")
+                        direction = step.get("direction", "down")
+                        if pixels:
+                            page.evaluate(f"window.scrollBy(0, {pixels})")
+                            step_result["scrolled"] = pixels
+                        else:
+                            amount = 800 if direction == "down" else -800
+                            page.evaluate(f"window.scrollBy(0, {amount})")
+                            step_result["scrolled"] = direction
+                    
+                    elif action == "press":
+                        keys = step.get("keys")
+                        if isinstance(keys, list) and keys:
+                            page.keyboard.press("+".join(keys))
+                            step_result["pressed"] = keys
+                        elif isinstance(keys, str):
+                            page.keyboard.press(keys)
+                            step_result["pressed"] = keys
+                        else:
+                            step_result["error"] = "keys (list or string) required"
+                    
+                    elif action == "select":
+                        selector = step.get("selector")
+                        value = step.get("value")
+                        if selector and value is not None:
+                            page.select_option(selector, str(value), timeout=_clamp_timeout(step))
+                            step_result["selected"] = value
+                        else:
+                            step_result["error"] = "selector and value required"
+                    
+                    elif action == "check":
+                        selector = step.get("selector")
+                        if selector:
+                            page.check(selector, timeout=_clamp_timeout(step))
+                            step_result["checked"] = selector
+                        else:
+                            step_result["error"] = "selector required"
+                    
+                    elif action == "uncheck":
+                        selector = step.get("selector")
+                        if selector:
+                            page.uncheck(selector, timeout=_clamp_timeout(step))
+                            step_result["unchecked"] = selector
+                        else:
+                            step_result["error"] = "selector required"
+                    
+                    elif action == "hover":
+                        selector = step.get("selector")
+                        if selector:
+                            page.hover(selector, timeout=_clamp_timeout(step))
+                            step_result["hovered"] = selector
+                        else:
+                            step_result["error"] = "selector required"
+                    
+                    elif action == "human_type":
+                        import random, time as _htime
+                        selector = step.get("selector")
+                        text = step.get("text", "")
+                        wpm = step.get("wpm", 40)  # words per minute
+                        if selector:
+                            page.click(selector)
+                        delay_per_char = 60.0 / (wpm * 5)  # 5 chars per word avg
+                        for char in text:
+                            page.keyboard.type(char, delay=delay_per_char * random.uniform(0.5, 1.5))
+                            _htime.sleep(delay_per_char * random.uniform(0.3, 0.7))
+                        step_result["human_typed"] = len(text)
+                        step_result["wpm"] = wpm
+                    
+                    elif action == "console":
+                        # Capture console messages
+                        msgs = []
+                        def _on_console(msg):
+                            msgs.append({"type": msg.type, "text": msg.text})
+                        page.on("console", _on_console)
+                        # If a script is provided, evaluate it and capture its console output
+                        script = step.get("script")
+                        if script:
+                            page.evaluate(script)
+                        # Wait a bit for async console messages
+                        import time as _ctime
+                        _ctime.sleep(step.get("wait_ms", 500) / 1000.0)
+                        page.remove_listener("console", _on_console)
+                        step_result["messages"] = msgs[-50:]  # last 50
+                    
+                    else:
+                        step_result["error"] = f"unknown action: {action}"
+                
+                except Exception as e:
+                    step_result["error"] = str(e)
+                    step_result["error_type"] = type(e).__name__
+                
+                results.append(step_result)
+                
+                # Stop on error unless continue_on_error is set
+                if "error" in step_result and not _as_bool(data.get("continue_on_error"), False):
+                    break
+            
+            # Auto-save session if requested
+            save_msg = None
+            if _as_bool(data.get("save_session"), False):
+                try:
+                    import json as _json3
+                    cookies_list = page.context.cookies()
+                    with open(_get_session_file(), "w") as f:
+                        _json3.dump(cookies_list, f)
+                    save_msg = f"Saved {len(cookies_list)} cookies"
+                except Exception as e:
+                    save_msg = f"Save failed: {e}"
+            
+            response = {
+                "status": "completed" if not any("error" in r for r in results) else "partial",
+                "url": page.url,
+                "steps_executed": len(results),
+                "results": results,
+            }
+            if save_msg:
+                response["session"] = save_msg
+            return jsonify(response)
+        except Exception as e:
+            return _error(str(e), 500, type=type(e).__name__, traceback=_tb.format_exc()[:2000])
+
+
+@browser_bp.route("/browser/elements", methods=["POST"])
+def route_browser_elements():
+    """List interactive elements on the current page with selectors and text."""
+    data = _json_payload()
+    filter_text = data.get("filter")  # optional text filter
+    with _BROWSER_LOCK:
+        page, error = _ensure_browser()
+        if error:
+            return error
+        try:
+            script = """
+            () => {
+                const elements = [];
+                const selectors = 'a, button, input, select, textarea, [role="button"], [role="link"], [role="checkbox"], [role="radio"], [onclick]';
+                document.querySelectorAll(selectors).forEach((el, i) => {
+                    if (el.offsetParent === null) return;
+                    const rect = el.getBoundingClientRect();
+                    if (rect.width === 0 || rect.height === 0) return;
+                    const text = (el.textContent || el.value || el.placeholder || el.getAttribute('aria-label') || '').trim().substring(0, 100);
+                    const tag = el.tagName.toLowerCase();
+                    const type = el.type || '';
+                    const id = el.id || '';
+                    const className = (typeof el.className === 'string' ? el.className : '') || '';
+                    const href = el.href || '';
+                    const name = el.name || '';
+                    const dataTestId = el.getAttribute('data-testid') || '';
+                    
+                    let suggestedSelector = '';
+                    if (id) suggestedSelector = '#' + id;
+                    else if (dataTestId) suggestedSelector = '[data-testid="' + dataTestId + '"]';
+                    else if (name) suggestedSelector = tag + '[name="' + name + '"]';
+                    else if (type) suggestedSelector = tag + '[type="' + type + '"]';
+                    
+                    elements.push({
+                        index: i,
+                        tag: tag,
+                        type: type,
+                        text: text,
+                        id: id,
+                        name: name,
+                        href: href,
+                        className: className.substring(0, 80),
+                        suggestedSelector: suggestedSelector,
+                        rect: {x: Math.round(rect.x), y: Math.round(rect.y), w: Math.round(rect.width), h: Math.round(rect.height)}
+                    });
+                });
+                return elements;
+            }
+            """
+            elements = page.evaluate(script)
+            
+            if isinstance(filter_text, str) and filter_text:
+                ft = filter_text.lower()
+                elements = [e for e in elements if ft in e.get('text', '').lower() or ft in e.get('id', '').lower() or ft in e.get('name', '').lower()]
+            
+            return jsonify({
+                "url": page.url,
+                "count": len(elements),
+                "elements": elements[:200],
+            })
+        except Exception as e:
+            return _error(str(e), 500, type=type(e).__name__)
+
+
+_BROWSER_SESSION_FILE = None
+
+
+def _get_session_file():
+    global _BROWSER_SESSION_FILE
+    if _BROWSER_SESSION_FILE is None:
+        import tempfile, os as _os
+        _BROWSER_SESSION_FILE = _os.path.join(tempfile.gettempdir(), "coagent_browser_session.json")
+    return _BROWSER_SESSION_FILE
+
+
+@browser_bp.route("/browser/session/save", methods=["POST"])
+def route_browser_session_save():
+    """Save current browser cookies to disk for session persistence across restarts."""
+    import json as _json
+    with _BROWSER_LOCK:
+        page, error = _ensure_browser()
+        if error:
+            return error
+        try:
+            cookies = page.context.cookies()
+            with open(_get_session_file(), "w") as f:
+                _json.dump(cookies, f)
+            return jsonify({"status": "saved", "count": len(cookies), "file": _get_session_file()})
+        except Exception as e:
+            return _error(str(e), 500, type=type(e).__name__)
+
+
+@browser_bp.route("/browser/session/load", methods=["POST"])
+def route_browser_session_load():
+    """Return saved session cookies (for passing to navigate/workflow as 'cookies' param)."""
+    import json as _json, os as _os
+    session_file = _get_session_file()
+    if not _os.path.exists(session_file):
+        return jsonify({"cookies": [], "count": 0, "note": "No saved session"})
+    try:
+        with open(session_file) as f:
+            cookies = _json.load(f)
+        return jsonify({"cookies": cookies, "count": len(cookies)})
+    except Exception as e:
+        return _error(str(e), 500, type=type(e).__name__)
+
+
 @browser_bp.route("/browser/close", methods=["POST"])
 def route_browser_close():
-    global _PW, _BROWSER, _CONTEXT, _PAGE
+    global _PW, _BROWSER
     with _BROWSER_LOCK:
         errors = []
-        for closer in (
-            ("context", lambda: _CONTEXT.close() if _CONTEXT else None),
-            ("browser", lambda: _BROWSER.close() if _BROWSER else None),
-            ("playwright", lambda: _PW.stop() if _PW else None),
-        ):
+        if _BROWSER:
             try:
-                closer[1]()
+                _BROWSER.close()
             except Exception as e:
-                errors.append(f"{closer[0]}: {e}")
-        _PW = _BROWSER = _CONTEXT = _PAGE = None
+                errors.append(f"browser: {e}")
+        if _PW:
+            try:
+                _PW.stop()
+            except Exception as e:
+                errors.append(f"playwright: {e}")
+        _PW = _BROWSER = None
         if errors:
             return _error("; ".join(errors), 500)
         return jsonify({"status": "closed"})
