@@ -54,7 +54,7 @@ else:
 os.environ["PYAUTOGUI_FAILSAFE"] = os.environ.get("HERMES_COAGENT_FAILSAFE", "false")
 
 # -- Shared utilities --------------------------------------------
-from shared import COAGENT_DIR, SERVER_PORT, TRAY_PORT, SERVER_LOG, _console, _log, _json_body
+from shared import COAGENT_DIR, SERVER_PORT, TRAY_PORT, SERVER_LOG, _console, _log, _json_body, _self_port
 from shared import acquire_single_instance_lock
 from shared import VERSION, AGENT_NAME, BUILD
 
@@ -1334,7 +1334,7 @@ def _start_tray():
             _console("  [INFO] Tray icon skipped: pythonw.exe not found")
             return
         task_name = "HermesCoAgent_Tray"
-        tray_argv = [str(tray_script), str(SERVER_PORT), str(TRAY_PORT)]
+        tray_argv = [str(tray_script), str(_self_port()), str(TRAY_PORT)]
         # Token is read from .token file by tray_icon.py, not passed via argv
         # to avoid exposing the bearer token in process lists and task metadata
         _log("[tray] token will be read from .token file")
@@ -1417,6 +1417,11 @@ def start_server():
         if not (1 <= port <= 65535):
             _console(f"  [FATAL] --port out of range (1-65535): {port}")
             sys.exit(2)
+    # Publish the effective port so internal self-calls (healer, finder, etc.)
+    # and the tray probe the actual bound port, not a hardcoded 9123.
+    os.environ["COAGENT_PORT"] = str(port)
+    import shared as _shared
+    _shared.SERVER_PORT = port
     has_secure_arg = "--secure" in sys.argv
     has_token_arg = any(a == "--token" or a.startswith("--token=") for a in sys.argv)
 

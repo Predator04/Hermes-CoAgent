@@ -14,7 +14,7 @@ from datetime import datetime
 
 from flask import Blueprint, Response, jsonify, request
 
-from shared import _wrap_registered_blueprint_routes
+from shared import _self_port, _wrap_registered_blueprint_routes
 
 _LOGGER = logging.getLogger(__name__)
 vision_bp = Blueprint("screen_vision", __name__)
@@ -36,7 +36,7 @@ def _capture_screenshot():
     """Capture screenshot bytes using CoAgent's own /screen endpoint."""
     try:
         import urllib.request
-        req = urllib.request.Request("http://127.0.0.1:9123/screen?monitor=0")
+        req = urllib.request.Request(f"http://127.0.0.1:{_self_port()}/screen?monitor=0")
         # No auth needed for localhost if auth is disabled, otherwise add token
         try:
             import auth
@@ -253,7 +253,7 @@ def _vision_quick_scan():
     """Lightning-fast screen check: what's open right now?"""
     try:
         import urllib.request
-        req = urllib.request.Request("http://127.0.0.1:9123/screen?monitor=0")
+        req = urllib.request.Request(f"http://127.0.0.1:{_self_port()}/screen?monitor=0")
         try:
             import auth
             token = getattr(auth, "AUTH_TOKEN", "") or ""

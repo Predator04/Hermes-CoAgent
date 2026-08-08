@@ -4,6 +4,19 @@ All notable changes to Hermes CoAgent are documented here. Versions follow
 `MAJOR.MINOR.PATCH`; every published change bumps `VERSION` (read at runtime by
 all modules and surfaced at the `/version` endpoint).
 
+## [8.51.15] - 2026-08-07
+
+### Fixed
+
+- **`--port` now honored across all internal self-calls.** The WSGI server always
+  bound the requested `--port`, but healer, finder, copilot, mobile, recipes,
+  screen-vision, recovery-daemon, hybrid-agent and the tray subprocess hardcoded
+  `127.0.0.1:9123`, so running on a non-default port broke self-health checks and
+  the tray tunnel. `start_server` now exports `COAGENT_PORT` (and syncs
+  `shared.SERVER_PORT`); `shared._self_port()` reads it with a 9123 fallback, and
+  every self-caller builds its URL from it. Resolves the "Healer hardcodes port
+  9123" and "--port flag ignored" issues.
+
 ## [8.51.14] - 2026-08-07
 
 Launch-readiness pass: full compile check of all 134 Python modules, the pytest

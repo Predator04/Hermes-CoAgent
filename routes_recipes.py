@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 
 from flask import Blueprint, jsonify, request
 
-from shared import COAGENT_DIR, _console, _json_body, _wrap_registered_blueprint_routes
+from shared import _self_port, COAGENT_DIR, _console, _json_body, _wrap_registered_blueprint_routes
 
 try:
     from croniter import croniter
@@ -63,7 +63,7 @@ def _coagent_request(method, path, data=None, auth_header=None, timeout=30):
     if token:
         headers["Authorization"] = token
     req = urllib.request.Request(
-        f"http://127.0.0.1:9123{path}",
+        f"http://127.0.0.1:{_self_port()}{path}",
         data=body,
         headers=headers,
         method=method.upper(),

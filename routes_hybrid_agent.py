@@ -9,6 +9,7 @@ import threading
 import time
 
 from flask import Blueprint, Response, jsonify, request
+from shared import _self_port
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -280,7 +281,7 @@ def _agent_act():
     clicked = False
 
     # Use CoAgent's own mouse/click endpoint via localhost
-    _mouse_port = 9123
+    _mouse_port = _self_port()
     if method in ("uia", "ocr", "som"):
         try:
             target_center = None
@@ -294,7 +295,7 @@ def _agent_act():
                     elif bbox and len(bbox) >= 4:
                         target_center = {"x": bbox[0] + bbox[2] // 2, "y": bbox[1] + bbox[3] // 2}
             if target_center:
-                _coagent_api_port = 9123
+                _coagent_api_port = _self_port()
                 act = action if action in ("double_click", "right_click") else "click"
                 coagent_path = f"/mouse/{act}"
                 coagent_body = {"x": target_center["x"], "y": target_center["y"]}
@@ -385,7 +386,7 @@ def _agent_type():
     type_error = None
     try:
         import urllib.request, json as _json
-        _type_url = "http://127.0.0.1:9123/keyboard/type"
+        _type_url = f"http://127.0.0.1:{_self_port()}/keyboard/type"
         _type_data = _json.dumps({"text": str(text)}).encode("utf-8")
         _type_req = urllib.request.Request(_type_url, data=_type_data, headers={"Content-Type": "application/json"})
         with urllib.request.urlopen(_type_req, timeout=10):

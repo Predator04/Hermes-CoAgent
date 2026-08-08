@@ -6,7 +6,7 @@ import urllib.request
 
 from flask import Blueprint, Response, jsonify, request
 
-from shared import _json_body
+from shared import _self_port, _json_body
 
 
 mobile_bp = Blueprint("mobile", __name__)
@@ -171,7 +171,7 @@ def _coagent_post(path, data):
     if token:
         headers["Authorization"] = token
     req = urllib.request.Request(
-        f"http://127.0.0.1:9123{path}",
+        f"http://127.0.0.1:{_self_port()}{path}",
         data=json.dumps(data or {}).encode("utf-8"),
         headers=headers,
         method="POST",

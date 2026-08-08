@@ -10,7 +10,7 @@ from difflib import SequenceMatcher
 
 from flask import Blueprint, jsonify, request
 
-from shared import COAGENT_DIR, _console, _json_body
+from shared import _self_port, COAGENT_DIR, _console, _json_body
 
 
 STOP_WORDS = {
@@ -42,7 +42,7 @@ def _coagent_post(path, data):
     if token:
         headers["Authorization"] = token
     req = urllib.request.Request(
-        f"http://127.0.0.1:9123{path}",
+        f"http://127.0.0.1:{_self_port()}{path}",
         data=json.dumps(data).encode("utf-8"),
         headers=headers,
         method="POST",

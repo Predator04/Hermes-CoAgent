@@ -28,6 +28,20 @@ TRAY_LOG = COAGENT_DIR / "tray_icon.log"
 SERVER_LOG = COAGENT_DIR / "coagent_server.log"
 PID_FILE = COAGENT_DIR / "coagent.pid"
 SERVER_PORT = 9123
+
+
+def _self_port():
+    """Runtime server port for internal self-calls.
+
+    Honors the ``--port`` flag: ``start_server`` exports ``COAGENT_PORT`` so
+    healer/finder/recipes/etc. probe the actual bound port instead of a
+    hardcoded 9123. Falls back to ``SERVER_PORT`` when unset.
+    """
+    import os as _os
+    try:
+        return int(_os.environ.get("COAGENT_PORT") or SERVER_PORT)
+    except (TypeError, ValueError):
+        return SERVER_PORT
 TRAY_PORT = 9124
 SERVER_DIR = COAGENT_DIR
 PYTHON = sys.executable

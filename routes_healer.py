@@ -13,7 +13,7 @@ from datetime import datetime
 
 from flask import Blueprint, jsonify
 
-from shared import COAGENT_DIR, _console, _json_body
+from shared import _self_port, COAGENT_DIR, _console, _json_body
 
 try:
     import psutil
@@ -183,7 +183,7 @@ def _http_get(path, timeout=5):
     if token:
         headers["Authorization"] = token
     started = time.perf_counter()
-    req = urllib.request.Request(f"http://127.0.0.1:9123{path}", headers=headers, method="GET")
+    req = urllib.request.Request(f"http://127.0.0.1:{_self_port()}{path}", headers=headers, method="GET")
     try:
         with urllib.request.urlopen(req, timeout=timeout) as response:
             body = response.read(4096)

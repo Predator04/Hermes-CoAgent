@@ -10,6 +10,7 @@ from collections import deque
 from datetime import datetime
 
 from flask import Blueprint, jsonify, request
+from shared import _self_port
 
 _LOGGER = logging.getLogger(__name__)
 recovery_bp = Blueprint("recovery_daemon", __name__)
@@ -67,7 +68,7 @@ def _dismiss_popup(match):
             # Click dismiss location (usually bottom-right of popup)
             dismiss_x = x + 50
             dismiss_y = y + 50
-            url = "http://127.0.0.1:9123/mouse/click"
+            url = f"http://127.0.0.1:{_self_port()}/mouse/click"
             data = json.dumps({"x": dismiss_x, "y": dismiss_y}).encode("utf-8")
             req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
             with urllib.request.urlopen(req, timeout=5):
