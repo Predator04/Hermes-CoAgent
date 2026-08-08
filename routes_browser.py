@@ -95,25 +95,147 @@ def _load_playwright():
             return None, Exception, _playwright_missing()
 
 
-_STEALTH_SCRIPT = """
-// Remove automation detection
-Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
-Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]});
-Object.defineProperty(navigator, 'languages', {get: () => ['en-US', 'en']});
-window.chrome = {runtime: {}};
-const originalQuery = window.navigator.permissions.query;
-window.navigator.permissions.query = (parameters) => (
-    parameters.name === 'notifications' ?
-    Promise.resolve({state: Notification.permission}) :
-    originalQuery(parameters)
-);
+_STEALTH_SCRIPT = r"""
+// === COMPREHENSIVE ANTI-DETECTION ===
+(() => {
+    const noise = () => Math.random() * 0.000001;
+    
+    // 1. Navigator properties
+    const navProps = {
+        webdriver: undefined,
+        plugins: {length: 5, 0: {name: 'Chrome PDF Plugin'}, 1: {name: 'Chrome PDF Viewer'}, 2: {name: 'Native Client'}, 3: {name: 'Widevine Content Decryption Module'}, 4: {name: 'Microsoft Edge PDF Viewer'}},
+        mimeTypes: {length: 4},
+        hardwareConcurrency: 16,
+        deviceMemory: 8,
+        platform: 'Win32',
+        vendor: 'Google Inc.',
+        vendorSub: '',
+        productSub: '20030107',
+        maxTouchPoints: 0,
+        pdfViewerEnabled: true,
+        doNotTrack: null,
+        cookieEnabled: true,
+        appVersion: '5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+        onLine: true,
+    };
+    for (const [key, val] of Object.entries(navProps)) {
+        try {
+            Object.defineProperty(navigator, key, {get: () => val, configurable: true});
+        } catch(e) {}
+    }
+    navigator.getBattery = () => Promise.resolve({charging: true, chargingTime: 0, dischargingTime: Infinity, level: 1});
+    navigator.connection = {effectiveType: '4g', rtt: 50, downlink: 10, saveData: false};
+    
+    // 2. Screen
+    Object.defineProperty(screen, 'colorDepth', {get: () => 24});
+    Object.defineProperty(screen, 'pixelDepth', {get: () => 24});
+    
+    // 3. window.chrome
+    window.chrome = {runtime: {id: undefined, onConnect: {addListener: () => {}}, onMessage: {addListener: () => {}}}, loadTimes: () => {}, csi: () => {}, app: {}};
+    
+    // 4. Permissions
+    const origQuery = navigator.permissions.query.bind(navigator.permissions);
+    navigator.permissions.query = (params) => 
+        params.name === 'notifications' ? Promise.resolve({state: 'prompt', onchange: null}) : origQuery(params);
+    
+    // 5. Canvas fingerprint randomization
+    const origToDataURL = HTMLCanvasElement.prototype.toDataURL;
+    HTMLCanvasElement.prototype.toDataURL = function(type, ...args) {
+        const ctx = this.getContext('2d');
+        if (ctx) {
+            const imageData = ctx.getImageData(0, 0, 1, 1);
+            imageData.data[0] = imageData.data[0] ^ Math.round(noise() * 255);
+            ctx.putImageData(imageData, 0, 0);
+        }
+        return origToDataURL.apply(this, [type, ...args]);
+    };
+    const origGetImageData = CanvasRenderingContext2D.prototype.getImageData;
+    CanvasRenderingContext2D.prototype.getImageData = function(x, y, w, h) {
+        const data = origGetImageData.call(this, x, y, w, h);
+        for (let i = 0; i < Math.min(data.data.length, 50); i++) {
+            data.data[i] = data.data[i] ^ Math.round(noise() * 2);
+        }
+        return data;
+    };
+    
+    // 6. WebGL fingerprint randomization
+    const origGetParameter = WebGLRenderingContext.prototype.getParameter;
+    const webglNoise = (val) => typeof val === 'number' ? val + noise() : val;
+    WebGLRenderingContext.prototype.getParameter = function(pname) {
+        const result = origGetParameter.call(this, pname);
+        if (pname === 37445) return 'Intel Inc.';  // VENDOR
+        if (pname === 37446) return 'Intel(R) Iris(R) Xe Graphics';  // RENDERER
+        return webglNoise(result);
+    };
+    try {
+        WebGL2RenderingContext.prototype.getParameter = WebGLRenderingContext.prototype.getParameter;
+    } catch(e) {}
+    
+    // 7. AudioContext fingerprint protection
+    const origGetChannelData = AudioBuffer.prototype.getChannelData;
+    AudioBuffer.prototype.getChannelData = function(channel) {
+        const data = origGetChannelData.call(this, channel);
+        for (let i = 0; i < Math.min(data.length, 10); i++) {
+            data[i] += noise() * 0.000001;
+        }
+        return data;
+    };
+    
+    // 8. Timezone offset stability
+    Date.prototype.getTimezoneOffset = (function(orig) {
+        return function() { return orig.call(this); };
+    })(Date.prototype.getTimezoneOffset);
+    
+    // 9. iframe detection (no extra frames)
+    Object.defineProperty(window, 'frameElement', {get: () => null});
+    
+    // 10. Override toString on overridden functions
+    const origToString = Function.prototype.toString;
+    const nativeFuncs = [
+        'HTMLCanvasElement.prototype.toDataURL',
+        'CanvasRenderingContext2D.prototype.getImageData',
+        'WebGLRenderingContext.prototype.getParameter',
+        'AudioBuffer.prototype.getChannelData',
+    ];
+})();
 """
+
+_STEALTH_VIEWPORTS = [
+    {"width": 1920, "height": 1080},
+    {"width": 1680, "height": 1050},
+    {"width": 1600, "height": 900},
+    {"width": 1536, "height": 864},
+    {"width": 1440, "height": 900},
+    {"width": 1366, "height": 768},
+    {"width": 1280, "height": 720},
+]
+_STEALTH_USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36 Edg/129.0.0.0",
+]
 
 _STEALTH_ARGS = [
     "--disable-blink-features=AutomationControlled",
     "--disable-features=IsolateOrigins,site-per-process",
     "--no-sandbox",
     "--disable-setuid-sandbox",
+    "--disable-infobars",
+    "--disable-breakpad",
+    "--disable-dev-shm-usage",
+    "--disable-component-extensions-with-background-pages",
+    "--disable-default-apps",
+    "--disable-extensions",
+    "--disable-sync",
+    "--disable-translate",
+    "--metrics-recording-only",
+    "--mute-audio",
+    "--no-first-run",
+    "--no-default-browser-check",
+    "--safebrowsing-disable-auto-update",
+    "--password-store=basic",
+    "--use-mock-keychain",
 ]
 
 
@@ -134,10 +256,16 @@ def _ensure_browser(cookies=None, stealth=False):
         
         context_kwargs = {}
         if stealth:
+            import random as _srandom
+            vp = _srandom.choice(_STEALTH_VIEWPORTS)
+            ua = _srandom.choice(_STEALTH_USER_AGENTS)
             context_kwargs.update({
-                "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-                "viewport": {"width": 1920, "height": 1080},
+                "user_agent": ua,
+                "viewport": vp,
                 "locale": "en-US",
+                "timezone_id": "America/Los_Angeles",
+                "geolocation": {"latitude": 36.17, "longitude": -115.14},  # Las Vegas
+                "permissions": ["geolocation"],
             })
         context = _BROWSER.new_context(**context_kwargs)
         
@@ -683,6 +811,42 @@ def route_browser_workflow():
                             _htime.sleep(delay_per_char * random.uniform(0.3, 0.7))
                         step_result["human_typed"] = len(text)
                         step_result["wpm"] = wpm
+                    
+                    elif action == "mousemove":
+                        import random, time as _mtime
+                        to_x = step.get("x", 0)
+                        to_y = step.get("y", 0)
+                        steps = step.get("steps", 20)
+                        # Move mouse in small increments
+                        for i in range(steps):
+                            t = (i + 1) / steps
+                            # Bezier-like easing
+                            eased_t = t * t * (3 - 2 * t)
+                            cur_x = int(to_x * eased_t)
+                            cur_y = int(to_y * eased_t)
+                            page.mouse.move(cur_x, cur_y)
+                            _mtime.sleep(random.uniform(0.005, 0.02))
+                        step_result["moved_to"] = [to_x, to_y]
+                    
+                    elif action == "random_delay":
+                        import random, time as _rdtime
+                        min_ms = step.get("min_ms", 200)
+                        max_ms = step.get("max_ms", 1500)
+                        delay = random.uniform(min_ms, max_ms) / 1000.0
+                        _rdtime.sleep(delay)
+                        step_result["delayed_ms"] = int(delay * 1000)
+                    
+                    elif action == "scroll_human":
+                        import random, time as _shtime
+                        pixels = step.get("pixels", 500)
+                        direction = step.get("direction", "down")
+                        total = pixels if direction == "down" else -pixels
+                        chunks = random.randint(5, 12)
+                        for i in range(chunks):
+                            chunk = total // chunks
+                            page.mouse.wheel(0, chunk)
+                            _shtime.sleep(random.uniform(0.03, 0.12))
+                        step_result["scrolled_human"] = total
                     
                     elif action == "console":
                         # Capture console messages
