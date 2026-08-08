@@ -1,5 +1,5 @@
 """Wallpaper, windows, clipboard, scheduler, macro, tunnel, voice, and misc routes."""
-import os, json, subprocess, time, ctypes, re, threading, webbrowser, tempfile, shutil, sys, types
+import os, json, subprocess, time, ctypes, re, threading, webbrowser, tempfile, shutil, sys, types, urllib.parse
 from pathlib import Path
 from flask import jsonify, request
 from shared import _json_body, _log, _console, _missing_field, COAGENT_DIR, MACROS_DIR, \
@@ -580,7 +580,7 @@ $s.Speak($text)
     @require_auth
     def route_replay():
         d = _json_body()
-        count = min(d.get("count", 5), 100)
+        count = max(0, min(int(d.get("count", 5)), 100))
         from routes_mouse import _execute_action_wrapper
         with _ACTION_HISTORY_LOCK:
             actions = list(_action_history)[-count:]
@@ -787,7 +787,7 @@ $s.Speak($text)
     @app.route("/history", methods=["GET"])
     @require_auth
     def route_history():
-        limit = min(int(request.args.get("limit", 50)), 500)
+        limit = max(0, min(int(request.args.get("limit", 50)), 500))
         with _ACTION_HISTORY_LOCK:
             actions = list(_action_history)[-limit:]
             total = len(_action_history)
