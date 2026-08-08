@@ -313,6 +313,18 @@ def _agent_act():
     if not target:
         clicked = True
 
+    # If target was provided but not resolved, fail explicitly
+    if target and not payload:
+        _bump_stat("misses")
+        _set_last_method("act", None)
+        return jsonify({
+            "ok": False,
+            "error": "target unresolvable",
+            "action": action,
+            "target": target,
+            "method_used": None,
+        }), 404
+
     _set_last_method("act", method)
     if not clicked and click_error:
         _bump_stat("failures")
