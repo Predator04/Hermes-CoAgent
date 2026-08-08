@@ -179,15 +179,14 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_undo_last():
         with _LOCK:
-            entry = dict(_HISTORY[-1]) if _HISTORY else None
-        if not entry:
-            return jsonify({"error": "No actions to undo"}), 404
+            if not _HISTORY:
+                return jsonify({"error": "No actions to undo"}), 404
+            entry = dict(_HISTORY.pop())
 
         payload, status = _undo_action(app, entry)
-        if status < 400:
+        if status >= 400:
             with _LOCK:
-                if _HISTORY and _HISTORY[-1].get("timestamp") == entry.get("timestamp"):
-                    _HISTORY.pop()
+                _HISTORY.append(entry)  # re-insert on failure
         return jsonify(payload), status
 
     @bp.route("/undo/history", methods=["GET"])
