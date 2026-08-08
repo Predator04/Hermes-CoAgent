@@ -107,51 +107,9 @@ $mediaCapture.CapturePhotoToStorageFileAsync(
     [Windows.Media.MediaProperties.ImageEncodingProperties]::CreateJpeg(), $file
 ).GetResults()
 '''
-
-    full_script = rf'''
-param([string]$OutputPath)
-Add-Type -AssemblyName System.Drawing
-Add-Type -AssemblyName System.Windows.Forms
-
-# Use Windows.Media.Capture for webcam
-$mediaCapture = New-Object -ComObject "MediaCapture.MediaCapture"
-if (-not $mediaCapture) {{
-    # Fallback: use SendKeys + PrintScreen
-    $form = New-Object System.Windows.Forms.Form
-    $form.WindowState = "Minimized"
-    $form.ShowInTaskbar = $false
-    $form.Width = 1
-    $form.Height = 1
-    
-    $webcamTimer = New-Object System.Windows.Forms.Timer
-    $webcamTimer.Interval = 2000
-    
-    $result = $null
-    $webcamTimer.Add_Tick({{
-        $webcamTimer.Stop()
-        try {{
-            # Try using Windows.Media.Capture via WinRT
-            $capture = New-Object Windows.Media.Capture.MediaCapture
-            $capture.InitializeAsync()
-            $imgProps = [Windows.Media.MediaProperties.ImageEncodingProperties]::CreateJpeg()
-            $file = [Windows.Storage.StorageFile]::GetFileFromPathAsync($OutputPath).GetResults()
-            $capture.CapturePhotoToStorageFileAsync($imgProps, $file)
-            $result = $true
-        }} catch {{
-            $result = $false
-        }}
-        $form.Close()
-    }})
-    
-    $form.Add_Shown({{$form.Activate(); $webcamTimer.Start()}})
-    [System.Windows.Forms.Application]::Run($form)
-    return $result
-}}
-'''
-    
     try:
         result = subprocess.run(
-            ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", full_script],
+            ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script],
             capture_output=True, text=True, timeout=30
         )
         return Path(path).exists() and Path(path).stat().st_size > 1000
