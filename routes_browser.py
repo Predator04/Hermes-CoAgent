@@ -259,28 +259,22 @@ def _get_user_data_dir():
 def _ensure_browser(cookies=None, stealth=False):
     """Get or create browser with persistent context.
     Uses a persistent user data directory so cookies/login survive across
-    CoAgent restarts and greenlet thread boundaries.
-    If stealth=True, applies anti-detection measures.
+    CoAgent restarts. Creates a fresh Playwright instance each call to
+    avoid greenlet cross-thread errors.
     """
-    global _PW, _BROWSER, _CONTEXT, _PAGE
+    global _PW, _CONTEXT, _PAGE
     sync_playwright, _playwright_error, missing = _load_playwright()
     if missing:
         return None, missing
     try:
-        if _PW is None:
-            _PW = sync_playwright().start()
-        
-        # Check if existing context is alive
-        if _CONTEXT is not None:
+        # Always create fresh PW instance to avoid greenlet issues
+        if _PW is not None:
             try:
-                pages = _CONTEXT.pages
-                if pages and not pages[0].is_closed():
-                    _PAGE = pages[0]
-                    return _PAGE, None
+                _PW.stop()
             except Exception:
                 pass
+        _PW = sync_playwright().start()
         
-        # Create new browser+context with persistent profile
         user_data_dir = _get_user_data_dir()
         launch_args = _STEALTH_ARGS if stealth else []
         
@@ -304,7 +298,6 @@ def _ensure_browser(cookies=None, stealth=False):
             })
         
         _CONTEXT = _PW.chromium.launch_persistent_context(**context_kwargs)
-        _BROWSER = None  # persistent context manages its own browser
         
         if stealth:
             _CONTEXT.add_init_script(_STEALTH_SCRIPT)
