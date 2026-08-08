@@ -278,10 +278,7 @@ def _ensure_browser(cookies=None, stealth=False):
         
         # Always create fresh PW instance to avoid greenlet issues
         if _PW is not None:
-            try:
-                _PW.stop()
-            except Exception:
-                pass
+            _PW = None  # Will be replaced, don't stop - context survives
         _PW = sync_playwright().start()
         
         # Close any existing context
@@ -407,7 +404,6 @@ def route_browser_navigate():
         try:
             page.goto(url, wait_until=data.get("wait_until", "load"), timeout=_clamp_timeout(data, "timeout", 30000))
             result = {"status": "navigated", "url": page.url}
-            _save_storage()  # Persist cookies
             if isinstance(evaluate, str) and evaluate:
                 try:
                     eval_result = page.evaluate(evaluate)
@@ -1046,19 +1042,11 @@ def _get_session_file():
 
 @browser_bp.route("/browser/session/save", methods=["POST"])
 def route_browser_session_save():
-    """Save current browser cookies to disk for session persistence across restarts."""
-    import json as _json
+    """Save current browser storage state (cookies, localStorage) to disk."""
     with _BROWSER_LOCK:
-        page, error = _ensure_browser()
-        if error:
-            return error
-        try:
-            cookies = page.context.cookies()
-            with open(_get_session_file(), "w") as f:
-                _json.dump(cookies, f)
-            return jsonify({"status": "saved", "count": len(cookies), "file": _get_session_file()})
-        except Exception as e:
-            return _error(str(e), 500, type=type(e).__name__)
+        if _save_storage():
+            return jsonify({"status": "saved", "file": _get_storage_path()})
+        return jsonify({"status": "no_context", "note": "No active browser context to save"})
 
 
 @browser_bp.route("/browser/session/load", methods=["POST"])
