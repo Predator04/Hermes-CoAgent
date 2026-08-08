@@ -239,42 +239,71 @@ _STEALTH_ARGS = [
 ]
 
 
+_PW = None
+_BROWSER = None
+_CONTEXT = None
+_PAGE = None
+
+
 def _ensure_browser(cookies=None, stealth=False):
-    """Always creates a fresh context+page to avoid greenlet cross-thread errors.
-    Optionally sets cookies before returning the page.
-    If stealth=True, applies anti-detection measures."""
-    global _PW, _BROWSER
+    """Get or create browser with persistent context.
+    On first call: creates browser + context (visible Chrome window).
+    On subsequent calls: reuses existing context if still connected.
+    If stealth=True, applies anti-detection measures.
+    """
+    global _PW, _BROWSER, _CONTEXT, _PAGE
     sync_playwright, _playwright_error, missing = _load_playwright()
     if missing:
         return None, missing
     try:
         if _PW is None:
             _PW = sync_playwright().start()
+        
+        # Check if existing browser and context are still alive
+        if _BROWSER is not None and _BROWSER.is_connected() and _CONTEXT is not None:
+            try:
+                # Check if any page in context is accessible
+                pages = _CONTEXT.pages
+                if pages and not pages[0].is_closed():
+                    return pages[0], None
+            except Exception:
+                pass  # Context is dead, recreate
+        
+        # Create new browser if needed
         if _BROWSER is None or not _BROWSER.is_connected():
             launch_args = _STEALTH_ARGS if stealth else []
             _BROWSER = _PW.chromium.launch(headless=False, args=launch_args)
+            _CONTEXT = None  # Force new context
         
-        context_kwargs = {}
-        if stealth:
-            import random as _srandom
-            vp = _srandom.choice(_STEALTH_VIEWPORTS)
-            ua = _srandom.choice(_STEALTH_USER_AGENTS)
-            context_kwargs.update({
-                "user_agent": ua,
-                "viewport": vp,
-                "locale": "en-US",
-                "timezone_id": "America/Los_Angeles",
-                "geolocation": {"latitude": 36.17, "longitude": -115.14},  # Las Vegas
-                "permissions": ["geolocation"],
-            })
-        context = _BROWSER.new_context(**context_kwargs)
+        # Create new context if needed
+        if _CONTEXT is None:
+            context_kwargs = {}
+            if stealth:
+                import random as _srandom
+                vp = _srandom.choice(_STEALTH_VIEWPORTS)
+                ua = _srandom.choice(_STEALTH_USER_AGENTS)
+                context_kwargs.update({
+                    "user_agent": ua,
+                    "viewport": vp,
+                    "locale": "en-US",
+                    "timezone_id": "America/Los_Angeles",
+                    "geolocation": {"latitude": 36.17, "longitude": -115.14},
+                    "permissions": ["geolocation"],
+                })
+            _CONTEXT = _BROWSER.new_context(**context_kwargs)
+            if stealth:
+                _CONTEXT.add_init_script(_STEALTH_SCRIPT)
+            if cookies and isinstance(cookies, list):
+                _CONTEXT.add_cookies(cookies)
         
-        if stealth:
-            context.add_init_script(_STEALTH_SCRIPT)
-        if cookies and isinstance(cookies, list):
-            context.add_cookies(cookies)
-        page = context.new_page()
-        return page, None
+        # Create or reuse page
+        pages = _CONTEXT.pages
+        if pages and not pages[0].is_closed():
+            _PAGE = pages[0]
+        else:
+            _PAGE = _CONTEXT.new_page()
+        
+        return _PAGE, None
     except Exception as e:
         return None, _error(str(e), 500, type=type(e).__name__)
 
@@ -283,10 +312,12 @@ def _current_status():
     with _BROWSER_LOCK:
         try:
             open_browser = bool(_BROWSER and _BROWSER.is_connected())
+            pages_count = len(_CONTEXT.pages) if _CONTEXT else 0
+            active_url = _PAGE.url if _PAGE and not _PAGE.is_closed() else None
             return {
                 "open": open_browser,
-                "pages": "?",
-                "current_url": None,
+                "pages": pages_count,
+                "current_url": active_url,
             }
         except Exception as e:
             return {"open": False, "pages": 0, "current_url": None, "error": str(e)}
@@ -1011,9 +1042,14 @@ def route_browser_session_load():
 
 @browser_bp.route("/browser/close", methods=["POST"])
 def route_browser_close():
-    global _PW, _BROWSER
+    global _PW, _BROWSER, _CONTEXT, _PAGE
     with _BROWSER_LOCK:
         errors = []
+        if _CONTEXT:
+            try:
+                _CONTEXT.close()
+            except Exception as e:
+                errors.append(f"context: {e}")
         if _BROWSER:
             try:
                 _BROWSER.close()
@@ -1024,7 +1060,7 @@ def route_browser_close():
                 _PW.stop()
             except Exception as e:
                 errors.append(f"playwright: {e}")
-        _PW = _BROWSER = None
+        _PW = _BROWSER = _CONTEXT = _PAGE = None
         if errors:
             return _error("; ".join(errors), 500)
         return jsonify({"status": "closed"})
