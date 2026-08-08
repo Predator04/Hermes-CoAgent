@@ -11,6 +11,7 @@ Provides:
 
 import base64, time, threading, hashlib, logging
 from io import BytesIO
+from pathlib import Path
 import ctypes
 from ctypes import wintypes, windll
 import traceback
