@@ -3,7 +3,8 @@
    proxy, VPN, dark mode, power mode, keyboard backlight, battery info."""
 import os, subprocess, ctypes, re, time, json as _json
 from flask import jsonify, request
-from shared import _json_body, _log, _missing_field
+from datetime import datetime
+from shared import _json_body, _log, _missing_field, COAGENT_DIR
 
 # ── PowerShell helper ─────────────────────────────────────────
 def _ps(script, timeout=10):

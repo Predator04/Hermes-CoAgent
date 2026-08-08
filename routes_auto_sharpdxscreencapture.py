@@ -8,7 +8,10 @@ import subprocess
 from pathlib import Path
 
 from flask import jsonify
-from shared import _json_body, _log, _missing_field
+from shared import _json_body, _log, _missing_field, COAGENT_DIR
+
+SCREENSHOTS_DIR = COAGENT_DIR / "screenshots"
+SCREENSHOTS_DIR.mkdir(parents=True, exist_ok=True)
 
 FEATURE_INFO = {
     "repo": "AnderssonPeter/SharpDxScreenCapture",

@@ -4,6 +4,28 @@ All notable changes to Hermes CoAgent are documented here. Versions follow
 `MAJOR.MINOR.PATCH`; every published change bumps `VERSION` (read at runtime by
 all modules and surfaced at the `/version` endpoint).
 
+## [8.52.1] - 2026-08-07
+
+### Fixed — latent NameError crashes found by static analysis (pyflakes)
+
+Seven undefined-name bugs on Windows-only code paths (never hit by the Linux
+test suite) that would raise NameError when the route/function actually ran:
+
+- `hermes_coagent.py` — watchdog restart used `PID_FILE` without importing it
+  from `shared`.
+- `routes_auto_copyq.py`, `routes_auto_windows_mcp.py` — used `request` but only
+  imported `jsonify` from flask.
+- `routes_system.py` — webcam capture used `datetime` and `COAGENT_DIR` without
+  importing them.
+- `routes_webcam.py` — `_capture_ps_media` built an f-string referencing
+  `shots_dir`/`fname` before they were assigned; moved the assignments above it.
+- `routes_auto_sharpdxscreencapture.py` — path-traversal check referenced an
+  undefined `SCREENSHOTS_DIR`; now defined from `COAGENT_DIR`.
+- `uia_engine.py` — two screenshot paths used `Image` (PIL) without importing it.
+
+Verified with pyflakes (zero undefined-name warnings) plus the full suite
+(81 passed, 6 skipped).
+
 ## [8.52.0] - 2026-08-07
 
 ### Added — 5 new capability modules (issues #5, #9, #13, #2, #8)

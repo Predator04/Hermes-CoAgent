@@ -1108,6 +1108,7 @@ def adaptive_find(target: str, screenshot_path: str = None) -> dict:
         if img is None:
             # Capture screenshot (MSS — no window flash)
             try:
+                from PIL import Image
                 import mss as _mss_mod
                 with _mss_mod.mss() as _sct:
                     _mon = _sct.monitors[0]
@@ -1342,6 +1343,7 @@ def find_icon_by_template(icon_path: str, threshold: float = 0.8) -> dict:
             template_rgb = template
 
         # Capture screen (MSS — no window flash)
+        from PIL import Image
         import mss as _mss_mod
         with _mss_mod.mss() as _sct:
             _mon = _sct.monitors[0]

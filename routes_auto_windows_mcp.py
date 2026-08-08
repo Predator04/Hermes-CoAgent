@@ -13,7 +13,7 @@ import time
 import urllib.error
 import urllib.request
 
-from flask import jsonify
+from flask import jsonify, request
 from shared import _json_body, _log, _missing_field
 
 FEATURE_INFO = {

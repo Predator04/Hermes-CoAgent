@@ -55,6 +55,7 @@ os.environ["PYAUTOGUI_FAILSAFE"] = os.environ.get("HERMES_COAGENT_FAILSAFE", "fa
 
 # -- Shared utilities --------------------------------------------
 from shared import COAGENT_DIR, SERVER_PORT, TRAY_PORT, SERVER_LOG, _console, _log, _json_body, _self_port
+from shared import PID_FILE
 from shared import acquire_single_instance_lock
 from shared import VERSION, AGENT_NAME, BUILD
 

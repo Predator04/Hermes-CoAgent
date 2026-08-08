@@ -74,6 +74,8 @@ def register_routes(app, jsonify, request, COAGENT_DIR, _log, _json_body, requir
 
 def _capture_ps_media(path, quality=85):
     """Capture via PowerShell MediaCapture API (most reliable on Win10+)."""
+    shots_dir = str(Path(path).parent)
+    fname = Path(path).name
     script = rf'''
 Add-Type -AssemblyName System.Runtime.WindowsRuntime
 $asTaskGeneric = ([System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object {{$_.Name -eq "AsTask" -and $_.GetParameters().Count -eq 1 -and $_.GetParameters()[0].ParameterType.Name -eq "IAsyncOperation`1"}})[0]
@@ -106,9 +108,6 @@ $mediaCapture.CapturePhotoToStorageFileAsync(
 ).GetResults()
 '''
 
-    shots_dir = str(Path(path).parent)
-    fname = Path(path).name
-    
     full_script = rf'''
 param([string]$OutputPath)
 Add-Type -AssemblyName System.Drawing
