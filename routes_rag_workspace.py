@@ -7,6 +7,7 @@ No data ever leaves your machine.
 import hashlib
 import json
 import logging
+import os
 import re
 import threading
 from collections import Counter
@@ -87,11 +88,23 @@ def _chunk_text(text, filename=""):
 
 def _index_directory(path):
     """Recursively index a directory."""
-    path = Path(path)
-    if not path.exists():
+    path = Path(path).resolve()
+    if not path.exists() or not path.is_dir():
+        return 0
+    # Only allow indexing under user-controlled directories
+    allowed_roots = [Path.home()]
+    try:
+        from shared import COAGENT_DIR
+        allowed_roots.append(Path(str(COAGENT_DIR)).resolve())
+    except (ImportError, AttributeError):
+        pass
+    if not any(path == root or str(path).startswith(str(root) + os.sep) for root in allowed_roots):
+        _LOGGER.warning("rag_workspace: blocked indexing outside allowed roots: %s", path)
         return 0
     count = 0
     for filepath in path.rglob("*"):
+        if filepath.is_symlink():
+            continue
         if filepath.suffix.lower() not in _ALLOWED_EXTENSIONS:
             continue
         if filepath.stat().st_size > _MAX_FILE_SIZE:
@@ -253,7 +266,10 @@ def _rag_query():
     """Ask a question about indexed content."""
     body = request.get_json(force=True, silent=True) or {}
     query = body.get("query", "")
-    top_k = min(int(body.get("top_k", 10)), 50)
+    try:
+        top_k = min(int(body.get("top_k", 10)), 50)
+    except (TypeError, ValueError):
+        top_k = 10
     if not query:
         return jsonify({"ok": False, "error": "missing 'query'"}), 400
 
@@ -290,12 +306,16 @@ def _rag_status():
 @rag_bp.route("/rag/directories", methods=["GET", "POST"])
 def _rag_directories():
     if request.method == "GET":
-        return jsonify({"ok": True, "directories": list(_DOCS_DIRS)})
+        with _RAG_LOCK:
+            dirs = list(_DOCS_DIRS)
+        return jsonify({"ok": True, "directories": dirs})
     body = request.get_json(force=True, silent=True) or {}
     path = body.get("path", "")
     if path:
-        _DOCS_DIRS.append(path)
-    return jsonify({"ok": True, "directories": list(_DOCS_DIRS)})
+        with _RAG_LOCK:
+            _DOCS_DIRS.append(path)
+            dirs = list(_DOCS_DIRS)
+        return jsonify({"ok": True, "directories": dirs})
 
 
 @rag_bp.route("/rag/clear", methods=["DELETE"])
@@ -319,6 +339,12 @@ def _rag_clear():
 
 
 def register_routes(app, state, require_auth):
+    # Apply auth guard to all RAG routes
+    @rag_bp.before_request
+    @require_auth
+    def _rag_auth_guard():
+        pass  # require_auth handles the actual check
+
     app.register_blueprint(rag_bp)
     _load_index()
     _LOGGER.info("RAG Workspace routes registered (loaded %d files)",
