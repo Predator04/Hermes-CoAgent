@@ -1,9 +1,7 @@
 """UIA accessibility tree, SOM overlay, and element-find routes."""
-import sys, base64, time, threading, hashlib
-from io import BytesIO
-from pathlib import Path
+import sys
 from flask import jsonify, request
-from shared import _json_body, _log, _console, _missing_field, COAGENT_DIR
+from shared import _json_body, _log, _missing_field, COAGENT_DIR
 
 _uia_engine = None
 def _get_uia_engine():
@@ -16,7 +14,6 @@ def _get_uia_engine():
 
 HAS_PIL = False
 try:
-    from PIL import Image, ImageDraw, ImageFont
     HAS_PIL = True
 except ImportError:
     pass

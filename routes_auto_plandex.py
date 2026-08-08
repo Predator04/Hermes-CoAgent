@@ -3,7 +3,6 @@
 # Source: https://github.com/plandex-ai/plandex
 
 from flask import jsonify
-from shared import _log
 
 FEATURE_INFO = {
   "repo": "plandex-ai/plandex",

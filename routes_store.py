@@ -6,15 +6,23 @@ Designed to run as a 24/7 cron-driven store machine.
 
 v1.0 — Initial release
 """
-import os, re, json as _json, time, hashlib, io, base64, logging, random, string, subprocess, mimetypes
+import os
+import re
+import json as _json
+import base64
+import logging
+import random
+import string
+import subprocess
+import mimetypes
 import html as _html
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 from urllib.parse import urljoin, urlparse
 
 from flask import Blueprint, jsonify, request, send_from_directory
-from shared import _json_body, _log, _missing_field
+from shared import _log
 
 log = logging.getLogger(__name__)
 
@@ -184,7 +192,6 @@ def _gen_image(prompt: str, product_id: str, index: int = 0) -> Optional[str]:
     
     Tries CoAgent's image gen first, falls back to placeholders.
     """
-    import urllib.request
     
     # Method 1: Try calling WSL Hermes image generation via CLI
     try:
@@ -218,7 +225,7 @@ print('PLACEHOLDER')
     
     # Method 2: Generate a placeholder product image with Pillow
     try:
-        from PIL import Image, ImageDraw, ImageFont
+        from PIL import Image, ImageDraw
         img = Image.new("RGB", (1024, 1024), color=(255, 255, 255))
         draw = ImageDraw.Draw(img)
         
@@ -1118,7 +1125,6 @@ Write 3-4 short lines with emojis, actionable insights, and next steps. Be excit
 
 def register_routes(app, state=None, require_auth=None):
     """Register store automation blueprint."""
-    from flask import Blueprint
     bp = store_bp
     if require_auth:
         # Apply auth to all routes

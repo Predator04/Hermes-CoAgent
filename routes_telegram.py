@@ -11,11 +11,12 @@ Endpoints:
   GET  /telegram/status        - Check config + last send status
 """
 
-import json, os, time, urllib.request
-from pathlib import Path
-from flask import Blueprint, jsonify, request
+import json
+import time
+import urllib.request
+from flask import Blueprint, jsonify
 
-from shared import COAGENT_DIR, _console, _log, _json_body, _wrap_registered_blueprint_routes
+from shared import COAGENT_DIR, _console, _json_body, _wrap_registered_blueprint_routes
 
 telegram_bp = Blueprint("telegram_relay", __name__)
 CONFIG_FILE = COAGENT_DIR / "telegram_config.json"

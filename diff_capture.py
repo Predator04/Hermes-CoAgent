@@ -6,16 +6,13 @@ changed regions (diff frames) on subsequent calls to reduce token usage.
 
 import hashlib
 import logging
-import time
-from io import BytesIO
-from pathlib import Path
 
 from flask import Blueprint, jsonify
 
 _LOGGER = logging.getLogger(__name__)
 
 try:
-    from PIL import Image, ImageChops, ImageDraw
+    from PIL import Image, ImageChops
     HAS_PIL = True
 except ImportError:
     HAS_PIL = False

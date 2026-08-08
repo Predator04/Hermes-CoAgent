@@ -5,7 +5,6 @@ import os
 import re
 import socket
 import threading
-from pathlib import Path
 
 from flask import jsonify
 

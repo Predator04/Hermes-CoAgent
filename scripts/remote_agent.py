@@ -1,6 +1,13 @@
 """Remote CoAgent - lightweight remote desktop agent (auth required)"""
-import http.server, json, io, subprocess, os, sys, tempfile, ctypes, time, base64, secrets, shlex
-from PIL import Image, ImageGrab
+import http.server
+import json
+import io
+import subprocess
+import os
+import sys
+import secrets
+import shlex
+from PIL import ImageGrab
 PORT = 19124
 BIND_HOST = "127.0.0.1"  # never expose to network without auth
 MAX_BODY = 1 * 1024 * 1024  # 1 MB max request body

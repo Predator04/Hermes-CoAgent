@@ -3,7 +3,6 @@
 # Source: https://github.com/openinterpreter/open-interpreter
 
 from flask import jsonify
-from shared import _log
 
 FEATURE_INFO = {
   "repo": "openinterpreter/open-interpreter",

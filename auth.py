@@ -17,7 +17,6 @@ When HERMES_COAGENT_TOKEN env var is used with --secure, the token is NOT persis
 """
 import os, sys, secrets, functools, hashlib, time, threading
 from flask import jsonify, request
-from pathlib import Path
 
 AUTH_TOKEN = None
 AUTH_ENABLED = False

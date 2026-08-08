@@ -8,21 +8,18 @@ Endpoints:
   GET  /deploy/script      — Download standalone oneclick_deploy.ps1
 """
 
-import io
 import json
 import os
 import secrets
 import shutil
 import subprocess
-import sys
 import threading
 import time
 from pathlib import Path
 
-from flask import Blueprint, jsonify, request, Response, send_file
+from flask import Blueprint, jsonify, Response
 
 from routes_bypass import _json_payload
-from shared import _is_private_url, _sanitize_path
 
 deploy_bp = Blueprint("deploy", __name__)
 

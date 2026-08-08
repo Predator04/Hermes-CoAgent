@@ -14,9 +14,9 @@ import threading
 import time
 from ctypes import wintypes
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify
 
-from shared import _console, _json_body, _log, _wrap_registered_blueprint_routes
+from shared import _console, _json_body, _wrap_registered_blueprint_routes
 from uia_engine import send_mouse_click, send_mouse_move
 
 background_bp = Blueprint("background", __name__)

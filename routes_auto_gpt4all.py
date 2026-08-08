@@ -3,7 +3,6 @@
 # Source: https://github.com/nomic-ai/gpt4all
 
 from flask import jsonify
-from shared import _log
 
 FEATURE_INFO = {
   "repo": "nomic-ai/gpt4all",

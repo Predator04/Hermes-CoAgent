@@ -1,6 +1,16 @@
 """Shared utilities for CoAgent route modules."""
 
-import atexit, getpass, ipaddress, json, os, queue, shlex, socket, subprocess, sys, threading, tempfile
+import atexit
+import getpass
+import ipaddress
+import json
+import os
+import queue
+import shlex
+import socket
+import subprocess
+import sys
+import threading
 import urllib.parse
 import urllib.request
 from pathlib import Path

@@ -5,11 +5,10 @@ import re
 import sys
 import threading
 import time
-from pathlib import Path
 
 from flask import jsonify
 
-from shared import COAGENT_DIR, _json_body, _log
+from shared import COAGENT_DIR, _log
 
 
 PLUGINS_DIR = COAGENT_DIR / "plugins"

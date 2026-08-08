@@ -2,13 +2,12 @@
 # Description: Nmap is a utility for network discovery, port scanning, OS detection, and security auditing.
 # Source: https://github.com/nmap/nmap
 
-import json
 import os
 import re
 import shutil
 import subprocess
 
-from flask import jsonify, request
+from flask import jsonify
 from shared import _json_body, _log, _missing_field
 
 FEATURE_INFO = {

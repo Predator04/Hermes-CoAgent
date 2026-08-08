@@ -4,10 +4,8 @@
 # CLI: rufus.exe /create /iso:<path> /drive:<letter> /target:<label> /volume_label:<label> /no_2fa
 
 import os
-import re
 import shutil
 import subprocess
-import tempfile
 
 from flask import jsonify
 from shared import _json_body, _log, _missing_field

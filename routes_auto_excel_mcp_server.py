@@ -7,7 +7,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from flask import jsonify, request
+from flask import jsonify
 from shared import _json_body, _log, _missing_field
 
 FEATURE_INFO = {

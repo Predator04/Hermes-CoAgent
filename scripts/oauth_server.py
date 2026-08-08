@@ -2,7 +2,6 @@ import http.server
 import urllib.parse
 import json
 import os
-import sys
 
 class OAuthHandler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):

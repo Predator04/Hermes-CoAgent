@@ -1,7 +1,6 @@
 """Ember Desktop Buddy — CoAgent integration routes."""
 from __future__ import annotations
 
-import json
 import subprocess
 import sys
 import time

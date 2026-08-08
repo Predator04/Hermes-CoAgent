@@ -1,8 +1,12 @@
 """System control routes: volume, brightness, mute, monitor, media playback,
    Wi-Fi, Bluetooth, night light, audio output, DND, camera, microphone,
    proxy, VPN, dark mode, power mode, keyboard backlight, battery info."""
-import os, subprocess, ctypes, re, time, json as _json
-from flask import jsonify, request
+import os
+import subprocess
+import ctypes
+import time
+import json as _json
+from flask import jsonify
 from datetime import datetime
 from shared import _json_body, _log, _missing_field, COAGENT_DIR
 
@@ -469,7 +473,8 @@ if ($current) {
     @require_auth
     def route_camera_snapshot():
         """Take a photo with the webcam and save it."""
-        import subprocess, tempfile, base64
+        import subprocess
+        import base64
         from pathlib import Path
         
         shots_dir = COAGENT_DIR / "camera_shots"
@@ -783,7 +788,6 @@ $form.Add_Shown({
 
 def _send_media_key(vk_code):
     """Send a virtual key code via keyboard driver."""
-    import pyautogui as pg
     # Use ctypes SendInput
     kbi = ctypes.create_unicode_buffer(40)  # KEYBDINPUT size
     ctypes.memset(kbi, 0, 40)

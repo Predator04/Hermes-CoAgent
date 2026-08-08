@@ -22,7 +22,6 @@ import argparse
 import json
 import os
 import platform
-import re
 import shutil
 import subprocess
 import sys
@@ -353,7 +352,6 @@ def step_verify(install_dir):
 
     # Check Python deps
     try:
-        import flask, waitress, PIL, pyautogui, pygetwindow
         print("  ✓ Python dependencies: flask, waitress, PIL, pyautogui, pygetwindow")
     except ImportError as e:
         print(f"  ⚠  Missing dependency: {e}")

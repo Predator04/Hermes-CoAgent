@@ -10,7 +10,7 @@ import time
 from datetime import datetime, timezone
 from urllib.parse import quote
 
-from flask import Response, g, has_request_context, jsonify, request, stream_with_context
+from flask import Response, jsonify, request, stream_with_context
 
 from shared import AGENT_NAME, BUILD, VERSION
 

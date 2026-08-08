@@ -3,7 +3,6 @@
 # Source: https://github.com/NationalSecurityAgency/ghidra
 
 from flask import jsonify
-from shared import _log
 
 FEATURE_INFO = {
   "repo": "NationalSecurityAgency/ghidra",

@@ -6,12 +6,9 @@
 import os
 import shutil
 import subprocess
-import json as json_lib
-import tempfile
-import time
 
 from flask import jsonify
-from shared import _json_body, _log, _missing_field
+from shared import _json_body, _missing_field
 
 FEATURE_INFO = {
     "repo": "Raphire/Win11Debloat",

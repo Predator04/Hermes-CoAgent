@@ -2,9 +2,8 @@
 import os, json, subprocess, time, ctypes, re, threading, webbrowser, tempfile, shutil, sys, types, urllib.parse
 from pathlib import Path
 from flask import jsonify, request
-from shared import _json_body, _log, _console, _missing_field, COAGENT_DIR, MACROS_DIR, \
-    SCREENSHOTS_DIR, TUNNEL_LOG, TRAY_LOG, SERVER_LOG, SERVER_PORT, TRAY_PORT, \
-    _sanitize_path, _sanitize_cmd, _interactive_task_xml, sse_broadcast, sse_response
+from shared import _json_body, _log, _missing_field, COAGENT_DIR, MACROS_DIR, SCREENSHOTS_DIR, \
+    TUNNEL_LOG, SERVER_PORT, _sanitize_path, sse_response
 from routes_config import backup_file
 
 # In-memory action history (shared with main)

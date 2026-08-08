@@ -7,7 +7,6 @@ import subprocess
 import threading
 import time
 from datetime import datetime
-from pathlib import Path
 
 from flask import jsonify
 

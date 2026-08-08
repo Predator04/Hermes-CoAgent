@@ -3,7 +3,6 @@
 # Source: https://github.com/nickie/pywinauto
 
 from flask import jsonify
-from shared import _log
 
 FEATURE_INFO = {
   "repo": "nickie/pywinauto",

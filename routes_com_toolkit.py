@@ -4,15 +4,10 @@ Gives the LLM direct access to PowerShell, WMI, COM objects, and the Windows Reg
 For any task that doesn't need a visible UI (changing wallpaper, querying processes, 
 reading registry, configuring Windows), this is 100x faster than clicking around.
 """
-import base64
-import io
 import json
 import logging
-import re
 import subprocess
 import threading
-import time
-from datetime import datetime
 
 from flask import Blueprint, jsonify, request
 

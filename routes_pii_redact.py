@@ -8,7 +8,6 @@ import io
 import logging
 import re
 import threading
-import time
 from datetime import datetime
 
 from flask import Blueprint, jsonify, request
@@ -78,7 +77,7 @@ def _redact_text(text):
 def _redact_image(base64_str):
     """Redact PII in an image by OCR-ing text and drawing black rectangles."""
     try:
-        from PIL import Image, ImageDraw, ImageFont
+        from PIL import Image, ImageDraw
         img_data = base64.b64decode(base64_str)
         img = Image.open(io.BytesIO(img_data))
         draw = ImageDraw.Draw(img)

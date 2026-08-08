@@ -2,7 +2,6 @@
 
 import base64
 import subprocess
-from pathlib import Path
 
 from flask import Response, jsonify, request
 

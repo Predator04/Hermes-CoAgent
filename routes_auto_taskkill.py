@@ -5,12 +5,11 @@
 # Source: Built-in Windows tool at C:\Windows\system32\taskkill.exe
 
 import os
-import re
 import shutil
 import subprocess
 
 from flask import jsonify
-from shared import _json_body, _log, _missing_field
+from shared import _json_body, _missing_field
 
 FEATURE_INFO = {
     "repo": "microsoft/windows",

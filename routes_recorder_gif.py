@@ -70,7 +70,7 @@ def _capture_loop(recording_id, fps, max_seconds, bbox):
     start = time.perf_counter()
     next_capture = start
     try:
-        from PIL import ImageGrab
+        pass
 
         while not _STOP_EVENT.is_set():
             now = time.perf_counter()

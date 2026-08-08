@@ -7,9 +7,8 @@ import os
 import re
 import shutil
 import subprocess
-import json as json_lib
 
-from flask import jsonify, request
+from flask import jsonify
 from shared import _json_body, _log, _missing_field
 
 FEATURE_INFO = {

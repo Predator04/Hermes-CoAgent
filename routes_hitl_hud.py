@@ -34,7 +34,6 @@ def _flash_rect(bbox, duration_ms=2000, color_rgba=(255, 0, 0, 80)):
     try:
         import win32gui
         import win32con
-        import struct
 
         x, y, w, h = bbox
         hwnd = win32gui.CreateWindowEx(

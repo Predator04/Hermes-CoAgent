@@ -1,10 +1,17 @@
 """OCR, screenshot, crop, and screen-describe routes."""
-import io, base64, json, logging, os, tempfile, subprocess, time, threading, hashlib
+import base64
+import json
+import logging
+import os
+import tempfile
+import subprocess
+import time
+import threading
+import hashlib
 import urllib.error, urllib.request
 from io import BytesIO
-from pathlib import Path
 from flask import Response, jsonify, request
-from shared import _json_body, _log, _console, _missing_field, get_host_ip, COAGENT_DIR, SCREENSHOTS_DIR, TRAY_PORT
+from shared import _json_body, _log, _missing_field, get_host_ip, TRAY_PORT
 from shared_fallbacks import FallbackChain
 
 _LOGGER = logging.getLogger(__name__)

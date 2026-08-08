@@ -1,7 +1,10 @@
 """Mouse, keyboard, input, and action-chain routes."""
-import threading, time, json, ctypes, hashlib, subprocess, re
+import threading
+import time
+import ctypes
+import hashlib
 from flask import jsonify
-from shared import _json_body, _log, _console, _missing_field, _result_response, COAGENT_DIR, SCREENSHOTS_DIR, _interactive_task_xml
+from shared import _json_body, _log, _missing_field, _result_response
 
 try:
     import pyautogui
@@ -141,7 +144,6 @@ def _background_sendinput(action, x, y, button="left"):
     if not hasattr(ctypes, 'windll'):
         return pyautogui.click(x, y, button=button)
     try:
-        import ctypes.wintypes as w
         MOUSEEVENTF_LEFTDOWN = 0x0002; MOUSEEVENTF_LEFTUP = 0x0004
         MOUSEEVENTF_RIGHTDOWN = 0x0008; MOUSEEVENTF_RIGHTUP = 0x0010
         MOUSEEVENTF_ABSOLUTE = 0x8000

@@ -3,7 +3,6 @@
 # Source: https://github.com/microsoft/windows-ai-toolkit
 
 from flask import jsonify
-from shared import _log
 
 FEATURE_INFO = {
   "repo": "microsoft/windows-ai-toolkit",

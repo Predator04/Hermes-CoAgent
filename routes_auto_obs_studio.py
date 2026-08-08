@@ -3,7 +3,6 @@
 # Source: https://github.com/obsproject/obs-studio
 
 from flask import jsonify
-from shared import _log
 
 FEATURE_INFO = {
   "repo": "obsproject/obs-studio",

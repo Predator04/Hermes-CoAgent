@@ -11,7 +11,6 @@ from __future__ import annotations
 import argparse
 import io
 import json
-import sys
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path

@@ -7,7 +7,6 @@ Stored in COAGENT_DIR/semantic_memory.json.
 import json
 import logging
 import threading
-import time
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path

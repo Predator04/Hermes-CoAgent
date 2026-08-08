@@ -5,8 +5,6 @@ Background thread: periodically OCR the screen looking for unexpected modal dial
 """
 import logging
 import threading
-import time
-from collections import deque
 from datetime import datetime
 
 from flask import Blueprint, jsonify, request
@@ -45,7 +43,7 @@ def _debug_failure(context, exc):
 def _ocr_screen():
     """Take screenshot and run OCR, return list of found text."""
     try:
-        from routes_ocr import _capture_jpeg, ocr_find_text
+        from routes_ocr import ocr_find_text
         # Use OCR directly on a fresh screenshot
         results = []
         for keyword in _RECOVERY_STATE.get("popup_keywords", []):

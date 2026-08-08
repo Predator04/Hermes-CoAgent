@@ -8,7 +8,7 @@ import shutil
 import subprocess
 
 from flask import jsonify
-from shared import _json_body, _log, _missing_field
+from shared import _json_body, _missing_field
 
 FEATURE_INFO = {
     "repo": "chocolatey/choco",

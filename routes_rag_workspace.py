@@ -4,14 +4,11 @@ Index your desktop files (docs, code, notes) and ask questions about them.
 Uses local embeddings (sentence-transformers) or a simple TF-IDF fallback.
 No data ever leaves your machine.
 """
-import base64
 import hashlib
 import json
 import logging
-import os
 import re
 import threading
-import time
 from collections import Counter
 from datetime import datetime
 from pathlib import Path

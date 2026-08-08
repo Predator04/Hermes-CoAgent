@@ -12,7 +12,7 @@ import shutil
 import subprocess
 
 from flask import jsonify
-from shared import _json_body, _log, _missing_field
+from shared import _json_body, _missing_field
 
 FEATURE_INFO = {
     "repo": "microsoft/windows",
@@ -381,7 +381,6 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_auto_ipconfig_registerdns():
         """Register DNS names with DHCP and refresh DNS registrations."""
-        from flask import request
         exe = _find_ipconfig()
         if not exe:
             return jsonify({"ok": False, "error": "ipconfig not found"}), 503

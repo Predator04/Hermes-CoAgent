@@ -9,7 +9,7 @@ import subprocess
 import json as json_lib
 
 from flask import jsonify
-from shared import _json_body, _log, _missing_field
+from shared import _json_body, _missing_field
 
 FEATURE_INFO = {
     "repo": "DevToys-app/DevToys",

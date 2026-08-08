@@ -4,6 +4,17 @@ All notable changes to Hermes CoAgent are documented here. Versions follow
 `MAJOR.MINOR.PATCH`; every published change bumps `VERSION` (read at runtime by
 all modules and surfaced at the `/version` endpoint).
 
+## [8.52.3] - 2026-08-07
+
+### Changed
+
+- Lint cleanup: removed ~197 unused imports across the codebase (pyflakes
+  "imported but unused" dropped from 199 to 2; the remaining two are intentional
+  lazy availability checks). No behavioral change — all removals were verified to
+  leave zero undefined-name warnings, a clean compile, and the full suite passing
+  (81 passed, 6 skipped). Only unused imports were removed; variables and
+  side-effect imports were left untouched.
+
 ## [8.52.1] - 2026-08-07
 
 ### Fixed — latent NameError crashes found by static analysis (pyflakes)

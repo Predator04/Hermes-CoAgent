@@ -4,15 +4,11 @@ Vision-first endpoint that captures the full desktop, runs OCR + object detectio
 and returns a structured description of what's on screen. Works like a "read the room"
 command for agents — get a full picture in a single call instead of many.
 """
-import base64
 import io
-import json
 import logging
 import threading
-import time
-from datetime import datetime
 
-from flask import Blueprint, Response, jsonify, request
+from flask import Blueprint, jsonify, request
 
 from shared import _self_port, _wrap_registered_blueprint_routes
 

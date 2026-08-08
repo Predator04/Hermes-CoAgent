@@ -4,7 +4,6 @@ import base64
 import os
 from datetime import datetime, timezone
 from email.mime.text import MIMEText
-from pathlib import Path
 
 from flask import Blueprint, jsonify
 

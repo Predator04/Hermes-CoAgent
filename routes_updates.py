@@ -22,7 +22,7 @@ from pathlib import Path
 
 from flask import Blueprint, jsonify
 
-from shared import COAGENT_DIR, VERSION, _console
+from shared import COAGENT_DIR, VERSION
 
 
 LOG = logging.getLogger("coagent.updates")

@@ -829,9 +829,7 @@ def find_on_screen(text: str) -> dict:
     
     # Method 2: OCR (if available)
     try:
-        import pytesseract
-        from PIL import Image
-        from io import BytesIO
+        pass
         # We'll get screenshot from the caller
         results["method"] = "combined"
     except (ImportError, OSError, RuntimeError) as e:
@@ -1323,7 +1321,6 @@ def find_icon_by_template(icon_path: str, threshold: float = 0.8) -> dict:
     try:
         import cv2
         import numpy as np
-        from PIL import ImageGrab
     except ImportError:
         return {"found": False, "error": "OpenCV or numpy not available", "strategy": "template_match"}
 

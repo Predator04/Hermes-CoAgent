@@ -3,7 +3,6 @@
 # Source: https://github.com/clients/tmuxp
 
 from flask import jsonify
-from shared import _log
 
 FEATURE_INFO = {
   "repo": "clients/tmuxp",

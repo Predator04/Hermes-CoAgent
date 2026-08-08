@@ -22,16 +22,13 @@ Endpoints:
 """
 
 import base64
-import json
-import os
 import threading
-import time
 from pathlib import Path
 
-from flask import Blueprint, jsonify, request, Response
+from flask import Blueprint, jsonify
 
 from routes_bypass import _json_payload
-from shared import _is_private_url, _sanitize_path
+from shared import _is_private_url
 
 stealth_bp = Blueprint("stealth", __name__)
 

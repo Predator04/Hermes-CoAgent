@@ -1,5 +1,10 @@
 """Pattern-based AI co-pilot routes."""
-import ctypes, ctypes.wintypes, os, re, subprocess, time, webbrowser
+import ctypes
+import ctypes.wintypes
+import re
+import subprocess
+import time
+import webbrowser
 from flask import jsonify
 from shared import _json_body, _log, _missing_field
 

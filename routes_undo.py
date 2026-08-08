@@ -5,7 +5,7 @@ import time
 
 from flask import Blueprint, jsonify, request
 
-from shared import COAGENT_DIR, _console, _json_body
+from shared import _console, _json_body
 
 
 MAX_HISTORY = 100

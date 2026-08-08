@@ -8,7 +8,6 @@ import os
 import shutil
 import subprocess
 import tempfile
-import struct
 import hashlib
 from datetime import datetime
 
@@ -94,7 +93,6 @@ def register_routes(app, state, require_auth):
         exe_path = _find_sharex()
         available = exe_path is not None
         try:
-            import mss
             mss_ok = True
         except ImportError:
             mss_ok = False

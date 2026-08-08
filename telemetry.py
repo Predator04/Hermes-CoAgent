@@ -4,12 +4,9 @@ Logs every agent action (tool, endpoint, success/fail, duration)
 to a structured SQLite database for analytics and debugging.
 """
 
-import json
 import logging
 import sqlite3
 import threading
-import time
-from datetime import datetime
 from pathlib import Path
 
 from flask import Blueprint, jsonify, request

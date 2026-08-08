@@ -8,7 +8,7 @@ import logging
 import threading
 import time
 
-from flask import Blueprint, Response, jsonify, request
+from flask import Blueprint, jsonify, request
 from shared import _self_port
 
 _LOGGER = logging.getLogger(__name__)
