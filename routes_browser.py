@@ -243,12 +243,23 @@ _PW = None
 _BROWSER = None
 _CONTEXT = None
 _PAGE = None
+_USER_DATA_DIR = None
+
+
+def _get_user_data_dir():
+    """Get or create persistent user data directory for cookie storage."""
+    global _USER_DATA_DIR
+    if _USER_DATA_DIR is None:
+        import tempfile, os as _os
+        _USER_DATA_DIR = _os.path.join(tempfile.gettempdir(), "coagent_browser_profile")
+        _os.makedirs(_USER_DATA_DIR, exist_ok=True)
+    return _USER_DATA_DIR
 
 
 def _ensure_browser(cookies=None, stealth=False):
     """Get or create browser with persistent context.
-    On first call: creates browser + context (visible Chrome window).
-    On subsequent calls: reuses existing context if still connected.
+    Uses a persistent user data directory so cookies/login survive across
+    CoAgent restarts and greenlet thread boundaries.
     If stealth=True, applies anti-detection measures.
     """
     global _PW, _BROWSER, _CONTEXT, _PAGE
@@ -259,44 +270,47 @@ def _ensure_browser(cookies=None, stealth=False):
         if _PW is None:
             _PW = sync_playwright().start()
         
-        # Check if existing browser and context are still alive
-        if _BROWSER is not None and _BROWSER.is_connected() and _CONTEXT is not None:
+        # Check if existing context is alive
+        if _CONTEXT is not None:
             try:
-                # Check if any page in context is accessible
                 pages = _CONTEXT.pages
                 if pages and not pages[0].is_closed():
-                    return pages[0], None
+                    _PAGE = pages[0]
+                    return _PAGE, None
             except Exception:
-                pass  # Context is dead, recreate
+                pass
         
-        # Create new browser if needed
-        if _BROWSER is None or not _BROWSER.is_connected():
-            launch_args = _STEALTH_ARGS if stealth else []
-            _BROWSER = _PW.chromium.launch(headless=False, args=launch_args)
-            _CONTEXT = None  # Force new context
+        # Create new browser+context with persistent profile
+        user_data_dir = _get_user_data_dir()
+        launch_args = _STEALTH_ARGS if stealth else []
         
-        # Create new context if needed
-        if _CONTEXT is None:
-            context_kwargs = {}
-            if stealth:
-                import random as _srandom
-                vp = _srandom.choice(_STEALTH_VIEWPORTS)
-                ua = _srandom.choice(_STEALTH_USER_AGENTS)
-                context_kwargs.update({
-                    "user_agent": ua,
-                    "viewport": vp,
-                    "locale": "en-US",
-                    "timezone_id": "America/Los_Angeles",
-                    "geolocation": {"latitude": 36.17, "longitude": -115.14},
-                    "permissions": ["geolocation"],
-                })
-            _CONTEXT = _BROWSER.new_context(**context_kwargs)
-            if stealth:
-                _CONTEXT.add_init_script(_STEALTH_SCRIPT)
-            if cookies and isinstance(cookies, list):
-                _CONTEXT.add_cookies(cookies)
+        context_kwargs = {
+            "headless": False,
+            "args": launch_args,
+            "user_data_dir": user_data_dir,
+        }
         
-        # Create or reuse page
+        if stealth:
+            import random as _srandom
+            vp = _srandom.choice(_STEALTH_VIEWPORTS)
+            ua = _srandom.choice(_STEALTH_USER_AGENTS)
+            context_kwargs.update({
+                "user_agent": ua,
+                "viewport": vp,
+                "locale": "en-US",
+                "timezone_id": "America/Los_Angeles",
+                "geolocation": {"latitude": 36.17, "longitude": -115.14},
+                "permissions": ["geolocation"],
+            })
+        
+        _CONTEXT = _PW.chromium.launch_persistent_context(**context_kwargs)
+        _BROWSER = None  # persistent context manages its own browser
+        
+        if stealth:
+            _CONTEXT.add_init_script(_STEALTH_SCRIPT)
+        if cookies and isinstance(cookies, list):
+            _CONTEXT.add_cookies(cookies)
+        
         pages = _CONTEXT.pages
         if pages and not pages[0].is_closed():
             _PAGE = pages[0]
@@ -311,11 +325,11 @@ def _ensure_browser(cookies=None, stealth=False):
 def _current_status():
     with _BROWSER_LOCK:
         try:
-            open_browser = bool(_BROWSER and _BROWSER.is_connected())
-            pages_count = len(_CONTEXT.pages) if _CONTEXT else 0
+            ctx_alive = _CONTEXT is not None
+            pages_count = len(_CONTEXT.pages) if ctx_alive else 0
             active_url = _PAGE.url if _PAGE and not _PAGE.is_closed() else None
             return {
-                "open": open_browser,
+                "open": ctx_alive,
                 "pages": pages_count,
                 "current_url": active_url,
             }
@@ -1047,14 +1061,15 @@ def route_browser_close():
         errors = []
         if _CONTEXT:
             try:
+                # Close all context pages first
+                for p in _CONTEXT.pages:
+                    try:
+                        p.close()
+                    except Exception:
+                        pass
                 _CONTEXT.close()
             except Exception as e:
                 errors.append(f"context: {e}")
-        if _BROWSER:
-            try:
-                _BROWSER.close()
-            except Exception as e:
-                errors.append(f"browser: {e}")
         if _PW:
             try:
                 _PW.stop()
