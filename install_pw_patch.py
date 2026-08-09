@@ -54,10 +54,14 @@ def apply_patch(filepath):
     if PATCH_OLD not in content:
         print("  WARNING: Expected code not found. Playwright may have changed.")
         print("  Trying alternative pattern...")
-        # Try a simpler match
-        alt_old = 'if self._loop.is_running():\n            raise Error('
+        # Try a simpler match using a triple-quoted string with real newlines
+        alt_old = """        if self._loop.is_running():
+            raise Error("""
         if alt_old in content:
-            print("  Found alternative pattern.")
+            print("  Found alternative pattern, attempting replacement...")
+            alt_new = """        if self._loop.is_running():
+            pass  # Patched by CoAgent"""
+            content = content.replace(alt_old, alt_new)
         else:
             print("  Could not patch. Please manually edit:")
             print(f"  {filepath}")
