@@ -58,7 +58,7 @@ public class AudioVol {
 }
 '@
 uint v;
-AudioVol.waveOutGetVolume(nint.Zero, out v);
+AudioVol.waveOutGetVolume(IntPtr.Zero, out v);
 uint left = v & 0xFFFF;
 uint right = (v >> 16) & 0xFFFF;
 double pct = ((left + right) / 2.0) / 65535.0 * 100;
@@ -173,7 +173,8 @@ def register_routes(app, state, require_auth):
     @app.route("/system/volume/up", methods=["POST"])
     @require_auth
     def route_system_volume_up():
-        delta = _coerce_int(_json_body().get("delta", 10) if _json_body() else 10, 10, 1, 100)
+        d = _json_body() or {}
+        delta = _coerce_int(d.get("delta", 10), 10, 1, 100)
         current, _ = _ps_get_volume()
         level = _coerce_int(current + delta, 50, 0, 100)
         _ps_set_volume(level)
@@ -182,7 +183,8 @@ def register_routes(app, state, require_auth):
     @app.route("/system/volume/down", methods=["POST"])
     @require_auth
     def route_system_volume_down():
-        delta = _coerce_int(_json_body().get("delta", 10) if _json_body() else 10, 10, 1, 100)
+        d = _json_body() or {}
+        delta = _coerce_int(d.get("delta", 10), 10, 1, 100)
         current, _ = _ps_get_volume()
         level = _coerce_int(current - delta, 50, 0, 100)
         _ps_set_volume(level)
@@ -309,8 +311,11 @@ def register_routes(app, state, require_auth):
             _log("Wi-Fi disconnected")
             return jsonify({"status": "ok", "wifi": "disconnected"})
         elif action == "on":
-            _ps('netsh wlan connect name=\"' + d.get("ssid", "").replace("\"", "\\\"") + '\"', timeout=10)
-            _log(f"Wi-Fi connecting to {d.get('ssid', 'last network')}")
+            ssid = d.get("ssid", "")
+            # Use subprocess directly (no PowerShell) to avoid injection
+            subprocess.run(["netsh", "wlan", "connect", f"name={ssid}"],
+                           capture_output=True, timeout=10)
+            _log(f"Wi-Fi connecting to {ssid or 'last network'}")
             return jsonify({"status": "ok", "wifi": "connecting", "ssid": d.get("ssid")})
         elif action == "list":
             out, _, _ = _ps("netsh wlan show profiles | findstr /R \"^\\s*All User Profile\"")
