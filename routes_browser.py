@@ -967,7 +967,6 @@ def route_browser_workflow():
                         step_result["pages"] = pages_info
                         step_result["count"] = len(pages)
                         if switch_idx is not None and 0 <= switch_idx < len(pages):
-                            nonlocal page
                             page = pages[switch_idx]
                             step_result["switched_to"] = switch_idx
                     
