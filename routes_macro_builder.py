@@ -73,7 +73,25 @@ def build_macro(text):
     """Parse multi-line / ';'-separated NL text into {steps, warnings}."""
     raw_lines = []
     for chunk in (text or "").splitlines():
-        raw_lines.extend(chunk.split(";"))
+        # Split by semicolons, but respect quoted strings
+        parts = []
+        current = []
+        in_quote = None
+        for ch in chunk:
+            if ch in ('"', "'") and in_quote is None:
+                in_quote = ch
+                current.append(ch)
+            elif ch == in_quote:
+                in_quote = None
+                current.append(ch)
+            elif ch == ';' and in_quote is None:
+                parts.append(''.join(current).strip())
+                current = []
+            else:
+                current.append(ch)
+        if current:
+            parts.append(''.join(current).strip())
+        raw_lines.extend(parts)
     steps, warnings = [], []
     for line in raw_lines:
         action, warn = _parse_step(line)
