@@ -343,7 +343,8 @@ def _perform_check(reason="scheduled"):
 
     checks = [_http_get(path) for path in _json_probe_paths()]
     failing = [check for check in checks if not check.get("ok")]
-    slow = [check for check in checks if check.get("path") == "/ping" and check.get("latency_seconds", 0) > 5]
+    slow_threshold = 5.0
+    slow = [check for check in checks if check.get("ok") and check.get("latency_seconds", 0) > slow_threshold]
     healthy_count = max(0, len(checks) - len(failing) - len(slow))
     route_status = "healthy" if healthy_count >= MIN_HEALTHY_PROBES else "degraded"
     if failing:
