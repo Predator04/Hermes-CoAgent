@@ -69,4 +69,5 @@ def register_routes(app, state, require_auth):
         response.headers["Cache-Control"] = "no-store"
         response.headers["Pragma"] = "no-cache"
         response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["Referrer-Policy"] = "no-referrer"
         return response
