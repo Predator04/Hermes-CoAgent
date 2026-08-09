@@ -259,7 +259,10 @@ def _mark_delivery(reminder, ok, response, manual=False):
 
 
 def _fire_reminder(reminder, manual=False):
-    ok, response = _deliver(reminder)
+    try:
+        ok, response = _deliver(reminder)
+    except Exception as exc:
+        ok, response = False, f"{type(exc).__name__}: {exc}"
     _mark_delivery(reminder, ok, response, manual=manual)
     return ok, response
 
