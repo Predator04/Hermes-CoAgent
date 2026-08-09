@@ -136,7 +136,7 @@ def register_routes(app, state, require_auth):
             try:
                 cmd.extend(["--max-depth", str(int(max_depth))])
             except (ValueError, TypeError):
-                pass
+                return jsonify({"error": f"Invalid max_depth value: {max_depth}", "results": []}), 400
 
         # Max results
         max_results = data.get("max_results", 200)
@@ -164,6 +164,8 @@ def register_routes(app, state, require_auth):
         # Strip prefix for cleaner output
         cmd.extend(["--strip-cwd-prefix"])
 
+        # -- separator prevents argument injection
+        cmd.append("--")
         cmd.append(pattern)
         cmd.append(search_path)
 
