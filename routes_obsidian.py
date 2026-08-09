@@ -57,12 +57,18 @@ def _resolve_note(name, must_exist=False):
     direct = (vault / note).resolve()
     if not _inside_vault(direct):
         raise ValueError("note path escapes vault")
-    if direct.exists() or not must_exist:
+    if direct.exists():
         return direct
+    if not must_exist:
+        return direct
+    # Fallback: case-insensitive search within vault
     wanted = Path(note).name.lower()
     for path in vault.rglob("*.md"):
         if path.name.lower() == wanted or path.stem.lower() == Path(note).stem.lower():
-            return path.resolve()
+            resolved = path.resolve()
+            if not _inside_vault(resolved):
+                continue  # skip symlinks escaping vault
+            return resolved
     raise FileNotFoundError(note)
 
 
