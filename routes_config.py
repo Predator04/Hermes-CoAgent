@@ -39,7 +39,7 @@ def _backup_name(path: Path, timestamp=None):
 def _prune_backups_for(path: Path):
     backups = sorted(
         BACKUP_DIR.glob(f"{path.name}.*.bak"),
-        key=lambda item: item.stat().st_mtime if item.exists() else 0,
+        key=_stat_safe,
         reverse=True,
     )
     for old in backups[MAX_BACKUPS_PER_FILE:]:
@@ -84,7 +84,7 @@ def _list_backups():
             name_no_bak = item.name[:-4] if item.name.endswith(".bak") else item.name
             # Backup format: {original}.{timestamp}.bak or {original}.{timestamp}.{suffix}.bak
             # Find the first dot that starts a YYYYMMDD-HHMMSS timestamp
-            m = re.match(r"^(.+?)\.\d{8}-\d{6}", name_no_bak)
+            m = re.match(r"^(.+)\.\d{8}-\d{6}", name_no_bak)
             original = m.group(1) if m else name_no_bak
             backups.append({
                 "backup": item.name,
