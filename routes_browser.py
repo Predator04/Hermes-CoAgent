@@ -275,8 +275,8 @@ def _run_on_pw_thread(fn, *args, **kwargs):
 
 
 def _ensure_browser(cookies=None, stealth=False):
-    """Create fresh browser per call."""
-    return _ensure_browser_inner(cookies, stealth)
+    """Create or reuse browser. Always on single thread for context persistence."""
+    return _run_on_pw_thread(_ensure_browser_inner, cookies, stealth)
 
 
 _CDP_URL = None  # Chrome DevTools Protocol URL for persistent browser
@@ -361,15 +361,25 @@ def _get_cdp_browser():
 
 
 def _ensure_browser_inner(cookies=None, stealth=False):
-    """Always creates fresh browser. No context reuse due to greenlet limitation."""
-    global _PW, _CONTEXT, _PAGE
+    """Runs on single thread. Reuses browser context if alive."""
+    global _PW, _CONTEXT, _PAGE, _BROWSER
+    
+    # Reuse existing browser if alive
+    if _BROWSER is not None and _CONTEXT is not None:
+        try:
+            pages = _CONTEXT.pages
+            if pages:
+                _PAGE = pages[0]
+                return _PAGE, None
+        except Exception:
+            pass
     
     sync_playwright, _playwright_error, missing = _load_playwright()
     if missing:
         return None, missing
     
     try:
-        # Don't stop old PW — it was created on a different thread (greenlet issue)
+        # Don't stop old PW — cross-thread greenlet issue
         _PW = sync_playwright().start()
         _CONTEXT = None
         
@@ -763,6 +773,34 @@ def route_browser_network():
             })
         except Exception as e:
             return _error(str(e), 500, type=type(e).__name__)
+
+
+@browser_bp.route("/browser/close", methods=["POST"])
+def route_browser_close():
+    """Close the persistent browser."""
+    global _BROWSER, _CONTEXT, _PW, _PAGE
+    try:
+        if _CONTEXT:
+            _run_on_pw_thread(_context_close)
+        if _PW:
+            _run_on_pw_thread(_pw_stop)
+    except Exception:
+        pass
+    _BROWSER = _CONTEXT = _PW = _PAGE = None
+    return jsonify({"status": "closed"})
+
+
+def _context_close():
+    global _CONTEXT
+    if _CONTEXT:
+        _CONTEXT.close()
+        _CONTEXT = None
+
+def _pw_stop():
+    global _PW
+    if _PW:
+        _PW.stop()
+        _PW = None
 
 
 @browser_bp.route("/browser/workflow", methods=["POST"])
