@@ -36,27 +36,37 @@ def _flash_rect(bbox, duration_ms=2000, color_rgba=(255, 0, 0, 80)):
         import win32con
 
         x, y, w, h = bbox
-        hwnd = win32gui.CreateWindowEx(
-            win32con.WS_EX_LAYERED | win32con.WS_EX_TRANSPARENT | win32con.WS_EX_TOPMOST,
-            "STATIC", None,
-            win32con.WS_POPUP,
-            x, y, w, h,
-            0, 0, 0, None
-        )
-        if not hwnd:
-            return False
-        win32gui.SetLayeredWindowAttributes(hwnd, 0, color_rgba[3], win32con.LWA_ALPHA)
-        hwnd_dc = win32gui.GetDC(hwnd)
-        from win32api import RGB
-        brush = win32gui.CreateSolidBrush(RGB(color_rgba[0], color_rgba[1], color_rgba[2]))
-        old_brush = win32gui.SelectObject(hwnd_dc, brush)
-        win32gui.Rectangle(hwnd_dc, 0, 0, w, h)
-        win32gui.SelectObject(hwnd_dc, old_brush)
-        win32gui.DeleteObject(brush)
-        win32gui.ReleaseDC(hwnd, hwnd_dc)
-        win32gui.ShowWindow(hwnd, win32con.SW_SHOW)
+        hwnd = None
+        hwnd_dc = None
+        brush = None
+        old_brush = None
+        try:
+            hwnd = win32gui.CreateWindowEx(
+                win32con.WS_EX_LAYERED | win32con.WS_EX_TRANSPARENT | win32con.WS_EX_TOPMOST,
+                "STATIC", None,
+                win32con.WS_POPUP,
+                x, y, w, h,
+                0, 0, 0, None
+            )
+            if not hwnd:
+                return False
+            win32gui.SetLayeredWindowAttributes(hwnd, 0, color_rgba[3], win32con.LWA_ALPHA)
+            hwnd_dc = win32gui.GetDC(hwnd)
+            from win32api import RGB
+            brush = win32gui.CreateSolidBrush(RGB(color_rgba[0], color_rgba[1], color_rgba[2]))
+            old_brush = win32gui.SelectObject(hwnd_dc, brush)
+            win32gui.Rectangle(hwnd_dc, 0, 0, w, h)
+        finally:
+            # Always restore GDI state before sleep, regardless of errors
+            if hwnd_dc is not None and old_brush is not None:
+                win32gui.SelectObject(hwnd_dc, old_brush)
+            if brush is not None:
+                win32gui.DeleteObject(brush)
+            if hwnd is not None and hwnd_dc is not None:
+                win32gui.ReleaseDC(hwnd, hwnd_dc)
         global _PREVIEW_HWND
         _PREVIEW_HWND = hwnd
+        win32gui.ShowWindow(hwnd, win32con.SW_SHOW)
         time.sleep(duration_ms / 1000.0)
         win32gui.DestroyWindow(hwnd)
         _PREVIEW_HWND = None
@@ -72,7 +82,10 @@ def _hitl_preview():
     bbox = body.get("bbox")
     if not bbox or len(bbox) < 4:
         return jsonify({"ok": False, "error": "bbox [x,y,w,h] required"}), 400
-    duration = int(body.get("duration_ms", 2000))
+    try:
+        duration = max(100, min(int(body.get("duration_ms", 2000)), 5000))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "duration_ms must be a number"}), 400
     ok = _flash_rect(bbox, duration)
     with _HITL_LOCK:
         _HITL_STATE["total_previews"] += 1
@@ -126,4 +139,6 @@ def _get_state():
 
 def register_routes(app, state, require_auth):
     app.register_blueprint(hitl_bp)
+    from shared import _wrap_registered_blueprint_routes
+    _wrap_registered_blueprint_routes(app, hitl_bp.name, require_auth)
     _LOGGER.info("HITL HUD routes registered")

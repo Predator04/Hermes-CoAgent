@@ -46,11 +46,16 @@ def register_routes(app, state, require_auth):
             return False
         try:
             r = subprocess.run(
-                ["tasklist", "/FI", f"PID eq {pid}", "/NH"],
+                ["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],
                 capture_output=True, text=True, timeout=5,
                 creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0,
             )
-            return str(pid) in r.stdout
+            # Parse CSV output: "name.exe","PID","Session","Session#","Mem Usage"
+            for line in r.stdout.strip().splitlines():
+                parts = [p.strip().strip('"') for p in line.replace('","', '","').split('","')]
+                if len(parts) >= 2 and parts[1] == str(pid):
+                    return True
+            return False
         except Exception:
             return False
 

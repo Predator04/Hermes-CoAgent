@@ -24,6 +24,24 @@ _COM_STATE = {
 }
 _COM_LOCK = threading.Lock()
 
+# PowerShell-safe string escaping: prevent injection via double-quote/backtick/dollar
+def _ps_escape(value):
+    """Escape a string for safe interpolation into a PowerShell double-quoted string."""
+    if not isinstance(value, str):
+        value = str(value)
+    # Escape backtick first (PowerShell escape char), then $ (variable expansion), then "
+    return value.replace("`", "``").replace("$", "`$").replace('"', '`"')
+
+# Regex for values that must be identifiers/paths (no injection chars allowed at all)
+_SAFE_PATH_RE = r"^[A-Za-z0-9_\\:\\.\\- ]+$"
+
+def _ps_validate(value, label="value"):
+    """Validate a value is safe for PowerShell interpolation. Raises ValueError if unsafe."""
+    import re
+    if not re.match(_SAFE_PATH_RE, str(value)):
+        raise ValueError(f"Unsafe character in {label}: {repr(value)}")
+    return str(value)
+
 
 def _debug_failure(context, exc):
     _LOGGER.debug("com_toolkit %s failed: %s: %s", context, type(exc).__name__, exc, exc_info=True)
@@ -51,9 +69,11 @@ def _ps_execute(script, timeout=30):
 
 def _registry_read(key, value_name=""):
     """Read a Windows registry value via PowerShell."""
+    safe_key = _ps_escape(key)
+    safe_val = _ps_escape(value_name)
     script = f"""
     try {{
-        $val = Get-ItemProperty -Path "{key}" -Name "{value_name}" -ErrorAction Stop
+        $val = Get-ItemProperty -Path "{safe_key}" -Name "{safe_val}" -ErrorAction Stop
         $val | ConvertTo-Json -Compress
     }} catch {{
         Write-Error $_.Exception.Message
@@ -70,8 +90,10 @@ def _registry_read(key, value_name=""):
 
 def _wmi_query(query, namespace="root/cimv2"):
     """Execute a WMI query and return results."""
+    safe_query = _ps_escape(query)
+    safe_ns = _ps_escape(namespace)
     script = f"""
-    $results = Get-CimInstance -Query "{query}" -Namespace "{namespace}" -ErrorAction Stop
+    $results = Get-CimInstance -Query "{safe_query}" -Namespace "{safe_ns}" -ErrorAction Stop
     $results | ConvertTo-Json -Depth 3 -Compress
     """
     result = _ps_execute(script)
@@ -86,11 +108,13 @@ def _wmi_query(query, namespace="root/cimv2"):
 
 def _com_create_object(prog_id, method=None, args=None):
     """Create a COM object and optionally call a method."""
-    args_json = json.dumps(args or [])
-    method_call = f".{method}({','.join(args or [])})" if method else ""
+    safe_prog_id = _ps_escape(prog_id)
+    # Escape each arg individually for safe concatenation
+    safe_args = [_ps_escape(str(a)) for a in (args or [])]
+    method_call = f".{_ps_escape(method)}({','.join(safe_args)})" if method else ""
     script = f"""
     try {{
-        $obj = New-Object -ComObject "{prog_id}" -ErrorAction Stop
+        $obj = New-Object -ComObject "{safe_prog_id}" -ErrorAction Stop
         $result = $obj{method_call}
         if ($result -ne $null) {{
             $result | ConvertTo-Json -Depth 3 -Compress
@@ -114,7 +138,10 @@ def _com_create_object(prog_id, method=None, args=None):
 def _com_powershell():
     body = request.get_json(force=True, silent=True) or {}
     script = body.get("script", "")
-    timeout = int(body.get("timeout", 30))
+    try:
+        timeout = max(1, min(int(body.get("timeout", 30)), 120))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "timeout must be a number 1-120"}), 400
     if not script:
         return jsonify({"ok": False, "error": "missing 'script'"}), 400
 
@@ -183,6 +210,7 @@ def _com_system():
     value = body.get("value")
 
     if action == "wallpaper":
+        safe_value = _ps_escape(str(value))
         script = f"""
         Add-Type -TypeDefinition @"
         using System.Runtime.InteropServices;
@@ -191,7 +219,7 @@ def _com_system():
             public static extern int SystemParametersInfo(int uAction, int uParam, string lpvParam, int fuWinIni);
         }}
 "@
-        [Wallpaper]::SystemParametersInfo(20, 0, "{value}", 2)
+        [Wallpaper]::SystemParametersInfo(20, 0, "{safe_value}", 2)
         """
         result = _ps_execute(script)
 
@@ -231,4 +259,6 @@ def _com_status():
 
 def register_routes(app, state, require_auth):
     app.register_blueprint(com_bp)
+    from shared import _wrap_registered_blueprint_routes
+    _wrap_registered_blueprint_routes(app, com_bp.name, require_auth)
     _LOGGER.info("COM Toolkit routes registered")

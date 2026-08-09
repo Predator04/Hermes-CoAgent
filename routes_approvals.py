@@ -119,7 +119,7 @@ def register_routes(app, state, require_auth):
     @app.route("/approvals/config", methods=["GET", "POST"])
     @require_auth
     def route_approvals_config():
-        body = _json_body() if _json_body() else {}
+        body = _json_body() or {}
         if isinstance(body, dict) and "enabled" in body:
             _QUEUE.enabled = bool(body["enabled"])
         if isinstance(body, dict) and "default_ttl" in body:
