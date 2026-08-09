@@ -32,7 +32,9 @@ LATENCY_BUCKETS = Counter()
 LATENCY_COUNT = Counter()
 LATENCY_SUM = Counter()
 
-_METRICS_LOCK = None
+import threading
+
+_METRICS_LOCK = threading.Lock()
 
 
 def _debug_failure(context, exc):
@@ -40,10 +42,6 @@ def _debug_failure(context, exc):
 
 
 def _lock():
-    global _METRICS_LOCK
-    if _METRICS_LOCK is None:
-        import threading
-        _METRICS_LOCK = threading.Lock()
     return _METRICS_LOCK
 
 
