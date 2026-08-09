@@ -955,6 +955,22 @@ def route_browser_workflow():
                         else:
                             step_result["error"] = "selector required"
                     
+                    elif action == "pages":
+                        pages = page.context.pages
+                        pages_info = []
+                        switch_idx = step.get("switch")
+                        for i, p in enumerate(pages):
+                            try:
+                                pages_info.append({"index": i, "url": p.url, "title": p.title() or ""})
+                            except Exception:
+                                pages_info.append({"index": i, "url": "error", "title": ""})
+                        step_result["pages"] = pages_info
+                        step_result["count"] = len(pages)
+                        if switch_idx is not None and 0 <= switch_idx < len(pages):
+                            nonlocal page
+                            page = pages[switch_idx]
+                            step_result["switched_to"] = switch_idx
+                    
                     elif action == "hover":
                         selector = step.get("selector")
                         if selector:
