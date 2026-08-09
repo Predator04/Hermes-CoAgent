@@ -265,17 +265,35 @@ def _ensure_browser(cookies=None, stealth=False):
         return None, missing
     try:
         # Handle case where current thread has a running asyncio event loop
+        # Playwright sync API can't run inside an asyncio loop
+        _playwright_in_new_thread = False
         try:
             import asyncio
-            try:
-                loop = asyncio.get_running_loop()
-                # Running event loop detected - create a new one for this thread
-                asyncio.set_event_loop(asyncio.new_event_loop())
-            except RuntimeError:
-                pass  # No running loop, we're fine
-        except ImportError:
+            asyncio.get_running_loop()
+            _playwright_in_new_thread = True
+        except (RuntimeError, ImportError):
             pass
         
+        if _playwright_in_new_thread:
+            # Run Playwright in a fresh thread without event loop
+            import concurrent.futures
+            future = concurrent.futures.ThreadPoolExecutor(max_workers=1).submit(
+                _ensure_browser_inner, cookies, stealth
+            )
+            return future.result(timeout=60)
+        
+        return _ensure_browser_inner(cookies, stealth)
+    except Exception as e:
+        return None, _error(str(e), 500, type=type(e).__name__)
+
+
+def _ensure_browser_inner(cookies=None, stealth=False):
+    """Actual Playwright browser creation — must run in a thread without asyncio loop."""
+    global _PW, _CONTEXT, _PAGE
+    sync_playwright, _playwright_error, missing = _load_playwright()
+    if missing:
+        return None, missing
+    try:
         # Always create fresh PW instance to avoid greenlet issues
         if _PW is not None:
             _PW = None  # Will be replaced, don't stop - context survives
