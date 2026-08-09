@@ -416,6 +416,10 @@ def _ensure_browser_inner(cookies=None, stealth=False):
             context_kwargs["storage_state"] = storage_path
         
         _CONTEXT = _BROWSER.new_context(**context_kwargs)
+        
+        # Capture popup/new windows
+        _CONTEXT.on("page", lambda p: setattr(p, "_coagent_popup", True))
+        
         if stealth:
             _CONTEXT.add_init_script(_STEALTH_SCRIPT)
         if cookies and isinstance(cookies, list):
@@ -1161,6 +1165,26 @@ def route_browser_session_load():
         return jsonify({"cookies": cookies, "count": len(cookies)})
     except Exception as e:
         return _error(str(e), 500, type=type(e).__name__)
+
+
+@browser_bp.route("/browser/pages", methods=["GET"])
+def route_browser_pages():
+    """List all open pages/popups and switch to one."""
+    with _BROWSER_LOCK:
+        if _CONTEXT is None:
+            return jsonify({"pages": [], "count": 0})
+        global _PAGE
+        switch_to = request.args.get("switch", type=int)
+        pages = _CONTEXT.pages
+        result = {"count": len(pages), "active": pages.index(_PAGE) if _PAGE in pages else -1}
+        result["pages"] = [
+            {"index": i, "url": p.url, "title": (p.title() or ""), "closed": p.is_closed()}
+            for i, p in enumerate(pages)
+        ]
+        if switch_to is not None and 0 <= switch_to < len(pages):
+            _PAGE = pages[switch_to]
+            result["switched_to"] = switch_to
+        return jsonify(result)
 
 
 @browser_bp.route("/browser/close", methods=["POST"])
