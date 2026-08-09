@@ -77,10 +77,11 @@ def csrf_protect(f):
         # GET/HEAD/OPTIONS are safe
         if request.method in ("GET", "HEAD", "OPTIONS"):
             return f(*args, **kwargs)
-        # Allow Bearer token auth (already protects CSRF)
+        # Allow Bearer token auth (already protects CSRF) — but validate it
         auth_header = request.headers.get("Authorization", "")
         if auth_header.startswith("Bearer ") and AUTH_TOKEN:
-            return f(*args, **kwargs)
+            if secrets.compare_digest(auth_header[7:], AUTH_TOKEN):
+                return f(*args, **kwargs)
         # CSRF token check
         if csrf_check():
             return f(*args, **kwargs)
