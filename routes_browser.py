@@ -301,34 +301,44 @@ def _get_cdp_browser():
     user_data = _os.path.join(tempfile.gettempdir(), "coagent_chrome_profile")
     _os.makedirs(user_data, exist_ok=True)
     
-    # Find Chromium installed by Playwright
-    pw_dir = _os.path.expanduser("~/.cache/ms-playwright")
+    # Find Chromium on Windows
     chrome_exe = None
-    for root, dirs, files in _os.walk(pw_dir):
-        for f in files:
-            if f == "chrome.exe" or f == "chromium" or f == "chrome":
-                chrome_exe = _os.path.join(root, f)
+    candidates = [
+        _os.path.expandvars("%LOCALAPPDATA%\\ms-playwright\\chromium-1208\\chrome-win64\\chrome.exe"),
+        _os.path.expandvars("%LOCALAPPDATA%\\ms-playwright\\chromium-*\\chrome-win64\\chrome.exe"),
+        "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+        "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
+    ]
+    import glob
+    for c in candidates:
+        if "*" in c:
+            matches = glob.glob(c)
+            if matches:
+                chrome_exe = matches[0]
                 break
-        if chrome_exe:
+        elif _os.path.exists(c):
+            chrome_exe = c
             break
     
     if not chrome_exe:
-        # Try system Chrome
-        chrome_exe = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
-        if not _os.path.exists(chrome_exe):
-            chrome_exe = _os.path.expandvars("%LOCALAPPDATA%\\Google\\Chrome\\Application\\chrome.exe")
-    
-    if not chrome_exe or not _os.path.exists(chrome_exe):
         return None
     
     # Find a free port
     import socket
     sock = socket.socket()
-    sock.bind(('', 0))
+    sock.bind(('127.0.0.1', 0))
     port = sock.getsockname()[1]
     sock.close()
     
     _CDP_URL = f"http://127.0.0.1:{port}"
+    
+    # Kill any existing Chrome using same user_data_dir
+    try:
+        subprocess.run(['taskkill', '/F', '/IM', 'chrome.exe'], 
+                       capture_output=True, timeout=5)
+    except Exception:
+        pass
+    _time.sleep(1)
     
     # Launch Chrome with remote debugging
     args = [
@@ -338,9 +348,11 @@ def _get_cdp_browser():
         "--no-first-run",
         "--no-default-browser-check",
         "--disable-blink-features=AutomationControlled",
+        "--disable-features=TranslateUI",
+        "--window-size=1280,900",
     ]
     subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    _time.sleep(2)
+    _time.sleep(3)
     
     return _CDP_URL
 
