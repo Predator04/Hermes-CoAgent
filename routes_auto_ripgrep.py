@@ -85,20 +85,28 @@ def register_routes(app, state, require_auth):
             return _missing_field("pattern")
 
         search_path = body.get("path", ".")
-        max_lines = int(body.get("max_lines", 200))
+        try:
+            max_lines = int(body.get("max_lines", 200))
+        except (TypeError, ValueError):
+            return jsonify({"error": "max_lines must be an integer"}), 400
         case_sensitive = body.get("case_sensitive", False)
         file_glob = body.get("file_glob", None)
         max_depth = body.get("max_depth", None)
+        if max_depth is not None:
+            try:
+                max_depth = int(max_depth)
+            except (TypeError, ValueError):
+                return jsonify({"error": "max_depth must be an integer"}), 400
 
         cmd = [exe, "--no-heading", "--line-number", "--color", "never", "--max-count", str(max_lines)]
         if not case_sensitive:
             cmd.append("--ignore-case")
         if file_glob:
             cmd.extend(["--glob", file_glob])
-        if max_depth:
+        if max_depth is not None:
             cmd.extend(["--max-depth", str(max_depth)])
 
-        cmd.extend([pattern, search_path])
+        cmd.extend(["--", pattern, search_path])
 
         try:
             r = subprocess.run(cmd, capture_output=True, text=True, timeout=30, cwd=os.getcwd())
@@ -136,7 +144,7 @@ def register_routes(app, state, require_auth):
         search_path = body.get("path", ".")
         file_glob = body.get("file_glob", None)
 
-        cmd = [exe, "--count", "--no-heading", pattern, search_path]
+        cmd = [exe, "--count", "--no-heading", "--", pattern, search_path]
         if file_glob:
             cmd.extend(["--glob", file_glob])
 
@@ -146,9 +154,13 @@ def register_routes(app, state, require_auth):
             total = 0
             for line in r.stdout.strip().split("\n"):
                 if ":" in line:
-                    fname, count = line.split(":", 1)
-                    results[fname] = int(count)
-                    total += int(count)
+                    fname, count_str = line.rsplit(":", 1)
+                    try:
+                        count = int(count_str)
+                        results[fname] = count
+                        total += count
+                    except ValueError:
+                        continue
             return jsonify({"pattern": pattern, "path": search_path, "file_counts": results, "total_matches": total})
         except subprocess.TimeoutExpired:
             return jsonify({"error": "Count timed out after 30s"}), 504
@@ -164,9 +176,12 @@ def register_routes(app, state, require_auth):
         body = _json_body(request) if request.is_json else {}
         search_path = body.get("path", ".")
         file_glob = body.get("file_glob", None)
-        max_results = int(body.get("max_results", 500))
+        try:
+            max_results = int(body.get("max_results", 500))
+        except (TypeError, ValueError):
+            return jsonify({"error": "max_results must be an integer"}), 400
 
-        cmd = [exe, "--files", search_path]
+        cmd = [exe, "--files", "--", search_path]
         if file_glob:
             cmd.extend(["--glob", file_glob])
 
