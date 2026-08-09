@@ -290,6 +290,17 @@ def _ensure_browser(cookies=None, stealth=False):
 def _ensure_browser_inner(cookies=None, stealth=False):
     """Actual Playwright browser creation — must run in a thread without asyncio loop."""
     global _PW, _CONTEXT, _PAGE
+    
+    # Check if existing context is still alive — reuse if possible
+    if _CONTEXT is not None and _PW is not None:
+        try:
+            pages = _CONTEXT.pages
+            if pages and not pages[0].is_closed():
+                _PAGE = pages[0]
+                return _PAGE, None
+        except Exception:
+            pass
+    
     sync_playwright, _playwright_error, missing = _load_playwright()
     if missing:
         return None, missing
