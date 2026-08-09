@@ -255,36 +255,20 @@ def _get_storage_path():
     return _USER_DATA_DIR
 
 
+_BROWSER_EXECUTOR = None
+
+
 def _ensure_browser(cookies=None, stealth=False):
-    """Create fresh browser+context. Uses storage_state for cookie persistence
-    across calls instead of launch_persistent_context to avoid Chromium lock issues.
-    """
-    global _PW, _CONTEXT, _PAGE
-    sync_playwright, _playwright_error, missing = _load_playwright()
-    if missing:
-        return None, missing
+    """Always runs in a single dedicated thread — same thread = no greenlet + context persists."""
+    global _BROWSER_EXECUTOR
+    if _BROWSER_EXECUTOR is None:
+        import concurrent.futures
+        _BROWSER_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="pw")
     try:
-        # Handle case where current thread has a running asyncio event loop
-        # Playwright sync API can't run inside an asyncio loop
-        _playwright_in_new_thread = False
-        try:
-            import asyncio
-            asyncio.get_running_loop()
-            _playwright_in_new_thread = True
-        except (RuntimeError, ImportError):
-            pass
-        
-        if _playwright_in_new_thread:
-            # Run Playwright in a fresh thread without event loop
-            import concurrent.futures
-            future = concurrent.futures.ThreadPoolExecutor(max_workers=1).submit(
-                _ensure_browser_inner, cookies, stealth
-            )
-            return future.result(timeout=60)
-        
-        return _ensure_browser_inner(cookies, stealth)
+        return _BROWSER_EXECUTOR.submit(_ensure_browser_inner, cookies, stealth).result(timeout=60)
     except Exception as e:
-        return None, _error(str(e), 500, type=type(e).__name__)
+        import traceback as _tb
+        return None, _error(str(e), 500, traceback=_tb.format_exc()[:1000])
 
 
 _CDP_URL = None  # Chrome DevTools Protocol URL for persistent browser
@@ -369,8 +353,20 @@ def _get_cdp_browser():
 
 
 def _ensure_browser_inner(cookies=None, stealth=False):
-    """Create fresh browser per call. Cookies persist via storage_state."""
+    """Runs in dedicated thread. Reuses context if alive, creates new if dead."""
     global _PW, _CONTEXT, _PAGE
+    
+    # Reuse existing context if it has live pages
+    if _CONTEXT is not None:
+        try:
+            pages = _CONTEXT.pages
+            if pages:
+                for p in pages:
+                    if not p.is_closed():
+                        _PAGE = p
+                        return _PAGE, None
+        except Exception:
+            pass
     
     sync_playwright, _playwright_error, missing = _load_playwright()
     if missing:
