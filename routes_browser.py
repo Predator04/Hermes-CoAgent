@@ -256,8 +256,17 @@ def _get_storage_path():
 
 
 def _ensure_browser(cookies=None, stealth=False):
-    """Create fresh browser per call."""
-    return _ensure_browser_inner(cookies, stealth)
+    """Create fresh browser per call. Handles asyncio event loop."""
+    import concurrent.futures, asyncio
+    try:
+        asyncio.get_running_loop()
+        # Running in asyncio — spawn Playwright in fresh thread
+        return concurrent.futures.ThreadPoolExecutor(max_workers=1).submit(
+            _ensure_browser_inner, cookies, stealth
+        ).result(timeout=60)
+    except RuntimeError:
+        # No event loop — run directly
+        return _ensure_browser_inner(cookies, stealth)
 
 
 _CDP_URL = None  # Chrome DevTools Protocol URL for persistent browser
