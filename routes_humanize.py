@@ -120,9 +120,20 @@ def register_routes(app, state, require_auth):
         steps = int(body.get("steps", 40))
         duration_ms = float(body.get("duration_ms", 600))
         seed = body.get("seed")
+        # Coerce seed to valid type to avoid TypeError in random.Random()
+        if seed is not None and not isinstance(seed, (int, str, type(None))):
+            return jsonify({"ok": False, "error": "seed must be int, str, or null"}), 400
         start = body.get("start")
         if not start:
             start = _current_cursor() or (tx, ty)
+        else:
+            # Validate start is a valid coordinate pair
+            if not isinstance(start, (list, tuple)) or len(start) != 2:
+                return jsonify({"ok": False, "error": "start must be [x, y]"}), 400
+            try:
+                start = (float(start[0]), float(start[1]))
+            except (TypeError, ValueError):
+                return jsonify({"ok": False, "error": "start coordinates must be numeric"}), 400
 
         path = humanized_path(start, (tx, ty), steps=steps,
                               duration_ms=duration_ms, seed=seed)
