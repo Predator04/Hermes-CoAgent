@@ -45,6 +45,8 @@ def _vision(state):
 
 def _find_window(state, title_contains: str):
     """Find a window handle by title substring using EnumWindows."""
+    # Escape for safe PowerShell string interpolation: double any embedded single quotes
+    safe_title = title_contains.replace("'", "''")
     ps = f"""
     Add-Type @"
     using System;
@@ -62,7 +64,7 @@ def _find_window(state, title_contains: str):
         $sb = New-Object Text.StringBuilder 256
         [W32]::GetWindowText($hWnd, $sb, 256)
         $t = $sb.ToString()
-        if ($t.Contains("{title_contains}")) {{
+        if ($t.Contains('{safe_title}')) {{
             Write-Host "HWND:$hWnd"
             return $false
         }}
@@ -75,8 +77,9 @@ def _find_window(state, title_contains: str):
 
 def _focus_and_type(state, url: str):
     """Open a URL in Brave and focus the window."""
-    # Open new tab
-    ps = f"""Start-Process brave.exe -ArgumentList "{url}" """
+    # Open new tab — escape double quotes for safe PowerShell interpolation
+    safe_url = url.replace('"', '""')
+    ps = f"""Start-Process brave.exe -ArgumentList '"{safe_url}"' """
     _powershell(state, ps)
     time.sleep(4)
     return True
