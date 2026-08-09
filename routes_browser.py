@@ -256,14 +256,18 @@ def _get_storage_path():
 
 
 def _ensure_browser(cookies=None, stealth=False):
-    """Create fresh browser per call. Handles asyncio."""
+    """Create fresh browser per call."""
     try:
-        import asyncio; asyncio.get_running_loop()
-        import concurrent.futures
-        return concurrent.futures.ThreadPoolExecutor(max_workers=1).submit(
-            _ensure_browser_inner, cookies, stealth).result(timeout=60)
+        import asyncio
+        loop = asyncio.get_running_loop()
+        try:
+            import nest_asyncio
+            nest_asyncio.apply(loop)
+        except ImportError:
+            pass
     except RuntimeError:
-        return _ensure_browser_inner(cookies, stealth)
+        pass
+    return _ensure_browser_inner(cookies, stealth)
 
 
 _CDP_URL = None  # Chrome DevTools Protocol URL for persistent browser
