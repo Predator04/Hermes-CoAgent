@@ -1,5 +1,6 @@
 """Wake-on-LAN routes."""
 
+import ipaddress
 import json
 import os
 import re
@@ -8,7 +9,7 @@ import threading
 
 from flask import jsonify
 
-from shared import COAGENT_DIR, _json_body
+from shared import COAGENT_DIR, _console, _json_body
 
 
 CONFIG_DIR = COAGENT_DIR / "config"
@@ -41,13 +42,25 @@ def _magic_packet(mac):
     return b"\xff" * 6 + raw * 16
 
 
+def _validate_broadcast(address):
+    """Validate and normalize broadcast/unicast IP address."""
+    if not address:
+        return "255.255.255.255"
+    try:
+        ip = ipaddress.IPv4Address(str(address))
+        return str(ip)
+    except (ValueError, ipaddress.AddressValueError):
+        raise ValueError(f"invalid broadcast address: {address}")
+
+
 def _load_machines():
     if not MACHINES_FILE.exists():
         return {}
     try:
         data = json.loads(MACHINES_FILE.read_text(encoding="utf-8"))
         return data if isinstance(data, dict) else {}
-    except Exception:
+    except Exception as exc:
+        _console(f"[wol] failed to load machines file: {type(exc).__name__}: {exc}")
         return {}
 
 
@@ -91,6 +104,10 @@ def register_routes(app, state, require_auth):
         except ValueError as e:
             return _error(str(e))
         broadcast = str(data.get("broadcast") or data.get("ip") or "255.255.255.255")
+        try:
+            broadcast = _validate_broadcast(broadcast)
+        except ValueError as e:
+            return _error(str(e))
         try:
             port = int(data.get("port", 9) if data.get("port") is not None else 9)
         except (ValueError, TypeError):
@@ -145,6 +162,10 @@ def register_routes(app, state, require_auth):
         if not mac:
             return _error("mac is required", 400)
         broadcast = data.get("broadcast") or data.get("ip") or (machine or {}).get("broadcast") or "255.255.255.255"
+        try:
+            broadcast = _validate_broadcast(broadcast)
+        except ValueError as e:
+            return _error(str(e))
         try:
             port = int(data.get("port") if data.get("port") is not None else (machine or {}).get("port", 9))
         except (ValueError, TypeError):

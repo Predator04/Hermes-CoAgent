@@ -255,6 +255,10 @@ def _run_native_hud(config, stop_event, token, ready_event):
     user32.DestroyWindow.argtypes = [HWND]
     user32.PeekMessageW.argtypes = [ctypes.POINTER(MSG), HWND, wintypes.UINT, wintypes.UINT, wintypes.UINT]
     user32.PeekMessageW.restype = wintypes.BOOL
+    user32.TranslateMessage.argtypes = [ctypes.POINTER(MSG)]
+    user32.TranslateMessage.restype = wintypes.BOOL
+    user32.DispatchMessageW.argtypes = [ctypes.POINTER(MSG)]
+    user32.DispatchMessageW.restype = LRESULT
     kernel32.GetModuleHandleW.argtypes = [wintypes.LPCWSTR]
     kernel32.GetModuleHandleW.restype = HINSTANCE
     gdi32.CreateCompatibleDC.argtypes = [HDC]
@@ -312,7 +316,12 @@ def _run_native_hud(config, stop_event, token, ready_event):
         raise OSError(f"CreateWindowExW failed: {ctypes.get_last_error()}")
 
     screen_dc = user32.GetDC(None)
+    if not screen_dc:
+        raise OSError("GetDC failed — cannot get screen device context")
     mem_dc = gdi32.CreateCompatibleDC(screen_dc)
+    if not mem_dc:
+        user32.ReleaseDC(None, screen_dc)
+        raise OSError("CreateCompatibleDC failed")
     bitmap = None
     old_bitmap = None
     try:
@@ -362,9 +371,9 @@ def _run_native_hud(config, stop_event, token, ready_event):
         if hwnd:
             user32.DestroyWindow(hwnd)
         with _HUD_LOCK:
-            current = token == _HUD_TOKEN
-        if current:
-            _write_status(visible=False, mode="native", error=None)
+            if token == _HUD_TOKEN:
+                _HUD_STATE.update(visible=False, mode="native", error=None)
+                _HUD_STATE["updated_at"] = _now_text()
 
 
 def _fallback_show(config, error=None):

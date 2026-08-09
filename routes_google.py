@@ -2,6 +2,7 @@
 
 import base64
 import os
+import threading
 from datetime import datetime, timezone
 from email.mime.text import MIMEText
 
@@ -12,6 +13,8 @@ from shared import COAGENT_DIR, _log, _wrap_registered_blueprint_routes
 
 
 google_bp = Blueprint("google", __name__)
+_CREDENTIALS_LOCK = threading.Lock()
+_CREDENTIALS_CACHE = None
 
 SCOPES = [
     "https://www.googleapis.com/auth/gmail.readonly",
@@ -66,13 +69,19 @@ def _load_google_libs():
 
 def _save_oauth_token(creds):
     TOKEN_FILE.parent.mkdir(parents=True, exist_ok=True)
-    if not TOKEN_FILE.exists():
-        TOKEN_FILE.touch(mode=0o600)
+    tmp_path = TOKEN_FILE.with_suffix(".tmp")
     try:
-        os.chmod(TOKEN_FILE, 0o600)
+        fd = os.open(str(tmp_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(creds.to_json())
+        os.replace(str(tmp_path), str(TOKEN_FILE))
     except OSError:
-        pass
-    TOKEN_FILE.write_text(creds.to_json(), encoding="utf-8")
+        if tmp_path.exists():
+            try:
+                tmp_path.unlink()
+            except OSError:
+                pass
+        TOKEN_FILE.write_text(creds.to_json(), encoding="utf-8")
     try:
         os.chmod(TOKEN_FILE, 0o600)
     except OSError:
@@ -81,24 +90,39 @@ def _save_oauth_token(creds):
 
 
 def _credentials():
+    global _CREDENTIALS_CACHE
     if not CREDENTIALS_FILE.exists():
         return None, _not_configured("google_credentials.json not found")
     GoogleRequest, Credentials, InstalledAppFlow, _build, missing = _load_google_libs()
     if missing:
         return None, missing
-    try:
-        creds = None
-        if TOKEN_FILE.exists():
-            creds = Credentials.from_authorized_user_file(str(TOKEN_FILE), SCOPES)
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(GoogleRequest())
-        if not creds or not creds.valid:
-            flow = InstalledAppFlow.from_client_secrets_file(str(CREDENTIALS_FILE), SCOPES)
-            creds = flow.run_local_server(host="127.0.0.1", port=0)
-        _save_oauth_token(creds)
-        return creds, None
-    except Exception as e:
-        return None, _not_configured(e)
+    with _CREDENTIALS_LOCK:
+        if _CREDENTIALS_CACHE is not None:
+            creds = _CREDENTIALS_CACHE
+            if creds and creds.expired and creds.refresh_token:
+                try:
+                    creds.refresh(GoogleRequest())
+                    _save_oauth_token(creds)
+                except Exception:
+                    _CREDENTIALS_CACHE = None
+                    return None, _not_configured("token refresh failed — re-auth required")
+            if creds and creds.valid:
+                return creds, None
+        try:
+            creds = None
+            if TOKEN_FILE.exists():
+                creds = Credentials.from_authorized_user_file(str(TOKEN_FILE), SCOPES)
+            if creds and creds.expired and creds.refresh_token:
+                creds.refresh(GoogleRequest())
+            if not creds or not creds.valid:
+                flow = InstalledAppFlow.from_client_secrets_file(str(CREDENTIALS_FILE), SCOPES)
+                creds = flow.run_local_server(host="127.0.0.1", port=0)
+            _save_oauth_token(creds)
+            _CREDENTIALS_CACHE = creds
+            return creds, None
+        except Exception as e:
+            _CREDENTIALS_CACHE = None
+            return None, _not_configured(e)
 
 
 def _service(name, version):

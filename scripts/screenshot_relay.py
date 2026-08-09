@@ -93,11 +93,6 @@ def _win32_capture():
         except Exception:
             pass
         try:
-            if src_dc is not None:
-                src_dc.DeleteDC()
-        except Exception:
-            pass
-        try:
             if hwnd_dc is not None:
                 win32gui.ReleaseDC(hwnd, hwnd_dc)
         except Exception:
