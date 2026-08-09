@@ -8,6 +8,13 @@ from pathlib import Path
 from flask import Blueprint, jsonify
 
 from routes_bypass import _json_payload
+
+# Patch asyncio for Playwright sync API
+try:
+    import nest_asyncio, asyncio
+    nest_asyncio.apply()
+except (ImportError, RuntimeError):
+    pass
 from shared import _is_private_url, _sanitize_path, _wrap_registered_blueprint_routes
 
 
@@ -257,16 +264,6 @@ def _get_storage_path():
 
 def _ensure_browser(cookies=None, stealth=False):
     """Create fresh browser per call."""
-    try:
-        import asyncio
-        loop = asyncio.get_running_loop()
-        try:
-            import nest_asyncio
-            nest_asyncio.apply(loop)
-        except ImportError:
-            pass
-    except RuntimeError:
-        pass
     return _ensure_browser_inner(cookies, stealth)
 
 
