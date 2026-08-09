@@ -275,8 +275,8 @@ def _run_on_pw_thread(fn, *args, **kwargs):
 
 
 def _ensure_browser(cookies=None, stealth=False):
-    """Create or reuse browser. Always on single thread for context persistence."""
-    return _run_on_pw_thread(_ensure_browser_inner, cookies, stealth)
+    """Create or reuse browser context."""
+    return _ensure_browser_inner(cookies, stealth)
 
 
 _CDP_URL = None  # Chrome DevTools Protocol URL for persistent browser
@@ -773,34 +773,6 @@ def route_browser_network():
             })
         except Exception as e:
             return _error(str(e), 500, type=type(e).__name__)
-
-
-@browser_bp.route("/browser/close", methods=["POST"])
-def route_browser_close():
-    """Close the persistent browser."""
-    global _BROWSER, _CONTEXT, _PW, _PAGE
-    try:
-        if _CONTEXT:
-            _run_on_pw_thread(_context_close)
-        if _PW:
-            _run_on_pw_thread(_pw_stop)
-    except Exception:
-        pass
-    _BROWSER = _CONTEXT = _PW = _PAGE = None
-    return jsonify({"status": "closed"})
-
-
-def _context_close():
-    global _CONTEXT
-    if _CONTEXT:
-        _CONTEXT.close()
-        _CONTEXT = None
-
-def _pw_stop():
-    global _PW
-    if _PW:
-        _PW.stop()
-        _PW = None
 
 
 @browser_bp.route("/browser/workflow", methods=["POST"])
