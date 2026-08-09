@@ -390,6 +390,12 @@ def _ensure_browser_inner(cookies=None, stealth=False):
         
         _CONTEXT = _BROWSER.new_context(**context_kwargs)
         
+        # Don't block popups — Amazon opens review form in new window
+        try:
+            _CONTEXT.grant_permissions(["popups"])
+        except Exception:
+            pass
+        
         # Capture popup/new windows
         _CONTEXT.on("page", lambda p: setattr(p, "_coagent_popup", True))
         
