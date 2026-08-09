@@ -262,6 +262,18 @@ def _get_storage_path():
     return _USER_DATA_DIR
 
 
+_BROWSER_EXECUTOR = None
+
+
+def _run_on_pw_thread(fn, *args, **kwargs):
+    """Run on single thread to avoid greenlet issues when asyncio is active."""
+    global _BROWSER_EXECUTOR
+    if _BROWSER_EXECUTOR is None:
+        import concurrent.futures
+        _BROWSER_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="pw")
+    return _BROWSER_EXECUTOR.submit(fn, *args, **kwargs).result(timeout=300)
+
+
 def _ensure_browser(cookies=None, stealth=False):
     """Create fresh browser per call."""
     return _ensure_browser_inner(cookies, stealth)
