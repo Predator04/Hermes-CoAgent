@@ -354,76 +354,74 @@ def _get_cdp_browser():
     subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     _time.sleep(3)
     
-    return _CDP_URL
+    # Verify CDP is reachable
+    import urllib.request
+    for _ in range(5):
+        try:
+            urllib.request.urlopen(f"http://127.0.0.1:{port}/json/version", timeout=2)
+            return _CDP_URL
+        except Exception:
+            _time.sleep(1)
+    
+    # Chrome didn't start - reset and return None
+    _CDP_URL = None
+    return None
 
 
 def _ensure_browser_inner(cookies=None, stealth=False):
-    """Connect to persistent Chromium via CDP — no greenlet issues."""
-    global _PW, _CONTEXT, _PAGE, _CDP_URL
+    """Create fresh browser per call. Cookies persist via storage_state."""
+    global _PW, _CONTEXT, _PAGE
     
     sync_playwright, _playwright_error, missing = _load_playwright()
     if missing:
         return None, missing
     
     try:
-        cdp_url = _get_cdp_browser()
-        if cdp_url is None:
-            return None, _error("Cannot find Chrome/Chromium", 500)
-        
-        # Always create fresh PW instance per request
+        # Fresh PW per request
         if _PW is not None:
-            try:
-                _PW.stop()
-            except Exception:
-                pass
-        
+            try: _PW.stop()
+            except Exception: pass
         _PW = sync_playwright().start()
         
-        # Close previous context if any
         if _CONTEXT is not None:
             try:
                 for p in _CONTEXT.pages:
                     try: p.close()
                     except Exception: pass
                 _CONTEXT.close()
-            except Exception:
-                pass
+            except Exception: pass
             _CONTEXT = None
         
-        # Connect to existing Chrome via CDP
-        _BROWSER = _PW.chromium.connect_over_cdp(cdp_url)
+        launch_args = _STEALTH_ARGS if stealth else []
+        _BROWSER = _PW.chromium.launch(headless=False, args=launch_args)
         
-        # Use first existing context or create new one
-        contexts = _BROWSER.contexts
-        if contexts:
-            _CONTEXT = contexts[0]
-        else:
-            context_kwargs = {}
-            if stealth:
-                import random as _srandom
-                vp = _srandom.choice(_STEALTH_VIEWPORTS)
-                ua = _srandom.choice(_STEALTH_USER_AGENTS)
-                context_kwargs.update({
-                    "user_agent": ua,
-                    "viewport": vp,
-                    "locale": "en-US",
-                    "timezone_id": "America/Los_Angeles",
-                    "geolocation": {"latitude": 36.17, "longitude": -115.14},
-                    "permissions": ["geolocation"],
-                })
-            _CONTEXT = _BROWSER.new_context(**context_kwargs)
-            if stealth:
-                _CONTEXT.add_init_script(_STEALTH_SCRIPT)
-            if cookies and isinstance(cookies, list):
-                _CONTEXT.add_cookies(cookies)
+        context_kwargs = {}
+        if stealth:
+            import random as _srandom
+            vp = _srandom.choice(_STEALTH_VIEWPORTS)
+            ua = _srandom.choice(_STEALTH_USER_AGENTS)
+            context_kwargs.update({
+                "user_agent": ua,
+                "viewport": vp,
+                "locale": "en-US",
+                "timezone_id": "America/Los_Angeles",
+                "geolocation": {"latitude": 36.17, "longitude": -115.14},
+                "permissions": ["geolocation"],
+            })
         
-        # Reuse or create page
-        pages = _CONTEXT.pages
-        if pages and not pages[0].is_closed():
-            _PAGE = pages[0]
-        else:
-            _PAGE = _CONTEXT.new_page()
+        # Load saved storage if exists
+        storage_path = _get_storage_path()
+        import os as _os
+        if _os.path.exists(storage_path):
+            context_kwargs["storage_state"] = storage_path
         
+        _CONTEXT = _BROWSER.new_context(**context_kwargs)
+        if stealth:
+            _CONTEXT.add_init_script(_STEALTH_SCRIPT)
+        if cookies and isinstance(cookies, list):
+            _CONTEXT.add_cookies(cookies)
+        
+        _PAGE = _CONTEXT.new_page()
         return _PAGE, None
     except Exception as e:
         return None, _error(str(e), 500, type=type(e).__name__)
