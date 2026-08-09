@@ -227,8 +227,9 @@ def _auth_gate():
             failures = _AUTH_FAILURES.setdefault(ip, [])
             failures[:] = [t for t in failures if now - t < _AUTH_FAIL_WINDOW]
             failures.append(now)
-            if len(failures) > _AUTH_FAIL_MAX:
-                time.sleep(0.5)  # throttle brute-force attempts
+            should_throttle = len(failures) > _AUTH_FAIL_MAX
+        if should_throttle:
+            time.sleep(0.5)  # throttle brute-force (NOT inside lock)
         return result
     return None
 
