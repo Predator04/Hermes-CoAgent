@@ -255,20 +255,9 @@ def _get_storage_path():
     return _USER_DATA_DIR
 
 
-_BROWSER_EXECUTOR = None
-
-
 def _ensure_browser(cookies=None, stealth=False):
-    """Always runs in a single dedicated thread — same thread = no greenlet + context persists."""
-    global _BROWSER_EXECUTOR
-    if _BROWSER_EXECUTOR is None:
-        import concurrent.futures
-        _BROWSER_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="pw")
-    try:
-        return _BROWSER_EXECUTOR.submit(_ensure_browser_inner, cookies, stealth).result(timeout=60)
-    except Exception as e:
-        import traceback as _tb
-        return None, _error(str(e), 500, traceback=_tb.format_exc()[:1000])
+    """Create fresh browser per call."""
+    return _ensure_browser_inner(cookies, stealth)
 
 
 _CDP_URL = None  # Chrome DevTools Protocol URL for persistent browser
@@ -353,20 +342,8 @@ def _get_cdp_browser():
 
 
 def _ensure_browser_inner(cookies=None, stealth=False):
-    """Runs in dedicated thread. Reuses context if alive, creates new if dead."""
+    """Always creates fresh browser. No context reuse due to greenlet limitation."""
     global _PW, _CONTEXT, _PAGE
-    
-    # Reuse existing context if it has live pages
-    if _CONTEXT is not None:
-        try:
-            pages = _CONTEXT.pages
-            if pages:
-                for p in pages:
-                    if not p.is_closed():
-                        _PAGE = p
-                        return _PAGE, None
-        except Exception:
-            pass
     
     sync_playwright, _playwright_error, missing = _load_playwright()
     if missing:
