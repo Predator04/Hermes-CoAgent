@@ -81,7 +81,7 @@ def _brainstem_route():
         # Neocortex
         model = _ROUTER_STATE["neocortex_model"]
         provider = model.split(":")[0]
-        response = _call_llm(provider, task, model.split(":")[1] if ":" in model else None)
+        response = _call_llm(provider, task, model.split(":", 1)[1] if ":" in model else None)
         latency = time.time() - start
         with _ROUTER_LOCK:
             _ROUTER_STATE["neocortex_calls"] += 1
@@ -101,7 +101,7 @@ def _brainstem_route():
         # Brainstem
         model = _ROUTER_STATE["brainstem_model"]
         provider = model.split(":")[0]
-        response = _call_llm(provider, task, model.split(":")[1] if ":" in model else None)
+        response = _call_llm(provider, task, model.split(":", 1)[1] if ":" in model else None)
         latency = time.time() - start
         with _ROUTER_LOCK:
             _ROUTER_STATE["brainstem_calls"] += 1
@@ -127,7 +127,49 @@ def _brainstem_query():
     force_neocortex = body.get("force_neocortex", False)
     if not prompt:
         return jsonify({"ok": False, "error": "missing prompt"}), 400
-    return _brainstem_route()
+    # Map prompt→task and inline routing instead of calling _brainstem_route()
+    # which re-reads `task` from the (already-consumed) request body.
+    complexity = _estimate_complexity(prompt)
+    start = time.time()
+    if force_neocortex or complexity >= _ROUTER_STATE["complexity_threshold"]:
+        model = _ROUTER_STATE["neocortex_model"]
+        provider = model.split(":")[0]
+        response = _call_llm(provider, prompt, model.split(":")[1] if ":" in model else None)
+        latency = time.time() - start
+        with _ROUTER_LOCK:
+            _ROUTER_STATE["neocortex_calls"] += 1
+            n = _ROUTER_STATE["neocortex_calls"]
+            _ROUTER_STATE["avg_neocortex_latency"] = (
+                (_ROUTER_STATE["avg_neocortex_latency"] * (n - 1) + latency) / n
+            )
+        return jsonify({
+            "ok": True,
+            "router": "neocortex",
+            "complexity": round(complexity, 3),
+            "task": prompt,
+            "response": response,
+            "latency_secs": round(latency, 2),
+        })
+    else:
+        model = _ROUTER_STATE["brainstem_model"]
+        provider = model.split(":")[0]
+        response = _call_llm(provider, prompt, model.split(":")[1] if ":" in model else None)
+        latency = time.time() - start
+        with _ROUTER_LOCK:
+            _ROUTER_STATE["brainstem_calls"] += 1
+            _ROUTER_STATE["tokens_saved_est"] += int(len(response) * 0.5)
+            n = _ROUTER_STATE["brainstem_calls"]
+            _ROUTER_STATE["avg_brainstem_latency"] = (
+                (_ROUTER_STATE["avg_brainstem_latency"] * (n - 1) + latency) / n
+            )
+        return jsonify({
+            "ok": True,
+            "router": "brainstem",
+            "complexity": round(complexity, 3),
+            "task": prompt,
+            "response": response,
+            "latency_secs": round(latency, 2),
+        })
 
 
 @brainstem_bp.route("/brainstem/status", methods=["GET"])
