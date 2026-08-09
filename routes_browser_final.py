@@ -392,8 +392,15 @@ def _browser_worker(browser_id, options, ready_queue):
         _set_metadata(browser_id, status="opened", url=page.url, title=title, warning=warning)
         ready_queue.put({"ok": True, "result": {"url": page.url, "title": title, "warning": warning}})
 
+        idle_timeout = options.get("idle_timeout", 300)  # auto-close after 5 min idle
         while True:
-            item = command_queue.get()
+            try:
+                item = command_queue.get(timeout=idle_timeout)
+            except queue.Empty:
+                # Idle timeout — close browser to prevent resource leak
+                _LOGGER = logging.getLogger(__name__)
+                _LOGGER.info("browser %s idle timeout (%ss), closing", browser_id, idle_timeout)
+                break
             response_queue = item["response"]
             name = item["name"]
             payload = item.get("payload") or {}
@@ -574,7 +581,7 @@ def route_browser_navigate(browser_id):
     if not isinstance(url, str) or not url.strip():
         return _error("url is required")
     data["url"] = url.strip()
-    url_error = _navigation_url_error(data["url"])
+    url_error = _navigation_url_error(data["url"], allow_blank=True)
     if url_error:
         return _error(url_error, 403, browser_id=browser_id)
     try:
@@ -639,7 +646,7 @@ def route_browser_extract(browser_id):
 @browser_v2_bp.route("/browser/evaluate/<browser_id>", methods=["POST"])
 def route_browser_evaluate(browser_id):
     config = _json_body()
-    if not os.environ.get("COAGENT_ENABLE_JS_EVAL") and not config.get("enable_js_eval"):
+    if not os.environ.get("COAGENT_ENABLE_JS_EVAL"):
         return _error("Browser JavaScript evaluation is disabled", 403, browser_id=browser_id)
     try:
         return jsonify(_command(browser_id, "evaluate", config, timeout=60))
