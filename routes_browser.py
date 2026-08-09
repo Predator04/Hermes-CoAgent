@@ -287,30 +287,87 @@ def _ensure_browser(cookies=None, stealth=False):
         return None, _error(str(e), 500, type=type(e).__name__)
 
 
-def _ensure_browser_inner(cookies=None, stealth=False):
-    """Actual Playwright browser creation — must run in a thread without asyncio loop."""
-    global _PW, _CONTEXT, _PAGE
+_CDP_URL = None  # Chrome DevTools Protocol URL for persistent browser
+
+
+def _get_cdp_browser():
+    """Launch a persistent Chromium via CDP that survives across calls."""
+    global _CDP_URL
+    if _CDP_URL is not None:
+        return _CDP_URL
     
-    # Check if existing context is still alive — reuse if possible
-    if _CONTEXT is not None and _PW is not None:
-        try:
-            pages = _CONTEXT.pages
-            if pages and not pages[0].is_closed():
-                _PAGE = pages[0]
-                return _PAGE, None
-        except Exception:
-            pass
+    import subprocess, tempfile, os as _os, time as _time
+    
+    user_data = _os.path.join(tempfile.gettempdir(), "coagent_chrome_profile")
+    _os.makedirs(user_data, exist_ok=True)
+    
+    # Find Chromium installed by Playwright
+    pw_dir = _os.path.expanduser("~/.cache/ms-playwright")
+    chrome_exe = None
+    for root, dirs, files in _os.walk(pw_dir):
+        for f in files:
+            if f == "chrome.exe" or f == "chromium" or f == "chrome":
+                chrome_exe = _os.path.join(root, f)
+                break
+        if chrome_exe:
+            break
+    
+    if not chrome_exe:
+        # Try system Chrome
+        chrome_exe = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
+        if not _os.path.exists(chrome_exe):
+            chrome_exe = _os.path.expandvars("%LOCALAPPDATA%\\Google\\Chrome\\Application\\chrome.exe")
+    
+    if not chrome_exe or not _os.path.exists(chrome_exe):
+        return None
+    
+    # Find a free port
+    import socket
+    sock = socket.socket()
+    sock.bind(('', 0))
+    port = sock.getsockname()[1]
+    sock.close()
+    
+    _CDP_URL = f"http://127.0.0.1:{port}"
+    
+    # Launch Chrome with remote debugging
+    args = [
+        chrome_exe,
+        f"--remote-debugging-port={port}",
+        f"--user-data-dir={user_data}",
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--disable-blink-features=AutomationControlled",
+    ]
+    subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    _time.sleep(2)
+    
+    return _CDP_URL
+
+
+def _ensure_browser_inner(cookies=None, stealth=False):
+    """Connect to persistent Chromium via CDP — no greenlet issues."""
+    global _PW, _CONTEXT, _PAGE, _CDP_URL
     
     sync_playwright, _playwright_error, missing = _load_playwright()
     if missing:
         return None, missing
+    
     try:
-        # Always create fresh PW instance to avoid greenlet issues
+        cdp_url = _get_cdp_browser()
+        if cdp_url is None:
+            return None, _error("Cannot find Chrome/Chromium", 500)
+        
+        # Always create fresh PW instance per request
         if _PW is not None:
-            _PW = None  # Will be replaced, don't stop - context survives
+            try:
+                _PW.stop()
+            except Exception:
+                pass
+        
         _PW = sync_playwright().start()
         
-        # Close any existing context
+        # Close previous context if any
         if _CONTEXT is not None:
             try:
                 for p in _CONTEXT.pages:
@@ -321,37 +378,40 @@ def _ensure_browser_inner(cookies=None, stealth=False):
                 pass
             _CONTEXT = None
         
-        launch_args = _STEALTH_ARGS if stealth else []
-        _BROWSER_LOCAL = _PW.chromium.launch(headless=False, args=launch_args)
+        # Connect to existing Chrome via CDP
+        _BROWSER = _PW.chromium.connect_over_cdp(cdp_url)
         
-        context_kwargs = {}
-        if stealth:
-            import random as _srandom
-            vp = _srandom.choice(_STEALTH_VIEWPORTS)
-            ua = _srandom.choice(_STEALTH_USER_AGENTS)
-            context_kwargs.update({
-                "user_agent": ua,
-                "viewport": vp,
-                "locale": "en-US",
-                "timezone_id": "America/Los_Angeles",
-                "geolocation": {"latitude": 36.17, "longitude": -115.14},
-                "permissions": ["geolocation"],
-            })
+        # Use first existing context or create new one
+        contexts = _BROWSER.contexts
+        if contexts:
+            _CONTEXT = contexts[0]
+        else:
+            context_kwargs = {}
+            if stealth:
+                import random as _srandom
+                vp = _srandom.choice(_STEALTH_VIEWPORTS)
+                ua = _srandom.choice(_STEALTH_USER_AGENTS)
+                context_kwargs.update({
+                    "user_agent": ua,
+                    "viewport": vp,
+                    "locale": "en-US",
+                    "timezone_id": "America/Los_Angeles",
+                    "geolocation": {"latitude": 36.17, "longitude": -115.14},
+                    "permissions": ["geolocation"],
+                })
+            _CONTEXT = _BROWSER.new_context(**context_kwargs)
+            if stealth:
+                _CONTEXT.add_init_script(_STEALTH_SCRIPT)
+            if cookies and isinstance(cookies, list):
+                _CONTEXT.add_cookies(cookies)
         
-        # Load saved storage state if exists
-        storage_path = _get_storage_path()
-        import os as _os
-        if _os.path.exists(storage_path):
-            context_kwargs["storage_state"] = storage_path
+        # Reuse or create page
+        pages = _CONTEXT.pages
+        if pages and not pages[0].is_closed():
+            _PAGE = pages[0]
+        else:
+            _PAGE = _CONTEXT.new_page()
         
-        _CONTEXT = _BROWSER_LOCAL.new_context(**context_kwargs)
-        
-        if stealth:
-            _CONTEXT.add_init_script(_STEALTH_SCRIPT)
-        if cookies and isinstance(cookies, list):
-            _CONTEXT.add_cookies(cookies)
-        
-        _PAGE = _CONTEXT.new_page()
         return _PAGE, None
     except Exception as e:
         return None, _error(str(e), 500, type=type(e).__name__)
