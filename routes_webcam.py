@@ -28,7 +28,6 @@ def register_routes(app, jsonify, request, COAGENT_DIR, _log, _json_body, requir
         # Try methods in order of reliability
         methods = [
             ("PowerShell MediaCapture", _capture_ps_media),
-            ("PowerShell Windows Forms", _capture_ps_winforms),
             ("FFmpeg DShow", _capture_ffmpeg),
         ]
         
@@ -101,11 +100,14 @@ try {{
     exit 1
 }}
 
-$folder = [Windows.Storage.StorageFolder]::GetFolderFromPathAsync("{shots_dir}").GetResults()
-$file = $folder.CreateFileAsync("{fname}", [Windows.Storage.CreationCollisionOption]::ReplaceExisting).GetResults()
-$mediaCapture.CapturePhotoToStorageFileAsync(
+$folderOp = [Windows.Storage.StorageFolder]::GetFolderFromPathAsync("{shots_dir}")
+$folder = Await $folderOp ([Windows.Storage.StorageFolder])
+$fileOp = $folder.CreateFileAsync("{fname}", [Windows.Storage.CreationCollisionOption]::ReplaceExisting)
+$file = Await $fileOp ([Windows.Storage.StorageFile])
+$captureOp = $mediaCapture.CapturePhotoToStorageFileAsync(
     [Windows.Media.MediaProperties.ImageEncodingProperties]::CreateJpeg(), $file
-).GetResults()
+)
+Await $captureOp ([void])
 '''
     try:
         result = subprocess.run(
