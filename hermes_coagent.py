@@ -881,6 +881,8 @@ from routes_auto_trippy import register_routes as reg_auto_trippy
 from routes_auto_ripgrep import register_routes as reg_auto_ripgrep
 from routes_auto_bat import register_routes as reg_auto_bat
 from routes_auto_fd import register_routes as reg_auto_fd
+from routes_auto_fzf import register_routes as reg_auto_fzf
+from routes_auto_zoxide import register_routes as reg_auto_zoxide
 from routes_background import register_routes as reg_background
 
 features = {}
@@ -1060,6 +1062,8 @@ reg_auto_trippy(app, state, require_auth)
 reg_auto_ripgrep(app, state, require_auth)
 reg_auto_bat(app, state, require_auth)
 reg_auto_fd(app, state, require_auth)
+reg_auto_fzf(app, state, require_auth)
+reg_auto_zoxide(app, state, require_auth)
 features["web_dashboard_overhaul"] = True
 features["mcp_mode"] = True
 features["dom_mode"] = True
@@ -1134,6 +1138,8 @@ features["auto_trippy"] = True
 features["auto_ripgrep"] = True
 features["auto_bat"] = True
 features["auto_fd"] = True
+features["auto_fzf"] = True
+features["auto_zoxide"] = True
 state.backup_file = backup_file
 
 # -- Core routes (stay in main) ----------------------------------
