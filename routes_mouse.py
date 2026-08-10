@@ -458,16 +458,21 @@ def register_routes(app, state, require_auth):
             return jsonify({"error": "Emergency stop engaged"}), 503
         try:
             if bg and hasattr(ctypes, 'windll'):
+                MOUSEEVENTF_LEFTDOWN = 0x0002; MOUSEEVENTF_LEFTUP = 0x0004
+                MOUSEEVENTF_RIGHTDOWN = 0x0008; MOUSEEVENTF_RIGHTUP = 0x0010
+                btn = d.get("button", "left")
+                btn_down = MOUSEEVENTF_LEFTDOWN if btn == "left" else MOUSEEVENTF_RIGHTDOWN
+                btn_up = MOUSEEVENTF_LEFTUP if btn == "left" else MOUSEEVENTF_RIGHTUP
                 ctypes.windll.user32.SetCursorPos(x1, y1)
                 time.sleep(0.02)
-                _background_sendinput("click", x1, y1, d.get("button", "left"))
+                ctypes.windll.user32.mouse_event(btn_down, 0, 0, 0, 0)
                 steps = 20
                 for i in range(1, steps+1):
                     cx = x1 + (x2 - x1) * i // steps
                     cy = y1 + (y2 - y1) * i // steps
                     ctypes.windll.user32.SetCursorPos(cx, cy)
                     time.sleep(0.01)
-                _background_sendinput("click", x2, y2, d.get("button", "left"))
+                ctypes.windll.user32.mouse_event(btn_up, 0, 0, 0, 0)
             else:
                 pyautogui.drag(x2 - x1, y2 - y1, button=d.get("button", "left"))
             _log(f"Drag ({x1},{y1})->({x2},{y2})")
