@@ -3,6 +3,7 @@
 # Source: https://github.com/junegunn/fzf
 # Install: winget install junegunn.fzf  OR  scoop install fzf
 
+import glob
 import shutil
 import subprocess
 import os
@@ -39,7 +40,11 @@ def _find_fzf():
         os.path.expandvars(r"%USERPROFILE%\scoop\shims\fzf.exe"),
     ]
     for c in candidates:
-        if os.path.isfile(c):
+        if "*" in c:
+            matches = glob.glob(c)
+            if matches:
+                return matches[0]
+        elif os.path.isfile(c):
             return c
     return None
 
@@ -164,17 +169,24 @@ def register_routes(app, state, require_auth):
             else:
                 # Fallback: use dir /s /b on Windows, find on Linux
                 if os.name == "nt":
+                    dir_cmd = ["cmd", "/c", "dir", "/s", "/b"]
+                    if file_type == "f":
+                        dir_cmd.append("/a:-d")
                     r_list = subprocess.run(
-                        ["cmd", "/c", "dir", "/s", "/b", "/a:-d" if file_type == "f" else ""],
+                        dir_cmd,
                         cwd=search_path,
                         capture_output=True,
                         text=True,
                         timeout=30,
                     )
                 else:
-                    find_type = "" if file_type == "all" else f" -type {file_type}"
+                    find_cmd = ["find", ".", "-maxdepth", "10"]
+                    if file_type == "f":
+                        find_cmd.extend(["-type", "f"])
+                    elif file_type == "d":
+                        find_cmd.extend(["-type", "d"])
                     r_list = subprocess.run(
-                        ["find", ".", "-maxdepth", "10" + find_type],
+                        find_cmd,
                         cwd=search_path,
                         capture_output=True,
                         text=True,
