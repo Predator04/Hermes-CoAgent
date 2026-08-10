@@ -3,6 +3,7 @@
 # Source: https://github.com/ajeetdsouza/zoxide
 # Install: winget install ajeetdsouza.zoxide  OR  scoop install zoxide
 
+import glob
 import shutil
 import subprocess
 import os
@@ -38,7 +39,11 @@ def _find_zoxide():
         os.path.expandvars(r"%USERPROFILE%\scoop\shims\zoxide.exe"),
     ]
     for c in candidates:
-        if os.path.isfile(c):
+        if "*" in c:
+            matches = glob.glob(c)
+            if matches:
+                return matches[0]
+        elif os.path.isfile(c):
             return c
     return None
 
@@ -146,7 +151,11 @@ def register_routes(app, state, require_auth):
                     continue
                 parts = line.strip().split(None, 1)
                 if len(parts) >= 2:
-                    entries.append({"score": float(parts[0]), "path": parts[1]})
+                    try:
+                        score = float(parts[0])
+                    except (ValueError, TypeError):
+                        score = 0
+                    entries.append({"score": score, "path": parts[1]})
                 else:
                     entries.append({"score": 0, "path": parts[0]})
 
