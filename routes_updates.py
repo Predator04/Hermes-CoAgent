@@ -47,8 +47,14 @@ def _acquire_fs_lock() -> bool:
     try:
         _LOCK_FD = os.open(LOCK_PATH, os.O_CREAT | os.O_RDWR, 0o600)
         try:
-            os.lockf(_LOCK_FD, os.F_LOCK | os.F_TLOCK, 0)
+            if os.name == "nt":
+                import msvcrt
+                msvcrt.locking(_LOCK_FD, msvcrt.LK_NBLCK, 1)
+            else:
+                os.lockf(_LOCK_FD, os.F_LOCK | os.F_TLOCK, 0)
         except OSError as exc:
+            if os.name == "nt":
+                return False
             if exc.errno in (errno.EACCES, errno.EAGAIN):
                 return False
             raise
@@ -62,7 +68,11 @@ def _release_fs_lock() -> None:
     global _LOCK_FD
     if _LOCK_FD is not None:
         try:
-            os.lockf(_LOCK_FD, os.F_ULOCK, 0)
+            if os.name == "nt":
+                import msvcrt
+                msvcrt.locking(_LOCK_FD, msvcrt.LK_UNLCK, 1)
+            else:
+                os.lockf(_LOCK_FD, os.F_ULOCK, 0)
         except Exception:
             pass
         try:
@@ -168,12 +178,16 @@ def _latest_release():
             tarball_url = asset.get("browser_download_url", tarball_url)
         if name.endswith(".sha256"):
             try:
-                sha_resp = _request_json(asset.get("browser_download_url", ""))
+                req = urllib.request.Request(
+                    asset.get("browser_download_url", ""),
+                    headers={"User-Agent": "Hermes-CoAgent-Updater/3.0"},
+                )
+                with urllib.request.urlopen(req, timeout=10) as sha_resp:
+                    sha_text = sha_resp.read().decode("utf-8").strip()
+                    # Format: "<hex>  <filename>" or just "<hex>"
+                    sha256 = sha_text.split()[0] if sha_text else ""
             except Exception:
                 pass
-            else:
-                if isinstance(sha_resp, dict):
-                    sha256 = sha_resp.get("sha256", "")
 
     return {
         "current": VERSION,
@@ -266,24 +280,30 @@ def _atomic_update(source_dir, dest_dir, preserve):
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(item, target)
 
-    # Remove stale files from staging (files in dest not in staging)
+    # Copy preserved files from dest into staging BEFORE the swap
+    # (these files are intentionally excluded from the tarball and must survive)
     if dest.exists():
-        for item in dest.rglob("*"):
-            rel = item.relative_to(dest)
-            if rel.parts and rel.parts[0] in SKIP_DIRS:
-                continue
-            if len(rel.parts) == 1 and rel.parts[0] in preserve:
-                continue
-            staging_target = staging / rel
-            if item.is_file() and not staging_target.exists():
-                # File deleted in new version — remove from staging as well
-                # (actually, we just don't copy it — staging only has new files)
-                pass
+        for p in preserve:
+            src = dest / p
+            if src.is_file():
+                dst = staging / p
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(str(src), str(dst))
+            elif src.is_dir():
+                dst = staging / p
+                if not dst.exists():
+                    shutil.copytree(str(src), str(dst))
 
-    # Atomic swap
+    # Atomic swap with rollback
     if dest.exists():
         dest.rename(backup)
-    staging.rename(dest)
+    try:
+        staging.rename(dest)
+    except Exception:
+        # Rollback: restore backup to dest
+        if backup.exists():
+            backup.rename(dest)
+        raise
 
     # Clean up
     if backup.exists():
@@ -306,11 +326,7 @@ def _pythonw_executable():
 
 
 def _launch_replacement():
-    env = {
-        "PATH": os.environ.get("PATH", ""),
-        "SYSTEMROOT": os.environ.get("SYSTEMROOT", r"C:\Windows"),
-        "TEMP": os.environ.get("TEMP", os.environ.get("TMP", "")),
-    }
+    env = dict(os.environ)  # Start with full environment to ensure pythonw starts correctly
     creationflags = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS | subprocess.CREATE_NO_WINDOW
     args = [_pythonw_executable(), str(COAGENT_DIR / "hermes_coagent.py"), "--secure"]
     subprocess.Popen(
