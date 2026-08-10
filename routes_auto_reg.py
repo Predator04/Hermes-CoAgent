@@ -332,19 +332,34 @@ def register_routes(app, state, require_auth):
         if not _validate_hive_path(key):
             return jsonify({"ok": False, "error": "invalid registry path"}), 400
 
+        import tempfile
         try:
-            args = ["export", key]
+            with tempfile.NamedTemporaryFile(suffix=".reg", delete=False) as tmp:
+                export_path = tmp.name
+            args = ["export", key, export_path]
             stdout, stderr, rc = _run_reg(args, timeout=15)
             if rc != 0:
+                try:
+                    os.unlink(export_path)
+                except OSError:
+                    pass
                 return jsonify({
                     "ok": False,
                     "error": stderr.strip() or "reg export failed",
                     "exit_code": rc,
                 }), 502
+            try:
+                reg_content = open(export_path, "r", encoding="utf-16-le", errors="replace").read()
+            except UnicodeError:
+                reg_content = open(export_path, "r", encoding="utf-8", errors="replace").read()
+            try:
+                os.unlink(export_path)
+            except OSError:
+                pass
             return jsonify({
                 "ok": True,
                 "key": key,
-                "reg_content": stdout,
+                "reg_content": reg_content,
             })
         except subprocess.TimeoutExpired:
             return jsonify({"ok": False, "error": "reg export timed out"}), 504
