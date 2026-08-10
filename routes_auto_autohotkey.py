@@ -45,8 +45,9 @@ def _is_autohotkey_available():
             text=True,
             timeout=5,
         )
-        # AHK returns a usage/error message when run without a script
-        return True
+        # AHK returns a usage/error message when run without a script (exit code 1 is normal)
+        # Exit code 0 = success, 1 = usage shown (normal for no script), anything else = error
+        return result.returncode in (0, 1)
     except (subprocess.TimeoutExpired, OSError):
         return False
 
