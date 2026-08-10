@@ -1057,9 +1057,9 @@ def adaptive_find(target: str, screenshot_path: str = None) -> dict:
             if results:
                 match = results[0]
                 rect = match.get("rect")
-                if rect and len(rect) >= 4:
-                    cx = rect[0] + rect[2] // 2
-                    cy = rect[1] + rect[3] // 2
+                if rect and isinstance(rect, dict) and rect.get("width") and rect.get("height"):
+                    cx = rect["left"] + rect["width"] // 2
+                    cy = rect["top"] + rect["height"] // 2
                     return {
                         "found": True,
                         "strategy": "uia_exact",
@@ -1083,9 +1083,9 @@ def adaptive_find(target: str, screenshot_path: str = None) -> dict:
                     name = win.element_info.name or ""
                     if target.lower() in name.lower():
                         rect = _uia_element_rect(win)
-                        if rect and len(rect) >= 4:
-                            cx = rect[0] + rect[2] // 2
-                            cy = rect[1] + rect[3] // 2
+                        if rect and isinstance(rect, dict) and rect.get("width") and rect.get("height"):
+                            cx = rect["left"] + rect["width"] // 2
+                            cy = rect["top"] + rect["height"] // 2
                             return {
                                 "found": True,
                                 "strategy": "uia_window",
