@@ -169,7 +169,7 @@ def register_routes(app, state, require_auth):
             packages = []
             for line in result.stdout.strip().split("\n"):
                 line = line.strip()
-                if not line or "packages installed" in line or "chocolatey" in line.lower() and "v" in line:
+                if not line or "packages installed" in line or ("chocolatey" in line.lower() and "v" in line):
                     continue
                 parts = line.split()
                 if len(parts) >= 2:
@@ -339,7 +339,7 @@ def register_routes(app, state, require_auth):
                 text=True,
                 timeout=60,
             )
-            if result.returncode != 0:
+            if result.returncode not in (0, 2):  # choco outdated returns 2 when packages exist
                 return jsonify({
                     "ok": False,
                     "error": result.stderr.strip() or "outdated check failed",
