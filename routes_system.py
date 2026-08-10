@@ -2,6 +2,7 @@
    Wi-Fi, Bluetooth, night light, audio output, DND, camera, microphone,
    proxy, VPN, dark mode, power mode, keyboard backlight, battery info."""
 import os
+import re
 import subprocess
 import ctypes
 import time
@@ -606,6 +607,9 @@ $form.Add_Shown({
             return jsonify({"status": "ok", "proxy_enabled": enabled, "proxy_server": server if enabled else None})
         elif action == "on":
             server = d.get("server", "127.0.0.1:8080")
+            server = str(server).strip().strip("'\"")
+            if not re.fullmatch(r"[A-Za-z0-9.:\-_ ]{1,256}", server):
+                return jsonify({"error": "invalid proxy server address"}), 400
             _ps(f"Set-ItemProperty 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings' -Name 'ProxyEnable' -Value 1; Set-ItemProperty 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings' -Name 'ProxyServer' -Value '{server}'", timeout=5)
             _log(f"Proxy enabled: {server}")
             return jsonify({"status": "ok", "proxy": "on", "server": server})
@@ -632,14 +636,18 @@ $form.Add_Shown({
             return jsonify({"status": "ok", "connections": conns})
         elif action == "connect":
             name = d.get("name", "")
-            if not name:
-                return _missing_field("name")
+            name = str(name).strip().strip("'\"")
+            if not name or not re.fullmatch(r"[A-Za-z0-9 .\-_]{1,128}", name):
+                return jsonify({"error": "invalid VPN connection name"}), 400
             _ps(f"rasdial \"{name}\"", timeout=30)
             _log(f"VPN connecting: {name}")
             return jsonify({"status": "ok", "vpn": "connecting", "name": name})
         elif action == "disconnect":
             name = d.get("name", "")
+            name = str(name).strip().strip("'\"")
             if name:
+                if not re.fullmatch(r"[A-Za-z0-9 .\-_]{1,128}", name):
+                    return jsonify({"error": "invalid VPN connection name"}), 400
                 _ps(f"rasdial \"{name}\" /d", timeout=15)
             else:
                 _ps("rasdial /d", timeout=15)
