@@ -994,13 +994,19 @@ def route_browser_workflow():
                         to_x = step.get("x", 0)
                         to_y = step.get("y", 0)
                         steps = step.get("steps", 20)
-                        # Move mouse in small increments
+                        # Start from current mouse position, not (0,0)
+                        try:
+                            from_x = page.evaluate("() => window.mouseX || 0")
+                            from_y = page.evaluate("() => window.mouseY || 0")
+                        except Exception:
+                            from_x, from_y = 0, 0
+                        # Move mouse in small increments, easing from current to target
                         for i in range(steps):
                             t = (i + 1) / steps
                             # Bezier-like easing
                             eased_t = t * t * (3 - 2 * t)
-                            cur_x = int(to_x * eased_t)
-                            cur_y = int(to_y * eased_t)
+                            cur_x = int(from_x + (to_x - from_x) * eased_t)
+                            cur_y = int(from_y + (to_y - from_y) * eased_t)
                             page.mouse.move(cur_x, cur_y)
                             _mtime.sleep(random.uniform(0.005, 0.02))
                         step_result["moved_to"] = [to_x, to_y]
@@ -1031,14 +1037,16 @@ def route_browser_workflow():
                         def _on_console(msg):
                             msgs.append({"type": msg.type, "text": msg.text})
                         page.on("console", _on_console)
-                        # If a script is provided, evaluate it and capture its console output
-                        script = step.get("script")
-                        if script:
-                            page.evaluate(script)
-                        # Wait a bit for async console messages
-                        import time as _ctime
-                        _ctime.sleep(step.get("wait_ms", 500) / 1000.0)
-                        page.remove_listener("console", _on_console)
+                        try:
+                            # If a script is provided, evaluate it and capture its console output
+                            script = step.get("script")
+                            if script:
+                                page.evaluate(script)
+                            # Wait a bit for async console messages
+                            import time as _ctime
+                            _ctime.sleep(step.get("wait_ms", 500) / 1000.0)
+                        finally:
+                            page.remove_listener("console", _on_console)
                         step_result["messages"] = msgs[-50:]  # last 50
                     
                     else:
