@@ -42,8 +42,16 @@ class _CDPSocket:
         self._pending: dict = {}   # id -> threading.Event + result slot
         self._reader = threading.Thread(target=self._read_loop, daemon=True)
         self._running = True
-        self._do_handshake(host, port, path)
-        self._reader.start()
+        try:
+            self._do_handshake(host, port, path)
+            self._reader.start()
+        except Exception:
+            self._running = False
+            try:
+                self._sock.close()
+            except Exception:
+                pass
+            raise
 
     # ------------------------------------------------------------------
     # WebSocket handshake (RFC 6455)
