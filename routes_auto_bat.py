@@ -3,6 +3,7 @@
 # Source: https://github.com/sharkdp/bat
 # Install: winget install sharkdp.bat  OR  scoop install bat
 
+import glob
 import shutil
 import subprocess
 import os
@@ -32,11 +33,15 @@ def _find_tool():
     candidates = [
         r"C:\Program Files\bat\bat.exe",
         r"C:\Program Files (x86)\bat\bat.exe",
-        os.path.expandvars(r"%LOCALAPPDATA%\Microsoft\WinGet\Packages\sharkdp.bat_*\bat.exe"),
     ]
     for c in candidates:
         if os.path.isfile(c):
             return c
+    # Winget install path uses a versioned subdirectory — glob for it
+    winget_pattern = os.path.expandvars(r"%LOCALAPPDATA%\Microsoft\WinGet\Packages\sharkdp.bat_*\bat.exe")
+    matches = glob.glob(winget_pattern)
+    if matches:
+        return matches[0]
     return None
 
 
@@ -86,7 +91,7 @@ def register_routes(app, state, require_auth):
                 "hint": "Install with: winget install sharkdp.bat",
             }), 503
 
-        body = _json_body(request)
+        body = _json_body()
         filepath = body.get("file")
         if not filepath:
             return _missing_field("file")
