@@ -883,7 +883,28 @@ from routes_auto_bat import register_routes as reg_auto_bat
 from routes_auto_fd import register_routes as reg_auto_fd
 from routes_auto_fzf import register_routes as reg_auto_fzf
 from routes_auto_zoxide import register_routes as reg_auto_zoxide
+from routes_auto_just import register_routes as reg_auto_just
+from routes_auto_delta import register_routes as reg_auto_delta
 from routes_background import register_routes as reg_background
+
+# v8.53: Modules #167..#73 (issues #167,166,165,164,163,162,134,133,132,131,130,129,77,76,75,74,73)
+from routes_background_agent import register_routes as reg_background_agent
+from routes_macro_recorder import register_routes as reg_macro_recorder
+from routes_confirmations import register_routes as reg_confirmations
+from routes_app_launcher import register_routes as reg_app_launcher
+from routes_uia_table import register_routes as reg_uia_table
+from routes_timeline import register_routes as reg_timeline
+from routes_verify import register_routes as reg_verify
+from routes_triggers import register_routes as reg_triggers
+from routes_sandbox import register_routes as reg_sandbox
+from routes_video import register_routes as reg_video
+from routes_audio_mixer import register_routes as reg_audio_mixer
+from routes_usb import register_routes as reg_usb
+from routes_vlm import register_routes as reg_vlm
+from routes_workflows import register_routes as reg_workflows
+from routes_resilient import register_routes as reg_resilient
+from routes_services import register_routes as reg_services
+from routes_fused_map import register_routes as reg_fused_map
 
 features = {}
 
@@ -1064,6 +1085,28 @@ reg_auto_bat(app, state, require_auth)
 reg_auto_fd(app, state, require_auth)
 reg_auto_fzf(app, state, require_auth)
 reg_auto_zoxide(app, state, require_auth)
+reg_auto_just(app, state, require_auth)
+reg_auto_delta(app, state, require_auth)
+
+# v8.53 modules
+reg_background_agent(app, state, require_auth); features["background_agent"] = True
+reg_macro_recorder(app, state, require_auth); features["macro_recorder"] = True
+reg_confirmations(app, state, require_auth); features["confirmations"] = True
+reg_app_launcher(app, state, require_auth); features["app_launcher"] = True
+reg_uia_table(app, state, require_auth); features["uia_table"] = True
+reg_timeline(app, state, require_auth); features["timeline"] = True
+reg_verify(app, state, require_auth); features["self_verify"] = True
+reg_triggers(app, state, require_auth); features["triggers"] = True
+reg_sandbox(app, state, require_auth); features["sandbox"] = True
+reg_video(app, state, require_auth); features["video_recording"] = True
+reg_audio_mixer(app, state, require_auth); features["audio_mixer"] = True
+reg_usb(app, state, require_auth); features["usb"] = True
+reg_vlm(app, state, require_auth); features["vlm"] = True
+reg_workflows(app, state, require_auth); features["workflows"] = True
+reg_resilient(app, state, require_auth); features["resilient_ui"] = True
+reg_services(app, state, require_auth); features["services_and_tasks"] = True
+reg_fused_map(app, state, require_auth); features["fused_map"] = True
+
 features["web_dashboard_overhaul"] = True
 features["mcp_mode"] = True
 features["dom_mode"] = True
@@ -1140,6 +1183,8 @@ features["auto_bat"] = True
 features["auto_fd"] = True
 features["auto_fzf"] = True
 features["auto_zoxide"] = True
+features["auto_just"] = True
+features["auto_delta"] = True
 state.backup_file = backup_file
 
 # -- Core routes (stay in main) ----------------------------------
