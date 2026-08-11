@@ -905,6 +905,8 @@ from routes_workflows import register_routes as reg_workflows
 from routes_resilient import register_routes as reg_resilient
 from routes_services import register_routes as reg_services
 from routes_fused_map import register_routes as reg_fused_map
+from routes_som import register_routes as reg_som
+from routes_agent_tools import register_routes as reg_agent_tools
 
 features = {}
 
@@ -1106,6 +1108,8 @@ reg_workflows(app, state, require_auth); features["workflows"] = True
 reg_resilient(app, state, require_auth); features["resilient_ui"] = True
 reg_services(app, state, require_auth); features["services_and_tasks"] = True
 reg_fused_map(app, state, require_auth); features["fused_map"] = True
+reg_som(app, state, require_auth); features["som"] = True
+reg_agent_tools(app, state, require_auth); features["agent_tools"] = True
 
 features["web_dashboard_overhaul"] = True
 features["mcp_mode"] = True

@@ -162,6 +162,44 @@ def route_toast_input():
         return _error(str(e), 500, type=type(e).__name__)
 
 
+@toast_bp.route("/toast/send", methods=["POST"])
+def route_toast_send():
+    """
+    POST /toast/send — Send a Windows toast notification.
+    Alias for /toast/show with AI-agent-friendly field names.
+    Body: {title, body, message, actions: [{text, action}], icon}
+    """
+    missing = _require_win11toast()
+    if missing:
+        return missing
+    data = _json_payload()
+    # Accept both "body" and "message" for flexibility
+    if "body" in data and "message" not in data:
+        data = dict(data, message=data["body"])
+    title, error = _get_string(data, "title")
+    if error:
+        return error
+    message, error = _get_string(data, "message")
+    if error:
+        return error
+    # Support "actions" as alias for "buttons"
+    if "actions" in data and "buttons" not in data:
+        data = dict(data, buttons=data["actions"])
+    kwargs, error = _toast_kwargs(data)
+    if error:
+        return error
+    try:
+        _win11_toast(title, message, **kwargs)
+        return jsonify({
+            "ok": True,
+            "status": "sent",
+            "title": title,
+            "message": message,
+        })
+    except Exception as e:
+        return _error(str(e), 500, type=type(e).__name__)
+
+
 def register_routes(app, state, require_auth):
     app.register_blueprint(toast_bp)
     _wrap_registered_blueprint_routes(app, toast_bp.name, require_auth)

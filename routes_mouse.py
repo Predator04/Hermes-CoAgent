@@ -168,12 +168,24 @@ def _background_sendinput(action, x, y, button="left"):
 
 def _mouse_action(action, x, y, button="left", background=True, state=None):
     if state and state.emergency_stop:
-        return jsonify({"error": "Emergency stop engaged"}), 503
+        return jsonify({
+            "ok": False,
+            "error": "Emergency stop is engaged",
+            "detail": "The emergency stop flag was set, all mouse input is blocked",
+            "suggestion": "POST /stop to release the emergency stop, then retry",
+            "code": "EMERGENCY_STOP",
+        }), 503
     lock = state.input_lock if (state and hasattr(state, 'input_lock')) else _GLOBAL_INPUT_LOCK
     with lock:
         # Re-check emergency stop after acquiring lock
         if state and state.emergency_stop:
-            return jsonify({"error": "Emergency stop engaged"}), 503
+            return jsonify({
+                "ok": False,
+                "error": "Emergency stop is engaged",
+                "detail": "The emergency stop flag was set after acquiring the input lock",
+                "suggestion": "POST /stop to release the emergency stop, then retry",
+                "code": "EMERGENCY_STOP",
+            }), 503
         now = time.time()
         gap = now - (state.last_action_time if state else 0)
         if gap < (state.min_action_gap if state else 0.05):
@@ -218,11 +230,23 @@ def _execute_action_wrapper(action, state=None):
 
 def _key_action(action, data, state=None):
     if state and state.emergency_stop:
-        return jsonify({"error": "Emergency stop engaged"}), 503
+        return jsonify({
+            "ok": False,
+            "error": "Emergency stop is engaged",
+            "detail": "The emergency stop flag was set, all keyboard input is blocked",
+            "suggestion": "POST /stop to release the emergency stop, then retry",
+            "code": "EMERGENCY_STOP",
+        }), 503
     lock = state.input_lock if (state and hasattr(state, 'input_lock')) else _GLOBAL_INPUT_LOCK
     with lock:
         if state and state.emergency_stop:
-            return jsonify({"error": "Emergency stop engaged"}), 503
+            return jsonify({
+                "ok": False,
+                "error": "Emergency stop is engaged",
+                "detail": "Emergency stop set after acquiring the input lock",
+                "suggestion": "POST /stop to release the emergency stop, then retry",
+                "code": "EMERGENCY_STOP",
+            }), 503
         try:
             if action == "type":
                 text = str(data)
@@ -238,11 +262,23 @@ def _key_action(action, data, state=None):
             _record_action(action, record_data, payload)
             return jsonify(payload)
         except Exception as e:
-            return jsonify({"error": str(e)}), 500
+            return jsonify({
+                "ok": False,
+                "error": f"Keyboard action {action!r} failed",
+                "detail": f"{type(e).__name__}: {e}",
+                "suggestion": "Ensure pyautogui is installed and an active desktop session exists",
+                "code": "KEY_ACTION_FAILED",
+            }), 500
 
 def _scroll_action(clicks, state=None):
     if state and state.emergency_stop:
-        return jsonify({"error": "Emergency stop engaged"}), 503
+        return jsonify({
+            "ok": False,
+            "error": "Emergency stop is engaged",
+            "detail": "The emergency stop flag was set, all scroll input is blocked",
+            "suggestion": "POST /stop to release the emergency stop, then retry",
+            "code": "EMERGENCY_STOP",
+        }), 503
     try:
         amount = int(clicks)
         pyautogui.scroll(amount)
@@ -250,7 +286,13 @@ def _scroll_action(clicks, state=None):
         _record_action("scroll", {"clicks": amount}, payload)
         return jsonify(payload)
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return jsonify({
+            "ok": False,
+            "error": "Scroll action failed",
+            "detail": f"{type(e).__name__}: {e}",
+            "suggestion": "Ensure pyautogui is installed and a window is focused",
+            "code": "SCROLL_FAILED",
+        }), 500
 
 def register_routes(app, state, require_auth):
     @app.route("/mouse/move", methods=["POST"])

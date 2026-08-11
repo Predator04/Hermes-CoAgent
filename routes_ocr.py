@@ -584,7 +584,14 @@ def register_routes(app, state, require_auth):
                 "X-Capture-Method": method,
                 "X-Monitor-Index": str(monitor_index) if monitor_requested else "0",
             })
-        return jsonify({"error": "No screenshot", "monitor_index": monitor_index}), 500
+        return jsonify({
+            "ok": False,
+            "error": "Screen capture failed",
+            "detail": f"All capture backends failed for monitor_index={monitor_index}",
+            "suggestion": "Run GET /screen/probe to diagnose backends, or GET /screen/diag for session info",
+            "code": "CAPTURE_FAILED",
+            "monitor_index": monitor_index,
+        }), 500
 
     @app.route("/screen/probe", methods=["GET"])
     @require_auth
@@ -630,11 +637,17 @@ def register_routes(app, state, require_auth):
         monitor_index = _request_monitor(0)
         data = _capture_jpeg(monitor_index=monitor_index)
         if data:
-            payload = {"data": base64.b64encode(data).decode(), "format": "jpeg"}
+            payload = {"ok": True, "data": base64.b64encode(data).decode(), "format": "jpeg"}
             if "monitor" in request.args:
                 payload["monitor_index"] = monitor_index
             return jsonify(payload)
-        return jsonify({"error": "No screenshot"}), 500
+        return jsonify({
+            "ok": False,
+            "error": "Screen capture failed",
+            "detail": f"JPEG capture returned no bytes for monitor_index={monitor_index}",
+            "suggestion": "Try GET /screen/probe to diagnose capture backends",
+            "code": "CAPTURE_FAILED",
+        }), 500
 
     @app.route("/screen/base64", methods=["GET"])
     @require_auth
@@ -642,11 +655,17 @@ def register_routes(app, state, require_auth):
         monitor_index = _request_monitor(0)
         data = _capture_raw(monitor_index=monitor_index)
         if data:
-            payload = {"data": base64.b64encode(data).decode(), "format": "png"}
+            payload = {"ok": True, "data": base64.b64encode(data).decode(), "format": "png"}
             if "monitor" in request.args:
                 payload["monitor_index"] = monitor_index
             return jsonify(payload)
-        return jsonify({"error": "No screenshot"}), 500
+        return jsonify({
+            "ok": False,
+            "error": "Screen capture failed",
+            "detail": f"PNG capture returned no bytes for monitor_index={monitor_index}",
+            "suggestion": "Try GET /screen/probe to diagnose capture backends",
+            "code": "CAPTURE_FAILED",
+        }), 500
 
     @app.route("/screen/fresh", methods=["GET"])
     @require_auth
@@ -654,11 +673,17 @@ def register_routes(app, state, require_auth):
         monitor_index = _request_monitor(0)
         data = _capture_jpeg(force=True, monitor_index=monitor_index)
         if data:
-            payload = {"data": base64.b64encode(data).decode(), "format": "jpeg", "fresh": True}
+            payload = {"ok": True, "data": base64.b64encode(data).decode(), "format": "jpeg", "fresh": True}
             if "monitor" in request.args:
                 payload["monitor_index"] = monitor_index
             return jsonify(payload)
-        return jsonify({"error": "No screenshot"}), 500
+        return jsonify({
+            "ok": False,
+            "error": "Fresh screen capture failed",
+            "detail": f"Force-capture returned no bytes for monitor_index={monitor_index}",
+            "suggestion": "Try GET /screen/probe — all capture backends may be unavailable",
+            "code": "CAPTURE_FAILED",
+        }), 500
 
     @app.route("/screen/diag", methods=["GET"])
     @require_auth
@@ -703,7 +728,13 @@ def register_routes(app, state, require_auth):
         d = _json_body()
         img = _screen_img(force=True)
         if img is None:
-            return jsonify({"error": "Cannot capture screen"}), 500
+            return jsonify({
+                "ok": False,
+                "error": "Screen capture failed",
+                "detail": "Could not obtain a PIL image from any capture backend",
+                "suggestion": "Check GET /screen/probe and ensure PIL/Pillow is installed",
+                "code": "CAPTURE_FAILED",
+            }), 500
         region = d.get("region")
         if region:
             if not (isinstance(region, (list, tuple)) and len(region) == 4):
@@ -723,6 +754,139 @@ def register_routes(app, state, require_auth):
         text = pytesseract.image_to_string(img)
         pyperclip.copy(text.strip())
         return jsonify({"status": "ok", "text": text.strip(), "chars": len(text.strip())})
+
+    @app.route("/screen/region", methods=["POST"])
+    @require_auth
+    def route_screen_region():
+        """
+        Fast region screenshot — returns only the requested area as base64 PNG.
+        Uses MSS direct region capture (~50ms) with full-screen crop as fallback.
+        Body: {x, y, width, height} or {element: "selector", padding: 4}
+        """
+        d = _json_body()
+        x = y = w = h = None
+
+        element_selector = (d.get("element") or "").strip()
+        if element_selector:
+            try:
+                from routes_uia import _get_uia_engine, _find_hybrid_element
+                ue = _get_uia_engine()
+                result = _find_hybrid_element(ue, element_selector, fallback_to_ocr=True)
+                if result.get("found"):
+                    pad = max(0, int(d.get("padding", 4)))
+                    x = max(0, int(result.get("x", 0)) - pad)
+                    y = max(0, int(result.get("y", 0)) - pad)
+                    w = int(result.get("width", 200)) + 2 * pad
+                    h = int(result.get("height", 50)) + 2 * pad
+                else:
+                    return jsonify({
+                        "ok": False,
+                        "error": f"Element {element_selector!r} not found on screen",
+                        "detail": "Searched UIA tree and OCR with no match",
+                        "suggestion": "Check the selector or provide explicit x/y/width/height",
+                        "code": "ELEMENT_NOT_FOUND",
+                    }), 404
+            except Exception as exc:
+                return jsonify({
+                    "ok": False,
+                    "error": "Element lookup failed",
+                    "detail": f"{type(exc).__name__}: {exc}",
+                    "suggestion": "Provide explicit x/y/width/height instead",
+                    "code": "ELEMENT_LOOKUP_FAILED",
+                }), 500
+        else:
+            try:
+                x = int(d.get("x", 0))
+                y = int(d.get("y", 0))
+                w = int(d.get("width") or d.get("w", 0))
+                h = int(d.get("height") or d.get("h", 0))
+            except (TypeError, ValueError) as exc:
+                return jsonify({
+                    "ok": False,
+                    "error": "Invalid region coordinates",
+                    "detail": f"x, y, width, height must be integers: {exc}",
+                    "suggestion": "Provide {\"x\": 100, \"y\": 200, \"width\": 400, \"height\": 300}",
+                    "code": "INVALID_COORDINATES",
+                }), 400
+
+            if w <= 0 or h <= 0:
+                return jsonify({
+                    "ok": False,
+                    "error": "Region has zero or negative area",
+                    "detail": f"width={w}, height={h}",
+                    "suggestion": "Provide positive width and height values",
+                    "code": "ZERO_AREA_REGION",
+                }), 400
+
+        monitor_index = _request_monitor(0)
+        t0 = time.time()
+        region_data = b""
+
+        # Fast path: MSS direct region capture
+        if _MSS_AVAILABLE and HAS_PIL:
+            try:
+                with _MSS_LOCK:
+                    with mss.mss() as sct:
+                        monitors = sct.monitors
+                        if monitor_index < len(monitors):
+                            mon = monitors[monitor_index]
+                            mon_left = int(mon.get("left", 0))
+                            mon_top = int(mon.get("top", 0))
+                        else:
+                            mon_left = mon_top = 0
+                        region = {
+                            "left": mon_left + x,
+                            "top": mon_top + y,
+                            "width": max(1, w),
+                            "height": max(1, h),
+                        }
+                        sct_img = sct.grab(region)
+                        raw = sct_img.rgb
+                        size = sct_img.size
+                pil_img = Image.frombytes("RGB", size, raw)
+                buf = BytesIO()
+                pil_img.save(buf, format="PNG")
+                region_data = buf.getvalue()
+            except Exception as exc:
+                _debug_backend_failure("MSS region capture", exc)
+
+        # Fallback: full screen + PIL crop
+        if not region_data:
+            full_data = _capture_raw(force=True, monitor_index=monitor_index)
+            if full_data and HAS_PIL:
+                try:
+                    img = Image.open(BytesIO(full_data))
+                    iw, ih = img.size
+                    rx = min(max(0, x), iw)
+                    ry = min(max(0, y), ih)
+                    rw = min(w, iw - rx)
+                    rh = min(h, ih - ry)
+                    if rw > 0 and rh > 0:
+                        cropped = img.crop((rx, ry, rx + rw, ry + rh))
+                        buf = BytesIO()
+                        cropped.save(buf, format="PNG")
+                        region_data = buf.getvalue()
+                except Exception as exc:
+                    _debug_backend_failure("region crop fallback", exc)
+
+        if not region_data:
+            return jsonify({
+                "ok": False,
+                "error": "Region capture failed",
+                "detail": "MSS region capture and full-screen crop both failed",
+                "suggestion": "Check GET /screen/probe for backend availability",
+                "code": "CAPTURE_FAILED",
+            }), 500
+
+        elapsed_ms = round((time.time() - t0) * 1000, 1)
+        return jsonify({
+            "ok": True,
+            "data": base64.b64encode(region_data).decode(),
+            "format": "png",
+            "region": {"x": x, "y": y, "width": w, "height": h},
+            "monitor": monitor_index,
+            "elapsed_ms": elapsed_ms,
+        })
 
     @app.route("/describe", methods=["GET"])
     @require_auth

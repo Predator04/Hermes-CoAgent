@@ -425,6 +425,11 @@ def register_routes(app, state, require_auth):
         result["query"] = text
         if type_hint:
             result["type"] = type_hint
+        if not result.get("found"):
+            result.setdefault("error", f"Element {text!r} not found via UIA or OCR")
+            result.setdefault("suggestion",
+                "Try POST /som/annotate to see all numbered elements, or check /uia/diag")
+            result.setdefault("code", "ELEMENT_NOT_FOUND")
         return jsonify(result)
 
     @app.route("/uia/find", methods=["POST"])
@@ -459,6 +464,139 @@ def register_routes(app, state, require_auth):
             return jsonify({"text": text})
         except Exception as exc:
             return jsonify({"error": f"{type(exc).__name__}: {exc}"}), 500
+
+    @app.route("/uia/text", methods=["POST"])
+    @require_auth
+    def route_uia_text():
+        """
+        Extract all visible text from a window using UIA — no OCR needed.
+        Much faster and more accurate than OCR for native Windows apps.
+        Body: {window: "Calculator"} or {selector: "editfield"} or {} for active window.
+        Returns text_elements list with positions and full_text string.
+        """
+        d = _json_body()
+        window_title = (d.get("window") or d.get("title") or "").strip()
+        selector = (d.get("selector") or d.get("element") or "").strip()
+
+        try:
+            snap = ue.uia_snapshot(timeout=5)
+        except Exception as exc:
+            return jsonify({
+                "ok": False,
+                "error": "UIA snapshot failed",
+                "detail": f"{type(exc).__name__}: {exc}",
+                "suggestion": "Check GET /uia/diag to verify UIA availability",
+                "code": "UIA_SNAPSHOT_FAILED",
+            }), 500
+
+        if not snap.get("success"):
+            return jsonify({
+                "ok": False,
+                "error": "UIA not ready",
+                "detail": snap.get("error", "uia_snapshot returned success=false"),
+                "suggestion": "UIA requires an interactive Windows session; check /uia/diag",
+                "code": "UIA_NOT_READY",
+            }), 503
+
+        SKIP_CTRL = {"window", "pane", "group", "toolbar", "statusbar", "titlebar",
+                     "scrollbar", "menubar", "appbar", "semantic zoom"}
+        texts = []
+
+        def collect_text(node, depth=0):
+            if not isinstance(node, dict) or depth > 12:
+                return
+            name = str(node.get("name") or "").strip()
+            ctrl = str(node.get("control_type", "")).lower()
+            if "." in ctrl:
+                ctrl = ctrl.rsplit(".", 1)[-1]
+            if name and ctrl not in SKIP_CTRL:
+                rect = _rect_payload(node.get("rect"))
+                if rect:
+                    texts.append({
+                        "text": name,
+                        "control_type": ctrl or "unknown",
+                        "x": rect["x"],
+                        "y": rect["y"],
+                        "width": rect["width"],
+                        "height": rect["height"],
+                        "center": {
+                            "x": rect["x"] + rect["width"] // 2,
+                            "y": rect["y"] + rect["height"] // 2,
+                        },
+                        "automation_id": node.get("automation_id", ""),
+                        "value": node.get("value", ""),
+                    })
+            for child in node.get("children", []) or []:
+                collect_text(child, depth + 1)
+
+        tree = snap.get("tree", {})
+        windows = tree.get("children", []) or []
+        matched_window = ""
+
+        if window_title:
+            needle = window_title.lower()
+            for win in windows:
+                win_name = str(win.get("name", "")).lower()
+                if needle in win_name or win_name in needle:
+                    matched_window = win.get("name", "")
+                    collect_text(win)
+                    break
+            if not texts:
+                available = [w.get("name", "") for w in windows[:10]]
+                return jsonify({
+                    "ok": False,
+                    "error": f"Window {window_title!r} not found",
+                    "detail": f"Available windows: {available}",
+                    "suggestion": "Use exact window title substring or omit to use active window",
+                    "code": "WINDOW_NOT_FOUND",
+                }), 404
+        elif selector:
+            needle = selector.lower()
+            for win in windows:
+                for node in _walk_uia_nodes(win):
+                    name = str(node.get("name") or "").lower()
+                    auto_id = str(node.get("automation_id") or "").lower()
+                    if needle in name or needle in auto_id:
+                        rect = _rect_payload(node.get("rect"))
+                        if rect:
+                            ctrl = str(node.get("control_type", "")).lower()
+                            if "." in ctrl:
+                                ctrl = ctrl.rsplit(".", 1)[-1]
+                            texts.append({
+                                "text": node.get("name", ""),
+                                "control_type": ctrl or "unknown",
+                                "x": rect["x"],
+                                "y": rect["y"],
+                                "width": rect["width"],
+                                "height": rect["height"],
+                                "center": {
+                                    "x": rect["x"] + rect["width"] // 2,
+                                    "y": rect["y"] + rect["height"] // 2,
+                                },
+                                "automation_id": node.get("automation_id", ""),
+                                "value": node.get("value", ""),
+                            })
+        else:
+            # Active window heuristic: skip desktop/Program Manager
+            DESKTOP_NAMES = {"program manager", "desktop", ""}
+            for win in windows[:5]:
+                win_name = str(win.get("name", "")).lower()
+                if win_name in DESKTOP_NAMES:
+                    continue
+                matched_window = win.get("name", "")
+                collect_text(win)
+                if texts:
+                    break
+
+        full_text = " ".join(t["text"] for t in texts if t.get("text"))
+        return jsonify({
+            "ok": True,
+            "window": matched_window,
+            "text_elements": texts,
+            "full_text": full_text,
+            "count": len(texts),
+            "method": "uia",
+        })
 
     @app.route("/uia/click-hybrid", methods=["POST"])
     @require_auth
