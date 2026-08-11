@@ -42,15 +42,25 @@ def _capture_frame(quality=70):
 
 def _mjpeg_generator(interval=0.1, quality=70):
     while True:
-        frame = _capture_frame(quality=quality)
+        try:
+            frame = _capture_frame(quality=quality)
+        except Exception:
+            time.sleep(interval)
+            continue
         if frame:
-            yield b"--frame\r\nContent-Type: image/jpeg\r\nContent-Length: " + str(len(frame)).encode("ascii") + b"\r\n\r\n" + frame + b"\r\n"
+            yield (b"--frame\r\n"
+                   b"Content-Type: image/jpeg\r\n"
+                   b"Content-Length: " + str(len(frame)).encode("ascii") + b"\r\n\r\n" + frame + b"\r\n")
         time.sleep(interval)
 
 
 def _sse_generator(interval=0.1, quality=70):
     while True:
-        frame = _capture_frame(quality=quality)
+        try:
+            frame = _capture_frame(quality=quality)
+        except Exception:
+            time.sleep(interval)
+            continue
         if frame:
             payload = base64.b64encode(frame).decode("ascii")
             yield f"event: frame\ndata: {payload}\n\n"
