@@ -126,6 +126,8 @@ def _check_browser():
 
     try:
         from playwright.sync_api import sync_playwright
+        chromium_path = None
+        chromium_ok = False
         with sync_playwright() as pw:
             chromium_path = pw.chromium.executable_path
             chromium_ok = os.path.exists(chromium_path)
@@ -229,7 +231,7 @@ def _check_python():
 
 
 def _check_coagent():
-    uptime = 0
+    uptime = None  # None means unknown/unavailable
     mem_mb = None
     cpu_pct = None
     if _STATE_REF:
