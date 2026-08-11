@@ -47,6 +47,7 @@ def _put_latest(client_queue, frame):
 def _broadcast_loop(key, monitor_index, quality):
     from routes_ocr import _capture_jpeg
     _log(f"Screen stream started monitor={monitor_index} quality={quality}")
+    consecutive_errors = 0
     try:
         while True:
             with _STREAM_LOCK:
@@ -56,7 +57,19 @@ def _broadcast_loop(key, monitor_index, quality):
                     return
                 clients = list(entry["clients"])
             started = time.time()
-            frame = _capture_jpeg(force=True, quality=quality, monitor_index=monitor_index)
+            try:
+                frame = _capture_jpeg(force=True, quality=quality, monitor_index=monitor_index)
+            except Exception as exc:
+                consecutive_errors += 1
+                _log(f"Screen stream capture error ({consecutive_errors}): {type(exc).__name__}: {exc}")
+                if consecutive_errors > 30:
+                    _log(f"Screen stream aborting after {consecutive_errors} consecutive capture failures")
+                    with _STREAM_LOCK:
+                        _STREAMS.pop(key, None)
+                    return
+                time.sleep(1.0)
+                continue
+            consecutive_errors = 0
             if frame:
                 payload = {
                     "jpeg": frame,
@@ -69,6 +82,8 @@ def _broadcast_loop(key, monitor_index, quality):
             elapsed = time.time() - started
             time.sleep(max(0.01, _FRAME_INTERVAL - elapsed))
     finally:
+        with _STREAM_LOCK:
+            _STREAMS.pop(key, None)
         _log(f"Screen stream stopped monitor={monitor_index} quality={quality}")
 
 
