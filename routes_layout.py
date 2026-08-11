@@ -127,7 +127,9 @@ def _restore_window(entry):
     else:
         ctypes.windll.user32.ShowWindow(hwnd, SW_RESTORE)
         time.sleep(0.04)
-        ctypes.windll.user32.MoveWindow(hwnd, l, t, w, h, True)
+        moved = ctypes.windll.user32.MoveWindow(hwnd, l, t, w, h, True)
+        if not moved:
+            return False, f"MoveWindow failed for '{title[:60]}'"
 
     return True, None
 
