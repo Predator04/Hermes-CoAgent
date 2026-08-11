@@ -5,6 +5,7 @@
 # Source: Built-in Windows tool at C:\Windows\system32\taskkill.exe
 
 import os
+import re
 import shutil
 import subprocess
 
