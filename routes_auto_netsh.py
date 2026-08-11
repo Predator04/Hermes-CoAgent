@@ -197,7 +197,7 @@ def register_routes(app, state, require_auth):
             pass
 
         if not name:
-            return jsonify({"ok": False, "error": _missing_field("name (query param)")}), 400
+            return _missing_field("name (query param)")
 
         try:
             stdout, stderr, rc = _run_netsh("wlan", "show", "profile", f"name={name}", "key=clear", timeout=15)
