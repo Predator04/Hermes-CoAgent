@@ -805,6 +805,13 @@ except ImportError:
     HELP_AVAILABLE = False
     _console("[WARN] routes_help.py not found")
 
+try:
+    from routes_cef import register_routes as reg_cef
+    CEF_AVAILABLE = True
+except ImportError:
+    CEF_AVAILABLE = False
+    _console("[WARN] routes_cef.py not found")
+
 # Telemetry module
 try:
     from telemetry import telem_bp, init_telem
@@ -1114,6 +1121,9 @@ reg_som(app, state, require_auth); features["som"] = True
 reg_agent_tools(app, state, require_auth); features["agent_tools"] = True
 reg_diagnostics(app, state, require_auth); features["diagnostics"] = True
 reg_layout(app, state, require_auth); features["layout_profiles"] = True
+if CEF_AVAILABLE:
+    reg_cef(app, state, require_auth)
+    features["cef_support"] = True
 
 features["web_dashboard_overhaul"] = True
 features["mcp_mode"] = True
