@@ -574,7 +574,15 @@ def route_docs():
 </body>
 </html>
 """
-    return Response(html, mimetype="text/html")
+    response = Response(html, mimetype="text/html")
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline' https://unpkg.com; "
+        "style-src 'self' 'unsafe-inline' https://unpkg.com; "
+        "img-src 'self' data:; "
+        "connect-src 'self'"
+    )
+    return response
 
 
 def register_routes(app, state, require_auth):
