@@ -578,7 +578,7 @@ def register_routes(app, state, require_auth):
         if target_text:
             word_bbox = _ocr_find_text(img, target_text)
             if word_bbox:
-                wx, wy, ww, wh = word_bbox
+                wx, wy, ww, wh = word_bbox[:4]
                 click_x = ox + wx + ww // 2
                 click_y = oy + wy + wh // 2
                 clicked = _click_at(click_x, click_y)
