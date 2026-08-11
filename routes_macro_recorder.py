@@ -345,6 +345,8 @@ def register_routes(app, state, require_auth):
             return jsonify({"ok": False, "error": "macro not found"}), 404
         macro = json.loads(path.read_text(encoding="utf-8"))
         speed = float(body.get("speed", 1.0))
+        if speed <= 0.0:
+            return jsonify({"ok": False, "error": "speed must be > 0"}), 400
         # Fire-and-forget with a stop flag tied to shared emergency_stop.
         stop_flag = threading.Event()
 
