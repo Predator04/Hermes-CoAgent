@@ -28,6 +28,7 @@ def _capture_image():
     import mss as _mss_mod
     from PIL import Image as _PILImage
 
+    image = None
     try:
         with _mss_mod.mss() as _sct:
             _mon = _sct.monitors[0]
@@ -42,6 +43,16 @@ def _capture_image():
         except Exception:
             from PIL import ImageGrab
             image = ImageGrab.grab()
+    except Exception:
+        pass
+    if image is None:
+        try:
+            from PIL import ImageGrab
+            image = ImageGrab.grab()
+        except Exception:
+            pass
+    if image is None:
+        raise RuntimeError("All screenshot capture methods failed")
     return image.convert("RGB")
 
 
