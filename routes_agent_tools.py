@@ -262,8 +262,10 @@ def register_routes(app, state, require_auth):
 
         # Step 3: Click
         center = found.get("center", {})
-        cx = int(center.get("x") or found.get("x", 0) + found.get("width", 0) // 2)
-        cy = int(center.get("y") or found.get("y", 0) + found.get("height", 0) // 2)
+        cx_val = center.get("x")
+        cy_val = center.get("y")
+        cx = int(cx_val if cx_val is not None else (found.get("x", 0) + found.get("width", 0) // 2))
+        cy = int(cy_val if cy_val is not None else (found.get("y", 0) + found.get("height", 0) // 2))
 
         click_ok = False
         click_error = None
