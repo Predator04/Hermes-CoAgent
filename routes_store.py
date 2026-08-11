@@ -65,7 +65,8 @@ def _load_settings():
     if SETTINGS_FILE.exists():
         try:
             return {**DEFAULT_SETTINGS, **_json.loads(SETTINGS_FILE.read_text())}
-        except: pass
+        except Exception as e:
+            _log(f"[store] Failed to parse settings JSON: {e}")
     return dict(DEFAULT_SETTINGS)
 
 def _save_settings(s):
@@ -984,8 +985,9 @@ def list_products():
                 "created_at": p.get("created_at"),
                 "images": len(p.get("generated_images", [])),
             })
-        except: pass
-    
+        except Exception as e:
+            _log(f"[store] Failed to parse product JSON {f.name}: {e}")
+
     return jsonify({"success": True, "products": products, "total": len(products)})
 
 @store_bp.route("/store/products/<product_id>", methods=["GET"])

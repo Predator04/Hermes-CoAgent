@@ -295,10 +295,7 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_auto_vssadmin_delete_shadows():
         """Delete volume shadow copies. Optionally specify volume and shadow copy ID."""
-        try:
-            body = _json_body()
-        except Exception:
-            return jsonify({"ok": False, "error": _missing_field("Request body")}), 400
+        body = _json_body()
         try:
             args = ["delete", "shadows"]
             vol = (body.get("volume") or "").strip()
@@ -364,16 +361,13 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_auto_vssadmin_resize_storage():
         """Resize shadow copy storage for a volume."""
-        try:
-            body = _json_body()
-        except Exception:
-            return jsonify({"ok": False, "error": _missing_field("Request body")}), 400
+        body = _json_body()
         volume = (body.get("volume") or "").strip()
         if not volume:
-            return jsonify({"ok": False, "error": _missing_field("volume")}), 400
+            return _missing_field("volume")
         max_size = (body.get("max_size") or "").strip()
         if not max_size:
-            return jsonify({"ok": False, "error": _missing_field("max_size")}), 400
+            return _missing_field("max_size")
         try:
             output = _run_vssadmin(
                 ["resize", "shadowstorage", f"/For={volume}", f"/On={volume}", f"/MaxSize={max_size}"],

@@ -275,7 +275,7 @@ def register_auth_routes(app):
             return jsonify({'error': 'No token set'}), 500
         return jsonify({
             'auth': True,
-            'token': token,
+            'token': f"{token[:4]}...{token[-4:]}",
         })
 
     @app.route('/auth/token/reset', methods=['POST'])
@@ -329,7 +329,7 @@ def register_auth_routes(app):
         suf = new_token[-8:]
         return jsonify({
             "message": "Token regenerated successfully",
-            "token": new_token,
+            "token": f"{new_token[:4]}...{new_token[-4:]}",
             "token_preview": f"{pre}...{suf}",
         })
 

@@ -133,7 +133,7 @@ def register_routes(app, state, require_auth):
         algorithm = (body.get("algorithm") or "SHA256").strip().upper()
 
         if not filepath:
-            return jsonify({"ok": False, "error": _missing_field("file")}), 400
+            return _missing_field("file")
         if algorithm not in HASH_ALGOS:
             return jsonify({
                 "ok": False,
@@ -186,7 +186,7 @@ def register_routes(app, state, require_auth):
 
         filepath = (body.get("file") or "").strip()
         if not filepath:
-            return jsonify({"ok": False, "error": _missing_field("file")}), 400
+            return _missing_field("file")
 
         # Convert WSL path to Windows path if needed
         if filepath.startswith("/mnt/"):
@@ -242,7 +242,7 @@ def register_routes(app, state, require_auth):
 
         encoded_file = (body.get("encoded_file") or "").strip()
         if not encoded_file:
-            return jsonify({"ok": False, "error": _missing_field("encoded_file")}), 400
+            return _missing_field("encoded_file")
 
         output_file = (body.get("output_file") or "").strip()
         if not output_file:
@@ -320,7 +320,7 @@ def register_routes(app, state, require_auth):
         output_file = (body.get("output_file") or "").strip()
 
         if not inf_file:
-            return jsonify({"ok": False, "error": _missing_field("inf_file")}), 400
+            return _missing_field("inf_file")
 
         args = ["-newreq"]
         if output_file:

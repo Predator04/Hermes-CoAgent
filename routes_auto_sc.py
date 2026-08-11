@@ -279,7 +279,7 @@ def register_routes(app, state, require_auth):
             from flask import request
             name = request.args.get("name", "")
         except Exception:
-            return jsonify({"ok": False, "error": _missing_field("name (query param)")}), 400
+            return _missing_field("name (query param)")
 
         try:
             name = _clean_service_name(name)
@@ -440,7 +440,7 @@ def register_routes(app, state, require_auth):
             from flask import request
             name = request.args.get("name", "")
         except Exception:
-            return jsonify({"ok": False, "error": _missing_field("name (query param)")}), 400
+            return _missing_field("name (query param)")
 
         try:
             name = _clean_service_name(name)

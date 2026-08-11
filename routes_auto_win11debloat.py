@@ -188,10 +188,7 @@ def register_routes(app, state, require_auth):
 
         Body: { "confirm": true, "params": ["-RemoveApps", "-DisableTelemetry", ...] }
         """
-        try:
-            body = _json_body()
-        except Exception:
-            return jsonify({"ok": False, "error": _missing_field("Request body")}), 400
+        body = _json_body()
 
         confirm = body.get("confirm", False)
         if not confirm:
@@ -202,7 +199,7 @@ def register_routes(app, state, require_auth):
 
         params = body.get("params", [])
         if not params:
-            return jsonify({"ok": False, "error": _missing_field("params")}), 400
+            return _missing_field("params")
 
         if not isinstance(params, list):
             return jsonify({"ok": False, "error": "params must be a list of strings"}), 400

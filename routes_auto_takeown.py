@@ -113,7 +113,7 @@ def register_routes(app, state, require_auth):
 
         filepath = body.get("path", "").strip()
         if not filepath:
-            return jsonify({"ok": False, "error": _missing_field("path")}), 400
+            return _missing_field("path")
 
         args = ["/F", filepath]
 

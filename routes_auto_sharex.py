@@ -209,14 +209,11 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_auto_sharex_upload():
         """Upload a file using ShareX or Python fallback (simulate)."""
-        try:
-            body = _json_body()
-        except Exception:
-            return jsonify({"ok": False, "error": _missing_field("Request body")}), 400
+        body = _json_body()
 
         file_path = body.get("file", "")
         if not file_path:
-            return jsonify({"ok": False, "error": _missing_field("file")}), 400
+            return _missing_field("file")
 
         if not os.path.isfile(file_path):
             return jsonify({"ok": False, "error": f"File not found: {file_path}"}), 400
@@ -254,16 +251,13 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_auto_sharex_hash():
         """Compute file hash using ShareX or Python fallback."""
-        try:
-            body = _json_body()
-        except Exception:
-            return jsonify({"ok": False, "error": _missing_field("Request body")}), 400
+        body = _json_body()
 
         file_path = body.get("file", "")
         algorithm = body.get("algorithm", "sha256").lower()
 
         if not file_path:
-            return jsonify({"ok": False, "error": _missing_field("file")}), 400
+            return _missing_field("file")
 
         if not os.path.isfile(file_path):
             return jsonify({"ok": False, "error": f"File not found: {file_path}"}), 400
@@ -340,14 +334,11 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_auto_sharex_image_editor():
         """Open image in ShareX image editor or provide Python Pillow fallback info."""
-        try:
-            body = _json_body()
-        except Exception:
-            return jsonify({"ok": False, "error": _missing_field("Request body")}), 400
+        body = _json_body()
 
         file_path = body.get("file", "")
         if not file_path:
-            return jsonify({"ok": False, "error": _missing_field("file")}), 400
+            return _missing_field("file")
 
         if not os.path.isfile(file_path):
             return jsonify({"ok": False, "error": f"File not found: {file_path}"}), 400
@@ -392,14 +383,11 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_auto_sharex_ocr():
         """Run OCR on an image using ShareX or Python fallback (pytesseract)."""
-        try:
-            body = _json_body()
-        except Exception:
-            return jsonify({"ok": False, "error": _missing_field("Request body")}), 400
+        body = _json_body()
 
         file_path = body.get("file", "")
         if not file_path:
-            return jsonify({"ok": False, "error": _missing_field("file")}), 400
+            return _missing_field("file")
 
         if not os.path.isfile(file_path):
             return jsonify({"ok": False, "error": f"File not found: {file_path}"}), 400
@@ -440,14 +428,11 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_auto_sharex_metadata():
         """Extract file metadata using ShareX or Python fallback."""
-        try:
-            body = _json_body()
-        except Exception:
-            return jsonify({"ok": False, "error": _missing_field("Request body")}), 400
+        body = _json_body()
 
         file_path = body.get("file", "")
         if not file_path:
-            return jsonify({"ok": False, "error": _missing_field("file")}), 400
+            return _missing_field("file")
 
         if not os.path.isfile(file_path):
             return jsonify({"ok": False, "error": f"File not found: {file_path}"}), 400

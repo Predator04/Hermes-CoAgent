@@ -198,13 +198,10 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_auto_dism_feature_enable():
         """Enable a Windows feature by name."""
-        try:
-            body = _json_body()
-        except Exception:
-            return jsonify({"ok": False, "error": _missing_field("Request body")}), 400
+        body = _json_body()
         name = (body.get("name") or "").strip()
         if not name:
-            return jsonify({"ok": False, "error": _missing_field("name")}), 400
+            return _missing_field("name")
         try:
             output = _run_dism(
                 ["/online", "/Enable-Feature", f"/FeatureName:{name}", "/All"],
@@ -218,13 +215,10 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_auto_dism_feature_disable():
         """Disable a Windows feature by name."""
-        try:
-            body = _json_body()
-        except Exception:
-            return jsonify({"ok": False, "error": _missing_field("Request body")}), 400
+        body = _json_body()
         name = (body.get("name") or "").strip()
         if not name:
-            return jsonify({"ok": False, "error": _missing_field("name")}), 400
+            return _missing_field("name")
         try:
             output = _run_dism(
                 ["/online", "/Disable-Feature", f"/FeatureName:{name}", "/Remove"],
@@ -238,13 +232,10 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_auto_dism_feature_state():
         """Get detailed state of a specific Windows feature."""
-        try:
-            body = _json_body()
-        except Exception:
-            return jsonify({"ok": False, "error": _missing_field("Request body")}), 400
+        body = _json_body()
         name = (body.get("name") or "").strip()
         if not name:
-            return jsonify({"ok": False, "error": _missing_field("name")}), 400
+            return _missing_field("name")
         try:
             output = _run_dism(
                 ["/online", "/Get-FeatureInfo", f"/FeatureName:{name}"],

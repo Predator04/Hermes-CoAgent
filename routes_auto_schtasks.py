@@ -141,7 +141,7 @@ def register_routes(app, state, require_auth):
             verbose = False
 
         if not task_name:
-            return jsonify({"ok": False, "error": _missing_field("task (query param)")}), 400
+            return _missing_field("task (query param)")
 
         args = ["Query", "/V", "/FO", "LIST", "/TN", task_name]
         if not verbose:
@@ -194,7 +194,7 @@ def register_routes(app, state, require_auth):
 
         task_name = body.get("task", "").strip()
         if not task_name:
-            return jsonify({"ok": False, "error": _missing_field("task")}), 400
+            return _missing_field("task")
 
         try:
             stdout, stderr, rc = _run_schtasks(["/Run", "/TN", task_name], timeout=30)
@@ -223,7 +223,7 @@ def register_routes(app, state, require_auth):
 
         task_name = body.get("task", "").strip()
         if not task_name:
-            return jsonify({"ok": False, "error": _missing_field("task")}), 400
+            return _missing_field("task")
 
         try:
             stdout, stderr, rc = _run_schtasks(["/End", "/TN", task_name], timeout=15)
@@ -254,7 +254,7 @@ def register_routes(app, state, require_auth):
         force = body.get("force", True)
 
         if not task_name:
-            return jsonify({"ok": False, "error": _missing_field("task")}), 400
+            return _missing_field("task")
 
         args = ["/Delete", "/TN", task_name, "/F"]
         if not force:
@@ -291,9 +291,9 @@ def register_routes(app, state, require_auth):
         interval = body.get("interval", 1)
 
         if not task_name:
-            return jsonify({"ok": False, "error": _missing_field("task")}), 400
+            return _missing_field("task")
         if not program:
-            return jsonify({"ok": False, "error": _missing_field("program")}), 400
+            return _missing_field("program")
 
         try:
             interval = int(interval)
@@ -341,9 +341,9 @@ def register_routes(app, state, require_auth):
         interval_days = body.get("interval_days", 1)
 
         if not task_name:
-            return jsonify({"ok": False, "error": _missing_field("task")}), 400
+            return _missing_field("task")
         if not program:
-            return jsonify({"ok": False, "error": _missing_field("program")}), 400
+            return _missing_field("program")
 
         try:
             interval = int(interval_days)
@@ -389,9 +389,9 @@ def register_routes(app, state, require_auth):
         delay = body.get("delay", "PT0M").strip()
 
         if not task_name:
-            return jsonify({"ok": False, "error": _missing_field("task")}), 400
+            return _missing_field("task")
         if not program:
-            return jsonify({"ok": False, "error": _missing_field("program")}), 400
+            return _missing_field("program")
 
         args = [
             "/Create", "/SC", "ONSTART",

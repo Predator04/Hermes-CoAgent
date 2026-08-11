@@ -200,7 +200,7 @@ def register_routes(app, state, require_auth):
             from flask import request
             target = request.args.get("path", "")
         except Exception:
-            return jsonify({"ok": False, "error": _missing_field("path (query param)")}), 400
+            return _missing_field("path (query param)")
 
         try:
             target = _clean_path(target)

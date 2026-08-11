@@ -117,7 +117,7 @@ def register_routes(app, state, require_auth):
             return jsonify({"ok": False, "error": str(e)}), 400
 
         if not query:
-            return jsonify({"ok": False, "error": _missing_field("query")}), 400
+            return _missing_field("query")
 
         exe = _find_choco()
         if not exe:

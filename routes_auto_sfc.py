@@ -161,13 +161,10 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_auto_sfc_verifyfile():
         """Verify a specific file's integrity (must be a protected system file)."""
-        try:
-            body = _json_body()
-        except Exception:
-            return jsonify({"ok": False, "error": _missing_field("Request body")}), 400
+        body = _json_body()
         filepath = (body.get("file") or "").strip()
         if not filepath:
-            return jsonify({"ok": False, "error": _missing_field("file")}), 400
+            return _missing_field("file")
         if len(filepath) > 260:
             return jsonify({"ok": False, "error": "File path too long (max 260 chars)"}), 400
         try:

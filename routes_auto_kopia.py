@@ -249,10 +249,7 @@ def register_routes(app, state, require_auth):
           - password: repository password (highly recommended to set)
           - hostname: optional hostname to use for snapshots
         """
-        try:
-            body = _json_body()
-        except Exception:
-            return jsonify({"ok": False, "error": _missing_field("Request body")}), 400
+        body = _json_body()
 
         storage_type = (body.get("storage_type") or "filesystem").strip().lower()
         location = (body.get("path_or_bucket") or body.get("location") or "").strip()
@@ -277,7 +274,7 @@ def register_routes(app, state, require_auth):
 
         exe = _find_kopia()
         if not exe:
-            return jsonify({"ok": False, "error": _missing_field("kopia not found")}), 503
+            return _missing_field("kopia not found")
 
         try:
             result = subprocess.run(
@@ -313,10 +310,7 @@ def register_routes(app, state, require_auth):
           - max_revision_size: optional max per-revision size
           - hostname: optional hostname
         """
-        try:
-            body = _json_body()
-        except Exception:
-            return jsonify({"ok": False, "error": _missing_field("Request body")}), 400
+        body = _json_body()
 
         storage_type = (body.get("storage_type") or "filesystem").strip().lower()
         location = (body.get("path_or_bucket") or body.get("location") or "").strip()
@@ -375,10 +369,7 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_auto_kopia_maintenance_run():
         """Run kopia maintenance tasks (blob cleanup, data migration, etc.)."""
-        try:
-            body = _json_body()
-        except Exception:
-            return jsonify({"ok": False, "error": _missing_field("Request body")}), 400
+        body = _json_body()
 
         full = body.get("full", False)
         safe = body.get("safe", True)
@@ -413,10 +404,7 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_auto_kopia_repository_disconnect():
         """Disconnect from the current kopia repository (requires confirmation)."""
-        try:
-            body = _json_body()
-        except Exception:
-            return jsonify({"ok": False, "error": _missing_field("Request body")}), 400
+        body = _json_body()
 
         confirm = body.get("confirm", False)
         if not confirm:

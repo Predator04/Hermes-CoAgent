@@ -102,7 +102,7 @@ def register_routes(app, state, require_auth):
 
         subcommand = body.get("subcommand", "").strip().lower()
         if not subcommand:
-            return jsonify({"ok": False, "error": _missing_field("subcommand")}), 400
+            return _missing_field("subcommand")
         if subcommand not in ALLOWED_SUBCOMMANDS["fsinfo"]:
             return jsonify({"ok": False, "error": f"invalid fsinfo subcommand: {subcommand}"}), 400
 
@@ -171,11 +171,11 @@ def register_routes(app, state, require_auth):
         file_path = body.get("path", "").strip()
 
         if not subcommand:
-            return jsonify({"ok": False, "error": _missing_field("subcommand")}), 400
+            return _missing_field("subcommand")
         if subcommand not in ALLOWED_SUBCOMMANDS["file"]:
             return jsonify({"ok": False, "error": f"invalid file subcommand: {subcommand}"}), 400
         if not file_path:
-            return jsonify({"ok": False, "error": _missing_field("path")}), 400
+            return _missing_field("path")
 
         args = ["file", subcommand, file_path]
 
@@ -255,14 +255,14 @@ def register_routes(app, state, require_auth):
             filename = body.get("filename", "").strip()
             newpath = body.get("newpath", "").strip()
             if not filename:
-                return jsonify({"ok": False, "error": _missing_field("filename")}), 400
+                return _missing_field("filename")
             if not newpath:
-                return jsonify({"ok": False, "error": _missing_field("newpath")}), 400
+                return _missing_field("newpath")
             args = ["hardlink", "create", newpath, filename]
         else:  # list
             filename = body.get("filename", "").strip()
             if not filename:
-                return jsonify({"ok": False, "error": _missing_field("filename")}), 400
+                return _missing_field("filename")
             args = ["hardlink", "list", filename]
 
         try:

@@ -153,7 +153,7 @@ def register_routes(app, state, require_auth):
 
         path = body.get("path", "")
         if not path:
-            return jsonify({"ok": False, "error": _missing_field("path")}), 400
+            return _missing_field("path")
 
         try:
             safe_path = _safe_path(path)
@@ -205,7 +205,7 @@ def register_routes(app, state, require_auth):
         options = body.get("options", "")
 
         if not source or not dest:
-            return jsonify({"ok": False, "error": _missing_field("source and dest")}), 400
+            return _missing_field("source and dest")
 
         try:
             safe_source = _safe_path(source)
@@ -275,7 +275,7 @@ def register_routes(app, state, require_auth):
         metric = body.get("metric", "AE")
 
         if not ref or not test:
-            return jsonify({"ok": False, "error": _missing_field("reference and test")}), 400
+            return _missing_field("reference and test")
 
         try:
             safe_ref = _safe_path(ref)
@@ -331,9 +331,9 @@ def register_routes(app, state, require_auth):
         keep_aspect = body.get("keep_aspect", True)
 
         if not source or not output:
-            return jsonify({"ok": False, "error": _missing_field("source and output")}), 400
+            return _missing_field("source and output")
         if not width and not height:
-            return jsonify({"ok": False, "error": _missing_field("width and/or height")}), 400
+            return _missing_field("width and/or height")
 
         try:
             safe_source = _safe_path(source)

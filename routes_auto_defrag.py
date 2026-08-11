@@ -93,7 +93,7 @@ def register_routes(app, state, require_auth):
 
         volumes = body.get("volumes", "")
         if not volumes:
-            return jsonify({"ok": False, "error": _missing_field("volumes")}), 400
+            return _missing_field("volumes")
 
         args = []
         if isinstance(volumes, list):
@@ -153,7 +153,7 @@ def register_routes(app, state, require_auth):
 
         volumes = body.get("volumes", "")
         if not volumes:
-            return jsonify({"ok": False, "error": _missing_field("volumes")}), 400
+            return _missing_field("volumes")
 
         args = []
         if isinstance(volumes, list):
@@ -227,7 +227,7 @@ def register_routes(app, state, require_auth):
 
         volume = body.get("volume", "").strip()
         if not volume:
-            return jsonify({"ok": False, "error": _missing_field("volume")}), 400
+            return _missing_field("volume")
 
         args = [volume, "/T", "/U"]
 

@@ -113,13 +113,10 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_auto_wevtutil_log_info():
         """Get metadata for a specific event log (path, max size, retention, etc.)."""
-        try:
-            body = _json_body()
-        except Exception:
-            return jsonify({"ok": False, "error": _missing_field("Request body")}), 400
+        body = _json_body()
         logname = (body.get("log") or "").strip()
         if not logname:
-            return jsonify({"ok": False, "error": _missing_field("log")}), 400
+            return _missing_field("log")
         try:
             output = _run_wevtutil(["gl", logname], timeout=15)
             return jsonify({"ok": True, "log": logname, "metadata": output})
@@ -130,13 +127,10 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_auto_wevtutil_query():
         """Query events from a log with optional filters."""
-        try:
-            body = _json_body()
-        except Exception:
-            return jsonify({"ok": False, "error": _missing_field("Request body")}), 400
+        body = _json_body()
         logname = (body.get("log") or "").strip()
         if not logname:
-            return jsonify({"ok": False, "error": _missing_field("log")}), 400
+            return _missing_field("log")
         xpath = (body.get("xpath") or "").strip()
         max_events = int(body.get("max_events", 50))
         if max_events < 1:
@@ -163,16 +157,13 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_auto_wevtutil_export():
         """Export event log to an evtx file."""
-        try:
-            body = _json_body()
-        except Exception:
-            return jsonify({"ok": False, "error": _missing_field("Request body")}), 400
+        body = _json_body()
         logname = (body.get("log") or "").strip()
         export_path = (body.get("path") or "").strip()
         if not logname:
-            return jsonify({"ok": False, "error": _missing_field("log")}), 400
+            return _missing_field("log")
         if not export_path:
-            return jsonify({"ok": False, "error": _missing_field("path")}), 400
+            return _missing_field("path")
         if len(export_path) > 260:
             return jsonify({"ok": False, "error": "Export path too long (max 260 chars)"}), 400
         try:
@@ -185,13 +176,10 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_auto_wevtutil_clear():
         """Clear all events from a log (and optionally save backup)."""
-        try:
-            body = _json_body()
-        except Exception:
-            return jsonify({"ok": False, "error": _missing_field("Request body")}), 400
+        body = _json_body()
         logname = (body.get("log") or "").strip()
         if not logname:
-            return jsonify({"ok": False, "error": _missing_field("log")}), 400
+            return _missing_field("log")
         backup_path = (body.get("backup") or "").strip()
         try:
             args = ["cl", logname]
@@ -241,17 +229,14 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_auto_wevtutil_archive():
         """Archive a log: export to evtx then optionally clear the original."""
-        try:
-            body = _json_body()
-        except Exception:
-            return jsonify({"ok": False, "error": _missing_field("Request body")}), 400
+        body = _json_body()
         logname = (body.get("log") or "").strip()
         archive_path = (body.get("path") or "").strip()
         clear_after = body.get("clear", False)
         if not logname:
-            return jsonify({"ok": False, "error": _missing_field("log")}), 400
+            return _missing_field("log")
         if not archive_path:
-            return jsonify({"ok": False, "error": _missing_field("path")}), 400
+            return _missing_field("path")
         try:
             export_output = _run_wevtutil(["epl", logname, archive_path], timeout=60)
             result = {"ok": True, "log": logname, "archive_path": archive_path}

@@ -202,7 +202,7 @@ def register_routes(app, state, require_auth):
 
         guid = body.get("guid", "").strip()
         if not guid:
-            return jsonify({"ok": False, "error": _missing_field("guid")}), 400
+            return _missing_field("guid")
 
         # Basic GUID validation
         guid_pattern = r"^\{?[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\}?$"
@@ -279,7 +279,7 @@ def register_routes(app, state, require_auth):
 
         enable = body.get("enable", None)
         if enable is None:
-            return jsonify({"ok": False, "error": _missing_field("enable")}), 400
+            return _missing_field("enable")
 
         try:
             action = "/H" if body.get("mode", "").lower() in ("on", "enable", "yes", "1", "true") else "/H OFF"

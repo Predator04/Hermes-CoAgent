@@ -120,10 +120,7 @@ def register_routes(app, state, require_auth):
         Options:
           - trust_store: "system" (default), "nss" (Firefox), "java", or "all"
         """
-        try:
-            body = _json_body()
-        except Exception:
-            return jsonify({"ok": False, "error": _missing_field("Request body")}), 400
+        body = _json_body()
 
         trust_store = (body.get("trust_store") or "system").strip().lower()
         valid_stores = ("system", "nss", "java", "all")
@@ -184,14 +181,11 @@ def register_routes(app, state, require_auth):
           - p12: if true, also export as PKCS12 (default: false)
           - ec: if true, use ECDSA key (default: false)
         """
-        try:
-            body = _json_body()
-        except Exception:
-            return jsonify({"ok": False, "error": _missing_field("Request body")}), 400
+        body = _json_body()
 
         domains = body.get("domains")
         if not domains or not isinstance(domains, list) or len(domains) == 0:
-            return jsonify({"ok": False, "error": _missing_field("domains (list, min 1)")}), 400
+            return _missing_field("domains (list, min 1)")
 
         for d in domains:
             if not isinstance(d, str) or not d.strip():
@@ -273,10 +267,7 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_auto_mkcert_uninstall_ca():
         """Uninstall the local CA from trust stores (requires confirmation)."""
-        try:
-            body = _json_body()
-        except Exception:
-            return jsonify({"ok": False, "error": _missing_field("Request body")}), 400
+        body = _json_body()
 
         confirm = body.get("confirm", False)
         if not confirm:

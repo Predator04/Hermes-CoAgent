@@ -174,7 +174,7 @@ def register_routes(app, state, require_auth):
 
         key = (body.get("key") or "").strip()
         if not key:
-            return jsonify({"ok": False, "error": _missing_field("key")}), 400
+            return _missing_field("key")
         if not _validate_hive_path(key):
             return jsonify({"ok": False, "error": "invalid registry path"}), 400
 
@@ -221,7 +221,7 @@ def register_routes(app, state, require_auth):
 
         key = (body.get("key") or "").strip()
         if not key:
-            return jsonify({"ok": False, "error": _missing_field("key")}), 400
+            return _missing_field("key")
         if not _validate_hive_path(key):
             return jsonify({"ok": False, "error": "invalid registry path"}), 400
 
@@ -278,7 +278,7 @@ def register_routes(app, state, require_auth):
 
         key = (body.get("key") or "").strip()
         if not key:
-            return jsonify({"ok": False, "error": _missing_field("key")}), 400
+            return _missing_field("key")
         if not _validate_hive_path(key):
             return jsonify({"ok": False, "error": "invalid registry path"}), 400
 
@@ -328,7 +328,7 @@ def register_routes(app, state, require_auth):
 
         key = (body.get("key") or "").strip()
         if not key:
-            return jsonify({"ok": False, "error": _missing_field("key")}), 400
+            return _missing_field("key")
         if not _validate_hive_path(key):
             return jsonify({"ok": False, "error": "invalid registry path"}), 400
 
@@ -380,7 +380,11 @@ def register_routes(app, state, require_auth):
         key1 = (body.get("key1") or "").strip()
         key2 = (body.get("key2") or "").strip()
         if not key1 or not key2:
-            return jsonify({"ok": False, "error": _missing_field("key1 and key2")}), 400
+            return _missing_field("key1 and key2")
+        if not _validate_hive_path(key1):
+            return jsonify({"ok": False, "error": "invalid registry path for key1"}), 400
+        if not _validate_hive_path(key2):
+            return jsonify({"ok": False, "error": "invalid registry path for key2"}), 400
 
         try:
             args = ["compare", key1, key2]

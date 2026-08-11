@@ -454,7 +454,7 @@ def register_routes(app, state, require_auth):
 
         cid = str(class_id or "").strip()
         if not cid:
-            return jsonify({"ok": False, "error": _missing_field("class_id")}), 400
+            return _missing_field("class_id")
         if len(cid) > 256:
             return jsonify({"ok": False, "error": "class_id too long (max 256 chars)"}), 400
 

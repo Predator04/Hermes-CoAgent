@@ -198,13 +198,10 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_auto_bitsadmin_job_info():
         """Get detailed info about a specific BITS job by name or GUID."""
-        try:
-            body = _json_body()
-        except Exception:
-            return jsonify({"ok": False, "error": _missing_field("Request body")}), 400
+        body = _json_body()
         job_id = (body.get("job_id") or "").strip()
         if not job_id:
-            return jsonify({"ok": False, "error": _missing_field("job_id")}), 400
+            return _missing_field("job_id")
         try:
             output = _run_bitsadmin(["/INFO", job_id, "/VERBOSE"], timeout=15)
             info = _parse_job_info(output)
@@ -219,13 +216,10 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_auto_bitsadmin_job_create():
         """Create a new BITS transfer job."""
-        try:
-            body = _json_body()
-        except Exception:
-            return jsonify({"ok": False, "error": _missing_field("Request body")}), 400
+        body = _json_body()
         name = (body.get("name") or "").strip()
         if not name:
-            return jsonify({"ok": False, "error": _missing_field("name")}), 400
+            return _missing_field("name")
         job_type = (body.get("type") or "download").strip().lower()
         if job_type not in ("download", "upload", "upload_reply"):
             return jsonify({"ok": False, "error": f"Invalid type '{job_type}'. Must be 'download', 'upload', or 'upload_reply'"}), 400
@@ -240,19 +234,16 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_auto_bitsadmin_job_add_file():
         """Add a file to an existing BITS job."""
-        try:
-            body = _json_body()
-        except Exception:
-            return jsonify({"ok": False, "error": _missing_field("Request body")}), 400
+        body = _json_body()
         job_id = (body.get("job_id") or "").strip()
         if not job_id:
-            return jsonify({"ok": False, "error": _missing_field("job_id")}), 400
+            return _missing_field("job_id")
         remote_url = (body.get("remote_url") or "").strip()
         if not remote_url:
-            return jsonify({"ok": False, "error": _missing_field("remote_url")}), 400
+            return _missing_field("remote_url")
         local_path = (body.get("local_path") or "").strip()
         if not local_path:
-            return jsonify({"ok": False, "error": _missing_field("local_path")}), 400
+            return _missing_field("local_path")
         try:
             output = _run_bitsadmin(["/ADDFILE", job_id, remote_url, local_path], timeout=15)
             return jsonify({
@@ -269,13 +260,10 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_auto_bitsadmin_job_resume():
         """Resume a suspended BITS job."""
-        try:
-            body = _json_body()
-        except Exception:
-            return jsonify({"ok": False, "error": _missing_field("Request body")}), 400
+        body = _json_body()
         job_id = (body.get("job_id") or "").strip()
         if not job_id:
-            return jsonify({"ok": False, "error": _missing_field("job_id")}), 400
+            return _missing_field("job_id")
         try:
             output = _run_bitsadmin(["/RESUME", job_id], timeout=15)
             return jsonify({"ok": True, "job_id": job_id, "output": output})
@@ -286,13 +274,10 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_auto_bitsadmin_job_suspend():
         """Suspend an active BITS job."""
-        try:
-            body = _json_body()
-        except Exception:
-            return jsonify({"ok": False, "error": _missing_field("Request body")}), 400
+        body = _json_body()
         job_id = (body.get("job_id") or "").strip()
         if not job_id:
-            return jsonify({"ok": False, "error": _missing_field("job_id")}), 400
+            return _missing_field("job_id")
         try:
             output = _run_bitsadmin(["/SUSPEND", job_id], timeout=15)
             return jsonify({"ok": True, "job_id": job_id, "output": output})
@@ -303,13 +288,10 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_auto_bitsadmin_job_cancel():
         """Cancel a BITS job."""
-        try:
-            body = _json_body()
-        except Exception:
-            return jsonify({"ok": False, "error": _missing_field("Request body")}), 400
+        body = _json_body()
         job_id = (body.get("job_id") or "").strip()
         if not job_id:
-            return jsonify({"ok": False, "error": _missing_field("job_id")}), 400
+            return _missing_field("job_id")
         try:
             output = _run_bitsadmin(["/CANCEL", job_id], timeout=15)
             return jsonify({"ok": True, "job_id": job_id, "output": output})
@@ -320,13 +302,10 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_auto_bitsadmin_job_complete():
         """Complete a transferred BITS job."""
-        try:
-            body = _json_body()
-        except Exception:
-            return jsonify({"ok": False, "error": _missing_field("Request body")}), 400
+        body = _json_body()
         job_id = (body.get("job_id") or "").strip()
         if not job_id:
-            return jsonify({"ok": False, "error": _missing_field("job_id")}), 400
+            return _missing_field("job_id")
         try:
             output = _run_bitsadmin(["/COMPLETE", job_id], timeout=15)
             return jsonify({"ok": True, "job_id": job_id, "output": output})
@@ -337,13 +316,10 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_auto_bitsadmin_job_files():
         """List files in a BITS job."""
-        try:
-            body = _json_body()
-        except Exception:
-            return jsonify({"ok": False, "error": _missing_field("Request body")}), 400
+        body = _json_body()
         job_id = (body.get("job_id") or "").strip()
         if not job_id:
-            return jsonify({"ok": False, "error": _missing_field("job_id")}), 400
+            return _missing_field("job_id")
         try:
             output = _run_bitsadmin(["/LISTFILES", job_id], timeout=15)
             return jsonify({"ok": True, "job_id": job_id, "output": output, "raw": output})
@@ -384,10 +360,7 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_auto_bitsadmin_cache_delete():
         """Delete items from BITS cache."""
-        try:
-            body = _json_body()
-        except Exception:
-            return jsonify({"ok": False, "error": _missing_field("Request body")}), 400
+        body = _json_body()
         record_id = (body.get("record_id") or "").strip()
         try:
             args = ["/CACHE", "/DELETE"]

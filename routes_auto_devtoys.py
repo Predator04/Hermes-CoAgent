@@ -128,14 +128,11 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_auto_devtoys_encode_base64():
         """Encode text to Base64 using DevToys CLI or Python fallback."""
-        try:
-            body = _json_body()
-        except Exception:
-            return jsonify({"ok": False, "error": _missing_field("Request body")}), 400
+        body = _json_body()
 
         text = body.get("text", "")
         if not text:
-            return jsonify({"ok": False, "error": _missing_field("text")}), 400
+            return _missing_field("text")
 
         cli = _find_devtoys_cli()
         if cli and cli.endswith("DevToys.CLI.exe"):
@@ -159,14 +156,11 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_auto_devtoys_decode_base64():
         """Decode Base64 to text using DevToys CLI or Python fallback."""
-        try:
-            body = _json_body()
-        except Exception:
-            return jsonify({"ok": False, "error": _missing_field("Request body")}), 400
+        body = _json_body()
 
         encoded = body.get("encoded", "")
         if not encoded:
-            return jsonify({"ok": False, "error": _missing_field("encoded")}), 400
+            return _missing_field("encoded")
 
         cli = _find_devtoys_cli()
         if cli and cli.endswith("DevToys.CLI.exe"):
@@ -193,15 +187,12 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_auto_devtoys_hash():
         """Generate hash of text using DevToys CLI or Python fallback."""
-        try:
-            body = _json_body()
-        except Exception:
-            return jsonify({"ok": False, "error": _missing_field("Request body")}), 400
+        body = _json_body()
 
         text = body.get("text", "")
         algorithm = body.get("algorithm", "sha256").lower()
         if not text:
-            return jsonify({"ok": False, "error": _missing_field("text")}), 400
+            return _missing_field("text")
 
         # List of supported algorithms
         supported = ["md5", "sha1", "sha256", "sha384", "sha512"]
@@ -239,15 +230,12 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_auto_devtoys_json_format():
         """Format/pretty-print JSON text using DevToys CLI or Python fallback."""
-        try:
-            body = _json_body()
-        except Exception:
-            return jsonify({"ok": False, "error": _missing_field("Request body")}), 400
+        body = _json_body()
 
         json_text = body.get("json", "")
         indent_size = body.get("indent", 2)
         if not json_text:
-            return jsonify({"ok": False, "error": _missing_field("json")}), 400
+            return _missing_field("json")
 
         cli = _find_devtoys_cli()
         if cli and cli.endswith("DevToys.CLI.exe"):

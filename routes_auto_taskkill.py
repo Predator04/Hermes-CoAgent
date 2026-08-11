@@ -117,15 +117,12 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_auto_taskkill_pid():
         """Kill a process by PID. Optionally force (-f) and kill subtree (-t)."""
-        try:
-            body = _json_body()
-        except Exception:
-            return jsonify({"ok": False, "error": _missing_field("Request body")}), 400
+        body = _json_body()
         pid = body.get("pid")
         force = bool(body.get("force", False))
         tree = bool(body.get("tree", False))
         if not pid:
-            return jsonify({"ok": False, "error": _missing_field("pid")}), 400
+            return _missing_field("pid")
         if not isinstance(pid, int) or isinstance(pid, bool):
             return jsonify({"ok": False, "error": f"Invalid pid: {pid} (must be an integer)"}), 400
         if pid <= 0:
@@ -153,15 +150,12 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_auto_taskkill_name():
         """Kill process(es) by image name (e.g., 'notepad.exe'). Optionally force and subtree."""
-        try:
-            body = _json_body()
-        except Exception:
-            return jsonify({"ok": False, "error": _missing_field("Request body")}), 400
+        body = _json_body()
         name = (body.get("name") or "").strip()
         force = bool(body.get("force", False))
         tree = bool(body.get("tree", False))
         if not name:
-            return jsonify({"ok": False, "error": _missing_field("name")}), 400
+            return _missing_field("name")
         if len(name) > 256:
             return jsonify({"ok": False, "error": "Image name too long (max 256 chars)"}), 400
         args = ["/im", name]
@@ -189,22 +183,27 @@ def register_routes(app, state, require_auth):
         """Kill processes matching one or more filters. Uses /fi parameters.
         Filter format: 'FILTERNAME eq VALUE' (e.g., 'USERNAME eq admin', 'STATUS eq running')
         Common filters: USERNAME, IMAGENAME, PID, SESSION, CPUTIME, MEMUSAGE, STATUS, WINDOWTITLE, SERVICES, MODULES"""
-        try:
-            body = _json_body()
-        except Exception:
-            return jsonify({"ok": False, "error": _missing_field("Request body")}), 400
+        body = _json_body()
         filters = body.get("filters")
         if not filters or not isinstance(filters, list):
-            return jsonify({"ok": False, "error": _missing_field("filters (list)")}), 400
+            return _missing_field("filters (list)")
         force = bool(body.get("force", False))
         tree = bool(body.get("tree", False))
         if len(filters) > 10:
             return jsonify({"ok": False, "error": "Maximum 10 filters allowed"}), 400
+        # Validate each filter: must be "FILTERNAME eq VALUE" or "FILTERNAME ne VALUE"
+        _filter_re = re.compile(
+            r'^(IMAGENAME|PID|SESSION|CPUTIME|MEMUSAGE|USERNAME|SERVICES|WINDOWTITLE|MODULES|STATUS)'
+            r'\s+(eq|ne|gt|lt|ge|le)\s+\S.*$',
+            re.IGNORECASE
+        )
         args = []
         for f in filters:
             f_str = str(f).strip()
             if not f_str:
                 continue
+            if not _filter_re.match(f_str):
+                return jsonify({"ok": False, "error": f"Invalid filter format: {f_str!r}. Expected: FILTERNAME eq VALUE"}), 400
             args.append("/fi")
             args.append(f_str)
         if not args:
@@ -234,13 +233,10 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_auto_taskkill_all():
         """Kill all processes by image name (wrapper for name endpoint with force+tree)."""
-        try:
-            body = _json_body()
-        except Exception:
-            return jsonify({"ok": False, "error": _missing_field("Request body")}), 400
+        body = _json_body()
         name = (body.get("name") or "").strip()
         if not name:
-            return jsonify({"ok": False, "error": _missing_field("name")}), 400
+            return _missing_field("name")
         if len(name) > 256:
             return jsonify({"ok": False, "error": "Image name too long (max 256 chars)"}), 400
         args = ["/im", name, "/f", "/t"]

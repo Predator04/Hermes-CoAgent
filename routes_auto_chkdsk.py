@@ -113,10 +113,7 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_auto_chkdsk_scan():
         """Run a read-only scan on a volume (no repair) — safe, non-destructive."""
-        try:
-            body = _json_body()
-        except Exception:
-            return jsonify({"ok": False, "error": _missing_field("Request body")}), 400
+        body = _json_body()
         volume = (body.get("volume") or "C:").strip().rstrip("\\")
         try:
             output = _run_chkdsk([volume], timeout=120)
@@ -129,10 +126,7 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_auto_chkdsk_repair():
         """Schedule a repair scan (/F) — may require volume dismount or next boot."""
-        try:
-            body = _json_body()
-        except Exception:
-            return jsonify({"ok": False, "error": _missing_field("Request body")}), 400
+        body = _json_body()
         volume = (body.get("volume") or "C:").strip().rstrip("\\")
         try:
             output = _run_chkdsk([volume, "/F"], timeout=300)
@@ -145,10 +139,7 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_auto_chkdsk_thorough():
         """Run a thorough scan (/R) — locates bad sectors and recovers readable info."""
-        try:
-            body = _json_body()
-        except Exception:
-            return jsonify({"ok": False, "error": _missing_field("Request body")}), 400
+        body = _json_body()
         volume = (body.get("volume") or "C:").strip().rstrip("\\")
         try:
             output = _run_chkdsk([volume, "/R"], timeout=600)
@@ -161,10 +152,7 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_auto_chkdsk_force_dismount():
         """Force dismount before scan (/X) — useful for non-system volumes."""
-        try:
-            body = _json_body()
-        except Exception:
-            return jsonify({"ok": False, "error": _missing_field("Request body")}), 400
+        body = _json_body()
         volume = (body.get("volume") or "D:").strip().rstrip("\\")
         try:
             output = _run_chkdsk([volume, "/X", "/F"], timeout=300)
@@ -177,10 +165,7 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_auto_chkdsk_schedule():
         """Schedule chkdsk to run on next boot (for system volumes in use)."""
-        try:
-            body = _json_body()
-        except Exception:
-            return jsonify({"ok": False, "error": _missing_field("Request body")}), 400
+        body = _json_body()
         volume = (body.get("volume") or "C:").strip().rstrip("\\")
         try:
             output = _run_chkdsk([volume, "/F", "/R", "/OfflineScanAndFix"], timeout=30)
@@ -192,22 +177,26 @@ def register_routes(app, state, require_auth):
     @app.route("/auto/chkdsk/volumes", methods=["GET"])
     @require_auth
     def route_auto_chkdsk_volumes():
-        """List available volumes by querying wmic or parsing mount points."""
+        """List available volumes via a single wmic logicaldisk query."""
         try:
-            import string
+            result = subprocess.run(
+                ["wmic", "logicaldisk", "get", "DeviceID,VolumeName,FileSystem,Size,FreeSpace", "/format:csv"],
+                capture_output=True, text=True, timeout=15,
+            )
             drives = []
-            for letter in string.ascii_uppercase:
-                vol = f"{letter}:"
-                if os.path.exists(vol):
-                    try:
-                        info = subprocess.run(
-                            ["cmd.exe", "/c", "vol", vol],
-                            capture_output=True, text=True, timeout=5
-                        )
-                        label = info.stdout.strip() if info.returncode == 0 else ""
-                    except (OSError, subprocess.TimeoutExpired):
-                        label = ""
-                    drives.append({"volume": vol, "label": label})
+            for line in result.stdout.splitlines():
+                line = line.strip()
+                if not line or line.startswith("Node") or line.startswith(","):
+                    continue
+                parts = line.split(",")
+                if len(parts) >= 3:
+                    drives.append({
+                        "volume": parts[1].strip() if len(parts) > 1 else "",
+                        "filesystem": parts[2].strip() if len(parts) > 2 else "",
+                        "free_bytes": parts[3].strip() if len(parts) > 3 else "",
+                        "size_bytes": parts[4].strip() if len(parts) > 4 else "",
+                        "label": parts[5].strip() if len(parts) > 5 else "",
+                    })
             return jsonify({"ok": True, "volumes": drives})
         except Exception as e:
             return jsonify({"ok": False, "error": str(e)}), 500

@@ -205,11 +205,10 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_auto_diskpart_list_partitions():
         """List partitions on a specific disk."""
-        try:
-            body = _json_body()
-        except Exception:
-            return jsonify({"ok": False, "error": _missing_field("Request body")}), 400
+        body = _json_body()
         disk_num = (body.get("disk") or "0").strip()
+        if not disk_num.isdigit():
+            return jsonify({"ok": False, "error": "disk must be a numeric index"}), 400
         try:
             output = _run_diskpart_script(
                 [f"select disk {disk_num}", "list partition", "exit"], timeout=15
@@ -223,11 +222,10 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_auto_diskpart_disk_detail():
         """Get detailed info about a specific disk."""
-        try:
-            body = _json_body()
-        except Exception:
-            return jsonify({"ok": False, "error": _missing_field("Request body")}), 400
+        body = _json_body()
         disk_num = (body.get("disk") or "0").strip()
+        if not disk_num.isdigit():
+            return jsonify({"ok": False, "error": "disk must be a numeric index"}), 400
         try:
             output = _run_diskpart_script(
                 [f"select disk {disk_num}", "detail disk", "exit"], timeout=15
@@ -240,14 +238,13 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_auto_diskpart_clean_disk():
         """Remove all partitions from a disk (DESTRUCTIVE — requires confirmation)."""
-        try:
-            body = _json_body()
-        except Exception:
-            return jsonify({"ok": False, "error": _missing_field("Request body")}), 400
+        body = _json_body()
         disk_num = (body.get("disk") or "").strip()
         confirm = body.get("confirm", False)
         if not disk_num:
-            return jsonify({"ok": False, "error": _missing_field("disk")}), 400
+            return _missing_field("disk")
+        if not disk_num.isdigit():
+            return jsonify({"ok": False, "error": "disk must be a numeric index"}), 400
         if not confirm:
             return jsonify({
                 "ok": False,
@@ -265,14 +262,13 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_auto_diskpart_convert_gpt():
         """Convert a disk from MBR to GPT (DESTRUCTIVE — requires confirmation)."""
-        try:
-            body = _json_body()
-        except Exception:
-            return jsonify({"ok": False, "error": _missing_field("Request body")}), 400
+        body = _json_body()
         disk_num = (body.get("disk") or "").strip()
         confirm = body.get("confirm", False)
         if not disk_num:
-            return jsonify({"ok": False, "error": _missing_field("disk")}), 400
+            return _missing_field("disk")
+        if not disk_num.isdigit():
+            return jsonify({"ok": False, "error": "disk must be a numeric index"}), 400
         if not confirm:
             return jsonify({
                 "ok": False,
@@ -290,15 +286,14 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_auto_diskpart_create_partition():
         """Create a new partition on a disk. Specify size in MB (optional)."""
-        try:
-            body = _json_body()
-        except Exception:
-            return jsonify({"ok": False, "error": _missing_field("Request body")}), 400
+        body = _json_body()
         disk_num = (body.get("disk") or "").strip()
         size_mb = body.get("size_mb")
         partition_type = body.get("type", "primary").strip().lower()
         if not disk_num:
-            return jsonify({"ok": False, "error": _missing_field("disk")}), 400
+            return _missing_field("disk")
+        if not disk_num.isdigit():
+            return jsonify({"ok": False, "error": "disk must be a numeric index"}), 400
         if partition_type not in ("primary", "extended", "logical"):
             partition_type = "primary"
         commands = [f"select disk {disk_num}"]
@@ -317,17 +312,16 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_auto_diskpart_format_volume():
         """Format a volume with specified filesystem (DESTRUCTIVE — requires confirmation)."""
-        try:
-            body = _json_body()
-        except Exception:
-            return jsonify({"ok": False, "error": _missing_field("Request body")}), 400
+        body = _json_body()
         volume_num = (body.get("volume") or "").strip()
         fs = (body.get("filesystem") or "NTFS").strip().upper()
         label = (body.get("label") or "").strip()
         quick = body.get("quick", True)
         confirm = body.get("confirm", False)
         if not volume_num:
-            return jsonify({"ok": False, "error": _missing_field("volume")}), 400
+            return _missing_field("volume")
+        if not volume_num.isdigit():
+            return jsonify({"ok": False, "error": "volume must be a numeric index"}), 400
         if not confirm:
             return jsonify({
                 "ok": False,
@@ -350,14 +344,13 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_auto_diskpart_assign_letter():
         """Assign a drive letter to a volume."""
-        try:
-            body = _json_body()
-        except Exception:
-            return jsonify({"ok": False, "error": _missing_field("Request body")}), 400
+        body = _json_body()
         volume_num = (body.get("volume") or "").strip()
         letter = (body.get("letter") or "").strip().upper().replace(":", "")
         if not volume_num:
-            return jsonify({"ok": False, "error": _missing_field("volume")}), 400
+            return _missing_field("volume")
+        if not volume_num.isdigit():
+            return jsonify({"ok": False, "error": "volume must be a numeric index"}), 400
         if not letter or len(letter) != 1 or letter not in "ABCDEFGHIJKLMNOPQRSTUVWXYZ":
             return jsonify({"ok": False, "error": "Invalid drive letter"}), 400
         try:
@@ -372,14 +365,13 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_auto_diskpart_remove_letter():
         """Remove a drive letter from a volume (make it hidden)."""
-        try:
-            body = _json_body()
-        except Exception:
-            return jsonify({"ok": False, "error": _missing_field("Request body")}), 400
+        body = _json_body()
         volume_num = (body.get("volume") or "").strip()
         letter = (body.get("letter") or "").strip().upper().replace(":", "")
         if not volume_num:
-            return jsonify({"ok": False, "error": _missing_field("volume")}), 400
+            return _missing_field("volume")
+        if not volume_num.isdigit():
+            return jsonify({"ok": False, "error": "volume must be a numeric index"}), 400
         if not letter or len(letter) != 1 or letter not in "ABCDEFGHIJKLMNOPQRSTUVWXYZ":
             return jsonify({"ok": False, "error": "Invalid drive letter"}), 400
         try:
