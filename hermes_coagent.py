@@ -819,6 +819,13 @@ except ImportError:
     TEMPLATE_AVAILABLE = False
     _console("[WARN] routes_template.py not found")
 
+try:
+    from routes_vision import register_routes as reg_vision
+    VISION_AVAILABLE = True
+except ImportError:
+    VISION_AVAILABLE = False
+    _console("[WARN] routes_vision.py not found")
+
 # Telemetry module
 try:
     from telemetry import telem_bp, init_telem
@@ -1134,6 +1141,9 @@ if CEF_AVAILABLE:
 if TEMPLATE_AVAILABLE:
     reg_template(app, state, require_auth)
     features["template_matching"] = True
+if VISION_AVAILABLE:
+    reg_vision(app, state, require_auth)
+    features["vision_detection"] = True
 
 features["web_dashboard_overhaul"] = True
 features["mcp_mode"] = True
