@@ -812,6 +812,13 @@ except ImportError:
     CEF_AVAILABLE = False
     _console("[WARN] routes_cef.py not found")
 
+try:
+    from routes_template import register_routes as reg_template
+    TEMPLATE_AVAILABLE = True
+except ImportError:
+    TEMPLATE_AVAILABLE = False
+    _console("[WARN] routes_template.py not found")
+
 # Telemetry module
 try:
     from telemetry import telem_bp, init_telem
@@ -1124,6 +1131,9 @@ reg_layout(app, state, require_auth); features["layout_profiles"] = True
 if CEF_AVAILABLE:
     reg_cef(app, state, require_auth)
     features["cef_support"] = True
+if TEMPLATE_AVAILABLE:
+    reg_template(app, state, require_auth)
+    features["template_matching"] = True
 
 features["web_dashboard_overhaul"] = True
 features["mcp_mode"] = True
