@@ -95,11 +95,11 @@ def _run_win11debloat_script(params, timeout=120):
 
     if not script:
         # Try downloading and running via iex
-        cmd = [ps, "-NoProfile", "-ExecutionPolicy", "Bypass",
-               "-Command",
-               "& { [scriptblock]::Create((irm 'https://debloat.raphi.re/')) }"]
+        command_str = "& { [scriptblock]::Create((irm 'https://debloat.raphi.re/')) }"
         if params:
-            cmd += params
+            command_str += " " + " ".join(params)
+        cmd = [ps, "-NoProfile", "-ExecutionPolicy", "Bypass",
+               "-Command", command_str]
     else:
         cmd = [ps, "-NoProfile", "-ExecutionPolicy", "Bypass",
                "-File", script]
