@@ -360,6 +360,255 @@ def register_routes(app, state, require_auth):
         _log(f"Monitor layout: {layout}")
         return jsonify({"status": "ok", "layout": layout})
 
+    @app.route("/monitors/info", methods=["GET"])
+    @require_auth
+    def route_monitors_info():
+        """Enhanced monitor list: includes DPI, scaling %, work area (excluding taskbar),
+        and exact pixel boundaries queried directly from the Windows API."""
+        try:
+            class MONITORINFOEX(ctypes.Structure):
+                _fields_ = [
+                    ("cbSize", ctypes.c_uint),
+                    ("rcMonitor", ctypes.wintypes.RECT),
+                    ("rcWork", ctypes.wintypes.RECT),
+                    ("dwFlags", ctypes.c_uint),
+                    ("szDevice", ctypes.c_wchar * 32),
+                ]
+
+            import ctypes.wintypes as _wt
+            MonitorEnumProc = ctypes.WINFUNCTYPE(
+                ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p,
+                ctypes.POINTER(_wt.RECT), ctypes.c_longlong,
+            )
+            hmonitors = []
+
+            def _mon_cb(hmon, _hdc, _rect, _data):
+                hmonitors.append(hmon)
+                return True
+
+            ctypes.windll.user32.EnumDisplayMonitors(None, None, MonitorEnumProc(_mon_cb), 0)
+
+            monitors = []
+            MONITORINFOF_PRIMARY = 1
+            for idx, hmon in enumerate(hmonitors):
+                info = MONITORINFOEX()
+                info.cbSize = ctypes.sizeof(MONITORINFOEX)
+                ctypes.windll.user32.GetMonitorInfoW(hmon, ctypes.byref(info))
+
+                r = info.rcMonitor
+                w = info.rcWork
+                is_primary = bool(info.dwFlags & MONITORINFOF_PRIMARY)
+                width = r.right - r.left
+                height = r.bottom - r.top
+
+                dpi_x = ctypes.c_uint(96)
+                dpi_y = ctypes.c_uint(96)
+                try:
+                    ctypes.windll.shcore.GetDpiForMonitor(
+                        hmon, 0, ctypes.byref(dpi_x), ctypes.byref(dpi_y)
+                    )
+                except Exception:
+                    pass
+
+                monitors.append({
+                    "index": idx,
+                    "id": idx + 1,
+                    "name": info.szDevice.strip() or f"Monitor {idx + 1}",
+                    "is_primary": is_primary,
+                    "left": r.left,
+                    "top": r.top,
+                    "width": width,
+                    "height": height,
+                    "right": r.right,
+                    "bottom": r.bottom,
+                    "work_area": {
+                        "left": w.left,
+                        "top": w.top,
+                        "width": w.right - w.left,
+                        "height": w.bottom - w.top,
+                    },
+                    "dpi": {"x": dpi_x.value, "y": dpi_y.value},
+                    "scaling_pct": round(dpi_x.value / 96.0 * 100),
+                })
+
+            primary = next((m for m in monitors if m["is_primary"]), monitors[0] if monitors else {})
+            return jsonify({
+                "status": "ok",
+                "count": len(monitors),
+                "monitors": monitors,
+                "primary": primary,
+            })
+        except Exception as exc:
+            _log(f"monitors/info failed: {exc}")
+            from routes_ocr import get_monitor_list
+            monitors = get_monitor_list()
+            return jsonify({"status": "fallback", "count": len(monitors), "monitors": monitors})
+
+    @app.route("/monitors/cursor", methods=["GET"])
+    @require_auth
+    def route_monitors_cursor():
+        """Return which monitor the cursor is currently on."""
+        try:
+            import ctypes.wintypes as _wt
+
+            class POINT(ctypes.Structure):
+                _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
+
+            class MONITORINFOEX(ctypes.Structure):
+                _fields_ = [
+                    ("cbSize", ctypes.c_uint),
+                    ("rcMonitor", _wt.RECT),
+                    ("rcWork", _wt.RECT),
+                    ("dwFlags", ctypes.c_uint),
+                    ("szDevice", ctypes.c_wchar * 32),
+                ]
+
+            pt = POINT()
+            ctypes.windll.user32.GetCursorPos(ctypes.byref(pt))
+            cx, cy = pt.x, pt.y
+
+            MONITOR_DEFAULTTONEAREST = 2
+            hmon = ctypes.windll.user32.MonitorFromPoint(
+                ctypes.wintypes.POINT(cx, cy), MONITOR_DEFAULTTONEAREST
+            )
+            info = MONITORINFOEX()
+            info.cbSize = ctypes.sizeof(MONITORINFOEX)
+            ctypes.windll.user32.GetMonitorInfoW(hmon, ctypes.byref(info))
+
+            r = info.rcMonitor
+            MONITORINFOF_PRIMARY = 1
+            return jsonify({
+                "status": "ok",
+                "cursor": {"x": cx, "y": cy},
+                "monitor": {
+                    "name": info.szDevice.strip(),
+                    "is_primary": bool(info.dwFlags & MONITORINFOF_PRIMARY),
+                    "left": r.left, "top": r.top,
+                    "width": r.right - r.left,
+                    "height": r.bottom - r.top,
+                },
+            })
+        except Exception as exc:
+            return jsonify({"error": str(exc)}), 500
+
+    @app.route("/monitors/arrange", methods=["POST"])
+    @require_auth
+    def route_monitors_arrange():
+        """Change display arrangement via DisplaySwitch.exe.
+        Body: {"mode": "extend"|"duplicate"|"internal"|"external"}"""
+        d = _json_body()
+        mode = d.get("mode", "extend").lower()
+        mode_map = {
+            "extend": "/extend",
+            "duplicate": "/clone",
+            "internal": "/internal",
+            "external": "/external",
+        }
+        flag = mode_map.get(mode)
+        if not flag:
+            return jsonify({"error": f"Unknown mode '{mode}'",
+                            "valid": list(mode_map.keys())}), 400
+        try:
+            subprocess.Popen(["DisplaySwitch.exe", flag])
+            _log(f"Monitor arrange: {mode} ({flag})")
+            return jsonify({"status": "ok", "mode": mode, "flag": flag})
+        except Exception as exc:
+            return jsonify({"error": str(exc)}), 500
+
+    @app.route("/window/move-to-monitor", methods=["POST"])
+    @require_auth
+    def route_window_move_to_monitor():
+        """Move a window to a specific monitor by monitor index.
+        Body: {"title": "...", "monitor_index": 1, "maximize": false}
+        Monitor index 0 = primary; 1 = second monitor, etc."""
+        d = _json_body()
+        title = d.get("title", "").strip()
+        monitor_index = int(d.get("monitor_index", 0))
+        maximize = bool(d.get("maximize", False))
+
+        if not title:
+            return _missing_field("title")
+
+        try:
+            import ctypes.wintypes as _wt
+
+            class MONITORINFOEX(ctypes.Structure):
+                _fields_ = [
+                    ("cbSize", ctypes.c_uint),
+                    ("rcMonitor", _wt.RECT),
+                    ("rcWork", _wt.RECT),
+                    ("dwFlags", ctypes.c_uint),
+                    ("szDevice", ctypes.c_wchar * 32),
+                ]
+
+            MonitorEnumProc = ctypes.WINFUNCTYPE(
+                ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p,
+                ctypes.POINTER(_wt.RECT), ctypes.c_longlong,
+            )
+            hmonitors = []
+
+            def _cb(hm, _hdc, _rect, _data):
+                hmonitors.append(hm)
+                return True
+
+            ctypes.windll.user32.EnumDisplayMonitors(None, None, MonitorEnumProc(_cb), 0)
+
+            if monitor_index >= len(hmonitors):
+                return jsonify({"error": f"monitor_index {monitor_index} out of range",
+                                "monitor_count": len(hmonitors)}), 400
+
+            hmon = hmonitors[monitor_index]
+            info = MONITORINFOEX()
+            info.cbSize = ctypes.sizeof(MONITORINFOEX)
+            ctypes.windll.user32.GetMonitorInfoW(hmon, ctypes.byref(info))
+            r = info.rcWork  # use work area to avoid taskbar
+
+            # Find target window
+            windows = []
+            def _wcb(hwnd, _):
+                if not ctypes.windll.user32.IsWindowVisible(hwnd):
+                    return True
+                length = ctypes.windll.user32.GetWindowTextLengthW(hwnd)
+                if length <= 0:
+                    return True
+                buf = ctypes.create_unicode_buffer(length + 1)
+                ctypes.windll.user32.GetWindowTextW(hwnd, buf, length + 1)
+                t = buf.value.strip()
+                if title.lower() in t.lower():
+                    windows.append(hwnd)
+                return True
+
+            WNDENUMPROC = ctypes.WINFUNCTYPE(
+                ctypes.c_bool, ctypes.wintypes.HWND, ctypes.wintypes.LPARAM
+            )
+            ctypes.windll.user32.EnumWindows(WNDENUMPROC(_wcb), 0)
+
+            if not windows:
+                return jsonify({"error": f"No visible window matching '{title}'"}), 404
+
+            hwnd = windows[0]
+            SW_RESTORE = 9
+            SW_MAXIMIZE = 3
+            ctypes.windll.user32.ShowWindow(hwnd, SW_RESTORE)
+            time.sleep(0.05)
+
+            if maximize:
+                ctypes.windll.user32.MoveWindow(hwnd, r.left, r.top,
+                                                r.right - r.left, r.bottom - r.top, True)
+                ctypes.windll.user32.ShowWindow(hwnd, SW_MAXIMIZE)
+            else:
+                work_w = r.right - r.left
+                work_h = r.bottom - r.top
+                ctypes.windll.user32.MoveWindow(hwnd, r.left, r.top,
+                                                min(work_w, 1280),
+                                                min(work_h, 720), True)
+
+            _log(f"Moved '{title}' to monitor {monitor_index} maximize={maximize}")
+            return jsonify({"status": "ok", "hwnd": hwnd, "monitor_index": monitor_index,
+                            "maximize": maximize})
+        except Exception as exc:
+            return jsonify({"error": str(exc)}), 500
+
     # ── Clipboard ──────────────────────────────────────
     @app.route("/clipboard/get", methods=["GET"])
     @require_auth

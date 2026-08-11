@@ -3,6 +3,8 @@ import threading
 import time
 import ctypes
 import hashlib
+import math
+import random
 from flask import jsonify
 from shared import _json_body, _log, _missing_field, _result_response
 
@@ -493,36 +495,96 @@ def register_routes(app, state, require_auth):
     @app.route("/mouse/drag", methods=["POST"])
     @require_auth
     def route_mouse_drag():
+        """Smooth drag with human-like path interpolation.
+
+        Accepts either:
+          {"from": {"x": N, "y": N}, "to": {"x": N, "y": N}, ...}
+        or legacy flat format:
+          {"x1": N, "y1": N, "x2": N, "y2": N, ...}
+
+        Optional: button ("left"|"right"), steps (default 20),
+                  duration_ms (default 500), background (bool).
+        """
         d = _json_body()
-        x1, y1, x2, y2 = int(d.get("x1", 0)), int(d.get("y1", 0)), int(d.get("x2", 0)), int(d.get("y2", 0))
-        bg = d.get("background", True)
+        btn = d.get("button", "left")
+        steps = max(5, min(200, int(d.get("steps", 20))))
+        duration_ms = max(50, min(10000, int(d.get("duration_ms", 500))))
+
+        if "from" in d and "to" in d:
+            src = d["from"]
+            dst = d["to"]
+            x1, y1 = int(src.get("x", 0)), int(src.get("y", 0))
+            x2, y2 = int(dst.get("x", 0)), int(dst.get("y", 0))
+        else:
+            x1, y1 = int(d.get("x1", 0)), int(d.get("y1", 0))
+            x2, y2 = int(d.get("x2", 0)), int(d.get("y2", 0))
+
         if state and state.emergency_stop:
-            return jsonify({"error": "Emergency stop engaged"}), 503
-        try:
-            if bg and hasattr(ctypes, 'windll'):
-                MOUSEEVENTF_LEFTDOWN = 0x0002; MOUSEEVENTF_LEFTUP = 0x0004
-                MOUSEEVENTF_RIGHTDOWN = 0x0008; MOUSEEVENTF_RIGHTUP = 0x0010
-                btn = d.get("button", "left")
-                btn_down = MOUSEEVENTF_LEFTDOWN if btn == "left" else MOUSEEVENTF_RIGHTDOWN
-                btn_up = MOUSEEVENTF_LEFTUP if btn == "left" else MOUSEEVENTF_RIGHTUP
-                ctypes.windll.user32.SetCursorPos(x1, y1)
-                time.sleep(0.02)
-                ctypes.windll.user32.mouse_event(btn_down, 0, 0, 0, 0)
-                steps = 20
-                for i in range(1, steps+1):
-                    cx = x1 + (x2 - x1) * i // steps
-                    cy = y1 + (y2 - y1) * i // steps
-                    ctypes.windll.user32.SetCursorPos(cx, cy)
-                    time.sleep(0.01)
-                ctypes.windll.user32.mouse_event(btn_up, 0, 0, 0, 0)
-            else:
-                pyautogui.drag(x2 - x1, y2 - y1, button=d.get("button", "left"))
-            _log(f"Drag ({x1},{y1})->({x2},{y2})")
-            payload = {"status": "ok", "x1": x1, "y1": y1, "x2": x2, "y2": y2}
-            _record_action("drag", {"x1": x1, "y1": y1, "x2": x2, "y2": y2, "button": d.get("button", "left"), "background": bg}, payload)
-            return jsonify(payload)
-        except Exception as e:
-            return jsonify({"error": str(e)}), 500
+            return jsonify({"ok": False, "error": "Emergency stop engaged",
+                            "code": "EMERGENCY_STOP"}), 503
+
+        lock = state.input_lock if (state and hasattr(state, "input_lock")) else _GLOBAL_INPUT_LOCK
+        with lock:
+            if state and state.emergency_stop:
+                return jsonify({"ok": False, "error": "Emergency stop engaged",
+                                "code": "EMERGENCY_STOP"}), 503
+            try:
+                step_delay = (duration_ms / 1000.0) / max(1, steps)
+                dx = x2 - x1
+                dy = y2 - y1
+                dist = math.hypot(dx, dy)
+                max_jitter = dist * 0.025  # 2.5% of drag distance as max jitter
+
+                if hasattr(ctypes, "windll"):
+                    MOUSEEVENTF_LEFTDOWN = 0x0002
+                    MOUSEEVENTF_LEFTUP = 0x0004
+                    MOUSEEVENTF_RIGHTDOWN = 0x0008
+                    MOUSEEVENTF_RIGHTUP = 0x0010
+                    btn_down = MOUSEEVENTF_LEFTDOWN if btn == "left" else MOUSEEVENTF_RIGHTDOWN
+                    btn_up = MOUSEEVENTF_LEFTUP if btn == "left" else MOUSEEVENTF_RIGHTUP
+
+                    ctypes.windll.user32.SetCursorPos(x1, y1)
+                    time.sleep(0.05)
+                    ctypes.windll.user32.mouse_event(btn_down, 0, 0, 0, 0)
+                    time.sleep(0.02)
+
+                    for i in range(1, steps + 1):
+                        t = i / steps
+                        # Cubic ease-in-out for natural acceleration/deceleration
+                        t_e = t * t * (3.0 - 2.0 * t)
+                        cx = x1 + dx * t_e
+                        cy = y1 + dy * t_e
+                        # Perpendicular jitter that tapers at endpoints
+                        if dist > 1 and max_jitter > 0:
+                            taper = min(t, 1.0 - t) * 4.0
+                            jitter = random.gauss(0, max_jitter * taper * 0.4)
+                            perp_x = -dy / dist
+                            perp_y = dx / dist
+                            cx += perp_x * jitter
+                            cy += perp_y * jitter
+                        ctypes.windll.user32.SetCursorPos(int(cx), int(cy))
+                        time.sleep(step_delay)
+
+                    ctypes.windll.user32.SetCursorPos(x2, y2)
+                    time.sleep(0.02)
+                    ctypes.windll.user32.mouse_event(btn_up, 0, 0, 0, 0)
+                else:
+                    pyautogui.drag(x2 - x1, y2 - y1, button=btn,
+                                   duration=duration_ms / 1000.0)
+
+                if state:
+                    state.last_action_time = time.time()
+            except Exception as exc:
+                return jsonify({"ok": False, "error": str(exc)}), 500
+
+        _log(f"Drag ({x1},{y1})->({x2},{y2}) btn={btn} steps={steps} dur={duration_ms}ms")
+        payload = {"status": "ok", "action": "drag",
+                   "from": {"x": x1, "y": y1}, "to": {"x": x2, "y": y2},
+                   "button": btn, "steps": steps, "duration_ms": duration_ms}
+        _record_action("drag", {"x1": x1, "y1": y1, "x2": x2, "y2": y2,
+                                "button": btn, "steps": steps,
+                                "duration_ms": duration_ms}, payload)
+        return jsonify(payload)
 
     @app.route("/mouse/scroll", methods=["POST"])
     @require_auth

@@ -659,6 +659,8 @@ from routes_uia import register_routes as reg_uia
 from routes_file import register_routes as reg_file
 from routes_media import register_routes as reg_media
 from routes_system import register_routes as reg_system
+from routes_diagnostics import register_routes as reg_diagnostics
+from routes_layout import register_routes as reg_layout
 from routes_webcam import register_routes as reg_webcam
 from routes_store import register_routes as reg_store
 from routes_setup import register_routes as reg_setup
@@ -1110,6 +1112,8 @@ reg_services(app, state, require_auth); features["services_and_tasks"] = True
 reg_fused_map(app, state, require_auth); features["fused_map"] = True
 reg_som(app, state, require_auth); features["som"] = True
 reg_agent_tools(app, state, require_auth); features["agent_tools"] = True
+reg_diagnostics(app, state, require_auth); features["diagnostics"] = True
+reg_layout(app, state, require_auth); features["layout_profiles"] = True
 
 features["web_dashboard_overhaul"] = True
 features["mcp_mode"] = True
