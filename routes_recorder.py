@@ -277,7 +277,13 @@ def _hook_loop():
         msg = ctypes.wintypes.MSG()
         while not _STOP_EVENT.is_set():
             result = user32.GetMessageW(ctypes.byref(msg), None, 0, 0)
-            if result in (0, -1):
+            if result == 0:
+                break
+            if result == -1:
+                err = ctypes.GetLastError()
+                _log(f"Recorder GetMessageW error: {err}")
+                with _LOCK:
+                    _RUNNING = False
                 break
             user32.TranslateMessage(ctypes.byref(msg))
             user32.DispatchMessageW(ctypes.byref(msg))
