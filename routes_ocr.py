@@ -48,6 +48,12 @@ _PIXEL_HASH_CACHE = {}
 _PIXEL_HASH_LOCK = threading.Lock()
 _SCREENSHOT_CACHE = {}
 
+# Relay circuit breaker — skip relay for 30s after a URLError/timeout to avoid
+# paying the full socket timeout on every request when the tray app is not running.
+_RELAY_LAST_FAILURE = 0.0
+_RELAY_COOLDOWN = 30.0
+_RELAY_LOCK = threading.Lock()
+
 try:
     from PIL import Image
     HAS_PIL = True
@@ -188,6 +194,14 @@ def _screenshot_dxcam(force=False, monitor_index=0):
     except Exception as e:
         _debug_backend_failure("DXCam capture", e)
         _log(f"DXCam capture failed: {type(e).__name__}: {e}")
+        # Evict stale camera so next call creates a fresh one and releases the DXGI handle.
+        with _DXCAM_LOCK:
+            stale = _DXCAM_CAMERAS.pop(output_idx, None)
+        if stale is not None:
+            try:
+                stale.release()
+            except Exception:
+                pass
         return None
 
 def _screenshot_mss(force=False, monitor_index=0):
@@ -282,10 +296,18 @@ def _screenshot_win32(force=False, monitor_index=0):
             _debug_backend_failure("Win32 window DC cleanup", e)
 
 def _screenshot_relay(force=False, monitor_index=0):
+    global _RELAY_LAST_FAILURE
+    with _RELAY_LOCK:
+        if not force and time.time() - _RELAY_LAST_FAILURE < _RELAY_COOLDOWN:
+            return None
     data, _latency_ms, relay_error = _fetch_tray_relay_screen(timeout=2.0)
     if data:
+        with _RELAY_LOCK:
+            _RELAY_LAST_FAILURE = 0.0
         return data
     if relay_error:
+        with _RELAY_LOCK:
+            _RELAY_LAST_FAILURE = time.time()
         _debug_backend_failure("PowerShell relay capture", RuntimeError(relay_error))
         _log(f"PowerShell relay capture failed: {relay_error}")
     return None
@@ -308,8 +330,8 @@ def _ensure_png_bytes(data):
 
 def _capture_raw(force=False, monitor_index=0):
     """Capture full screen as PNG bytes through the configured fallback chain.
-    Flash-causing methods (PIL ImageGrab, Win32 BitBlt) are only used as
-    absolute last resort and gated behind HERMES_COAGENT_ALLOW_FLASH_CAPTURE=1."""
+    Chain: DXCam → MSS → Win32(GetWindowDC) → relay.
+    PIL ImageGrab (all_screens) is only tried when HERMES_COAGENT_ALLOW_FLASH_CAPTURE=1."""
     global _last_screenshot_time, _last_screenshot_raw, _PIXEL_HASH_CACHE
     monitor_index = _coerce_monitor_index(monitor_index)
     now = time.time()
@@ -323,10 +345,13 @@ def _capture_raw(force=False, monitor_index=0):
         screenshot_chain = FallbackChain("screenshot")
         screenshot_chain.add_method("dxcam", _screenshot_dxcam, force, monitor_index)
         screenshot_chain.add_method("mss", _screenshot_mss, force, monitor_index)
-        # PIL and Win32 cause window flashes — only use if explicitly enabled
+        # Win32 GetWindowDC path — different DC acquisition than MSS's GetDC(NULL),
+        # may succeed when DXGI and the standard GDI screen DC both fail.
+        screenshot_chain.add_method("win32", _screenshot_win32, force, monitor_index)
+        # PIL ImageGrab with all_screens=True can cause window repaints on some apps
+        # — only use if explicitly enabled.
         if os.environ.get("HERMES_COAGENT_ALLOW_FLASH_CAPTURE", "").lower() in ("1", "true", "yes"):
             screenshot_chain.add_method("pil", _screenshot_pil, force, monitor_index)
-            screenshot_chain.add_method("win32", _screenshot_win32, force, monitor_index)
         # PowerShell relay is the last resort fallback
         screenshot_chain.add_method("powershell_relay", _screenshot_relay, force, monitor_index)
         try:
