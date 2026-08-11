@@ -39,7 +39,11 @@ INSTALLER_VERSION = (Path(__file__).resolve().parent / "VERSION").read_text().st
 
 # Default paths
 if platform.system() == "Windows":
-    DEFAULT_DIR = Path(os.environ.get("LOCALAPPDATA", "C:\\Users\\%USERNAME%\\AppData\\Local")) / "CoAgent"
+    _localappdata = os.environ.get("LOCALAPPDATA", "")
+    if not _localappdata:
+        _username = os.environ.get("USERNAME", "Default")
+        _localappdata = f"C:\\Users\\{_username}\\AppData\\Local"
+    DEFAULT_DIR = Path(_localappdata) / "CoAgent"
     START_MENU = Path(os.environ.get("APPDATA", "")) / "Microsoft\\Windows\\Start Menu\\Programs\\CoAgent"
 else:
     DEFAULT_DIR = Path.home() / ".coagent"
@@ -114,8 +118,11 @@ def step_download(install_dir):
 
         shutil.rmtree(install_dir, ignore_errors=True)
 
-    temp_tarball = Path(tempfile.mktemp(suffix=".tar.gz"))
+    temp_tarball = None
     try:
+        fd, temp_path = tempfile.mkstemp(suffix=".tar.gz")
+        os.close(fd)
+        temp_tarball = Path(temp_path)
         console("  Fetching from GitHub...")
         req = urllib.request.Request(
             GITHUB_TARBALL,
@@ -203,7 +210,9 @@ def step_install_nircmd(install_dir):
         return True
 
     try:
-        zip_path = Path(tempfile.mktemp(suffix=".zip"))
+        fd, tmp_path = tempfile.mkstemp(suffix=".zip")
+        os.close(fd)
+        zip_path = Path(tmp_path)
         urllib.request.urlretrieve(NIRCMD_URL, zip_path)
         import zipfile
         with zipfile.ZipFile(zip_path) as z:
@@ -321,11 +330,16 @@ Shortcut.Save
         console(f"  ✓ Start menu shortcuts created")
 
     # Scheduled task for auto-start on login
-    run([
+    username = os.environ.get("USERNAME", "").strip()
+    schtasks_cmd = [
         "schtasks", "/create", "/tn", "CoAgent", "/tr",
-        f'"{bat_path}"', "/sc", "onlogon", "/ru", os.environ.get("USERNAME", ""),
+        f'"{bat_path}"', "/sc", "onlogon",
         "/it", "/f", "/delay", "0000:30"
-    ], timeout=15, check=False)
+    ]
+    if username:
+        schtasks_cmd.insert(6, "/ru")
+        schtasks_cmd.insert(7, username)
+    run(schtasks_cmd, timeout=15, check=False)
     console("  ✓ Auto-start scheduled task created")
 
     return True
@@ -473,7 +487,7 @@ def cmd_update(args):
             shutil.copy2(src, backup_dir / f)
 
     # Download fresh copy
-    temp_dir = Path(tempfile.mktemp(suffix="_coagent_update"))
+    temp_dir = Path(tempfile.mkdtemp(suffix="_coagent_update"))
     try:
         req = urllib.request.Request(
             GITHUB_TARBALL,
