@@ -5,7 +5,9 @@ import threading
 import urllib.parse
 from pathlib import Path
 
-from flask import Blueprint, jsonify
+import json as _json
+from collections import deque
+from flask import Blueprint, jsonify, request
 
 from routes_bypass import _json_payload
 
@@ -246,11 +248,69 @@ _STEALTH_ARGS = [
 ]
 
 
-_PW = None
-_BROWSER = None
-_CONTEXT = None
-_PAGE = None
 _USER_DATA_DIR = None
+
+# Console messages captured from active page
+_CONSOLE_MESSAGES: deque = deque(maxlen=200)
+# Dialog event log + next-action setting (AI pre-sets before triggering action)
+_DIALOG_LOG: deque = deque(maxlen=50)
+_NEXT_DIALOG_ACTION: dict = {"action": "dismiss", "text": ""}
+# Client-side navigation history
+_NAV_HISTORY: deque = deque(maxlen=100)
+
+
+def _compact_a11y(node, depth=0, max_depth=6):
+    """Recursively compact an accessibility tree node to a terse dict."""
+    if node is None or depth > max_depth:
+        return None
+    out = {}
+    role = node.get("role", "")
+    name = (node.get("name") or "").strip()[:120]
+    value = node.get("value", "")
+    if isinstance(value, str):
+        value = value.strip()[:120]
+    if role:
+        out["role"] = role
+    if name:
+        out["name"] = name
+    if value:
+        out["value"] = value
+    for attr in ("checked", "disabled", "expanded", "level", "pressed", "selected", "required"):
+        if node.get(attr) is not None:
+            out[attr] = node[attr]
+    children = node.get("children") or []
+    compact = [_compact_a11y(c, depth + 1, max_depth) for c in children]
+    compact = [c for c in compact if c]
+    if compact:
+        out["children"] = compact
+    return out or None
+
+
+def _setup_page_listeners(page):
+    """Attach console + dialog event listeners to a newly created page."""
+    def _on_console(msg):
+        _CONSOLE_MESSAGES.append({"type": msg.type, "text": msg.text, "url": page.url})
+
+    def _on_dialog(dialog):
+        action = _NEXT_DIALOG_ACTION.get("action", "dismiss")
+        text = _NEXT_DIALOG_ACTION.get("text", "")
+        _DIALOG_LOG.append({
+            "type": dialog.type,
+            "message": dialog.message,
+            "default_value": dialog.default_value if dialog.type == "prompt" else None,
+            "action_taken": action,
+            "text_sent": text,
+        })
+        try:
+            if action == "accept":
+                dialog.accept(text) if text else dialog.accept()
+            else:
+                dialog.dismiss()
+        except Exception:
+            pass
+
+    page.on("console", _on_console)
+    page.on("dialog", _on_dialog)
 
 
 def _get_storage_path():
@@ -413,9 +473,12 @@ def _ensure_browser_inner(cookies=None, stealth=False):
             _CONTEXT.grant_permissions(["popups"])
         except Exception:
             pass
-        
-        # Capture popup/new windows
-        _CONTEXT.on("page", lambda p: setattr(p, "_coagent_popup", True))
+
+        # Capture popup/new windows and attach listeners
+        def _on_new_page(p):
+            setattr(p, "_coagent_popup", True)
+            _setup_page_listeners(p)
+        _CONTEXT.on("page", _on_new_page)
         
         if stealth:
             _CONTEXT.add_init_script(_STEALTH_SCRIPT)
@@ -423,6 +486,7 @@ def _ensure_browser_inner(cookies=None, stealth=False):
             _CONTEXT.add_cookies(cookies)
         
         _PAGE = _CONTEXT.new_page()
+        _setup_page_listeners(_PAGE)
         return _PAGE, None
     except Exception as e:
         return None, _error(str(e), 500, type=type(e).__name__)
@@ -460,21 +524,47 @@ def route_browser_index():
     return jsonify({
         "installed": installed,
         "endpoints": [
-            {"path": "/browser", "method": "GET", "desc": "List browser endpoints"},
-            {"path": "/browser/navigate", "method": "POST", "desc": "Navigate to a URL, optionally with cookies + evaluate"},
-            {"path": "/browser/workflow", "method": "POST", "desc": "Execute multi-step workflow in one session"},
-            {"path": "/browser/click", "method": "POST", "desc": "Click by selector or text"},
-            {"path": "/browser/fill", "method": "POST", "desc": "Fill an input"},
-            {"path": "/browser/extract", "method": "POST", "desc": "Extract page text"},
-            {"path": "/browser/elements", "method": "POST", "desc": "List interactive elements with selectors"},
-            {"path": "/browser/screenshot", "method": "POST", "desc": "Capture browser screenshot"},
-            {"path": "/browser/evaluate", "method": "POST", "desc": "Run JavaScript"},
-            {"path": "/browser/cookies", "method": "POST", "desc": "Get or set cookies"},
-            {"path": "/browser/cookies/import", "method": "POST", "desc": "Import cookies from Brave/Chrome profile"},
-            {"path": "/browser/session/save", "method": "POST", "desc": "Save browser cookies to disk for persistence"},
-            {"path": "/browser/session/load", "method": "POST", "desc": "Load saved session cookies"},
-            {"path": "/browser/close", "method": "POST", "desc": "Close browser"},
-            {"path": "/browser/status", "method": "GET", "desc": "Browser status"},
+            {"path": "/browser/status", "method": "GET", "desc": "Browser open/closed state"},
+            {"path": "/browser/snapshot", "method": "POST", "desc": "AI primary: page title + text + optional accessibility tree. mode=text|accessibility|both"},
+            {"path": "/browser/navigate", "method": "POST", "desc": "Navigate to URL. Returns title. Pass snapshot=true for body text snippet."},
+            {"path": "/browser/back", "method": "POST", "desc": "Go back in history"},
+            {"path": "/browser/forward", "method": "POST", "desc": "Go forward in history"},
+            {"path": "/browser/refresh", "method": "POST", "desc": "Reload the current page"},
+            {"path": "/browser/stop", "method": "POST", "desc": "Stop page loading"},
+            {"path": "/browser/url", "method": "GET", "desc": "Get current URL"},
+            {"path": "/browser/title", "method": "GET", "desc": "Get current page title"},
+            {"path": "/browser/source", "method": "GET", "desc": "Get full HTML source"},
+            {"path": "/browser/history", "method": "GET", "desc": "Navigation history (URL+title) for this session"},
+            {"path": "/browser/click", "method": "POST", "desc": "Click by selector or text. Returns element_text, url_changed, title."},
+            {"path": "/browser/fill", "method": "POST", "desc": "Fill input. Returns value_confirmed and accepted flag."},
+            {"path": "/browser/press", "method": "POST", "desc": "Press key or combo (Enter, Escape, Control+a). Optional selector."},
+            {"path": "/browser/hover", "method": "POST", "desc": "Hover over selector"},
+            {"path": "/browser/focus", "method": "POST", "desc": "Focus an element"},
+            {"path": "/browser/extract", "method": "POST", "desc": "Extract text (mode=text) or structured data (mode=structured: links/buttons/inputs/headings)"},
+            {"path": "/browser/elements", "method": "POST", "desc": "List interactive elements with suggested selectors"},
+            {"path": "/browser/wait", "method": "POST", "desc": "Wait for selector state, text presence, or URL pattern. Essential for SPAs."},
+            {"path": "/browser/screenshot", "method": "POST", "desc": "Screenshot as base64 PNG or saved to path"},
+            {"path": "/browser/evaluate", "method": "POST", "desc": "Run arbitrary JavaScript"},
+            {"path": "/browser/scroll-to", "method": "POST", "desc": "Scroll to selector or x/y coordinates"},
+            {"path": "/browser/console", "method": "GET", "desc": "Recent console messages. ?level=error|warn|log&limit=50"},
+            {"path": "/browser/dialog", "method": "GET", "desc": "Dialog log + next-action setting"},
+            {"path": "/browser/dialog/accept", "method": "POST", "desc": "Pre-set next dialog to accept. Optional text for prompt dialogs."},
+            {"path": "/browser/dialog/dismiss", "method": "POST", "desc": "Pre-set next dialog to dismiss (default)"},
+            {"path": "/browser/tabs", "method": "GET", "desc": "List all open tabs"},
+            {"path": "/browser/new-tab", "method": "POST", "desc": "Open new tab, optionally navigate to URL"},
+            {"path": "/browser/close-tab", "method": "POST", "desc": "Close tab by index (default: active)"},
+            {"path": "/browser/switch-tab", "method": "POST", "desc": "Switch active tab by index"},
+            {"path": "/browser/pages", "method": "GET", "desc": "List open pages/popups (alias: /browser/tabs)"},
+            {"path": "/browser/viewport", "method": "GET", "desc": "Get viewport size"},
+            {"path": "/browser/viewport", "method": "POST", "desc": "Resize viewport: width, height"},
+            {"path": "/browser/workflow", "method": "POST", "desc": "Execute multi-step action sequence in one call"},
+            {"path": "/browser/cookies", "method": "POST", "desc": "Get (action=get) or set (action=set) cookies"},
+            {"path": "/browser/cookies/set", "method": "POST", "desc": "Set cookies directly: {cookies: [...]}"},
+            {"path": "/browser/cookies/import", "method": "POST", "desc": "Import from Brave/Chrome profile"},
+            {"path": "/browser/network", "method": "POST", "desc": "Navigate + capture all network requests"},
+            {"path": "/browser/session/save", "method": "POST", "desc": "Save storage state to disk"},
+            {"path": "/browser/session/load", "method": "POST", "desc": "Load saved session"},
+            {"path": "/browser/close", "method": "POST", "desc": "Close browser and free resources"},
         ],
     })
 
@@ -503,7 +593,18 @@ def route_browser_navigate():
             return error
         try:
             page.goto(url, wait_until=data.get("wait_until", "load"), timeout=_clamp_timeout(data, "timeout", 30000))
-            result = {"status": "navigated", "url": page.url}
+            title = ""
+            try:
+                title = page.title()
+            except Exception:
+                pass
+            _NAV_HISTORY.append({"url": page.url, "title": title})
+            result = {"status": "navigated", "url": page.url, "title": title}
+            if _as_bool(data.get("snapshot"), False):
+                try:
+                    result["snippet"] = page.inner_text("body", timeout=5000)[:1000]
+                except Exception:
+                    pass
             if isinstance(evaluate, str) and evaluate:
                 try:
                     eval_result = page.evaluate(evaluate)
@@ -525,15 +626,34 @@ def route_browser_click():
         if error:
             return error
         try:
+            url_before = page.url
             if isinstance(selector, str) and selector:
+                element_text = ""
+                try:
+                    element_text = (page.locator(selector).first.inner_text(timeout=2000) or "").strip()[:100]
+                except Exception:
+                    pass
                 page.click(selector, timeout=_clamp_timeout(data))
-                target = {"selector": selector}
+                target = {"selector": selector, "element_text": element_text}
             elif isinstance(text, str) and text:
                 page.get_by_text(text).click(timeout=_clamp_timeout(data))
-                target = {"text": text}
+                target = {"text": text, "element_text": text}
             else:
                 return _error("selector or text is required")
-            return jsonify({"status": "clicked", "url": page.url, **target})
+            new_url = page.url
+            title = ""
+            try:
+                title = page.title()
+            except Exception:
+                pass
+            return jsonify({
+                "status": "clicked",
+                "url": new_url,
+                "url_changed": new_url != url_before,
+                "url_before": url_before,
+                "title": title,
+                **target,
+            })
         except Exception as e:
             return _error(str(e), 500, type=type(e).__name__)
 
@@ -553,20 +673,93 @@ def route_browser_fill():
             return error
         try:
             page.fill(selector, str(value), timeout=_clamp_timeout(data))
-            return jsonify({"status": "filled", "selector": selector, "url": page.url})
+            confirmed = None
+            try:
+                confirmed = page.locator(selector).input_value(timeout=2000)
+            except Exception:
+                pass
+            return jsonify({
+                "status": "filled",
+                "selector": selector,
+                "value_set": str(value),
+                "value_confirmed": confirmed,
+                "accepted": (confirmed == str(value)) if confirmed is not None else None,
+                "url": page.url,
+            })
         except Exception as e:
             return _error(str(e), 500, type=type(e).__name__)
 
 
+_EXTRACT_STRUCTURED_SCRIPT = """() => {
+    const links = [];
+    document.querySelectorAll('a[href]').forEach(el => {
+        const text = (el.innerText || el.getAttribute('aria-label') || '').trim().substring(0, 100);
+        if (text) links.push({text, href: el.href});
+    });
+    const buttons = [];
+    document.querySelectorAll('button, [role="button"], input[type="submit"], input[type="button"]').forEach(el => {
+        if (el.offsetParent === null) return;
+        const text = (el.innerText || el.value || el.getAttribute('aria-label') || '').trim().substring(0, 100);
+        const id = el.id ? '#' + el.id : '';
+        const name = el.name ? '[name="' + el.name + '"]' : '';
+        buttons.push({text, selector: id || name || el.tagName.toLowerCase(), disabled: el.disabled});
+    });
+    const inputs = [];
+    document.querySelectorAll('input:not([type="hidden"]):not([type="submit"]):not([type="button"]),textarea,select').forEach(el => {
+        if (el.offsetParent === null) return;
+        const label = el.id ? document.querySelector('label[for="' + el.id + '"]') : null;
+        const labelText = label ? label.innerText.trim() : (el.getAttribute('aria-label') || el.placeholder || '');
+        const id = el.id ? '#' + el.id : '';
+        const name = el.name ? '[name="' + el.name + '"]' : '';
+        inputs.push({
+            label: labelText.substring(0, 80),
+            type: el.type || el.tagName.toLowerCase(),
+            name: el.name || '',
+            value: (el.value || '').substring(0, 200),
+            placeholder: (el.placeholder || '').substring(0, 80),
+            selector: id || name || el.tagName.toLowerCase(),
+            required: el.required,
+        });
+    });
+    const headings = [];
+    document.querySelectorAll('h1,h2,h3,h4,h5,h6').forEach(el => {
+        headings.push({level: parseInt(el.tagName[1]), text: el.innerText.trim().substring(0, 200)});
+    });
+    return {links: links.slice(0, 100), buttons: buttons.slice(0, 60), inputs, headings};
+}"""
+
+
 @browser_bp.route("/browser/extract", methods=["POST"])
 def route_browser_extract():
+    """Extract text or structured data (links, buttons, inputs, headings) from the page.
+
+    mode='text' (default): return inner text of page or selector.
+    mode='structured': return links, buttons, inputs, headings as JSON.
+    """
     data = _json_payload()
     selector = data.get("selector")
+    mode = data.get("mode", "text")
     with _BROWSER_LOCK:
         page, error = _ensure_browser()
         if error:
             return error
         try:
+            if mode == "structured" or (mode != "text" and not selector):
+                structured = page.evaluate(_EXTRACT_STRUCTURED_SCRIPT)
+                body_text = ""
+                try:
+                    body_text = page.inner_text("body", timeout=5000)
+                except Exception:
+                    pass
+                return jsonify({
+                    "mode": "structured",
+                    "url": page.url,
+                    "title": page.title(),
+                    **structured,
+                    "text": body_text[:3000],
+                    "text_chars": len(body_text),
+                })
+            # Text mode (backward-compatible)
             if isinstance(selector, str) and selector:
                 text = page.locator(selector).inner_text(timeout=_clamp_timeout(data))
             else:
@@ -1232,6 +1425,535 @@ def route_browser_close():
         if errors:
             return _error("; ".join(errors), 500)
         return jsonify({"status": "closed"})
+
+
+# ---------------------------------------------------------------------------
+# Snapshot — #1 AI-facing endpoint: "what do I see right now?"
+# ---------------------------------------------------------------------------
+
+@browser_bp.route("/browser/snapshot", methods=["POST"])
+def route_browser_snapshot():
+    """Return a compact accessibility tree and/or clean text of the current page.
+
+    mode='text' (default): body text + title. Fastest.
+    mode='accessibility': Playwright accessibility tree (structured roles/names).
+    mode='both': both.
+    Pass snapshot=true to /browser/navigate instead for a combined navigate+snapshot.
+    """
+    data = _json_payload()
+    mode = data.get("mode", "text")
+    with _BROWSER_LOCK:
+        page, error = _ensure_browser()
+        if error:
+            return error
+        try:
+            result = {"url": page.url}
+            try:
+                result["title"] = page.title()
+            except Exception:
+                result["title"] = ""
+            if mode in ("accessibility", "both"):
+                try:
+                    tree = page.accessibility.snapshot()
+                    result["accessibility_tree"] = _compact_a11y(tree)
+                except Exception as e:
+                    result["accessibility_error"] = str(e)
+            if mode in ("text", "both"):
+                try:
+                    text = page.inner_text("body", timeout=8000)
+                    result["text"] = text[:6000]
+                    result["text_chars"] = len(text)
+                except Exception as e:
+                    result["text_error"] = str(e)
+            return jsonify(result)
+        except Exception as e:
+            return _error(str(e), 500, type=type(e).__name__)
+
+
+# ---------------------------------------------------------------------------
+# Wait — essential for SPAs and dynamic content
+# ---------------------------------------------------------------------------
+
+@browser_bp.route("/browser/wait", methods=["POST"])
+def route_browser_wait():
+    """Wait for a condition before the next action. Essential for SPAs.
+
+    Provide ONE of:
+      selector + state: wait for CSS selector in state visible|hidden|attached|detached.
+      text: wait for this string to appear in body text.
+      url: wait for page URL to contain this string.
+    """
+    data = _json_payload()
+    selector = data.get("selector")
+    text = data.get("text")
+    url_pattern = data.get("url")
+    state = data.get("state", "visible")
+    timeout = _clamp_timeout(data, "timeout", 15000)
+    with _BROWSER_LOCK:
+        page, error = _ensure_browser()
+        if error:
+            return error
+        try:
+            if isinstance(selector, str) and selector:
+                page.wait_for_selector(selector, state=state, timeout=timeout)
+                return jsonify({"waited_for": "selector", "selector": selector, "state": state, "url": page.url})
+            if isinstance(text, str) and text:
+                page.wait_for_function(
+                    f"() => document.body.innerText.includes({_json.dumps(text)})",
+                    timeout=timeout,
+                )
+                return jsonify({"waited_for": "text", "text": text, "url": page.url})
+            if isinstance(url_pattern, str) and url_pattern:
+                page.wait_for_url(f"**{url_pattern}**", timeout=timeout)
+                return jsonify({"waited_for": "url", "url": page.url})
+            return _error("selector, text, or url is required")
+        except Exception as e:
+            return _error(str(e), 500, type=type(e).__name__)
+
+
+# ---------------------------------------------------------------------------
+# Key press and element interactions
+# ---------------------------------------------------------------------------
+
+@browser_bp.route("/browser/press", methods=["POST"])
+def route_browser_press():
+    """Press a key or combo. key examples: 'Enter', 'Escape', 'Tab', 'Control+a'.
+    Optionally target a selector (focused element by default).
+    """
+    data = _json_payload()
+    key = data.get("key")
+    selector = data.get("selector")
+    if not isinstance(key, str) or not key:
+        return _error("key is required (e.g. 'Enter', 'Escape', 'Control+a', 'Tab')")
+    with _BROWSER_LOCK:
+        page, error = _ensure_browser()
+        if error:
+            return error
+        try:
+            url_before = page.url
+            if isinstance(selector, str) and selector:
+                page.press(selector, key, timeout=_clamp_timeout(data))
+            else:
+                page.keyboard.press(key)
+            return jsonify({
+                "pressed": key,
+                "selector": selector,
+                "url": page.url,
+                "url_changed": page.url != url_before,
+            })
+        except Exception as e:
+            return _error(str(e), 500, type=type(e).__name__)
+
+
+@browser_bp.route("/browser/hover", methods=["POST"])
+def route_browser_hover():
+    """Hover the mouse over an element. Useful for revealing tooltips/dropdowns."""
+    data = _json_payload()
+    selector = data.get("selector")
+    if not isinstance(selector, str) or not selector:
+        return _error("selector is required")
+    with _BROWSER_LOCK:
+        page, error = _ensure_browser()
+        if error:
+            return error
+        try:
+            page.hover(selector, timeout=_clamp_timeout(data))
+            return jsonify({"hovered": selector, "url": page.url})
+        except Exception as e:
+            return _error(str(e), 500, type=type(e).__name__)
+
+
+@browser_bp.route("/browser/focus", methods=["POST"])
+def route_browser_focus():
+    """Focus an element (useful before typing with /browser/press)."""
+    data = _json_payload()
+    selector = data.get("selector")
+    if not isinstance(selector, str) or not selector:
+        return _error("selector is required")
+    with _BROWSER_LOCK:
+        page, error = _ensure_browser()
+        if error:
+            return error
+        try:
+            page.focus(selector, timeout=_clamp_timeout(data))
+            value = None
+            try:
+                value = page.locator(selector).input_value(timeout=1000)
+            except Exception:
+                pass
+            return jsonify({"focused": selector, "current_value": value, "url": page.url})
+        except Exception as e:
+            return _error(str(e), 500, type=type(e).__name__)
+
+
+# ---------------------------------------------------------------------------
+# Console messages
+# ---------------------------------------------------------------------------
+
+@browser_bp.route("/browser/console", methods=["GET"])
+def route_browser_console():
+    """Get recent console messages (log, warn, error) from the active page.
+    Query params: limit (default 50, max 200), level (log|warn|error|info).
+    """
+    limit = min(int(request.args.get("limit", 50)), 200)
+    level = request.args.get("level")
+    msgs = list(_CONSOLE_MESSAGES)
+    if level:
+        msgs = [m for m in msgs if m.get("type") == level]
+    active_url = None
+    with _BROWSER_LOCK:
+        if _PAGE and not _PAGE.is_closed():
+            try:
+                active_url = _PAGE.url
+            except Exception:
+                pass
+    return jsonify({"count": len(msgs), "messages": msgs[-limit:], "url": active_url})
+
+
+# ---------------------------------------------------------------------------
+# Dialog handling — pre-set next dialog response before triggering action
+# ---------------------------------------------------------------------------
+
+@browser_bp.route("/browser/dialog", methods=["GET"])
+def route_browser_dialog():
+    """Get dialog event log and current next-action setting.
+    To pre-set a response: POST /browser/dialog/accept or /browser/dialog/dismiss
+    BEFORE the action that triggers the dialog (e.g., a button click).
+    """
+    return jsonify({
+        "log": list(_DIALOG_LOG)[-20:],
+        "next_action": _NEXT_DIALOG_ACTION.copy(),
+        "note": "Call /dialog/accept or /dialog/dismiss before triggering the action that opens the dialog.",
+    })
+
+
+@browser_bp.route("/browser/dialog/accept", methods=["POST"])
+def route_browser_dialog_accept():
+    """Pre-set the next dialog to be accepted. For prompt dialogs, pass 'text'."""
+    data = _json_payload()
+    text = str(data.get("text", ""))
+    _NEXT_DIALOG_ACTION.update({"action": "accept", "text": text})
+    return jsonify({"next_action": _NEXT_DIALOG_ACTION.copy()})
+
+
+@browser_bp.route("/browser/dialog/dismiss", methods=["POST"])
+def route_browser_dialog_dismiss():
+    """Pre-set the next dialog to be dismissed (cancel). This is the default."""
+    _NEXT_DIALOG_ACTION.update({"action": "dismiss", "text": ""})
+    return jsonify({"next_action": _NEXT_DIALOG_ACTION.copy()})
+
+
+# ---------------------------------------------------------------------------
+# Navigation history
+# ---------------------------------------------------------------------------
+
+@browser_bp.route("/browser/history", methods=["GET"])
+def route_browser_history():
+    """Return navigation history entries (URL + title) tracked during this session."""
+    limit = min(int(request.args.get("limit", 50)), 100)
+    entries = list(_NAV_HISTORY)
+    return jsonify({"count": len(entries), "entries": entries[-limit:]})
+
+
+# ---------------------------------------------------------------------------
+# Back / Forward / Refresh / Stop
+# ---------------------------------------------------------------------------
+
+@browser_bp.route("/browser/back", methods=["POST"])
+def route_browser_back():
+    """Navigate back in history."""
+    with _BROWSER_LOCK:
+        page, error = _ensure_browser()
+        if error:
+            return error
+        try:
+            response = page.go_back(timeout=_clamp_timeout(_json_payload(), "timeout", 10000))
+            title = ""
+            try:
+                title = page.title()
+            except Exception:
+                pass
+            _NAV_HISTORY.append({"url": page.url, "title": title})
+            return jsonify({
+                "status": "back",
+                "url": page.url,
+                "title": title,
+                "navigated": response is not None,
+            })
+        except Exception as e:
+            return _error(str(e), 500, type=type(e).__name__)
+
+
+@browser_bp.route("/browser/forward", methods=["POST"])
+def route_browser_forward():
+    """Navigate forward in history."""
+    with _BROWSER_LOCK:
+        page, error = _ensure_browser()
+        if error:
+            return error
+        try:
+            response = page.go_forward(timeout=_clamp_timeout(_json_payload(), "timeout", 10000))
+            title = ""
+            try:
+                title = page.title()
+            except Exception:
+                pass
+            _NAV_HISTORY.append({"url": page.url, "title": title})
+            return jsonify({
+                "status": "forward",
+                "url": page.url,
+                "title": title,
+                "navigated": response is not None,
+            })
+        except Exception as e:
+            return _error(str(e), 500, type=type(e).__name__)
+
+
+@browser_bp.route("/browser/refresh", methods=["POST"])
+def route_browser_refresh():
+    """Reload the current page."""
+    with _BROWSER_LOCK:
+        page, error = _ensure_browser()
+        if error:
+            return error
+        try:
+            page.reload(timeout=_clamp_timeout(_json_payload(), "timeout", 15000))
+            return jsonify({"status": "refreshed", "url": page.url, "title": page.title()})
+        except Exception as e:
+            return _error(str(e), 500, type=type(e).__name__)
+
+
+@browser_bp.route("/browser/stop", methods=["POST"])
+def route_browser_stop():
+    """Stop page loading."""
+    with _BROWSER_LOCK:
+        page, error = _ensure_browser()
+        if error:
+            return error
+        try:
+            page.evaluate("() => window.stop()")
+            return jsonify({"status": "stopped", "url": page.url})
+        except Exception as e:
+            return _error(str(e), 500, type=type(e).__name__)
+
+
+# ---------------------------------------------------------------------------
+# URL / Title / Source
+# ---------------------------------------------------------------------------
+
+@browser_bp.route("/browser/url", methods=["GET"])
+def route_browser_url():
+    """Get the current page URL."""
+    with _BROWSER_LOCK:
+        if _PAGE is None or _PAGE.is_closed():
+            return jsonify({"url": None, "open": False})
+        return jsonify({"url": _PAGE.url, "open": True})
+
+
+@browser_bp.route("/browser/title", methods=["GET"])
+def route_browser_title():
+    """Get the current page title."""
+    with _BROWSER_LOCK:
+        if _PAGE is None or _PAGE.is_closed():
+            return jsonify({"title": None, "open": False})
+        try:
+            return jsonify({"title": _PAGE.title(), "url": _PAGE.url, "open": True})
+        except Exception as e:
+            return _error(str(e), 500, type=type(e).__name__)
+
+
+@browser_bp.route("/browser/source", methods=["GET"])
+def route_browser_source():
+    """Get the current page HTML source."""
+    with _BROWSER_LOCK:
+        page, error = _ensure_browser()
+        if error:
+            return error
+        try:
+            html = page.content()
+            return jsonify({"url": page.url, "html": html, "bytes": len(html)})
+        except Exception as e:
+            return _error(str(e), 500, type=type(e).__name__)
+
+
+# ---------------------------------------------------------------------------
+# Scroll
+# ---------------------------------------------------------------------------
+
+@browser_bp.route("/browser/scroll-to", methods=["POST"])
+def route_browser_scroll_to():
+    """Scroll to a selector or absolute pixel position.
+
+    Provide 'selector' OR 'x'+'y' pixel coords. Optional: 'behavior' smooth|instant.
+    """
+    data = _json_payload()
+    selector = data.get("selector")
+    x = data.get("x")
+    y = data.get("y")
+    behavior = data.get("behavior", "smooth")
+    with _BROWSER_LOCK:
+        page, error = _ensure_browser()
+        if error:
+            return error
+        try:
+            if isinstance(selector, str) and selector:
+                page.locator(selector).scroll_into_view_if_needed(timeout=_clamp_timeout(data))
+                return jsonify({"scrolled_to": selector, "url": page.url})
+            if x is not None or y is not None:
+                px = int(x or 0)
+                py = int(y or 0)
+                page.evaluate(f"window.scrollTo({{left: {px}, top: {py}, behavior: '{behavior}'}})")
+                return jsonify({"scrolled_to": {"x": px, "y": py}, "url": page.url})
+            return _error("selector or x/y coordinates required")
+        except Exception as e:
+            return _error(str(e), 500, type=type(e).__name__)
+
+
+# ---------------------------------------------------------------------------
+# Tabs
+# ---------------------------------------------------------------------------
+
+@browser_bp.route("/browser/tabs", methods=["GET"])
+def route_browser_tabs():
+    """List all open tabs. Alias for GET /browser/pages."""
+    with _BROWSER_LOCK:
+        if _CONTEXT is None:
+            return jsonify({"tabs": [], "count": 0})
+        pages = _CONTEXT.pages
+        active_idx = pages.index(_PAGE) if _PAGE in pages else -1
+        tabs = []
+        for i, p in enumerate(pages):
+            try:
+                tabs.append({"index": i, "url": p.url, "title": p.title() or "", "active": i == active_idx})
+            except Exception:
+                tabs.append({"index": i, "url": "error", "title": "", "active": False})
+        return jsonify({"tabs": tabs, "count": len(tabs), "active": active_idx})
+
+
+@browser_bp.route("/browser/new-tab", methods=["POST"])
+def route_browser_new_tab():
+    """Open a new tab, optionally navigate to a URL."""
+    global _PAGE
+    data = _json_payload()
+    url = data.get("url")
+    with _BROWSER_LOCK:
+        if _CONTEXT is None:
+            return _error("browser not open — call /browser/navigate first", 409)
+        try:
+            new_page = _CONTEXT.new_page()
+            _setup_page_listeners(new_page)
+            _PAGE = new_page
+            result = {"status": "opened", "index": _CONTEXT.pages.index(new_page)}
+            if isinstance(url, str) and url:
+                url_err = _navigation_url_error(url)
+                if url_err:
+                    return _error(url_err, 403)
+                new_page.goto(url, timeout=_clamp_timeout(data, "timeout", 15000))
+                result["url"] = new_page.url
+                try:
+                    result["title"] = new_page.title()
+                except Exception:
+                    pass
+            else:
+                result["url"] = new_page.url
+            return jsonify(result)
+        except Exception as e:
+            return _error(str(e), 500, type=type(e).__name__)
+
+
+@browser_bp.route("/browser/close-tab", methods=["POST"])
+def route_browser_close_tab():
+    """Close a tab by index. Defaults to the active tab. Switches to nearest remaining tab."""
+    global _PAGE
+    data = _json_payload()
+    with _BROWSER_LOCK:
+        if _CONTEXT is None:
+            return _error("browser not open", 409)
+        pages = _CONTEXT.pages
+        idx = data.get("index")
+        if idx is None:
+            target = _PAGE
+        else:
+            idx = int(idx)
+            if idx < 0 or idx >= len(pages):
+                return _error(f"tab index {idx} out of range (0-{len(pages)-1})")
+            target = pages[idx]
+        try:
+            closed_url = target.url
+            target.close()
+            remaining = _CONTEXT.pages
+            if remaining:
+                _PAGE = remaining[-1]
+                return jsonify({"status": "closed", "closed_url": closed_url, "active_url": _PAGE.url})
+            _PAGE = None
+            return jsonify({"status": "closed", "closed_url": closed_url, "active_url": None})
+        except Exception as e:
+            return _error(str(e), 500, type=type(e).__name__)
+
+
+@browser_bp.route("/browser/switch-tab", methods=["POST"])
+def route_browser_switch_tab():
+    """Switch the active tab to a given index."""
+    global _PAGE
+    data = _json_payload()
+    idx = data.get("index")
+    if idx is None:
+        return _error("index is required")
+    idx = int(idx)
+    with _BROWSER_LOCK:
+        if _CONTEXT is None:
+            return _error("browser not open", 409)
+        pages = _CONTEXT.pages
+        if idx < 0 or idx >= len(pages):
+            return _error(f"index {idx} out of range (0-{len(pages)-1})")
+        _PAGE = pages[idx]
+        return jsonify({"status": "switched", "index": idx, "url": _PAGE.url, "title": _PAGE.title()})
+
+
+# ---------------------------------------------------------------------------
+# Viewport
+# ---------------------------------------------------------------------------
+
+@browser_bp.route("/browser/viewport", methods=["GET", "POST"])
+def route_browser_viewport():
+    """GET: return current viewport size. POST: resize viewport (width, height)."""
+    with _BROWSER_LOCK:
+        page, error = _ensure_browser()
+        if error:
+            return error
+        try:
+            vp = page.viewport_size
+            if request.method == "GET":
+                return jsonify({"width": vp["width"] if vp else None, "height": vp["height"] if vp else None})
+            data = _json_payload()
+            w = int(data.get("width", vp["width"] if vp else 1280))
+            h = int(data.get("height", vp["height"] if vp else 720))
+            page.set_viewport_size({"width": w, "height": h})
+            return jsonify({"status": "resized", "width": w, "height": h})
+        except Exception as e:
+            return _error(str(e), 500, type=type(e).__name__)
+
+
+# ---------------------------------------------------------------------------
+# Cookies convenience alias
+# ---------------------------------------------------------------------------
+
+@browser_bp.route("/browser/cookies/set", methods=["POST"])
+def route_browser_cookies_set():
+    """Set cookies directly. cookies: list of cookie objects."""
+    data = _json_payload()
+    cookies = data.get("cookies")
+    if not isinstance(cookies, list):
+        return _error("cookies (list) is required")
+    with _BROWSER_LOCK:
+        page, error = _ensure_browser()
+        if error:
+            return error
+        try:
+            page.context.add_cookies(cookies)
+            return jsonify({"status": "set", "count": len(cookies), "url": page.url})
+        except Exception as e:
+            return _error(str(e), 500, type=type(e).__name__)
 
 
 def register_routes(app, state, require_auth):
