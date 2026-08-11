@@ -826,6 +826,13 @@ except ImportError:
     VISION_AVAILABLE = False
     _console("[WARN] routes_vision.py not found")
 
+try:
+    from routes_uac import register_routes as reg_uac
+    UAC_AVAILABLE = True
+except ImportError:
+    UAC_AVAILABLE = False
+    _console("[WARN] routes_uac.py not found")
+
 # Telemetry module
 try:
     from telemetry import telem_bp, init_telem
@@ -1144,6 +1151,9 @@ if TEMPLATE_AVAILABLE:
 if VISION_AVAILABLE:
     reg_vision(app, state, require_auth)
     features["vision_detection"] = True
+if UAC_AVAILABLE:
+    reg_uac(app, state, require_auth)
+    features["uac_automation"] = True
 
 features["web_dashboard_overhaul"] = True
 features["mcp_mode"] = True
