@@ -322,6 +322,10 @@ def register_routes(app, state, require_auth):
             return _missing_field("volume")
         if not volume_num.isdigit():
             return jsonify({"ok": False, "error": "volume must be a numeric index"}), 400
+        if fs not in ("NTFS", "FAT", "FAT32", "EXFAT", "REFS", "UDF"):
+            return jsonify({"ok": False, "error": f"unsupported filesystem '{fs}'"}), 400
+        if label and not re.fullmatch(r"[A-Za-z0-9 _\-.]{1,32}", label):
+            return jsonify({"ok": False, "error": "label may only contain letters, digits, spaces, and ._- (max 32 chars)"}), 400
         if not confirm:
             return jsonify({
                 "ok": False,
