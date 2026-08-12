@@ -230,6 +230,9 @@ def register_routes(app, state, require_auth):
 
         format_str = _clean_format(body.get("format", ""))
         output_template = body.get("output", "%(title)s.%(ext)s")
+        # Prevent path traversal: reject templates containing ".." or absolute paths
+        if isinstance(output_template, str) and (".." in output_template or output_template.startswith(("\\", "/")) or ":" in output_template.split("/")[0]):
+            return jsonify({"ok": False, "error": "output template must not contain path traversal or absolute paths"}), 400
         extract_audio = body.get("extract_audio", False)
         playlist_start = body.get("playlist_start")
         playlist_end = body.get("playlist_end")
