@@ -908,9 +908,10 @@ $form.Add_Shown({
 
         # Write Python restart script (runs elevated, can kill admin process)
         script_path = os.path.join(cwd, "_restart.py")
-        esc_py = py.replace("\\", "\\\\")
-        esc_argv = argv_str.replace("\\", "\\\\")
-        esc_cwd = cwd.replace("\\", "\\\\")
+        # Use forward slashes in _restart.py paths (no escaping headaches)
+        fwd_py = py.replace("\\", "/")
+        fwd_argv = argv_str.replace("\\", "/")
+        fwd_cwd = cwd.replace("\\", "/")
         with open(script_path, "w") as f:
             f.write(f'''import subprocess, time
 time.sleep(2)
@@ -918,7 +919,7 @@ subprocess.run(["taskkill","/f","/pid","{pid}"], capture_output=True)
 time.sleep(1)
 subprocess.run([
     "powershell","-NoProfile","-Command",
-    "$a=New-ScheduledTaskAction -Execute '{esc_py}' -Argument '{esc_argv}' -WorkingDirectory '{esc_cwd}';"
+    "$a=New-ScheduledTaskAction -Execute '{fwd_py}' -Argument '{fwd_argv}' -WorkingDirectory '{fwd_cwd}';"
     "$t=New-ScheduledTaskTrigger -Once -At (Get-Date).AddSeconds(2);"
     "$p=New-ScheduledTaskPrincipal -UserId 'Admin' -LogonType Interactive -RunLevel Highest;"
     "Register-ScheduledTask -TaskName CoAgentLaunch -Action $a -Trigger $t -Principal $p -Force|Out-Null;"
