@@ -23,6 +23,7 @@ _sessions: dict = {}   # port -> {"ws": _CDPSocket, "pages": list, "page_id": st
 _sessions_lock = threading.Lock()
 
 _passive_scan_cache: dict = {"ts": 0.0, "result": []}
+_cef_cache: dict = {"ts": 0.0, "data": {}}
 
 # Ports to probe when process command-line inspection yields nothing.
 _FALLBACK_PORTS = [9222, 9229, 9223, 9224, 9225]
@@ -582,21 +583,30 @@ def register_routes(app, state, require_auth):
         and ``cdp_access=False``.  Identified only — CDP is not available.
         """
         try:
+            # Cached result check — skip expensive scans
+            now = time.monotonic()
+            fresh = request.args.get("fresh", "").lower() == "true"
+            if not fresh and now - _cef_cache.get("ts", 0) < 30:
+                return jsonify(_cef_cache["data"])
+
             apps = _scan_cef_processes()
             if not apps:
                 apps = _probe_fallback_ports()
             try:
-                fresh = request.args.get("fresh", "").lower() == "true"
                 passive = _scan_passive_cef_processes(fresh=fresh)
             except Exception as exc:
                 _log(f"[CEF] passive scan error: {exc}")
                 passive = []
-            return jsonify({
+
+            result = {
                 "apps": apps,
                 "count": len(apps),
                 "passive_cef_apps": passive,
                 "passive_count": len(passive),
-            })
+            }
+            _cef_cache["ts"] = time.monotonic()
+            _cef_cache["data"] = result
+            return jsonify(result)
         except Exception as exc:
             _log(f"[CEF] detect error: {exc}")
             return jsonify({"error": str(exc)}), 500
