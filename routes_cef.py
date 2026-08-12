@@ -23,7 +23,6 @@ _sessions: dict = {}   # port -> {"ws": _CDPSocket, "pages": list, "page_id": st
 _sessions_lock = threading.Lock()
 
 _passive_scan_cache: dict = {"ts": 0.0, "result": []}
-_passive_scan_cache_lock = threading.Lock()
 
 # Ports to probe when process command-line inspection yields nothing.
 _FALLBACK_PORTS = [9222, 9229, 9223, 9224, 9225]
@@ -458,117 +457,104 @@ def _probe_fallback_ports() -> list[dict]:
 def _scan_passive_cef_processes(include_titles: bool = False, fresh: bool = False) -> list[dict]:
     """Find running CEF apps that do NOT expose a CDP debug port.
 
-    Two-pass scan for speed:
-      Pass 1: name-only (no cmdline fetch) — catches known CEF hosts instantly.
-      Pass 2: cmdline scan for remaining PIDs — finds worker children and
-              unlisted apps; skips PIDs already matched in pass 1.
+    Two-pass PowerShell scan:
+      Pass 1: Get-Process (name+PID) filtered by _CEF_HOST_NAMES. < 2s.
+      Pass 2: WMI Win32_Process cmdline scan for unmatched PIDs. < 3s.
 
-    Results are cached for 30 s.  Pass ``fresh=True`` to bypass the cache.
-    The scan runs in a background thread with a 5-second hard timeout;
-    partial results are returned if it expires.
-
-    Window titles (EnumWindows) are expensive and skipped by default.
-    Pass ``include_titles=True`` only when the caller needs them.
+    Results cached for 30s. Pass fresh=True to bypass.
+    No threading — pure synchronous subprocess calls; returns [] on failure.
     """
-    import psutil
+    import subprocess
 
     now = time.monotonic()
-    if not fresh:
-        with _passive_scan_cache_lock:
-            if now - _passive_scan_cache["ts"] < 30.0:
-                return _passive_scan_cache["result"]
+    if not fresh and now - _passive_scan_cache["ts"] < 30.0:
+        return _passive_scan_cache["result"]
 
-    result_holder: list = []
+    apps: dict = {}  # pid -> entry
 
-    def _do_scan() -> None:
-        apps: dict = {}   # top_pid -> entry
+    def _record(pid: int, name: str, methods: list[str], child_pid: int | None) -> None:
+        entry = apps.get(pid)
+        if entry is None:
+            entry = {
+                "pid": pid,
+                "name": name,
+                "window_title": "",
+                "detection_methods": [],
+                "child_pids": [],
+                "cdp_access": False,
+            }
+            apps[pid] = entry
+        for m in methods:
+            if m not in entry["detection_methods"]:
+                entry["detection_methods"].append(m)
+        if child_pid is not None and child_pid != pid and child_pid not in entry["child_pids"]:
+            entry["child_pids"].append(child_pid)
 
-        def _record(top_pid: int, top_name: str, methods: list[str], child_pid: int | None) -> None:
-            entry = apps.get(top_pid)
-            if entry is None:
-                entry = {
-                    "pid": top_pid,
-                    "name": top_name,
-                    "window_title": _window_title_for_pid(top_pid) if include_titles else "",
-                    "detection_methods": [],
-                    "child_pids": [],
-                    "cdp_access": False,
-                }
-                apps[top_pid] = entry
-            for m in methods:
-                if m not in entry["detection_methods"]:
-                    entry["detection_methods"].append(m)
-            if child_pid is not None and child_pid != top_pid and child_pid not in entry["child_pids"]:
-                entry["child_pids"].append(child_pid)
+    def _run_ps(command: str) -> list | None:
+        try:
+            proc = subprocess.run(
+                ["powershell", "-NoProfile", "-Command", command],
+                capture_output=True, text=True, timeout=10,
+            )
+            if proc.returncode != 0 or not proc.stdout.strip():
+                return None
+            data = json.loads(proc.stdout)
+            return [data] if isinstance(data, dict) else data
+        except Exception:
+            return None
 
-        # ------------------------------------------------------------------
-        # Pass 1: name-only — no cmdline fetch, typically <0.3 s
-        # ------------------------------------------------------------------
-        name_matched_pids: set = set()
-        for proc in psutil.process_iter(["pid", "name"]):
+    # ------------------------------------------------------------------
+    # Pass 1: name-only via Get-Process — typically < 1s
+    # ------------------------------------------------------------------
+    name_matched_pids: set = set()
+    procs = _run_ps("Get-Process | Select-Object Id,ProcessName | ConvertTo-Json -Compress")
+    if procs:
+        for p in procs:
             try:
-                info = proc.info
-                name = (info.get("name") or "").lower()
-                if any(host in name for host in _CEF_HOST_NAMES):
-                    pid = info["pid"]
+                pid = int(p.get("Id") or 0)
+                name = (p.get("ProcessName") or "").lower()
+                if pid and any(host in name for host in _CEF_HOST_NAMES):
                     name_matched_pids.add(pid)
-                    _record(pid, info.get("name") or "", ["name"], None)
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    _record(pid, p.get("ProcessName") or "", ["name"], None)
+            except Exception:
                 continue
 
-        # ------------------------------------------------------------------
-        # Pass 2: cmdline scan for PIDs not caught by name
-        # ------------------------------------------------------------------
-        for proc in psutil.process_iter(["pid", "name", "cmdline", "ppid"]):
+    # ------------------------------------------------------------------
+    # Pass 2: WMI cmdline scan — skip PIDs already matched
+    # ------------------------------------------------------------------
+    wmi_procs = _run_ps(
+        "Get-WmiObject Win32_Process | Where-Object {$_.CommandLine -ne $null} | "
+        "Select-Object ProcessId,ParentProcessId,Name,CommandLine | ConvertTo-Json -Compress"
+    )
+    if wmi_procs:
+        for p in wmi_procs:
             try:
-                info = proc.info
-                pid = info["pid"]
-                if pid in name_matched_pids:
-                    continue   # already recorded in pass 1
-
-                cmdline = info.get("cmdline") or []
-                if not cmdline:
+                pid = int(p.get("ProcessId") or 0)
+                if not pid or pid in name_matched_pids:
                     continue
-                cmdline_str = " ".join(cmdline)
-
+                cmdline_str = p.get("CommandLine") or ""
                 if "--remote-debugging-port=" in cmdline_str:
-                    continue   # handled by the active scan
-
+                    continue
                 methods: list[str] = []
                 if any(marker in cmdline_str for marker in _CEF_CMDLINE_STRONG):
                     methods.append("cmdline")
                 if not methods and any(marker in cmdline_str for marker in _CEF_CMDLINE_WEAK):
                     methods.append("cmdline-weak")
-
                 if not methods:
                     continue
-
-                ppid = info.get("ppid") or 0
+                ppid = int(p.get("ParentProcessId") or 0)
+                proc_name = p.get("Name") or ""
                 worker_only = all(m.startswith("cmdline") for m in methods)
-
-                if worker_only and ppid:
-                    try:
-                        parent = psutil.Process(ppid)
-                        _record(ppid, parent.name(), methods, pid)
-                        continue
-                    except (psutil.NoSuchProcess, psutil.AccessDenied):
-                        pass   # fall through: record worker as its own entry
-
-                _record(pid, info.get("name") or "", methods, None)
-
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                if worker_only and ppid and ppid in apps:
+                    _record(ppid, apps[ppid]["name"], methods, pid)
+                else:
+                    _record(pid, proc_name, methods, None)
+            except Exception:
                 continue
 
-        result_holder.extend(apps.values())
-
-    worker = threading.Thread(target=_do_scan, daemon=True)
-    worker.start()
-    worker.join(5.0)   # hard timeout — return whatever is ready
-
-    results = list(result_holder)
-    with _passive_scan_cache_lock:
-        _passive_scan_cache["ts"] = time.monotonic()
-        _passive_scan_cache["result"] = results
+    results = list(apps.values())
+    _passive_scan_cache["ts"] = time.monotonic()
+    _passive_scan_cache["result"] = results
     return results
 
 
