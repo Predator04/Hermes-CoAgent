@@ -47,6 +47,10 @@ curl http://127.0.0.1:9123/help
 | **Goal Runner** | Multi-step goal execution with SSE progress, timeline cards, activity log, batch plan-execute |
 | **Stealth Browser** | 13 anti-detection patches, Cloudflare bypass, persistent profiles, fingerprint randomization |
 | **MCP Bridge** | JSON-RPC MCP server auto-discovers 60+ CoAgent endpoints as tools. Config generator for Claude Desktop, Cursor, Hermes |
+| **MCP Client Mode** | Generic MCP client — connect out to external MCP servers (stdio + HTTP/SSE), aggregate their tools into CoAgent as a single hub |
+| **Agent Skills Loader** | Progressive-disclosure SKILL.md loader — inject skill bodies into `/agent/exec` prompts on demand |
+| **Companion Extension** | Long-poll relay driving the user's *real* browser with real sessions via an MV3 extension |
+| **Governance** | App/URL allowlist+denylist, per-hour/per-goal action budgets, secret/PII redaction (active in logs + OCR) |
 | **One-Click Deploy** | Full pipeline: deps → token → launch. Optional ngrok tunnel for NAT/cellular |
 | **Reliability** | Watchdog, endpoint health tracking, self-healing checks, dependency helper, memory leak watchdog |
 | **Automation Kits** | Scheduled recipes, macro recording, GIF recording, undo/redo, visual diff, smart element finder |
@@ -68,6 +72,8 @@ curl http://127.0.0.1:9123/screen/base64 \
 ```
 
 The `.token` file is gitignored. Do not expose port 9123 to untrusted networks without a reverse proxy.
+
+> **⚠️ Auth is opt-in.** Without `--secure` the server runs **unauthenticated** — anyone who can reach the port gets full desktop control. `--allow-external` (bind to `0.0.0.0`) is **hard-refused unless `--secure` is also passed**. For any network-exposed deployment, always run with `--secure`.
 
 ## API Reference
 
@@ -113,6 +119,21 @@ The `.token` file is gitignored. Do not expose port 9123 to untrusted networks w
 | `POST` | `/stealth/navigate` | Undetectable browser navigation |
 | `GET` | `/stealth/health` | Browser detectability self-test |
 | `GET` | `/mcp/config` | Generate MCP client configs |
+| `POST` | `/mcp/client/register` | Register an external MCP server (stdio/HTTP) |
+| `GET` | `/mcp/client/servers` | List registered MCP servers |
+| `GET` | `/mcp/client/tools` | List all tools across MCP servers |
+| `POST` | `/mcp/client/call` | Call a tool on a registered MCP server |
+| `GET` | `/skills/list` | List loaded agent skills |
+| `GET` | `/skills/<name>` | Get a skill's body + bundled files |
+| `POST` | `/skills/reload` | Rescan the skills directory |
+| `GET` | `/governance/policy` | Read the governance policy |
+| `POST` | `/governance/policy` | Update policy (allowlist/denylist/budgets) |
+| `GET` | `/governance/status` | Governance + budget usage status |
+| `GET` | `/governance/audit` | Blocked-action audit log |
+| `POST` | `/governance/redact` | Redact secrets/PII from text |
+| `POST` | `/browser/companion/command` | Send a command to the companion extension |
+| `GET` | `/browser/companion/poll` | Extension long-poll for pending commands |
+| `POST` | `/browser/companion/result` | Extension posts a command result |
 | `POST` | `/deploy/oneclick` | One-click deploy pipeline |
 | `POST` | `/deploy/ngrok` | Start ngrok tunnel |
 | `POST` | `/recipes/run` | Execute automation recipe |
@@ -180,6 +201,10 @@ Hermes-CoAgent/
 | `routes_hud.py` | Transparent desktop HUD |
 | `routes_logs.py` | Log analyzer |
 | `routes_mcp.py` | MCP JSON-RPC bridge |
+| `routes_mcp_client.py` | MCP client mode (connect to external servers) |
+| `routes_skills.py` | Agent skills loader (SKILL.md injection) |
+| `routes_companion.py` | Companion browser-extension relay |
+| `routes_governance.py` | Allowlist/budgets/redaction governance layer |
 | `routes_media.py` | Wallpaper, scheduler, tunnel, voice |
 | `routes_memory.py` | Persistent FTS5 memory |
 | `routes_metrics.py` | Prometheus metrics |
