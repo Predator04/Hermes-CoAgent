@@ -87,7 +87,7 @@ def register_routes(app, state, require_auth):
         """Syntax-highlight a diff or text snippet.
         Body: {"content": "diff --git ...", "theme": "Monokai Extended", "width": 120, "side_by_side": false}
         """
-        body = _json_body(request)
+        body = _json_body()
         content = body.get("content", "")
         theme = body.get("theme", "Monokai Extended")
         width = body.get("width", 120)
