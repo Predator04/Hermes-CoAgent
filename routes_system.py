@@ -813,47 +813,54 @@ $form.Add_Shown({
         base_url = "https://raw.githubusercontent.com/Predator04/Hermes-Coagent/main/"
         coagent_path = str(COAGENT_DIR)
 
-        # Fetch file list from GitHub repo to know what actually exists
-        repo_api = "https://api.github.com/repos/Predator04/Hermes-Coagent/git/trees/main?recursive=1"
+        # Use gh CLI token for private repo access
+        gh_token = None
+        try:
+            r = subprocess.run(
+                ["gh", "auth", "token"], capture_output=True, text=True, timeout=5
+            )
+            if r.returncode == 0:
+                gh_token = r.stdout.strip()
+        except Exception:
+            pass
+
+        auth_headers = {"User-Agent": "CoAgent"}
+        if gh_token:
+            auth_headers["Authorization"] = f"token {gh_token}"
+
+        # Fetch file list from GitHub repo
+        repo_api = "https://api.github.com/repos/Predator04/Hermes-CoAgent/git/trees/main?recursive=1"
         repo_files = set()
         try:
-            import urllib.request as _ur
-            req = _ur.Request(repo_api, headers={"Accept": "application/vnd.github+json", "User-Agent": "CoAgent"})
-            with _ur.urlopen(req, timeout=15) as resp:
+            req = urllib.request.Request(repo_api, headers=auth_headers)
+            with urllib.request.urlopen(req, timeout=15) as resp:
                 data = _json.loads(resp.read())
                 for item in data.get("tree", []):
                     repo_files.add(item["path"])
         except Exception:
-            # Fallback: sync only known core files
             repo_files = {
                 "hermes_coagent.py", "shared.py", "VERSION",
-                "scripts/test_compile.py", "requirements.txt",
+                "requirements.txt",
             }
 
-        # Build target list: core files + routes_*.py that exist on GitHub
+        # Build target list from files that exist on GitHub
         targets = []
         for fname in sorted(repo_files):
-            if fname.endswith(".py") and not fname.startswith("scripts/") and "/" not in fname:
+            if fname.endswith(".py") and "/" not in fname:
                 targets.append(os.path.join(coagent_path, fname))
-        # Always include hermes_coagent.py
-        main_path = os.path.join(coagent_path, "hermes_coagent.py")
-        if main_path not in targets:
-            targets.insert(0, main_path)
-        # Add shared.py
-        shared_path = os.path.join(coagent_path, "shared.py")
-        if shared_path not in targets:
-            targets.append(shared_path)
+        for must_have in ["hermes_coagent.py", "shared.py"]:
+            mp = os.path.join(coagent_path, must_have)
+            if mp not in targets:
+                targets.insert(0, mp)
 
         updated, errors = [], []
         for local_path in targets:
             fname = os.path.basename(local_path)
-            if fname not in repo_files:
-                continue  # skip files not in GitHub repo
+            if fname not in repo_files or not fname.endswith(".py"):
+                continue
             try:
-                with urllib.request.urlopen(base_url + fname, timeout=15) as resp:
-                    if resp.status == 404:
-                        errors.append({"file": fname, "error": "Not found on GitHub"})
-                        continue
+                req = urllib.request.Request(base_url + fname, headers=auth_headers)
+                with urllib.request.urlopen(req, timeout=15) as resp:
                     content = resp.read()
                 with open(local_path, "wb") as fh:
                     fh.write(content)
