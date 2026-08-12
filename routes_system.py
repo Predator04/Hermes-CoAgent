@@ -917,8 +917,8 @@ $form.Add_Shown({
         ps = [
             "powershell", "-NoProfile", "-Command",
             f"$a=New-ScheduledTaskAction -Execute 'cmd.exe' -Argument '{kill_and_restart}' -WorkingDirectory '{cwd}';"
-            "$t=New-ScheduledTaskTrigger -Once -At (Get-Date).AddSeconds(2);"
-            "$p=New-ScheduledTaskPrincipal -UserId '$env:USERNAME' -LogonType Interactive -RunLevel Highest;"
+            '$t=New-ScheduledTaskTrigger -Once -At (Get-Date).AddSeconds(2);'
+            f'$p=New-ScheduledTaskPrincipal -UserId "$env:USERNAME" -LogonType Interactive -RunLevel Highest;'
             "Register-ScheduledTask -TaskName 'CoAgentReboot' -Action $a -Trigger $t -Principal $p -Force|Out-Null;"
             "Start-ScheduledTask -TaskName 'CoAgentReboot'"
         ]
