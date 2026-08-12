@@ -906,8 +906,8 @@ $form.Add_Shown({
         cwd = str(COAGENT_DIR)
         argv_str = " ".join([main_script] + _sys.argv[1:])
 
-        # Write Python restart script (runs elevated, can kill admin process)
-        script_path = os.path.join(cwd, "_restart.py")
+        # Write Python restart script to temp (no spaces in path for scheduled task)
+        script_path = os.path.join(os.environ.get("TEMP", cwd), "_coagent_restart.py")
         # Use forward slashes in _restart.py paths (no escaping headaches)
         fwd_py = py.replace("\\", "/")
         fwd_argv = argv_str.replace("\\", "/")
@@ -927,11 +927,10 @@ subprocess.run([
 ], capture_output=True, timeout=15)
 ''')
 
-        # Create CoAgentReboot task (cmd.exe wrapper avoids space-in-path issues)
-        restart_cmd = f'/c ""{py}"" "{script_path}"'
+        # Create CoAgentReboot task (runs _restart.py directly, no cmd wrapper needed)
         ps = [
             "powershell", "-NoProfile", "-Command",
-            f"$a=New-ScheduledTaskAction -Execute 'cmd.exe' -Argument '{restart_cmd}' -WorkingDirectory '{cwd}';"
+            f"$a=New-ScheduledTaskAction -Execute '{py}' -Argument '{script_path}' -WorkingDirectory '{cwd}';"
             '$t=New-ScheduledTaskTrigger -Once -At (Get-Date).AddSeconds(2);'
             f'$p=New-ScheduledTaskPrincipal -UserId "$env:USERNAME" -LogonType Interactive -RunLevel Highest;'
             "Register-ScheduledTask -TaskName CoAgentReboot -Action $a -Trigger $t -Principal $p -Force|Out-Null;"
