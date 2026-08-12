@@ -25,6 +25,59 @@ _sessions_lock = threading.Lock()
 # Ports to probe when process command-line inspection yields nothing.
 _FALLBACK_PORTS = [9222, 9229, 9223, 9224, 9225]
 
+# Known CEF-hosting app executables (matched case-insensitively as a substring
+# of the process name).  NVIDIA App, Spotify, Discord, VS Code, Slack, Teams,
+# Steam's overlay browser, and the Edge WebView2 runtime all embed CEF/Chromium.
+_CEF_HOST_NAMES = (
+    "nvidia app",
+    "nvidia broadcast",
+    "nvidia overlay",
+    "spotify",
+    "discord",
+    "slack",
+    "teams",
+    "steamwebhelper",
+    "msedgewebview2",
+    "cefsharp",
+    "electron",
+    "notion",
+    "figma",
+    "obsidian",
+    "1password",
+    # VS Code — matched exactly to avoid catching "vscode-server" etc. from name suffix
+    "code.exe",
+)
+
+# CEF / Chromium runtime DLLs.  Presence in a process' loaded modules is strong
+# evidence the process hosts a Chromium renderer.
+_CEF_DLLS = (
+    "libcef.dll",
+    "cef.dll",
+    "chrome_elf.dll",
+    "nw_elf.dll",
+    "libcef_dll_wrapper.dll",
+    # chrome.dll is more ambiguous (Chrome itself), but still a valid signal
+    "chrome.dll",
+)
+
+# Strong cmdline markers: these flags are only ever passed to Chromium child
+# workers (renderer/gpu/utility) or to processes explicitly launched with a
+# custom user-data dir or subprocess path.
+_CEF_CMDLINE_STRONG = (
+    "--type=renderer",
+    "--type=gpu-process",
+    "--type=utility",
+    "--type=crashpad-handler",
+    "--browser-subprocess-path=",
+)
+
+# Weaker signal: many non-CEF Chromium-derived processes also carry these, but
+# combined with a name or DLL hit they confirm CEF hosting.
+_CEF_CMDLINE_WEAK = (
+    "--user-data-dir=",
+    "--field-trial-handle=",
+)
+
 
 # ---------------------------------------------------------------------------
 # Minimal synchronous CDP WebSocket client (no external deps)
@@ -283,6 +336,65 @@ def _cdp(port: int, method: str, params: dict | None = None, timeout: float = 10
 # Process scanning (Windows — uses psutil which is already a dependency)
 # ---------------------------------------------------------------------------
 
+def _window_title_for_pid(pid: int) -> str:
+    """Return the first visible top-level window title owned by ``pid``, or ""."""
+    try:
+        import ctypes
+        titles: list = []
+
+        @ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_int))
+        def _enum(hwnd, _lParam):
+            win_pid = ctypes.c_ulong(0)
+            ctypes.windll.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(win_pid))
+            if win_pid.value == pid and ctypes.windll.user32.IsWindowVisible(hwnd):
+                buf = ctypes.create_unicode_buffer(512)
+                ctypes.windll.user32.GetWindowTextW(hwnd, buf, 512)
+                if buf.value:
+                    titles.append(buf.value)
+            return True
+
+        ctypes.windll.user32.EnumWindows(_enum, 0)
+        return titles[0] if titles else ""
+    except Exception:
+        return ""
+
+
+def _detect_cef_methods(proc, info: dict, check_dlls: bool = True) -> list[str]:
+    """Return the list of detection methods that identify ``proc`` as CEF-hosting.
+
+    Methods (in evidence order): "cmdline", "name", "dll", "cmdline-weak".
+    Empty list means the process is not identified as CEF.  ``check_dlls=False``
+    skips the memory_maps() probe (which is slow and often triggers AccessDenied).
+    """
+    import psutil
+
+    methods: list[str] = []
+    name = (info.get("name") or "").lower()
+    cmdline_str = " ".join(info.get("cmdline") or [])
+
+    if any(marker in cmdline_str for marker in _CEF_CMDLINE_STRONG):
+        methods.append("cmdline")
+
+    if any(host in name for host in _CEF_HOST_NAMES):
+        methods.append("name")
+
+    if check_dlls and not methods:
+        try:
+            for mmap in proc.memory_maps():
+                mpath = (getattr(mmap, "path", "") or "").lower()
+                if any(dll in mpath for dll in _CEF_DLLS):
+                    methods.append("dll")
+                    break
+        except (psutil.NoSuchProcess, psutil.AccessDenied,
+                AttributeError, NotImplementedError, OSError):
+            pass
+
+    if not methods and any(marker in cmdline_str for marker in _CEF_CMDLINE_WEAK):
+        methods.append("cmdline-weak")
+
+    return methods
+
+
 def _scan_cef_processes() -> list[dict]:
     """Scan running processes for those advertising a CDP debug port."""
     import psutil
@@ -308,38 +420,10 @@ def _scan_cef_processes() -> list[dict]:
             if port is None:
                 continue
 
-            # Best-effort window title
-            window_title = ""
-            try:
-                import ctypes
-                EnumWindows = ctypes.windll.user32.EnumWindows
-                GetWindowThreadProcessId = ctypes.windll.user32.GetWindowThreadProcessId
-                GetWindowTextW = ctypes.windll.user32.GetWindowTextW
-                IsWindowVisible = ctypes.windll.user32.IsWindowVisible
-
-                pid = proc.info["pid"]
-                titles = []
-
-                @ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_int))
-                def foreach_window(hwnd, _lParam):
-                    win_pid = ctypes.c_ulong(0)
-                    GetWindowThreadProcessId(hwnd, ctypes.byref(win_pid))
-                    if win_pid.value == pid and IsWindowVisible(hwnd):
-                        buf = ctypes.create_unicode_buffer(512)
-                        GetWindowTextW(hwnd, buf, 512)
-                        if buf.value:
-                            titles.append(buf.value)
-                    return True
-
-                EnumWindows(foreach_window, 0)
-                window_title = titles[0] if titles else ""
-            except Exception:
-                pass
-
             results.append({
                 "pid": proc.info["pid"],
                 "name": proc.info["name"],
-                "window_title": window_title,
+                "window_title": _window_title_for_pid(proc.info["pid"]),
                 "debug_port": port,
                 "debug_url": f"http://127.0.0.1:{port}/json",
             })
@@ -369,85 +453,78 @@ def _probe_fallback_ports() -> list[dict]:
 
 
 def _scan_passive_cef_processes() -> list[dict]:
-    """Find CEF apps without debug ports via renderer/gpu-process children or DLL loading.
+    """Find running CEF apps that do NOT expose a CDP debug port.
 
-    Groups child worker processes by parent PID.  CDP access is not possible for
-    these apps; they appear in the response as informational entries.
+    Three detection methods run per process:
+      * ``cmdline`` — strong CEF child-worker flags (renderer / gpu-process /
+        crashpad / --browser-subprocess-path)
+      * ``name``    — the process image is a known CEF host (NVIDIA App,
+        Spotify, Discord, VS Code, Slack, Teams, etc.)
+      * ``dll``     — loaded modules include libcef / chrome_elf / nw_elf
+      * ``cmdline-weak`` — Chromium-style flags without stronger evidence
+
+    Results are grouped by top-level app: worker children (matched only by
+    cmdline flags) are folded under their parent PID.  Standalone matches
+    (by name or DLL) appear as their own entry.  CDP access is not possible
+    for these apps — the response is informational.
     """
-    import psutil
+    import psutil, signal, threading
 
-    cef_types = ("--type=renderer", "--type=gpu-process")
-    cef_dlls = ("chrome.dll", "cef.dll", "libcef.dll")
+    apps: dict = {}   # top_pid -> entry
+    _scan_deadline = threading.Event()
 
-    parent_groups: dict = {}  # ppid -> entry
+    def _record(top_pid: int, top_name: str, methods: list[str], child_pid: int | None) -> None:
+        entry = apps.get(top_pid)
+        if entry is None:
+            entry = {
+                "pid": top_pid,
+                "name": top_name,
+                "window_title": _window_title_for_pid(top_pid),
+                "detection_methods": [],
+                "child_pids": [],
+                "cdp_access": False,
+            }
+            apps[top_pid] = entry
+        for m in methods:
+            if m not in entry["detection_methods"]:
+                entry["detection_methods"].append(m)
+        if child_pid is not None and child_pid != top_pid and child_pid not in entry["child_pids"]:
+            entry["child_pids"].append(child_pid)
 
     for proc in psutil.process_iter(["pid", "name", "cmdline", "ppid"]):
         try:
             info = proc.info
-            cmdline = info.get("cmdline") or []
-            cmdline_str = " ".join(cmdline)
-            ppid = info.get("ppid") or 0
+            cmdline_str = " ".join(info.get("cmdline") or [])
 
-            # Skip if it already advertises a debug port (covered by active scan)
+            # Handled by the active scan
             if "--remote-debugging-port=" in cmdline_str:
                 continue
 
-            is_cef = any(t in cmdline_str for t in cef_types)
-
-            if not is_cef:
-                try:
-                    for m in proc.memory_maps():
-                        if any(dll in m.path.lower() for dll in cef_dlls):
-                            is_cef = True
-                            break
-                except (psutil.NoSuchProcess, psutil.AccessDenied, AttributeError, NotImplementedError):
-                    pass
-
-            if not is_cef:
+            methods = _detect_cef_methods(proc, info, check_dlls=False)
+            if not methods:
                 continue
 
-            if ppid not in parent_groups:
+            pid = info["pid"]
+            ppid = info.get("ppid") or 0
+
+            # A child worker (matched purely by cmdline / cmdline-weak) belongs
+            # under its parent; a name/dll match identifies the process itself.
+            worker_only = methods and all(m.startswith("cmdline") for m in methods)
+
+            if worker_only and ppid:
                 try:
                     parent = psutil.Process(ppid)
-                    parent_name = parent.name()
+                    _record(ppid, parent.name(), methods, pid)
+                    continue
                 except (psutil.NoSuchProcess, psutil.AccessDenied):
-                    parent_name = info.get("name") or ""
+                    pass   # fall through: record the worker as its own entry
 
-                window_title = ""
-                try:
-                    import ctypes
-                    _pid = ppid
-                    titles: list = []
+            _record(pid, info.get("name") or "", methods, None)
 
-                    @ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_int))
-                    def _foreach_passive(hwnd, _lParam):
-                        win_pid = ctypes.c_ulong(0)
-                        ctypes.windll.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(win_pid))
-                        if win_pid.value == _pid and ctypes.windll.user32.IsWindowVisible(hwnd):
-                            buf = ctypes.create_unicode_buffer(512)
-                            ctypes.windll.user32.GetWindowTextW(hwnd, buf, 512)
-                            if buf.value:
-                                titles.append(buf.value)
-                        return True
-
-                    ctypes.windll.user32.EnumWindows(_foreach_passive, 0)
-                    window_title = titles[0] if titles else ""
-                except Exception:
-                    pass
-
-                parent_groups[ppid] = {
-                    "parent_pid": ppid,
-                    "parent_name": parent_name,
-                    "window_title": window_title,
-                    "pids": [],
-                    "cdp_access": False,
-                }
-
-            parent_groups[ppid]["pids"].append(info["pid"])
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             continue
 
-    return list(parent_groups.values())
+    return list(apps.values())
 
 
 # ---------------------------------------------------------------------------
@@ -466,8 +543,10 @@ def register_routes(app, state, require_auth):
         """Scan running processes for CEF apps.
 
         'apps' — processes with a CDP debug port (full automation possible).
-        'passive_cef_apps' — renderer/gpu-process children or DLL-loaded CEF apps
-        without a debug port (identified only; CDP access not possible).
+        'passive_cef_apps' — CEF hosts without a debug port.  Each entry has
+        ``pid``, ``name``, ``window_title``, ``detection_methods`` (any of
+        ``cmdline`` / ``name`` / ``dll`` / ``cmdline-weak``), ``child_pids``,
+        and ``cdp_access=False``.  Identified only — CDP is not available.
         """
         try:
             apps = _scan_cef_processes()
