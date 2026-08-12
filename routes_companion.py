@@ -124,6 +124,7 @@ def register_routes(app, state, require_auth):
     @app.route("/browser/companion/command", methods=["POST"])
     @require_auth
     def route_companion_command():
+        global _inflight
         body = request.get_json(silent=True) or {}
         if not isinstance(body, dict):
             return jsonify({"ok": False, "error": "invalid JSON body"}), 400
