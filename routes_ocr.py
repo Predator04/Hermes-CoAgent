@@ -14,6 +14,15 @@ from flask import Response, jsonify, request
 from shared import _json_body, _log, _missing_field, get_host_ip, TRAY_PORT
 from shared_fallbacks import FallbackChain
 
+
+def _redact(text):
+    """Redact secrets from OCR text using the governance redactor (if present)."""
+    try:
+        from routes_governance import get_governor
+        return get_governor().redact(text)
+    except Exception:
+        return text
+
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -922,14 +931,17 @@ def register_routes(app, state, require_auth):
         win_ocr = _windows_ocr(img)
         if win_ocr.get("success"):
             lines = [l.strip() for l in win_ocr["text"].split(" ") if l.strip()]
-            return jsonify({"status": "ok", "description": "\n".join(lines[:100]) if lines else "(blank)",
-                            "lines": len(lines), "full_text": win_ocr["text"].strip(), "engine": "windows_ocr"})
+            desc = "\n".join(lines[:100]) if lines else "(blank)"
+            full = _redact(win_ocr["text"].strip())
+            return jsonify({"status": "ok", "description": _redact(desc),
+                            "lines": len(lines), "full_text": full, "engine": "windows_ocr"})
         try:
             import pytesseract
             text = pytesseract.image_to_string(img)
             lines = [l.strip() for l in text.split("\n") if l.strip()]
-            return jsonify({"status": "ok", "description": "\n".join(lines[:100]) if lines else "(blank)",
-                            "lines": len(lines), "full_text": text.strip()})
+            desc = "\n".join(lines[:100]) if lines else "(blank)"
+            return jsonify({"status": "ok", "description": _redact(desc),
+                            "lines": len(lines), "full_text": _redact(text.strip())})
         except ImportError:
             return jsonify({"error": "OCR not available", "description": "OCR not available", "lines": 0}), 200
         except Exception as e:

@@ -37,6 +37,15 @@ def _read_lines(limit=None):
     return lines[-limit:] if limit else lines
 
 
+def _redact(text):
+    """Redact secrets from log text using the governance redactor (if present)."""
+    try:
+        from routes_governance import get_governor
+        return get_governor().redact(text)
+    except Exception:
+        return text
+
+
 def _is_error(line):
     lowered = line.lower()
     return any(token in lowered for token in ("error", "exception", "traceback", "failed", "[500]"))
@@ -71,7 +80,7 @@ def route_logs_analyze():
     except (TypeError, ValueError):
         limit = 1000
     lines = _read_lines(limit)
-    errors = [_normalize_error(line) for line in lines if _is_error(line)]
+    errors = [_redact(_normalize_error(line)) for line in lines if _is_error(line)]
     counts = Counter(errors)
     common = [{"error": message, "count": count} for message, count in counts.most_common(20)]
     suggestions = [
