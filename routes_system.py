@@ -893,16 +893,11 @@ $form.Add_Shown({
     @app.route("/system/restart", methods=["POST"])
     @require_auth
     def route_system_restart():
-        """Restart hermes_coagent.py in-place.
+        """Restart hermes_coagent.py via elevated scheduled task.
 
-        Spawns a detached Python watchdog that:
-          1. Sleeps 2s so this HTTP response reaches the client.
-          2. Force-kills the current process tree.
-          3. Runs `pip install -r requirements.txt` to pick up any new deps.
-          4. Re-launches the main script with the same CLI args.
-
-        The watchdog inherits the working directory but runs as a fresh
-        Python process (no Flask app context, no in-memory server state).
+        The scheduled task runs as admin (RunLevel Highest) so it can kill
+        the admin CoAgent process and relaunch in Session 1.
+        Response returns immediately — the task fires 2s later.
         """
         import sys as _sys
 
@@ -915,51 +910,50 @@ $form.Add_Shown({
         py = _sys.executable
         cwd = str(COAGENT_DIR)
         req_txt = str(COAGENT_DIR / "requirements.txt")
-        child_argv = [main_script] + _sys.argv[1:]
+        argv_str = " ".join([main_script] + _sys.argv[1:])
 
-        # Watchdog runs as `python -c <src> <main_script> <arg1> ...`;
-        # its sys.argv[1:] therefore is the argv it should re-launch with.
-        watchdog_src = (
-            "import subprocess, os, sys, time\n"
-            "time.sleep(2)\n"
-            f"subprocess.run(['taskkill','/PID','{parent_pid}','/F','/T'],\n"
-            "               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)\n"
-            "time.sleep(1)\n"
-            f"if os.path.isfile({repr(req_txt)}):\n"
-            f"    subprocess.run([{repr(py)},'-m','pip','install','-r',{repr(req_txt)}],\n"
-            "                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=300)\n"
-            "# Relaunch via PowerShell scheduled task (preserves admin + Session 1)\n"
-            f"ps_cmd = (\"$a=New-ScheduledTaskAction -Execute '{py}' \"\n"
-            f"          \"-Argument '{' '.join(child_argv)}' \"\n"
-            f"          \"-WorkingDirectory '{cwd}';\"\n"
-            "          \"$t=New-ScheduledTaskTrigger -Once -At (Get-Date).AddSeconds(2);\"\n"
-            "          \"$p=New-ScheduledTaskPrincipal -UserId '$env:USERNAME' \"\n"
-            "          \"-LogonType Interactive -RunLevel Highest;\"\n"
-            "          \"Register-ScheduledTask -TaskName 'CoAgentReboot' \"\n"
-            "          \"-Action $a -Trigger $t -Principal $p -Force|Out-Null;\"\n"
-            "          \"Start-ScheduledTask -TaskName 'CoAgentReboot'\")\n"
-            "subprocess.run(['powershell','-NoProfile','-Command',ps_cmd],\n"
-            "               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=15)\n"
+        # Build a self-contained batch script for the scheduled task
+        batch = (
+            f"@echo off\r\n"
+            f"timeout /t 2 /nobreak >nul\r\n"
+            f"taskkill /PID {parent_pid} /F /T >nul 2>&1\r\n"
+            f"timeout /t 1 /nobreak >nul\r\n"
+            f'if exist "{req_txt}" (\r\n'
+            f'    "{py}" -m pip install -r "{req_txt}" >nul 2>&1\r\n'
+            f")\r\n"
+            f'start "" "{py}" {argv_str}\r\n'
         )
 
-        create_flags = 0
-        if hasattr(subprocess, "DETACHED_PROCESS"):
-            create_flags |= subprocess.DETACHED_PROCESS
-        if hasattr(subprocess, "CREATE_NEW_PROCESS_GROUP"):
-            create_flags |= subprocess.CREATE_NEW_PROCESS_GROUP
+        # Write batch file
+        bat_path = os.path.join(cwd, "_restart.bat")
+        try:
+            with open(bat_path, "w") as f:
+                f.write(batch)
+        except Exception as e:
+            _log(f"[RESTART] Failed to write batch: {e}")
+            return jsonify({"ok": False, "error": str(e)}), 500
+
+        # Create elevated scheduled task to run the batch
+        ps_cmd = (
+            f"$a=New-ScheduledTaskAction -Execute 'cmd.exe' "
+            f"-Argument '/c \\\"{bat_path}\\\"' "
+            f"-WorkingDirectory '{cwd}';"
+            "$t=New-ScheduledTaskTrigger -Once -At (Get-Date).AddSeconds(2);"
+            "$p=New-ScheduledTaskPrincipal -UserId '$env:USERNAME' "
+            "-LogonType Interactive -RunLevel Highest;"
+            "Register-ScheduledTask -TaskName 'CoAgentReboot' "
+            "-Action $a -Trigger $t -Principal $p -Force|Out-Null;"
+            "Start-ScheduledTask -TaskName 'CoAgentReboot'"
+        )
 
         try:
-            subprocess.Popen(
-                [py, "-c", watchdog_src] + child_argv,
-                cwd=cwd,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                stdin=subprocess.DEVNULL,
-                creationflags=create_flags,
-                close_fds=True,
+            subprocess.run(
+                ["powershell", "-NoProfile", "-Command", ps_cmd],
+                timeout=8,
+                capture_output=True,
             )
         except Exception as e:
-            _log(f"[RESTART] Watchdog spawn failed: {type(e).__name__}: {e}")
+            _log(f"[RESTART] Scheduled task creation failed: {e}")
             return jsonify({"ok": False, "error": str(e)}), 500
 
         _log("[RESTART] Watchdog spawned; process will terminate in ~2s")
