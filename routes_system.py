@@ -893,11 +893,7 @@ $form.Add_Shown({
     @app.route("/system/restart", methods=["POST"])
     @require_auth
     def route_system_restart():
-        """Restart hermes_coagent.py via elevated scheduled task.
-
-        Creates a RunLevel=Highest task that kills this process and relaunches.
-        The task cmd is: taskkill /f /pid {pid} & pythonw hermes_coagent.py ...
-        """
+        """Restart via elevated scheduled task (admin-safe, Session 1)."""
         import sys as _sys
 
         try:
@@ -910,17 +906,31 @@ $form.Add_Shown({
         cwd = str(COAGENT_DIR)
         argv_str = " ".join([main_script] + _sys.argv[1:])
 
-        # Single cmd line that kills + restarts (quote python path for spaces)
-        kill_and_restart = f'/c taskkill /f /pid {pid} & ""{py}"" {argv_str}'
+        # Write Python restart script (runs elevated, can kill admin process)
+        script_path = os.path.join(cwd, "_restart.py")
+        with open(script_path, "w") as f:
+            f.write(f'''import subprocess, time
+time.sleep(2)
+subprocess.run(["taskkill","/f","/pid","{pid}"], capture_output=True)
+time.sleep(1)
+subprocess.run([
+    "powershell","-NoProfile","-Command",
+    "$a=New-ScheduledTaskAction -Execute '{py}' -Argument '{argv_str}' -WorkingDirectory '{cwd}';"
+    "$t=New-ScheduledTaskTrigger -Once -At (Get-Date).AddSeconds(2);"
+    "$p=New-ScheduledTaskPrincipal -UserId '$env:USERNAME' -LogonType Interactive -RunLevel Highest;"
+    "Register-ScheduledTask -TaskName CoAgentLaunch -Action $a -Trigger $t -Principal $p -Force|Out-Null;"
+    "Start-ScheduledTask -TaskName CoAgentLaunch"
+], capture_output=True, timeout=15)
+''')
 
-        # Create as RunLevel Highest so it can kill this admin process
+        # Create CoAgentReboot task that runs the script (elevated)
         ps = [
             "powershell", "-NoProfile", "-Command",
-            f"$a=New-ScheduledTaskAction -Execute 'cmd.exe' -Argument '{kill_and_restart}' -WorkingDirectory '{cwd}';"
+            f"$a=New-ScheduledTaskAction -Execute '{py}' -Argument '{script_path}' -WorkingDirectory '{cwd}';"
             '$t=New-ScheduledTaskTrigger -Once -At (Get-Date).AddSeconds(2);'
             f'$p=New-ScheduledTaskPrincipal -UserId "$env:USERNAME" -LogonType Interactive -RunLevel Highest;'
-            "Register-ScheduledTask -TaskName 'CoAgentReboot' -Action $a -Trigger $t -Principal $p -Force|Out-Null;"
-            "Start-ScheduledTask -TaskName 'CoAgentReboot'"
+            "Register-ScheduledTask -TaskName CoAgentReboot -Action $a -Trigger $t -Principal $p -Force|Out-Null;"
+            "Start-ScheduledTask -TaskName CoAgentReboot"
         ]
 
         try:
@@ -929,7 +939,7 @@ $form.Add_Shown({
             _log(f"[RESTART] Failed: {e}")
             return jsonify({"ok": False, "error": str(e)}), 500
 
-        _log("[RESTART] Watchdog spawned; process will terminate in ~2s")
+        _log("[RESTART] Scheduled task created; process will terminate in ~4s")
         return jsonify({"ok": True, "restarting": True})
 
 
