@@ -1227,6 +1227,12 @@ def _run_command(command, prompt_input, timeout, workdir_path, env, log_id=None)
 
 def _build_command(agent_name, cmd_path, prompt, model, read_only=False):
     spec = AGENT_SPECS[agent_name]
+    if _is_batch_wrapper(cmd_path) and not spec.supports_stdin:
+        # A .bat/.cmd is executed via cmd.exe, which reparses argv — passing a
+        # prompt on the command line would reopen the BatBadBut (CVE-2024-1874)
+        # vector. Batch shims are only ever selected when the prompt is
+        # stdin-routed; assert that invariant defensively.
+        raise ValueError("batch wrapper requires stdin-routed prompt (BatBadBut guard)")
     command = [cmd_path, *spec.base_args]
     if read_only:
         command.extend(spec.read_only_args)
@@ -1242,6 +1248,10 @@ def _next_log_path(agent_name):
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     safe_agent = re.sub(r"[^A-Za-z0-9_.-]+", "_", agent_name)
+    # Reject names that survive as ".", "..", empty, or dot/dash-only — they
+    # could become path-traversal or dotfile-collision landmines on refactor.
+    if not safe_agent or safe_agent in (".", "..") or set(safe_agent) <= {".", "-", "_"}:
+        safe_agent = "agent"
     path = LOG_DIR / f"{stamp}_{safe_agent}.json"
     counter = 1
     while path.exists():
@@ -1328,6 +1338,20 @@ def _execute_agent(
     command = _build_command(selected, cmd_path, prompt, model, read_only=read_only)
 
     env = os.environ.copy()
+    # Defense-in-depth: don't leak unrelated secrets to the child agent. Keep
+    # AI-provider keys (the agent needs its own) but strip other credential
+    # families that a compromised/verbose agent could otherwise read.
+    _UNRELATED_SECRET_KEYS = {
+        "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN",
+        "GITHUB_TOKEN", "GH_TOKEN", "GITLAB_TOKEN", "NPM_TOKEN", "NODE_AUTH_TOKEN",
+        "DOCKER_PASSWORD", "DOCKER_AUTH_CONFIG", "SLACK_TOKEN", "SLACK_WEBHOOK",
+        "DISCORD_TOKEN", "TELEGRAM_BOT_TOKEN", "TWILIO_AUTH_TOKEN", "TWILIO_ACCOUNT_SID",
+        "STRIPE_SECRET_KEY", "STRIPE_API_KEY", "SHOPIFY_API_SECRET", "SHOPIFY_ACCESS_TOKEN",
+        "SUPABASE_SERVICE_KEY", "SUPABASE_ANON_KEY", "KALSHI_API_SECRET", "KALSHI_PRIVATE_KEY",
+    }
+    for _k in list(env.keys()):
+        if _k.upper() in _UNRELATED_SECRET_KEYS:
+            env.pop(_k, None)
     env.setdefault("NO_COLOR", "1")
     env.setdefault("CI", "1")
     env.setdefault("PYTHONIOENCODING", "utf-8")
