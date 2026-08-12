@@ -38,7 +38,6 @@ def test_discover_manifest_groups_and_availability():
 
 def test_discover_marks_missing_tools_unavailable():
     # tunnel requires ngrok/cloudflared which aren't installed in CI
-    manifest = routes_discover.build_manifest(_client(routes_discover)[0].url_map)
     # inject a fake tunnel rule via a throwaway app
     app = Flask(__name__)
     app.add_url_rule("/tunnel/start", "t", lambda: "", methods=["POST"])
