@@ -8,7 +8,7 @@ import threading
 from datetime import datetime
 
 from flask import Blueprint, jsonify, request
-from shared import _self_port
+from shared import _self_port, _wrap_registered_blueprint_routes
 
 _LOGGER = logging.getLogger(__name__)
 recovery_bp = Blueprint("recovery_daemon", __name__)
@@ -154,4 +154,5 @@ def _recovery_configure():
 
 def register_routes(app, state, require_auth):
     app.register_blueprint(recovery_bp)
+    _wrap_registered_blueprint_routes(app, recovery_bp.name, require_auth)
     _LOGGER.info("Recovery daemon routes registered")

@@ -9,6 +9,7 @@ import threading
 import time
 
 from flask import Blueprint, jsonify, request
+from shared import _wrap_registered_blueprint_routes
 
 _LOGGER = logging.getLogger(__name__)
 brainstem_bp = Blueprint("brainstem", __name__)
@@ -208,4 +209,5 @@ def _brainstem_configure():
 
 def register_routes(app, state, require_auth):
     app.register_blueprint(brainstem_bp)
+    _wrap_registered_blueprint_routes(app, brainstem_bp.name, require_auth)
     _LOGGER.info("Brainstem/Neocortex routing routes registered")

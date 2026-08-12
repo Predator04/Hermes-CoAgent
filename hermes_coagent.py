@@ -54,7 +54,7 @@ else:
 os.environ["PYAUTOGUI_FAILSAFE"] = os.environ.get("HERMES_COAGENT_FAILSAFE", "false")
 
 # -- Shared utilities --------------------------------------------
-from shared import COAGENT_DIR, SERVER_PORT, TRAY_PORT, SERVER_LOG, _console, _log, _json_body, _self_port
+from shared import COAGENT_DIR, SERVER_PORT, TRAY_PORT, SERVER_LOG, _console, _log, _json_body, _self_port, _wrap_registered_blueprint_routes
 from shared import PID_FILE
 from shared import acquire_single_instance_lock
 from shared import VERSION, AGENT_NAME, BUILD
@@ -1116,6 +1116,7 @@ if TELEMETRY_AVAILABLE:
     init_telem(str(COAGENT_DIR))
 if DIFF_CAPTURE_AVAILABLE:
     app.register_blueprint(diff_bp)
+    _wrap_registered_blueprint_routes(app, diff_bp.name, require_auth)
     features["diff_capture"] = True
 if RECORDER_GIF_AVAILABLE:
     reg_recorder_gif(app, state, require_auth)

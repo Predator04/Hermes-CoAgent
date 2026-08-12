@@ -22,7 +22,7 @@ from typing import Optional
 from urllib.parse import urljoin, urlparse
 
 from flask import Blueprint, jsonify, request, send_from_directory
-from shared import _log
+from shared import _log, _wrap_registered_blueprint_routes
 
 log = logging.getLogger(__name__)
 
@@ -1151,11 +1151,9 @@ Write 3-4 short lines with emojis, actionable insights, and next steps. Be excit
 def register_routes(app, state=None, require_auth=None):
     """Register store automation blueprint."""
     bp = store_bp
-    if require_auth:
-        # Apply auth to all routes
-        for rule in [r for r in bp.deferred_functions] if hasattr(bp, 'deferred_functions') else []:
-            pass
     app.register_blueprint(bp)
+    if require_auth:
+        _wrap_registered_blueprint_routes(app, bp.name, require_auth)
     _log(f"store routes registered ({len(bp.deferred_functions) if hasattr(bp, 'deferred_functions') else '?'} endpoints)")
     app.config.setdefault("store_bp_registered", True)
     return app
