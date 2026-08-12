@@ -167,9 +167,9 @@ def register_routes(app, state, require_auth):
         try:
             body = _json_body()
             if body is None:
-                return jsonify({"ok": False, "error": _missing_field("request body")}), 400
+                return _missing_field("request body")
         except Exception:
-            return jsonify({"ok": False, "error": _missing_field("request body")}), 400
+            return _missing_field("request body")
 
         iso_path = body.get("iso_path", "")
         drive_letter = body.get("drive", "")
