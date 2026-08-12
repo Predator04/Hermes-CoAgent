@@ -1,0 +1,26 @@
+{
+  "manifest_version": 3,
+  "name": "CoAgent Companion",
+  "version": "1.0.0",
+  "description": "Companion extension that pairs with the local Hermes CoAgent server to drive the browser (navigate, click, type, read, extract, screenshot).",
+  "permissions": [
+    "activeTab",
+    "tabs",
+    "scripting",
+    "alarms",
+    "storage"
+  ],
+  "host_permissions": [
+    "<all_urls>",
+    "http://localhost/*",
+    "http://127.0.0.1/*",
+    "http://192.168.1.8/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "CoAgent Companion"
+  }
+}

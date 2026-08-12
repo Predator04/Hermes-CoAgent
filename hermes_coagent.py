@@ -702,12 +702,14 @@ from routes_deps import register_routes as reg_deps
 from routes_config import register_routes as reg_config, backup_file
 from routes_browser import register_routes as reg_browser
 from browser_automation import register_routes as reg_browser_automation
+from routes_companion import register_routes as reg_companion
 from routes_deploy import register_routes as reg_deploy
 from routes_stealth_browser import register_routes as reg_stealth_browser
 from routes_google import register_routes as reg_google
 from routes_logs import register_routes as reg_logs
 from routes_recorder import register_routes as reg_recorder
 from routes_mcp import register_routes as reg_mcp, run_stdio_server
+from routes_mcp_client import register_routes as reg_mcp_client
 from routes_git import register_routes as reg_git
 from routes_dashboard import register_routes as reg_dashboard
 from routes_obsidian import register_routes as reg_obsidian
@@ -715,6 +717,7 @@ from routes_wol import register_routes as reg_wol
 from routes_phone import register_routes as reg_phone
 from routes_webrtc import register_routes as reg_webrtc
 from routes_plugins import register_routes as reg_plugins
+from routes_skills import register_routes as reg_skills
 from routes_palmreject import register_routes as reg_palmreject
 from routes_agent import register_routes as reg_agent
 from routes_hybrid_agent import register_routes as reg_hybrid_agent
@@ -1068,6 +1071,7 @@ reg_deps(app, state, require_auth)
 reg_config(app, state, require_auth)
 reg_browser(app, state, require_auth)
 reg_browser_automation(app, state, require_auth)
+reg_companion(app, state, require_auth)
 reg_google(app, state, require_auth)
 reg_logs(app, state, require_auth)
 reg_recorder(app, state, require_auth)
@@ -1078,6 +1082,7 @@ reg_wol(app, state, require_auth)
 reg_phone(app, state, require_auth)
 reg_webrtc(app, state, require_auth)
 reg_plugins(app, state, require_auth)
+reg_skills(app, state, require_auth)
 reg_palmreject(app, state, require_auth)
 reg_agent(app, state, require_auth)
 reg_hybrid_agent(app, state, require_auth)
@@ -1096,6 +1101,7 @@ reg_screen_vision(app, state, require_auth)
 reg_rag_workspace(app, state, require_auth)
 reg_telegram(app, state, require_auth)
 reg_mcp(app, state, require_auth)
+reg_mcp_client(app, state, require_auth)
 reg_memory(app, state, require_auth)
 features["memory"] = True
 reg_reminders(app, state, require_auth)

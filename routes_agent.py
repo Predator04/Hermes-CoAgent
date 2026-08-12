@@ -1613,9 +1613,35 @@ def route_agent_provider_test():
         return _error(str(exc), 500, type=type(exc).__name__)
 
 
+_SKILLS_PROVIDER = None  # set in register_routes; see routes_skills.py
+
+
+def _inject_skills(data):
+    """Progressive-disclosure skill injection.
+
+    If the request carries a ``skills`` field (list of skill names) and the
+    skills loader (routes_skills.py) is installed, append the matching skill
+    bodies to the prompt before dispatch. No-op when skills are absent.
+    """
+    provider = _SKILLS_PROVIDER
+    if not provider or not isinstance(data, dict):
+        return
+    skill_names = data.get("skills")
+    if not skill_names or not isinstance(skill_names, list):
+        return
+    render = provider.get("render")
+    if not callable(render):
+        return
+    try:
+        data["prompt"] = render(data.get("prompt"), skill_names)
+    except Exception as exc:  # noqa: BLE001
+        _console(f"[agent] skills injection failed: {exc}")
+
+
 @agent_bp.route("/agent/exec", methods=["POST"])
 def route_agent_exec():
     data = _json_payload()
+    _inject_skills(data)
     try:
         provider = _provider_name_for_exec(data)
     except ValueError as exc:
@@ -1823,6 +1849,8 @@ def route_agent_logs():
 
 
 def register_routes(app, state, require_auth):
+    global _SKILLS_PROVIDER
+    _SKILLS_PROVIDER = getattr(state, "skills", None)
     app.register_blueprint(agent_bp)
     _wrap_registered_blueprint_routes(app, agent_bp.name, require_auth)
     state.agent_gateway = {
