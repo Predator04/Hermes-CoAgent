@@ -895,9 +895,8 @@ $form.Add_Shown({
     def route_system_restart():
         """Restart hermes_coagent.py via elevated scheduled task.
 
-        The scheduled task runs as admin (RunLevel Highest) so it can kill
-        the admin CoAgent process and relaunch in Session 1.
-        Response returns immediately — the task fires 2s later.
+        Creates a RunLevel=Highest task that kills this process and relaunches.
+        The task cmd is: taskkill /f /pid {pid} & pythonw hermes_coagent.py ...
         """
         import sys as _sys
 
@@ -906,54 +905,28 @@ $form.Add_Shown({
         except Exception:
             main_script = str(COAGENT_DIR / "hermes_coagent.py")
 
-        parent_pid = os.getpid()
+        pid = os.getpid()
         py = _sys.executable
         cwd = str(COAGENT_DIR)
-        req_txt = str(COAGENT_DIR / "requirements.txt")
         argv_str = " ".join([main_script] + _sys.argv[1:])
 
-        # Build a self-contained batch script for the scheduled task
-        batch = (
-            f"@echo off\r\n"
-            f"timeout /t 2 /nobreak >nul\r\n"
-            f"taskkill /PID {parent_pid} /F /T >nul 2>&1\r\n"
-            f"timeout /t 1 /nobreak >nul\r\n"
-            f'if exist "{req_txt}" (\r\n'
-            f'    "{py}" -m pip install -r "{req_txt}" >nul 2>&1\r\n'
-            f")\r\n"
-            f'start "" "{py}" {argv_str}\r\n'
-        )
+        # Single cmd line that kills + restarts (quote python path for spaces)
+        kill_and_restart = f'/c taskkill /f /pid {pid} & ""{py}"" {argv_str}'
 
-        # Write batch file
-        bat_path = os.path.join(cwd, "_restart.bat")
-        try:
-            with open(bat_path, "w") as f:
-                f.write(batch)
-        except Exception as e:
-            _log(f"[RESTART] Failed to write batch: {e}")
-            return jsonify({"ok": False, "error": str(e)}), 500
-
-        # Create elevated scheduled task to run the batch
-        ps_cmd = (
-            f"$a=New-ScheduledTaskAction -Execute 'cmd.exe' "
-            f"-Argument '/c \\\"{bat_path}\\\"' "
-            f"-WorkingDirectory '{cwd}';"
+        # Create as RunLevel Highest so it can kill this admin process
+        ps = [
+            "powershell", "-NoProfile", "-Command",
+            f"$a=New-ScheduledTaskAction -Execute 'cmd.exe' -Argument '{kill_and_restart}' -WorkingDirectory '{cwd}';"
             "$t=New-ScheduledTaskTrigger -Once -At (Get-Date).AddSeconds(2);"
-            "$p=New-ScheduledTaskPrincipal -UserId '$env:USERNAME' "
-            "-LogonType Interactive -RunLevel Highest;"
-            "Register-ScheduledTask -TaskName 'CoAgentReboot' "
-            "-Action $a -Trigger $t -Principal $p -Force|Out-Null;"
+            "$p=New-ScheduledTaskPrincipal -UserId '$env:USERNAME' -LogonType Interactive -RunLevel Highest;"
+            "Register-ScheduledTask -TaskName 'CoAgentReboot' -Action $a -Trigger $t -Principal $p -Force|Out-Null;"
             "Start-ScheduledTask -TaskName 'CoAgentReboot'"
-        )
+        ]
 
         try:
-            subprocess.run(
-                ["powershell", "-NoProfile", "-Command", ps_cmd],
-                timeout=8,
-                capture_output=True,
-            )
+            subprocess.run(ps, timeout=8, capture_output=True)
         except Exception as e:
-            _log(f"[RESTART] Scheduled task creation failed: {e}")
+            _log(f"[RESTART] Failed: {e}")
             return jsonify({"ok": False, "error": str(e)}), 500
 
         _log("[RESTART] Watchdog spawned; process will terminate in ~2s")
