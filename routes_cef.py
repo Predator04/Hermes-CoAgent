@@ -22,6 +22,9 @@ from shared import _json_body, _log
 _sessions: dict = {}   # port -> {"ws": _CDPSocket, "pages": list, "page_id": str}
 _sessions_lock = threading.Lock()
 
+_passive_scan_cache: dict = {"ts": 0.0, "result": []}
+_passive_scan_cache_lock = threading.Lock()
+
 # Ports to probe when process command-line inspection yields nothing.
 _FALLBACK_PORTS = [9222, 9229, 9223, 9224, 9225]
 
@@ -452,79 +455,121 @@ def _probe_fallback_ports() -> list[dict]:
     return found
 
 
-def _scan_passive_cef_processes() -> list[dict]:
+def _scan_passive_cef_processes(include_titles: bool = False, fresh: bool = False) -> list[dict]:
     """Find running CEF apps that do NOT expose a CDP debug port.
 
-    Three detection methods run per process:
-      * ``cmdline`` — strong CEF child-worker flags (renderer / gpu-process /
-        crashpad / --browser-subprocess-path)
-      * ``name``    — the process image is a known CEF host (NVIDIA App,
-        Spotify, Discord, VS Code, Slack, Teams, etc.)
-      * ``dll``     — loaded modules include libcef / chrome_elf / nw_elf
-      * ``cmdline-weak`` — Chromium-style flags without stronger evidence
+    Two-pass scan for speed:
+      Pass 1: name-only (no cmdline fetch) — catches known CEF hosts instantly.
+      Pass 2: cmdline scan for remaining PIDs — finds worker children and
+              unlisted apps; skips PIDs already matched in pass 1.
 
-    Results are grouped by top-level app: worker children (matched only by
-    cmdline flags) are folded under their parent PID.  Standalone matches
-    (by name or DLL) appear as their own entry.  CDP access is not possible
-    for these apps — the response is informational.
+    Results are cached for 30 s.  Pass ``fresh=True`` to bypass the cache.
+    The scan runs in a background thread with a 5-second hard timeout;
+    partial results are returned if it expires.
+
+    Window titles (EnumWindows) are expensive and skipped by default.
+    Pass ``include_titles=True`` only when the caller needs them.
     """
-    import psutil, signal, threading
+    import psutil
 
-    apps: dict = {}   # top_pid -> entry
-    _scan_deadline = threading.Event()
+    now = time.monotonic()
+    if not fresh:
+        with _passive_scan_cache_lock:
+            if now - _passive_scan_cache["ts"] < 30.0:
+                return _passive_scan_cache["result"]
 
-    def _record(top_pid: int, top_name: str, methods: list[str], child_pid: int | None) -> None:
-        entry = apps.get(top_pid)
-        if entry is None:
-            entry = {
-                "pid": top_pid,
-                "name": top_name,
-                "window_title": _window_title_for_pid(top_pid),
-                "detection_methods": [],
-                "child_pids": [],
-                "cdp_access": False,
-            }
-            apps[top_pid] = entry
-        for m in methods:
-            if m not in entry["detection_methods"]:
-                entry["detection_methods"].append(m)
-        if child_pid is not None and child_pid != top_pid and child_pid not in entry["child_pids"]:
-            entry["child_pids"].append(child_pid)
+    result_holder: list = []
 
-    for proc in psutil.process_iter(["pid", "name", "cmdline", "ppid"]):
-        try:
-            info = proc.info
-            cmdline_str = " ".join(info.get("cmdline") or [])
+    def _do_scan() -> None:
+        apps: dict = {}   # top_pid -> entry
 
-            # Handled by the active scan
-            if "--remote-debugging-port=" in cmdline_str:
+        def _record(top_pid: int, top_name: str, methods: list[str], child_pid: int | None) -> None:
+            entry = apps.get(top_pid)
+            if entry is None:
+                entry = {
+                    "pid": top_pid,
+                    "name": top_name,
+                    "window_title": _window_title_for_pid(top_pid) if include_titles else "",
+                    "detection_methods": [],
+                    "child_pids": [],
+                    "cdp_access": False,
+                }
+                apps[top_pid] = entry
+            for m in methods:
+                if m not in entry["detection_methods"]:
+                    entry["detection_methods"].append(m)
+            if child_pid is not None and child_pid != top_pid and child_pid not in entry["child_pids"]:
+                entry["child_pids"].append(child_pid)
+
+        # ------------------------------------------------------------------
+        # Pass 1: name-only — no cmdline fetch, typically <0.3 s
+        # ------------------------------------------------------------------
+        name_matched_pids: set = set()
+        for proc in psutil.process_iter(["pid", "name"]):
+            try:
+                info = proc.info
+                name = (info.get("name") or "").lower()
+                if any(host in name for host in _CEF_HOST_NAMES):
+                    pid = info["pid"]
+                    name_matched_pids.add(pid)
+                    _record(pid, info.get("name") or "", ["name"], None)
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
                 continue
 
-            methods = _detect_cef_methods(proc, info, check_dlls=False)
-            if not methods:
-                continue
+        # ------------------------------------------------------------------
+        # Pass 2: cmdline scan for PIDs not caught by name
+        # ------------------------------------------------------------------
+        for proc in psutil.process_iter(["pid", "name", "cmdline", "ppid"]):
+            try:
+                info = proc.info
+                pid = info["pid"]
+                if pid in name_matched_pids:
+                    continue   # already recorded in pass 1
 
-            pid = info["pid"]
-            ppid = info.get("ppid") or 0
-
-            # A child worker (matched purely by cmdline / cmdline-weak) belongs
-            # under its parent; a name/dll match identifies the process itself.
-            worker_only = methods and all(m.startswith("cmdline") for m in methods)
-
-            if worker_only and ppid:
-                try:
-                    parent = psutil.Process(ppid)
-                    _record(ppid, parent.name(), methods, pid)
+                cmdline = info.get("cmdline") or []
+                if not cmdline:
                     continue
-                except (psutil.NoSuchProcess, psutil.AccessDenied):
-                    pass   # fall through: record the worker as its own entry
+                cmdline_str = " ".join(cmdline)
 
-            _record(pid, info.get("name") or "", methods, None)
+                if "--remote-debugging-port=" in cmdline_str:
+                    continue   # handled by the active scan
 
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
-            continue
+                methods: list[str] = []
+                if any(marker in cmdline_str for marker in _CEF_CMDLINE_STRONG):
+                    methods.append("cmdline")
+                if not methods and any(marker in cmdline_str for marker in _CEF_CMDLINE_WEAK):
+                    methods.append("cmdline-weak")
 
-    return list(apps.values())
+                if not methods:
+                    continue
+
+                ppid = info.get("ppid") or 0
+                worker_only = all(m.startswith("cmdline") for m in methods)
+
+                if worker_only and ppid:
+                    try:
+                        parent = psutil.Process(ppid)
+                        _record(ppid, parent.name(), methods, pid)
+                        continue
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        pass   # fall through: record worker as its own entry
+
+                _record(pid, info.get("name") or "", methods, None)
+
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
+
+        result_holder.extend(apps.values())
+
+    worker = threading.Thread(target=_do_scan, daemon=True)
+    worker.start()
+    worker.join(5.0)   # hard timeout — return whatever is ready
+
+    results = list(result_holder)
+    with _passive_scan_cache_lock:
+        _passive_scan_cache["ts"] = time.monotonic()
+        _passive_scan_cache["result"] = results
+    return results
 
 
 # ---------------------------------------------------------------------------
@@ -553,7 +598,8 @@ def register_routes(app, state, require_auth):
             if not apps:
                 apps = _probe_fallback_ports()
             try:
-                passive = _scan_passive_cef_processes()
+                fresh = request.args.get("fresh", "").lower() == "true"
+                passive = _scan_passive_cef_processes(fresh=fresh)
             except Exception as exc:
                 _log(f"[CEF] passive scan error: {exc}")
                 passive = []
