@@ -296,9 +296,16 @@ def register_routes(app, state, require_auth):
             return jsonify({"ok": False, "error": "disk must be a numeric index"}), 400
         if partition_type not in ("primary", "extended", "logical"):
             partition_type = "primary"
+        if size_mb not in (None, ""):
+            try:
+                size_mb = int(size_mb)
+            except (ValueError, TypeError):
+                return jsonify({"ok": False, "error": "size_mb must be an integer"}), 400
+            if size_mb < 1 or size_mb > 1_000_000_000:
+                return jsonify({"ok": False, "error": "size_mb must be between 1 and 1000000000"}), 400
         commands = [f"select disk {disk_num}"]
         if size_mb:
-            commands.append(f"create partition {partition_type} size={int(size_mb)}")
+            commands.append(f"create partition {partition_type} size={size_mb}")
         else:
             commands.append(f"create partition {partition_type}")
         commands.append("exit")
