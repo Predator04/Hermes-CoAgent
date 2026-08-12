@@ -30,7 +30,13 @@ def get_version() -> str:
 
 
 def bump_version(current: str, part: str) -> str:
-    parts = [int(x) for x in current.split(".")]
+    # Strip prerelease/build metadata (e.g. "8.53.11-beta.1" → "8.53.11")
+    clean = current.split("-")[0].split("+")[0]
+    try:
+        parts = [int(x) for x in clean.split(".")]
+    except ValueError:
+        print(f"ERROR: VERSION file contains non-numeric version: '{current}'", file=sys.stderr)
+        raise SystemExit(1)
     # Normalize to 3-part semver
     while len(parts) < 3:
         parts.append(0)
