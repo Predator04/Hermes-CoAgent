@@ -880,45 +880,43 @@ $form.Add_Shown({
 
         # Watchdog runs as `python -c <src> <main_script> <arg1> ...`;
         # its sys.argv[1:] therefore is the argv it should re-launch with.
-        # Build PowerShell scheduled-task restart script.
-        # Uses Register-ScheduledTask + RunLevel Highest so admin
-        # CoAgent re-launches in Session 1 with full privileges.
-        ps_script = (
-            "timeout /t 2 /nobreak >nul\n"
-            f"taskkill /PID {parent_pid} /F /T >nul 2>&1\n"
-            "timeout /t 1 /nobreak >nul\n"
-            f"if exist {repr(req_txt)} (\n"
-            f"    {repr(py)} -m pip install -r {repr(req_txt)} >nul 2>&1\n"
-            ")\n"
-            f"powershell -NoProfile -Command \""
-            f"$a=New-ScheduledTaskAction -Execute '{py}' "
-            f"-Argument '{' '.join(child_argv)}' "
-            f"-WorkingDirectory '{cwd}';"
-            "$t=New-ScheduledTaskTrigger -Once -At (Get-Date).AddSeconds(2);"
-            "$p=New-ScheduledTaskPrincipal -UserId '$env:USERNAME' "
-            "-LogonType Interactive -RunLevel Highest;"
-            f"Register-ScheduledTask -TaskName 'CoAgentReboot' "
-            "-Action $a -Trigger $t -Principal $p -Force|Out-Null;"
-            "Start-ScheduledTask -TaskName 'CoAgentReboot'"
-            "\"\n"
+        watchdog_src = (
+            "import subprocess, os, sys, time\n"
+            "time.sleep(2)\n"
+            f"subprocess.run(['taskkill','/PID','{parent_pid}','/F','/T'],\n"
+            "               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)\n"
+            "time.sleep(1)\n"
+            f"if os.path.isfile({repr(req_txt)}):\n"
+            f"    subprocess.run([{repr(py)},'-m','pip','install','-r',{repr(req_txt)}],\n"
+            "                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=300)\n"
+            "# Relaunch via PowerShell scheduled task (preserves admin + Session 1)\n"
+            f"ps_cmd = (\"$a=New-ScheduledTaskAction -Execute '{py}' \"\n"
+            f"          \"-Argument '{' '.join(child_argv)}' \"\n"
+            f"          \"-WorkingDirectory '{cwd}';\"\n"
+            "          \"$t=New-ScheduledTaskTrigger -Once -At (Get-Date).AddSeconds(2);\"\n"
+            "          \"$p=New-ScheduledTaskPrincipal -UserId '$env:USERNAME' \"\n"
+            "          \"-LogonType Interactive -RunLevel Highest;\"\n"
+            "          \"Register-ScheduledTask -TaskName 'CoAgentReboot' \"\n"
+            "          \"-Action $a -Trigger $t -Principal $p -Force|Out-Null;\"\n"
+            "          \"Start-ScheduledTask -TaskName 'CoAgentReboot'\")\n"
+            "subprocess.run(['powershell','-NoProfile','-Command',ps_cmd],\n"
+            "               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=15)\n"
         )
 
-        # Write the watchdog batch file and spawn it
-        bat_path = os.path.join(cwd, "_restart.bat")
-        try:
-            with open(bat_path, "w") as f:
-                f.write(ps_script)
-        except Exception as e:
-            _log(f"[RESTART] Failed to write batch file: {e}")
-            return jsonify({"ok": False, "error": str(e)}), 500
+        create_flags = 0
+        if hasattr(subprocess, "DETACHED_PROCESS"):
+            create_flags |= subprocess.DETACHED_PROCESS
+        if hasattr(subprocess, "CREATE_NEW_PROCESS_GROUP"):
+            create_flags |= subprocess.CREATE_NEW_PROCESS_GROUP
 
         try:
             subprocess.Popen(
-                ["cmd.exe", "/c", bat_path],
+                [py, "-c", watchdog_src] + child_argv,
                 cwd=cwd,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 stdin=subprocess.DEVNULL,
+                creationflags=create_flags,
                 close_fds=True,
             )
         except Exception as e:
