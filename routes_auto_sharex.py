@@ -93,6 +93,7 @@ def register_routes(app, state, require_auth):
         exe_path = _find_sharex()
         available = exe_path is not None
         try:
+            import mss  # noqa: F401
             mss_ok = True
         except ImportError:
             mss_ok = False
@@ -236,8 +237,11 @@ def register_routes(app, state, require_auth):
 
         # Fallback: compute hash and return metadata (no actual upload without ShareX)
         file_size = os.path.getsize(file_path)
+        h = hashlib.sha256()
         with open(file_path, "rb") as f:
-            file_hash = hashlib.sha256(f.read()).hexdigest()
+            for chunk in iter(lambda: f.read(65536), b""):
+                h.update(chunk)
+        file_hash = h.hexdigest()
         return jsonify({
             "ok": True,
             "tool": "Python fallback",
