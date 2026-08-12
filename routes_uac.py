@@ -141,9 +141,11 @@ def _run_elevated_via_task(command, arguments="", working_dir=None):
             except Exception:
                 pass
         # Best-effort task cleanup after a short delay
+        # NOTE: Do NOT use /f — it terminates the running process.
+        # Remove only the task definition; let the elevated process finish.
         try:
             subprocess.run(
-                [schtasks, "/delete", "/tn", task_name, "/f"],
+                [schtasks, "/delete", "/tn", task_name],
                 capture_output=True, timeout=10,
             )
         except Exception:
