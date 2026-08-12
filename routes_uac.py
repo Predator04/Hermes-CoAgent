@@ -25,7 +25,7 @@ from flask import jsonify
 
 from shared import _json_body, _log, _missing_field, _interactive_task_xml, COAGENT_DIR
 
-_UAC_REG_KEY = r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System"
+_UAC_REG_KEY = r"HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System"
 
 # UIAccess helper binary path (Option C — must be built and installed separately)
 _UIACCESS_HELPER = os.path.join(str(COAGENT_DIR), "uiaccess_helper.exe")
@@ -50,7 +50,7 @@ def _ps(script, timeout=10):
 
 def _reg_read_dword(value_name):
     out, _err, rc = _ps(
-        f"(Get-ItemProperty -Path 'Registry::{_UAC_REG_KEY}'"
+        f"(Get-ItemProperty -Path '{_UAC_REG_KEY}'"
         f" -Name '{value_name}' -ErrorAction SilentlyContinue).'{value_name}'"
     )
     if rc == 0 and out:
@@ -63,7 +63,7 @@ def _reg_read_dword(value_name):
 
 def _reg_set_dword(value_name, value):
     _out, err, rc = _ps(
-        f"Set-ItemProperty -Path 'Registry::{_UAC_REG_KEY}'"
+        f"Set-ItemProperty -Path '{_UAC_REG_KEY}'"
         f" -Name '{value_name}' -Value {int(value)} -Type DWord"
     )
     return rc == 0, err

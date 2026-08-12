@@ -813,15 +813,47 @@ $form.Add_Shown({
         base_url = "https://raw.githubusercontent.com/Predator04/Hermes-Coagent/main/"
         coagent_path = str(COAGENT_DIR)
 
-        targets = [os.path.join(coagent_path, "hermes_coagent.py")]
-        for f in _glob.glob(os.path.join(coagent_path, "routes_*.py")):
-            targets.append(f)
+        # Fetch file list from GitHub repo to know what actually exists
+        repo_api = "https://api.github.com/repos/Predator04/Hermes-Coagent/git/trees/main?recursive=1"
+        repo_files = set()
+        try:
+            import urllib.request as _ur
+            req = _ur.Request(repo_api, headers={"Accept": "application/vnd.github+json", "User-Agent": "CoAgent"})
+            with _ur.urlopen(req, timeout=15) as resp:
+                data = _json.loads(resp.read())
+                for item in data.get("tree", []):
+                    repo_files.add(item["path"])
+        except Exception:
+            # Fallback: sync only known core files
+            repo_files = {
+                "hermes_coagent.py", "shared.py", "VERSION",
+                "scripts/test_compile.py", "requirements.txt",
+            }
+
+        # Build target list: core files + routes_*.py that exist on GitHub
+        targets = []
+        for fname in sorted(repo_files):
+            if fname.endswith(".py") and not fname.startswith("scripts/") and "/" not in fname:
+                targets.append(os.path.join(coagent_path, fname))
+        # Always include hermes_coagent.py
+        main_path = os.path.join(coagent_path, "hermes_coagent.py")
+        if main_path not in targets:
+            targets.insert(0, main_path)
+        # Add shared.py
+        shared_path = os.path.join(coagent_path, "shared.py")
+        if shared_path not in targets:
+            targets.append(shared_path)
 
         updated, errors = [], []
         for local_path in targets:
             fname = os.path.basename(local_path)
+            if fname not in repo_files:
+                continue  # skip files not in GitHub repo
             try:
                 with urllib.request.urlopen(base_url + fname, timeout=15) as resp:
+                    if resp.status == 404:
+                        errors.append({"file": fname, "error": "Not found on GitHub"})
+                        continue
                     content = resp.read()
                 with open(local_path, "wb") as fh:
                     fh.write(content)
