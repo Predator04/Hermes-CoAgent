@@ -129,6 +129,8 @@ def _window_region(window_hint: str):
 def _load_template_name(name: str):
     """Load a saved template as numpy BGR array."""
     import cv2
+    if not re.match(r'^[\w\-]+$', name):
+        raise ValueError(f"Invalid template name: {name!r}")
     path = _TEMPLATES_DIR / f"{name}.png"
     if not path.exists():
         raise FileNotFoundError(f"Template '{name}' not found (expected {path})")
@@ -407,6 +409,8 @@ def register_routes(app, state, require_auth):
         name = (body.get("name") or "").strip()
         if not name:
             return jsonify({"error": "name required"}), 400
+        if not re.match(r'^[\w\-]+$', name):
+            return jsonify({"error": "name must be alphanumeric with - or _ only"}), 400
 
         path = _TEMPLATES_DIR / f"{name}.png"
         if not path.exists():
@@ -445,11 +449,6 @@ def register_routes(app, state, require_auth):
             x, y, w, h = [int(v) for v in region_raw[:4]]
         except (TypeError, IndexError, ValueError):
             return jsonify({"error": "region must be [x, y, w, h] integers"}), 400
-
-        try:
-            _, screen_size = _grab_screen_cv2((x, y, w, h))
-        except Exception as exc:
-            return jsonify({"error": f"Screenshot failed: {exc}"}), 500
 
         try:
             from PIL import ImageGrab

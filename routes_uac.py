@@ -269,14 +269,19 @@ def _try_click_ocr(button_target):
     # Try Windows OCR via routes_ocr helper
     try:
         from routes_ocr import _windows_ocr as _win_ocr
-        words = _win_ocr(img)
-        if words:
-            for word_info in words:
+        ocr_result = _win_ocr(img)
+        if ocr_result and ocr_result.get("success"):
+            for word_info in ocr_result.get("words", []):
                 word_text = (word_info.get("text") or "").strip().lower()
                 if word_text in target_lower:
-                    bbox = word_info.get("bbox", {})
-                    x = int(bbox.get("x", 0) + bbox.get("w", 50) / 2)
-                    y = int(bbox.get("y", 0) + bbox.get("h", 20) / 2)
+                    # bbox is [x, y, w, h] list from _windows_ocr
+                    bbox = word_info.get("bbox") or []
+                    if isinstance(bbox, list) and len(bbox) >= 4:
+                        x = int(bbox[0] + bbox[2] / 2)
+                        y = int(bbox[1] + bbox[3] / 2)
+                    else:
+                        x = int(bbox.get("x", 0) + bbox.get("w", 50) / 2)
+                        y = int(bbox.get("y", 0) + bbox.get("h", 20) / 2)
                     ok = _click_point(x, y)
                     return {
                         "clicked": ok,

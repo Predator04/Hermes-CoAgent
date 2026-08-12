@@ -499,6 +499,8 @@ def register_routes(app, state, require_auth):
         Returns list of {id, bbox:{x,y,w,h}, text, type, confidence, color}.
         """
         d = _json_body()
+        if isinstance(d, tuple):
+            return d
         region = d.get("region")
         window = (d.get("window") or "").strip() or None
         want_ocr = bool(d.get("ocr", False))
@@ -549,6 +551,8 @@ def register_routes(app, state, require_auth):
         Returns {ok, clicked, method, click_point:{x,y}, element, ...}.
         """
         d = _json_body()
+        if isinstance(d, tuple):
+            return d
         target_text = (d.get("text") or "").strip()
         target_color = (d.get("color") or "").strip() or None
         window = (d.get("window") or "").strip() or None
@@ -684,6 +688,8 @@ def register_routes(app, state, require_auth):
         Word bounding boxes are in absolute screen coordinates.
         """
         d = _json_body()
+        if isinstance(d, tuple):
+            return d
         region = d.get("region")
         window = (d.get("window") or "").strip() or None
 

@@ -96,8 +96,15 @@ class _CDPSocket:
             header = bytes([0x81, 0xFF]) + length.to_bytes(8, "big") + mask
         return header + masked
 
-    def _recv_frame(self) -> str:
-        """Read one complete WebSocket text frame from the socket."""
+    def _recv_frame(self) -> str | None:
+        """Read one complete WebSocket frame from the socket.
+
+        Returns the decoded text payload for data frames, or None for control
+        frames that were handled internally (ping→pong, pong).  Raises
+        ConnectionError on close frames or a broken connection.
+        """
+        import os as _os
+
         def recv_exact(n):
             buf = b""
             while len(buf) < n:
@@ -108,7 +115,7 @@ class _CDPSocket:
             return buf
 
         header = recv_exact(2)
-        # bit 0 of byte1 = MASK flag
+        opcode = header[0] & 0x0F
         masked = bool(header[1] & 0x80)
         length = header[1] & 0x7F
         if length == 126:
@@ -119,6 +126,22 @@ class _CDPSocket:
         payload = recv_exact(length)
         if masked:
             payload = bytes(b ^ mask_bytes[i % 4] for i, b in enumerate(payload))
+
+        if opcode == 0x8:   # Close frame
+            raise ConnectionError("CDP sent WebSocket close frame")
+        if opcode == 0x9:   # Ping — reply with Pong (opcode 0xA, mask required)
+            mask = _os.urandom(4)
+            masked_payload = bytes(b ^ mask[i % 4] for i, b in enumerate(payload))
+            pong_len = len(payload)
+            pong_header = bytes([0x8A, 0x80 | pong_len]) + mask
+            try:
+                self._sock.sendall(pong_header + masked_payload)
+            except Exception:
+                pass
+            return None
+        if opcode == 0xA:   # Pong — ignore
+            return None
+
         return payload.decode("utf-8", errors="replace")
 
     # ------------------------------------------------------------------
@@ -129,6 +152,8 @@ class _CDPSocket:
         while self._running:
             try:
                 text = self._recv_frame()
+                if text is None:
+                    continue   # control frame handled internally (ping/pong)
                 msg = json.loads(text)
                 cmd_id = msg.get("id")
                 if cmd_id is not None:
@@ -147,6 +172,9 @@ class _CDPSocket:
 
     def send(self, method: str, params: dict | None = None, timeout: float = 10.0) -> dict:
         """Send a CDP command and return the response (blocks until reply)."""
+        if not self._running:
+            raise ConnectionError("CDP connection is closed")
+
         with self._lock:
             self._cmd_id += 1
             cmd_id = self._cmd_id
@@ -154,7 +182,13 @@ class _CDPSocket:
             self._pending[cmd_id] = {"event": ev, "result": None}
 
         payload = json.dumps({"id": cmd_id, "method": method, "params": params or {}}).encode()
-        self._sock.sendall(self._encode_frame(payload))
+        try:
+            self._sock.sendall(self._encode_frame(payload))
+        except Exception:
+            with self._lock:
+                self._pending.pop(cmd_id, None)
+            raise
+
         triggered = ev.wait(timeout)
 
         with self._lock:
@@ -216,13 +250,17 @@ def _connect_to_port(port: int, title_hint: str | None = None) -> tuple[_CDPSock
 
     Returns ``(socket, pages, page_id)``.
     """
+    from urllib.parse import urlparse
     pages = _list_pages(port)
     page = _pick_page(pages, title_hint)
     if not page:
         raise ValueError(f"No debuggable pages found on port {port}")
     ws_url: str = page["webSocketDebuggerUrl"]
-    # ws_url looks like: ws://127.0.0.1:{port}/devtools/page/{id}
-    path = ws_url.split(f"127.0.0.1:{port}", 1)[-1]
+    # Parse path robustly — CEF may advertise localhost or 127.0.0.1
+    parsed = urlparse(ws_url)
+    path = parsed.path
+    if not path:
+        raise ValueError(f"Could not parse WebSocket path from URL: {ws_url!r}")
     ws = _CDPSocket("127.0.0.1", port, path)
     page_id: str = page.get("id", "")
     return ws, pages, page_id
