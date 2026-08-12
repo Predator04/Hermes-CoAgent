@@ -2,6 +2,7 @@
 import csv, io, json, os, shlex, subprocess, time
 from flask import jsonify
 from shared import _json_body, _sanitize_path
+from routes_governance import get_governor
 
 try:
     import psutil
@@ -341,6 +342,16 @@ def register_routes(app, state, require_auth):
         try:
             args = _parse_command(data)
             cwd = _sanitize_path(data["cwd"]) if data.get("cwd") else None
+            gov = get_governor()
+            app_name = args[0] if args else ""
+            allowed, reason = gov.check_app(app_name)
+            if not allowed:
+                gov.record_block("process_start", app_name, reason)
+                return jsonify({"error": reason}), 403
+            allowed, reason = gov.check_budget("process_start")
+            if not allowed:
+                gov.record_block("process_start", app_name, reason)
+                return jsonify({"error": reason}), 429
             proc = subprocess.Popen(args, cwd=cwd, shell=False)
             return jsonify({"status": "started", "pid": proc.pid, "command": args})
         except Exception as e:

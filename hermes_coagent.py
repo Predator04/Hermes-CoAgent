@@ -703,6 +703,7 @@ from routes_config import register_routes as reg_config, backup_file
 from routes_browser import register_routes as reg_browser
 from browser_automation import register_routes as reg_browser_automation
 from routes_companion import register_routes as reg_companion
+from routes_governance import register_routes as reg_governance
 from routes_deploy import register_routes as reg_deploy
 from routes_stealth_browser import register_routes as reg_stealth_browser
 from routes_google import register_routes as reg_google
@@ -1072,6 +1073,7 @@ reg_config(app, state, require_auth)
 reg_browser(app, state, require_auth)
 reg_browser_automation(app, state, require_auth)
 reg_companion(app, state, require_auth)
+reg_governance(app, state, require_auth)
 reg_google(app, state, require_auth)
 reg_logs(app, state, require_auth)
 reg_recorder(app, state, require_auth)

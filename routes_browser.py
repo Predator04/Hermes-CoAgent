@@ -10,6 +10,7 @@ from collections import deque
 from flask import Blueprint, jsonify, request
 
 from routes_bypass import _json_payload
+from routes_governance import get_governor
 
 # Patch asyncio for Playwright sync API
 try:
@@ -584,6 +585,15 @@ def route_browser_navigate():
     url_error = _navigation_url_error(url)
     if url_error:
         return _error(url_error, 403)
+    gov = get_governor()
+    allowed, reason = gov.check_url(url)
+    if not allowed:
+        gov.record_block("navigate", url, reason)
+        return _error(reason, 403)
+    allowed, reason = gov.check_budget("navigate")
+    if not allowed:
+        gov.record_block("navigate", url, reason)
+        return _error(reason, 429)
     cookies = data.get("cookies")
     evaluate = data.get("evaluate")  # optional JS to run after navigation
     stealth = _as_bool(data.get("stealth"), False)

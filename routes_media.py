@@ -5,6 +5,7 @@ from flask import jsonify, request
 from shared import _json_body, _log, _missing_field, COAGENT_DIR, MACROS_DIR, SCREENSHOTS_DIR, \
     TUNNEL_LOG, SERVER_PORT, _sanitize_path, sse_response
 from routes_config import backup_file
+from routes_governance import get_governor
 
 # In-memory action history (shared with main)
 _action_history = []
@@ -270,6 +271,11 @@ def register_routes(app, state, require_auth):
         d = _json_body()
         title = d.get("title", "")
         needle = title.lower()
+        gov = get_governor()
+        allowed, reason = gov.check_app(title)
+        if not allowed:
+            gov.record_block("window_activate", title, reason)
+            return jsonify({"error": reason}), 403
         try:
             import pygetwindow as gw
             for w in gw.getAllWindows():

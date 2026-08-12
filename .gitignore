@@ -24,6 +24,10 @@ recipes.json
 *.db
 coagent_token.txt
 
+# Governance runtime state (never commit policy/audit)
+governance.json
+governance_audit.jsonl
+
 # Build artifacts
 CoAgent.spec
 *.exe
