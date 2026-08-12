@@ -940,6 +940,8 @@ from routes_auto_fzf import register_routes as reg_auto_fzf
 from routes_auto_zoxide import register_routes as reg_auto_zoxide
 from routes_auto_just import register_routes as reg_auto_just
 from routes_auto_delta import register_routes as reg_auto_delta
+from routes_auto_scrcpy import register_routes as reg_auto_scrcpy
+from routes_auto_procs import register_routes as reg_auto_procs
 from routes_background import register_routes as reg_background
 
 features = {}
@@ -1220,6 +1222,8 @@ reg_auto_fzf(app, state, require_auth)
 reg_auto_zoxide(app, state, require_auth)
 reg_auto_just(app, state, require_auth)
 reg_auto_delta(app, state, require_auth)
+reg_auto_scrcpy(app, state, require_auth)
+reg_auto_procs(app, state, require_auth)
 
 # v8.53 modules
 if reg_background_agent:
@@ -1372,6 +1376,8 @@ features["auto_fzf"] = True
 features["auto_zoxide"] = True
 features["auto_just"] = True
 features["auto_delta"] = True
+features["auto_scrcpy"] = True
+features["auto_procs"] = True
 state.backup_file = backup_file
 
 # -- Core routes (stay in main) ----------------------------------
