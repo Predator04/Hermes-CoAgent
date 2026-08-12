@@ -197,7 +197,7 @@ def register_routes(app, state, require_auth):
         extra_args = body.get("extra_args", "")
 
         if not target:
-            return jsonify({"ok": False, "error": _missing_field("target")}), 400
+            return _missing_field("target")
 
         try:
             target = _validate_target(target)
@@ -284,7 +284,7 @@ def register_routes(app, state, require_auth):
 
         target = body.get("target", "")
         if not target:
-            return jsonify({"ok": False, "error": _missing_field("target")}), 400
+            return _missing_field("target")
 
         try:
             target = _validate_target(target)
@@ -326,7 +326,7 @@ def register_routes(app, state, require_auth):
         ports = body.get("ports", "")
 
         if not target:
-            return jsonify({"ok": False, "error": _missing_field("target")}), 400
+            return _missing_field("target")
 
         try:
             target = _validate_target(target)
