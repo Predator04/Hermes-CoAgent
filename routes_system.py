@@ -851,6 +851,88 @@ $form.Add_Shown({
 
         return jsonify({"ok": True, "updated": updated, "errors": errors, "restarting": True})
 
+    @app.route("/system/restart", methods=["POST"])
+    @require_auth
+    def route_system_restart():
+        """Restart hermes_coagent.py in-place.
+
+        Spawns a detached Python watchdog that:
+          1. Sleeps 2s so this HTTP response reaches the client.
+          2. Force-kills the current process tree.
+          3. Runs `pip install -r requirements.txt` to pick up any new deps.
+          4. Re-launches the main script with the same CLI args.
+
+        The watchdog inherits the working directory but runs as a fresh
+        Python process (no Flask app context, no in-memory server state).
+        """
+        import sys as _sys
+
+        try:
+            main_script = os.path.abspath(_sys.modules["__main__"].__file__)
+        except Exception:
+            main_script = str(COAGENT_DIR / "hermes_coagent.py")
+
+        parent_pid = os.getpid()
+        py = _sys.executable
+        cwd = str(COAGENT_DIR)
+        req_txt = str(COAGENT_DIR / "requirements.txt")
+        child_argv = [main_script] + _sys.argv[1:]
+
+        # Watchdog runs as `python -c <src> <main_script> <arg1> ...`;
+        # its sys.argv[1:] therefore is the argv it should re-launch with.
+        watchdog_src = (
+            "import os, sys, time, subprocess\n"
+            "time.sleep(2)\n"
+            f"_pid = {parent_pid}\n"
+            "try:\n"
+            "    if os.name == 'nt':\n"
+            "        subprocess.run(['taskkill', '/PID', str(_pid), '/F', '/T'],\n"
+            "                       stdout=subprocess.DEVNULL,\n"
+            "                       stderr=subprocess.DEVNULL, timeout=10)\n"
+            "    else:\n"
+            "        os.kill(_pid, 9)\n"
+            "except Exception:\n"
+            "    pass\n"
+            f"_req = {repr(req_txt)}\n"
+            "if os.path.isfile(_req):\n"
+            "    try:\n"
+            f"        subprocess.run([{repr(py)}, '-m', 'pip', 'install', '-r', _req],\n"
+            "                       stdout=subprocess.DEVNULL,\n"
+            "                       stderr=subprocess.DEVNULL, timeout=600)\n"
+            "    except Exception:\n"
+            "        pass\n"
+            "_flags = getattr(subprocess, 'DETACHED_PROCESS', 0) | \\\n"
+            "         getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0)\n"
+            f"subprocess.Popen([{repr(py)}] + sys.argv[1:], cwd={repr(cwd)},\n"
+            "                 stdout=subprocess.DEVNULL,\n"
+            "                 stderr=subprocess.DEVNULL,\n"
+            "                 stdin=subprocess.DEVNULL,\n"
+            "                 creationflags=_flags, close_fds=True)\n"
+        )
+
+        create_flags = 0
+        if hasattr(subprocess, "DETACHED_PROCESS"):
+            create_flags |= subprocess.DETACHED_PROCESS
+        if hasattr(subprocess, "CREATE_NEW_PROCESS_GROUP"):
+            create_flags |= subprocess.CREATE_NEW_PROCESS_GROUP
+
+        try:
+            subprocess.Popen(
+                [py, "-c", watchdog_src] + child_argv,
+                cwd=cwd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                stdin=subprocess.DEVNULL,
+                creationflags=create_flags,
+                close_fds=True,
+            )
+        except Exception as e:
+            _log(f"[RESTART] Watchdog spawn failed: {type(e).__name__}: {e}")
+            return jsonify({"ok": False, "error": str(e)}), 500
+
+        _log("[RESTART] Watchdog spawned; process will terminate in ~2s")
+        return jsonify({"ok": True, "restarting": True})
+
 
 def _send_media_key(vk_code):
     """Send a virtual key code via keyboard driver."""
