@@ -528,7 +528,16 @@ def register_routes(app, state, require_auth):
         threshold = max(0.1, min(0.99, float(body.get("threshold", 0.8))))
         max_results = int(body.get("max_results", 10))
         scales_raw = body.get("scales")
-        scales = [float(s) for s in scales_raw] if scales_raw else None
+        if scales_raw:
+            try:
+                scales = [float(s) for s in scales_raw]
+            except (TypeError, ValueError):
+                return jsonify({"error": "scales must be a list of numbers"}), 400
+            scales = [s for s in scales if 0.1 <= s <= 5.0]
+            if not scales:
+                return jsonify({"error": "scales values must be between 0.1 and 5.0"}), 400
+        else:
+            scales = None
 
         capture_region, screen_offset, window_found = _resolve_region(body)
 
@@ -589,7 +598,16 @@ def register_routes(app, state, require_auth):
 
         threshold = max(0.1, min(0.99, float(body.get("threshold", 0.8))))
         scales_raw = body.get("scales")
-        scales = [float(s) for s in scales_raw] if scales_raw else None
+        if scales_raw:
+            try:
+                scales = [float(s) for s in scales_raw]
+            except (TypeError, ValueError):
+                return jsonify({"error": "scales must be a list of numbers"}), 400
+            scales = [s for s in scales if 0.1 <= s <= 5.0]
+            if not scales:
+                return jsonify({"error": "scales values must be between 0.1 and 5.0"}), 400
+        else:
+            scales = None
         offset_x = int(body.get("offset_x", 0))
         offset_y = int(body.get("offset_y", 0))
 
