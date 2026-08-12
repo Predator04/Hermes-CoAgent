@@ -908,18 +908,23 @@ $form.Add_Shown({
 
         # Write Python restart script to temp (no spaces in path for scheduled task)
         script_path = os.path.join(os.environ.get("TEMP", cwd), "_coagent_restart.py")
-        # Use forward slashes in _restart.py paths (no escaping headaches)
+        # Use forward slashes in Python source to avoid escape issues,
+        # convert back to native separators at runtime in _restart.py
         fwd_py = py.replace("\\", "/")
         fwd_argv = argv_str.replace("\\", "/")
         fwd_cwd = cwd.replace("\\", "/")
         with open(script_path, "w") as f:
-            f.write(f'''import subprocess, time
+            f.write(f'''import subprocess, time, os
 time.sleep(2)
 subprocess.run(["taskkill","/f","/pid","{pid}"], capture_output=True)
 time.sleep(1)
+# Convert forward slashes back for Windows scheduled task
+_py = "{fwd_py}".replace("/", "\\\\")
+_argv = "{fwd_argv}".replace("/", "\\\\")
+_cwd = "{fwd_cwd}".replace("/", "\\\\")
 subprocess.run([
     "powershell","-NoProfile","-Command",
-    "$a=New-ScheduledTaskAction -Execute '{fwd_py}' -Argument '{fwd_argv}' -WorkingDirectory '{fwd_cwd}';"
+    "$a=New-ScheduledTaskAction -Execute '" + _py + "' -Argument '" + _argv + "' -WorkingDirectory '" + _cwd + "';"
     "$t=New-ScheduledTaskTrigger -Once -At (Get-Date).AddSeconds(2);"
     "$p=New-ScheduledTaskPrincipal -UserId 'Admin' -LogonType Interactive -RunLevel Highest;"
     "Register-ScheduledTask -TaskName CoAgentLaunch -Action $a -Trigger $t -Principal $p -Force|Out-Null;"
