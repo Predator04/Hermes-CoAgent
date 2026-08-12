@@ -923,10 +923,11 @@ subprocess.run([
 ], capture_output=True, timeout=15)
 ''')
 
-        # Create CoAgentReboot task that runs the script (elevated)
+        # Create CoAgentReboot task (cmd.exe wrapper avoids space-in-path issues)
+        restart_cmd = f'/c ""{py}"" "{script_path}"'
         ps = [
             "powershell", "-NoProfile", "-Command",
-            f"$a=New-ScheduledTaskAction -Execute '{py}' -Argument '{script_path}' -WorkingDirectory '{cwd}';"
+            f"$a=New-ScheduledTaskAction -Execute 'cmd.exe' -Argument '{restart_cmd}' -WorkingDirectory '{cwd}';"
             '$t=New-ScheduledTaskTrigger -Once -At (Get-Date).AddSeconds(2);'
             f'$p=New-ScheduledTaskPrincipal -UserId "$env:USERNAME" -LogonType Interactive -RunLevel Highest;'
             "Register-ScheduledTask -TaskName CoAgentReboot -Action $a -Trigger $t -Principal $p -Force|Out-Null;"
