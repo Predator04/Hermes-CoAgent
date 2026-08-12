@@ -86,7 +86,11 @@ def _register_touch_windows():
 def _coerce_int(data, key, current, minimum, maximum):
     if key not in data:
         return current
-    return max(minimum, min(int(data[key]), maximum))
+    try:
+        value = int(data[key])
+    except (ValueError, TypeError):
+        return current
+    return max(minimum, min(value, maximum))
 
 
 def _should_filter(width=0, height=0, radius=0):
