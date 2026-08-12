@@ -114,7 +114,7 @@ def _list_bundle_files(skill_dir: Path) -> Dict[str, List[str]]:
     remaining = _MAX_BUNDLE_FILES
     for sub in _BUNDLE_DIRS:
         sub_path = skill_dir / sub
-        if not sub_path.is_dir():
+        if not sub_path.is_dir() or sub_path.is_symlink():
             continue
         for root, _dirs, files in os.walk(sub_path, followlinks=False):
             for f in files:
@@ -147,6 +147,13 @@ def _derive_name(skill_md: Path, fm: Dict[str, str]) -> Optional[str]:
 
 def _load_one(skill_md: Path) -> Optional[Dict[str, Any]]:
     """Parse a single SKILL.md file. Returns None on malformed input."""
+    # Reject paths that escape the skills root (symlinked SKILL.md or a
+    # symlinked directory in the scan path). resolve() follows symlinks.
+    try:
+        skill_md.resolve().relative_to(_skills_root().resolve())
+    except (ValueError, OSError):
+        _log(f"skills: path escapes skills root, skipping {skill_md}")
+        return None
     try:
         raw = skill_md.read_text(encoding="utf-8", errors="replace")
         mtime = skill_md.stat().st_mtime
@@ -170,7 +177,9 @@ def _load_one(skill_md: Path) -> Optional[Dict[str, Any]]:
     try:
         rel_path = str(skill_md.resolve().relative_to(Path(COAGENT_DIR).resolve()))
     except (ValueError, OSError):
-        rel_path = str(skill_md)
+        # Should be unreachable after the escape guard above; never leak an
+        # absolute path into API responses.
+        rel_path = skill_md.name
     return {
         "name": name,
         "description": description,
@@ -199,17 +208,20 @@ class _SkillCache:
     def _scan_locked(self) -> None:
         root = _skills_root()
         self._by_name.clear()
-        self._loaded = True
         if not root.is_dir():
+            self._loaded = True
             return
         seen: List[Path] = []
         try:
-            for p in root.rglob("SKILL.md"):
-                if p.is_file():
-                    seen.append(p)
+            # os.walk(followlinks=False) — don't descend into symlinked dirs.
+            for dirpath, _dirnames, filenames in os.walk(root, followlinks=False):
+                if "SKILL.md" in filenames:
+                    seen.append(Path(dirpath) / "SKILL.md")
         except OSError as e:
             _log(f"skills: scan error under {root}: {e}")
+            self._loaded = False
             return
+        self._loaded = True
         for skill_md in seen:
             entry = _load_one(skill_md)
             if entry is None:

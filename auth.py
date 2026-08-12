@@ -108,14 +108,23 @@ def _save_token(token):
     tp = _token_path()
     if not tp:
         return
-    # Write to temp file in same dir, then atomic rename
+    # Write to temp file in same dir, then atomic rename. Create with 0o600
+    # from the outset so there's no world-readable window before chmod.
     tmp = tp.with_suffix(".tmp")
-    tmp.write_text(token, encoding="utf-8")
-    try:
-        if os.name != "nt":
-            os.chmod(tmp, 0o600)
-    except OSError:
-        pass
+    if os.name != "nt":
+        try:
+            fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(token)
+        except OSError:
+            # Fall back to write_text (still chmod right after)
+            tmp.write_text(token, encoding="utf-8")
+            try:
+                os.chmod(tmp, 0o600)
+            except OSError:
+                pass
+    else:
+        tmp.write_text(token, encoding="utf-8")
     os.replace(tmp, tp)  # atomic on both Windows and POSIX
     old_suffix = tp.with_suffix(".token_tok")
     if old_suffix.exists():
@@ -296,8 +305,9 @@ def register_auth_routes(app):
             return jsonify({'error': 'No saved token file found'}), 404
         saved = tp.read_text(encoding='utf-8').strip()
         if saved:
-            AUTH_TOKEN = saved
-            AUTH_ENABLED = True
+            with _AUTH_LOCK:
+                AUTH_TOKEN = saved
+                AUTH_ENABLED = True
             pre = saved[:16]
             suf = saved[-8:]
             return jsonify({
@@ -323,7 +333,9 @@ def register_auth_routes(app):
         new_token = secrets.token_hex(32)
         with _AUTH_LOCK:
             AUTH_TOKEN = new_token
-        _save_token(new_token)
+            # Persist inside the lock so in-memory and on-disk tokens can't
+            # diverge under a concurrent regen.
+            _save_token(new_token)
 
         pre = new_token[:16]
         suf = new_token[-8:]

@@ -42,6 +42,7 @@ DEFAULT_COMMAND_TIMEOUT = 60.0
 MAX_COMMAND_TIMEOUT = 300.0
 POLL_HOLD_SECONDS = 20.0
 MAX_PENDING_QUEUE = 100
+MAX_INFLIGHT_COMMANDS = 16
 CONNECTED_WINDOW_SECONDS = 60.0
 RESULT_RETENTION_SECONDS = 300.0
 
@@ -51,6 +52,11 @@ RESULT_RETENTION_SECONDS = 300.0
 # ---------------------------------------------------------------------------
 
 _cond = threading.Condition()
+
+# Number of /command calls currently blocked waiting for a result. Capped to
+# avoid exhausting Waitress worker threads (each waiter holds a worker for up
+# to MAX_COMMAND_TIMEOUT seconds).
+_inflight = 0
 
 # Pending commands not yet claimed by a /poll call.
 # Each entry: {"command_id": str, "command": dict, "enqueued_at": float}
@@ -153,57 +159,78 @@ def register_routes(app, state, require_auth):
 
         command_id = uuid.uuid4().hex
 
+        # Cap concurrent in-flight waits so a burst of /command calls can't
+        # exhaust Waitress worker threads (each waiter blocks a worker).
         with _cond:
-            _gc_results_locked()
-            if len(_pending) >= MAX_PENDING_QUEUE:
+            if _inflight >= MAX_INFLIGHT_COMMANDS:
                 return (
-                    jsonify(
-                        {
-                            "ok": False,
-                            "error": "companion command queue full",
-                            "pending": len(_pending),
-                        }
-                    ),
+                    jsonify({
+                        "ok": False,
+                        "error": "too many in-flight companion commands",
+                        "inflight": _inflight,
+                    }),
                     429,
                 )
+            _inflight += 1
 
-            _pending.append(
-                {
-                    "command_id": command_id,
-                    "command": command,
-                    "enqueued_at": _now(),
+        delivered = False
+        payload = None
+        try:
+            with _cond:
+                _gc_results_locked()
+                if len(_pending) >= MAX_PENDING_QUEUE:
+                    return (
+                        jsonify(
+                            {
+                                "ok": False,
+                                "error": "companion command queue full",
+                                "pending": len(_pending),
+                            }
+                        ),
+                        429,
+                    )
+
+                _pending.append(
+                    {
+                        "command_id": command_id,
+                        "command": command,
+                        "enqueued_at": _now(),
+                    }
+                )
+                _results[command_id] = {
+                    "result": None,
+                    "delivered": False,
+                    "posted_at": None,
+                    "created_at": _now(),
                 }
-            )
-            _results[command_id] = {
-                "result": None,
-                "delivered": False,
-                "posted_at": None,
-                "created_at": _now(),
-            }
-            _cond.notify_all()
+                _cond.notify_all()
 
-            deadline = _now() + timeout
-            while True:
-                rec = _results.get(command_id)
-                if rec is not None and rec.get("delivered"):
-                    break
-                remaining = deadline - _now()
-                if remaining <= 0:
-                    break
-                _cond.wait(timeout=remaining)
-
-            rec = _results.get(command_id)
-            delivered = bool(rec and rec.get("delivered"))
-            payload = rec.get("result") if rec else None
-
-            if not delivered:
-                # Timed out. Remove from pending queue if still there so the
-                # extension won't try to run a command nobody is waiting on.
-                for i, entry in enumerate(_pending):
-                    if entry["command_id"] == command_id:
-                        del _pending[i]
+                deadline = _now() + timeout
+                while True:
+                    rec = _results.get(command_id)
+                    if rec is not None and rec.get("delivered"):
                         break
-                _results.pop(command_id, None)
+                    remaining = deadline - _now()
+                    if remaining <= 0:
+                        break
+                    _cond.wait(timeout=remaining)
+
+                rec = _results.get(command_id)
+                delivered = bool(rec and rec.get("delivered"))
+                payload = rec.get("result") if rec else None
+
+                if not delivered:
+                    # Timed out. Remove from pending queue if still there so the
+                    # extension won't try to run a command nobody is waiting on.
+                    for i, entry in enumerate(_pending):
+                        if entry["command_id"] == command_id:
+                            del _pending[i]
+                            break
+                    _results.pop(command_id, None)
+        finally:
+            with _cond:
+                _inflight -= 1
+                _cond.notify_all()
 
         if not delivered:
             _log(f"[companion] timeout waiting for result: {command_id}")

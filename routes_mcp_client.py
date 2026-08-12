@@ -27,6 +27,8 @@ MAX_SERVERS = 32
 DEFAULT_TIMEOUT = 30.0
 INIT_TIMEOUT = 30.0
 SHUTDOWN_TIMEOUT = 3.0
+MAX_STDIO_LINE_BYTES = 8 * 1024 * 1024
+MAX_HTTP_RESPONSE_BYTES = 16 * 1024 * 1024
 NAME_REGEX = re.compile(r"^[A-Za-z_][A-Za-z0-9_.\-]{0,63}$")
 
 SERVERS = {}
@@ -62,6 +64,21 @@ class _HttpResp:
         return json.loads(self.text)
 
 
+def _read_bounded(stream, cap):
+    """Read a stream in chunks up to ``cap`` bytes. Raises MCPError past cap."""
+    chunks = []
+    total = 0
+    while True:
+        chunk = stream.read(min(65536, cap - total + 1))
+        if not chunk:
+            break
+        chunks.append(chunk)
+        total += len(chunk)
+        if total > cap:
+            raise MCPError(f"response exceeds {cap} byte limit", status=502)
+    return b"".join(chunks)
+
+
 def _http_post(url, data_bytes, headers, timeout):
     """POST bytes to ``url`` using stdlib urllib (no third-party dependency).
 
@@ -72,11 +89,15 @@ def _http_post(url, data_bytes, headers, timeout):
     req = urllib.request.Request(url, data=data_bytes, headers=headers, method="POST")
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
-            body = resp.read().decode("utf-8", errors="replace")
+            body = _read_bounded(resp, MAX_HTTP_RESPONSE_BYTES).decode("utf-8", errors="replace")
             return _HttpResp(resp.status, dict(resp.headers.items()), body)
+    except MCPError:
+        raise
     except urllib.error.HTTPError as e:
         try:
-            body = e.read().decode("utf-8", errors="replace")
+            body = e.read(MAX_HTTP_RESPONSE_BYTES + 1).decode("utf-8", errors="replace")
+            if len(body) > MAX_HTTP_RESPONSE_BYTES:
+                body = body[:MAX_HTTP_RESPONSE_BYTES]
         except Exception:
             body = ""
         headers = dict(e.headers.items()) if e.headers else {}
@@ -183,7 +204,7 @@ class StdioServer:
     def _reader_loop(self):
         try:
             while not self.stopped.is_set():
-                line = self.proc.stdout.readline()
+                line = self.proc.stdout.readline(MAX_STDIO_LINE_BYTES)
                 if not line:
                     break
                 try:
@@ -248,6 +269,9 @@ class StdioServer:
         return i
 
     def request(self, method, params=None, timeout=DEFAULT_TIMEOUT):
+        # Serialize only id allocation + write; the per-id response queue makes
+        # the wait thread-safe without holding self.lock (which would serialize
+        # ALL requests to this server behind one slow call).
         with self.lock:
             if self.proc is None or self.proc.poll() is not None:
                 raise MCPError(f"server '{self.name}' not running", status=502)
@@ -260,26 +284,39 @@ class StdioServer:
                 self.response_queues[req_id] = q
             try:
                 self._write_message(msg)
-                try:
-                    resp = q.get(timeout=timeout)
-                except Empty:
-                    raise MCPError(
-                        f"timeout waiting for response to '{method}'",
-                        status=504,
-                    )
-            finally:
+            except Exception:
                 with self.response_queues_lock:
                     self.response_queues.pop(req_id, None)
-            if "error" in resp and resp.get("id") is None:
+                raise
+            # Re-check: the reader may have already hit EOF and stopped before
+            # we registered our queue, in which case we'd hang until timeout.
+            if self.stopped.is_set():
+                with self.response_queues_lock:
+                    self.response_queues.pop(req_id, None)
                 raise MCPError("stdio connection lost", status=502)
-            if "error" in resp:
-                err = resp["error"] or {}
-                raise MCPError(
-                    f"jsonrpc error: {_sanitize_error(err.get('message'))}",
-                    status=502,
-                    detail=err,
-                )
-            return resp.get("result", {})
+
+        # Wait OUTSIDE the write lock so concurrent calls can proceed.
+        try:
+            resp = q.get(timeout=timeout)
+        except Empty:
+            raise MCPError(
+                f"timeout waiting for response to '{method}'",
+                status=504,
+            )
+        finally:
+            with self.response_queues_lock:
+                self.response_queues.pop(req_id, None)
+
+        if "error" in resp and resp.get("id") is None:
+            raise MCPError("stdio connection lost", status=502)
+        if "error" in resp:
+            err = resp["error"] or {}
+            raise MCPError(
+                f"jsonrpc error: {_sanitize_error(err.get('message'))}",
+                status=502,
+                detail=err,
+            )
+        return resp.get("result", {})
 
     def notify(self, method, params=None):
         with self.lock:
@@ -423,19 +460,21 @@ class HttpServer:
             payload = {"jsonrpc": "2.0", "id": req_id, "method": method}
             if params is not None:
                 payload["params"] = params
-            resp = self._post(payload, timeout, expect_response=True)
-            if resp is None:
-                raise MCPError("no response body from server", status=502)
-            if not isinstance(resp, dict):
-                raise MCPError("unexpected non-object jsonrpc response", status=502)
-            if "error" in resp:
-                err = resp["error"] or {}
-                raise MCPError(
-                    f"jsonrpc error: {_sanitize_error(err.get('message'))}",
-                    status=502,
-                    detail=err,
-                )
-            return resp.get("result", {})
+        # HTTP call outside the lock so one slow tool call doesn't serialize
+        # every other request to this server.
+        resp = self._post(payload, timeout, expect_response=True)
+        if resp is None:
+            raise MCPError("no response body from server", status=502)
+        if not isinstance(resp, dict):
+            raise MCPError("unexpected non-object jsonrpc response", status=502)
+        if "error" in resp:
+            err = resp["error"] or {}
+            raise MCPError(
+                f"jsonrpc error: {_sanitize_error(err.get('message'))}",
+                status=502,
+                detail=err,
+            )
+        return resp.get("result", {})
 
     def notify(self, method, params=None):
         with self.lock:
@@ -659,6 +698,15 @@ def register_routes(app, state, require_auth):
                     "ok": False,
                     "error": f"server '{name}' registered concurrently",
                 }), 409
+            if len(SERVERS) >= MAX_SERVERS:
+                try:
+                    server.shutdown()
+                except Exception:
+                    pass
+                return jsonify({
+                    "ok": False,
+                    "error": f"server registry full (max {MAX_SERVERS})",
+                }), 429
             SERVERS[name] = server
 
         _log(f"[mcp-client] registered '{name}' ({transport}) with {len(server.tools)} tools")
