@@ -9,7 +9,7 @@ errors = []
 for f in sorted(ROOT.glob("*.py")):
     try:
         ast.parse(f.read_text(encoding="utf-8"))
-    except SyntaxError as e:
+    except (SyntaxError, ValueError, OSError) as e:
         print(f"FAIL: {f.name}: {e}")
         errors.append(f)
 
@@ -17,7 +17,7 @@ for f in sorted(ROOT.glob("*.py")):
 for f in sorted((ROOT / "scripts").glob("*.py")):
     try:
         ast.parse(f.read_text(encoding="utf-8"))
-    except SyntaxError as e:
+    except (SyntaxError, ValueError, OSError) as e:
         print(f"FAIL: scripts/{f.name}: {e}")
         errors.append(f)
 
@@ -25,7 +25,7 @@ for f in sorted((ROOT / "scripts").glob("*.py")):
 for f in sorted((ROOT / "tests").glob("*.py")):
     try:
         ast.parse(f.read_text(encoding="utf-8"))
-    except SyntaxError as e:
+    except (SyntaxError, ValueError, OSError) as e:
         print(f"FAIL: tests/{f.name}: {e}")
         errors.append(f)
 
