@@ -84,68 +84,58 @@ def _find_schtasks():
 
 
 def _run_elevated_via_task(command, arguments="", working_dir=None):
-    """Create a Task Scheduler task with RunLevel=HighestAvailable and run it.
+    """Create an elevated scheduled task via PowerShell and run it.
 
-    This bypasses the UAC consent prompt when the current user has admin rights,
-    because Task Scheduler launches the process elevated without showing a dialog.
+    Uses Register-ScheduledTask with RunLevel=Highest, which bypasses the UAC
+    consent prompt when the current user has admin rights.
     Returns a dict; 'error' key present on failure.
     """
-    schtasks = _find_schtasks()
-    if not schtasks:
-        return {"error": "schtasks.exe not found on this system"}
-
     task_name = f"CoAgent_Elevate_{uuid.uuid4().hex[:12]}"
-    xml_content = _interactive_task_xml(command, arguments, working_dir=working_dir)
 
-    tmp_path = None
+    def _psq(s):
+        return "'" + str(s).replace("'", "''") + "'"
+
+    action_part = f"$action=New-ScheduledTaskAction -Execute {_psq(command)}"
+    if arguments:
+        action_part += f" -Argument {_psq(arguments)}"
+
+    ps_cmd = (
+        f"{action_part}; "
+        f"Register-ScheduledTask -TaskName {_psq(task_name)} -Action $action "
+        f"-Trigger (New-ScheduledTaskTrigger -Once -At (Get-Date).AddSeconds(1)) "
+        f"-Principal (New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Highest) "
+        f"-Force | Out-Null; "
+        f"Start-ScheduledTask -TaskName {_psq(task_name)}"
+    )
+
     try:
-        fd, tmp_path = tempfile.mkstemp(suffix=".xml", prefix="coagent_uac_")
-        os.close(fd)
-        # schtasks /create /xml requires UTF-16 LE encoding
-        with open(tmp_path, "w", encoding="utf-16") as f:
-            f.write(xml_content)
-
-        r_create = subprocess.run(
-            [schtasks, "/create", "/xml", tmp_path, "/tn", task_name, "/f"],
-            capture_output=True, text=True, timeout=15,
+        r = subprocess.run(
+            ["powershell.exe", "-NoProfile", "-Command", ps_cmd],
+            capture_output=True, text=True, timeout=20,
         )
-        if r_create.returncode != 0:
+        if r.returncode != 0:
             return {
-                "error": "Failed to register scheduled task",
-                "detail": (r_create.stderr or r_create.stdout).strip(),
+                "error": "Failed to create/start elevated task",
+                "detail": (r.stderr or r.stdout).strip(),
                 "task_name": task_name,
-                "hint": "CoAgent may need to run as administrator to create elevated tasks",
+                "hint": "CoAgent may need to run as administrator",
             }
-
-        r_run = subprocess.run(
-            [schtasks, "/run", "/tn", task_name],
-            capture_output=True, text=True, timeout=10,
-        )
-        started = r_run.returncode == 0
-
         return {
             "task_name": task_name,
             "created": True,
-            "started": started,
+            "started": True,
             "command": command,
             "arguments": arguments,
-            "detail": (r_run.stdout or r_run.stderr).strip(),
+            "detail": r.stdout.strip(),
         }
     except Exception as exc:
         _log(f"[uac] elevated-exec error: {exc}")
         return {"error": str(exc), "task_name": task_name}
     finally:
-        if tmp_path and os.path.exists(tmp_path):
-            try:
-                os.unlink(tmp_path)
-            except Exception:
-                pass
-        # Best-effort task cleanup after a short delay
-        # NOTE: Do NOT use /f — it terminates the running process.
-        # Remove only the task definition; let the elevated process finish.
         try:
             subprocess.run(
-                [schtasks, "/delete", "/tn", task_name],
+                ["powershell.exe", "-NoProfile", "-Command",
+                 f"Unregister-ScheduledTask -TaskName {_psq(task_name)} -Confirm:$false -ErrorAction SilentlyContinue"],
                 capture_output=True, timeout=10,
             )
         except Exception:

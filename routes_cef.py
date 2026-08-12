@@ -368,6 +368,88 @@ def _probe_fallback_ports() -> list[dict]:
     return found
 
 
+def _scan_passive_cef_processes() -> list[dict]:
+    """Find CEF apps without debug ports via renderer/gpu-process children or DLL loading.
+
+    Groups child worker processes by parent PID.  CDP access is not possible for
+    these apps; they appear in the response as informational entries.
+    """
+    import psutil
+
+    cef_types = ("--type=renderer", "--type=gpu-process")
+    cef_dlls = ("chrome.dll", "cef.dll", "libcef.dll")
+
+    parent_groups: dict = {}  # ppid -> entry
+
+    for proc in psutil.process_iter(["pid", "name", "cmdline", "ppid"]):
+        try:
+            info = proc.info
+            cmdline = info.get("cmdline") or []
+            cmdline_str = " ".join(cmdline)
+            ppid = info.get("ppid") or 0
+
+            # Skip if it already advertises a debug port (covered by active scan)
+            if "--remote-debugging-port=" in cmdline_str:
+                continue
+
+            is_cef = any(t in cmdline_str for t in cef_types)
+
+            if not is_cef:
+                try:
+                    for m in proc.memory_maps():
+                        if any(dll in m.path.lower() for dll in cef_dlls):
+                            is_cef = True
+                            break
+                except (psutil.NoSuchProcess, psutil.AccessDenied, AttributeError, NotImplementedError):
+                    pass
+
+            if not is_cef:
+                continue
+
+            if ppid not in parent_groups:
+                try:
+                    parent = psutil.Process(ppid)
+                    parent_name = parent.name()
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    parent_name = info.get("name") or ""
+
+                window_title = ""
+                try:
+                    import ctypes
+                    _pid = ppid
+                    titles: list = []
+
+                    @ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_int))
+                    def _foreach_passive(hwnd, _lParam):
+                        win_pid = ctypes.c_ulong(0)
+                        ctypes.windll.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(win_pid))
+                        if win_pid.value == _pid and ctypes.windll.user32.IsWindowVisible(hwnd):
+                            buf = ctypes.create_unicode_buffer(512)
+                            ctypes.windll.user32.GetWindowTextW(hwnd, buf, 512)
+                            if buf.value:
+                                titles.append(buf.value)
+                        return True
+
+                    ctypes.windll.user32.EnumWindows(_foreach_passive, 0)
+                    window_title = titles[0] if titles else ""
+                except Exception:
+                    pass
+
+                parent_groups[ppid] = {
+                    "parent_pid": ppid,
+                    "parent_name": parent_name,
+                    "window_title": window_title,
+                    "pids": [],
+                    "cdp_access": False,
+                }
+
+            parent_groups[ppid]["pids"].append(info["pid"])
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+
+    return list(parent_groups.values())
+
+
 # ---------------------------------------------------------------------------
 # Route registration
 # ---------------------------------------------------------------------------
@@ -381,12 +463,27 @@ def register_routes(app, state, require_auth):
     @app.route("/cef/detect", methods=["POST"])
     @require_auth
     def cef_detect():
-        """Scan running processes for CEF apps that expose a CDP debug port."""
+        """Scan running processes for CEF apps.
+
+        'apps' — processes with a CDP debug port (full automation possible).
+        'passive_cef_apps' — renderer/gpu-process children or DLL-loaded CEF apps
+        without a debug port (identified only; CDP access not possible).
+        """
         try:
             apps = _scan_cef_processes()
             if not apps:
                 apps = _probe_fallback_ports()
-            return jsonify({"apps": apps, "count": len(apps)})
+            try:
+                passive = _scan_passive_cef_processes()
+            except Exception as exc:
+                _log(f"[CEF] passive scan error: {exc}")
+                passive = []
+            return jsonify({
+                "apps": apps,
+                "count": len(apps),
+                "passive_cef_apps": passive,
+                "passive_count": len(passive),
+            })
         except Exception as exc:
             _log(f"[CEF] detect error: {exc}")
             return jsonify({"error": str(exc)}), 500

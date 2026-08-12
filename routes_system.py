@@ -798,6 +798,59 @@ $form.Add_Shown({
             "dark_mode": theme_apps.strip() == "0" if theme_apps else None,
         })
 
+    @app.route("/system/sync-github", methods=["GET"])
+    @require_auth
+    def route_sync_github():
+        """Download latest hermes_coagent.py + routes_*.py from GitHub, then restart."""
+        import platform as _platform
+        if _platform.system() != "Windows":
+            return jsonify({"ok": False, "error": "Windows only"})
+
+        import sys
+        import urllib.request
+        import glob as _glob
+
+        base_url = "https://raw.githubusercontent.com/Predator04/Hermes-Coagent/main/"
+        coagent_path = str(COAGENT_DIR)
+
+        targets = [os.path.join(coagent_path, "hermes_coagent.py")]
+        for f in _glob.glob(os.path.join(coagent_path, "routes_*.py")):
+            targets.append(f)
+
+        updated, errors = [], []
+        for local_path in targets:
+            fname = os.path.basename(local_path)
+            try:
+                with urllib.request.urlopen(base_url + fname, timeout=15) as resp:
+                    content = resp.read()
+                with open(local_path, "wb") as fh:
+                    fh.write(content)
+                updated.append(fname)
+            except Exception as exc:
+                errors.append({"file": fname, "error": str(exc)})
+
+        # Schedule restart and return
+        try:
+            script = os.path.abspath(sys.modules["__main__"].__file__)
+            arg_string = subprocess.list2cmdline([script] + sys.argv[1:])
+            ps_cmd = (
+                "Start-Sleep -Seconds 2; "
+                f"Start-Process -FilePath '{sys.executable}' "
+                f"-ArgumentList '{arg_string}' "
+                "-WindowStyle Hidden"
+            )
+            subprocess.Popen(
+                ["powershell.exe", "-NoProfile", "-WindowStyle", "Hidden", "-Command", ps_cmd],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            import threading, time as _time
+            threading.Thread(target=lambda: (_time.sleep(1.5), os._exit(0)), daemon=True).start()
+        except Exception as exc:
+            return jsonify({"ok": True, "updated": updated, "errors": errors, "restart_error": str(exc)})
+
+        return jsonify({"ok": True, "updated": updated, "errors": errors, "restarting": True})
+
 
 def _send_media_key(vk_code):
     """Send a virtual key code via keyboard driver."""

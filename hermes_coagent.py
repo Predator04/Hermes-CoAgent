@@ -405,10 +405,35 @@ _WATCHDOG_STATE = {
     "memory_growth_mb_5min": 0.0,
 }
 
+def _auto_install_package(module_name: str) -> bool:
+    """Auto-install a Python package when its module fails to import."""
+    _PKG_MAP = {
+        "cv2": "opencv-python",
+        "numpy": "numpy",
+        "psutil": "psutil",
+        "winrt": "winrt",
+        "PIL": "pillow",
+    }
+    pkg = _PKG_MAP.get(module_name, module_name)
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "pip", "install", pkg],
+            capture_output=True, text=True, timeout=120,
+        )
+        return result.returncode == 0
+    except Exception:
+        return False
+
 try:
     import psutil as _psutil
 except ImportError:
-    _psutil = None
+    if _auto_install_package("psutil"):
+        try:
+            import psutil as _psutil
+        except ImportError:
+            _psutil = None
+    else:
+        _psutil = None
 
 _MEMORY_LOCK = threading.Lock()
 _MEMORY_SAMPLES = deque(maxlen=5)  # 5 min at 60s interval = 300s window
@@ -917,28 +942,104 @@ from routes_auto_just import register_routes as reg_auto_just
 from routes_auto_delta import register_routes as reg_auto_delta
 from routes_background import register_routes as reg_background
 
-# v8.53: Modules #167..#73 (issues #167,166,165,164,163,162,134,133,132,131,130,129,77,76,75,74,73)
-from routes_background_agent import register_routes as reg_background_agent
-from routes_macro_recorder import register_routes as reg_macro_recorder
-from routes_confirmations import register_routes as reg_confirmations
-from routes_app_launcher import register_routes as reg_app_launcher
-from routes_uia_table import register_routes as reg_uia_table
-from routes_timeline import register_routes as reg_timeline
-from routes_verify import register_routes as reg_verify
-from routes_triggers import register_routes as reg_triggers
-from routes_sandbox import register_routes as reg_sandbox
-from routes_video import register_routes as reg_video
-from routes_audio_mixer import register_routes as reg_audio_mixer
-from routes_usb import register_routes as reg_usb
-from routes_vlm import register_routes as reg_vlm
-from routes_workflows import register_routes as reg_workflows
-from routes_resilient import register_routes as reg_resilient
-from routes_services import register_routes as reg_services
-from routes_fused_map import register_routes as reg_fused_map
-from routes_som import register_routes as reg_som
-from routes_agent_tools import register_routes as reg_agent_tools
-
 features = {}
+
+# v8.53: Modules #167..#73 (issues #167,166,165,164,163,162,134,133,132,131,130,129,77,76,75,74,73)
+try:
+    from routes_background_agent import register_routes as reg_background_agent
+except ImportError:
+    reg_background_agent = None
+    features["background_agent"] = False
+try:
+    from routes_macro_recorder import register_routes as reg_macro_recorder
+except ImportError:
+    reg_macro_recorder = None
+    features["macro_recorder"] = False
+try:
+    from routes_confirmations import register_routes as reg_confirmations
+except ImportError:
+    reg_confirmations = None
+    features["confirmations"] = False
+try:
+    from routes_app_launcher import register_routes as reg_app_launcher
+except ImportError:
+    reg_app_launcher = None
+    features["app_launcher"] = False
+try:
+    from routes_uia_table import register_routes as reg_uia_table
+except ImportError:
+    reg_uia_table = None
+    features["uia_table"] = False
+try:
+    from routes_timeline import register_routes as reg_timeline
+except ImportError:
+    reg_timeline = None
+    features["timeline"] = False
+try:
+    from routes_verify import register_routes as reg_verify
+except ImportError:
+    reg_verify = None
+    features["self_verify"] = False
+try:
+    from routes_triggers import register_routes as reg_triggers
+except ImportError:
+    reg_triggers = None
+    features["triggers"] = False
+try:
+    from routes_sandbox import register_routes as reg_sandbox
+except ImportError:
+    reg_sandbox = None
+    features["sandbox"] = False
+try:
+    from routes_video import register_routes as reg_video
+except ImportError:
+    reg_video = None
+    features["video_recording"] = False
+try:
+    from routes_audio_mixer import register_routes as reg_audio_mixer
+except ImportError:
+    reg_audio_mixer = None
+    features["audio_mixer"] = False
+try:
+    from routes_usb import register_routes as reg_usb
+except ImportError:
+    reg_usb = None
+    features["usb"] = False
+try:
+    from routes_vlm import register_routes as reg_vlm
+except ImportError:
+    reg_vlm = None
+    features["vlm"] = False
+try:
+    from routes_workflows import register_routes as reg_workflows
+except ImportError:
+    reg_workflows = None
+    features["workflows"] = False
+try:
+    from routes_resilient import register_routes as reg_resilient
+except ImportError:
+    reg_resilient = None
+    features["resilient_ui"] = False
+try:
+    from routes_services import register_routes as reg_services
+except ImportError:
+    reg_services = None
+    features["services_and_tasks"] = False
+try:
+    from routes_fused_map import register_routes as reg_fused_map
+except ImportError:
+    reg_fused_map = None
+    features["fused_map"] = False
+try:
+    from routes_som import register_routes as reg_som
+except ImportError:
+    reg_som = None
+    features["som"] = False
+try:
+    from routes_agent_tools import register_routes as reg_agent_tools
+except ImportError:
+    reg_agent_tools = None
+    features["agent_tools"] = False
 
 reg_background(app, state, require_auth)
 features["background_control"] = True
@@ -1121,25 +1222,63 @@ reg_auto_just(app, state, require_auth)
 reg_auto_delta(app, state, require_auth)
 
 # v8.53 modules
-reg_background_agent(app, state, require_auth); features["background_agent"] = True
-reg_macro_recorder(app, state, require_auth); features["macro_recorder"] = True
-reg_confirmations(app, state, require_auth); features["confirmations"] = True
-reg_app_launcher(app, state, require_auth); features["app_launcher"] = True
-reg_uia_table(app, state, require_auth); features["uia_table"] = True
-reg_timeline(app, state, require_auth); features["timeline"] = True
-reg_verify(app, state, require_auth); features["self_verify"] = True
-reg_triggers(app, state, require_auth); features["triggers"] = True
-reg_sandbox(app, state, require_auth); features["sandbox"] = True
-reg_video(app, state, require_auth); features["video_recording"] = True
-reg_audio_mixer(app, state, require_auth); features["audio_mixer"] = True
-reg_usb(app, state, require_auth); features["usb"] = True
-reg_vlm(app, state, require_auth); features["vlm"] = True
-reg_workflows(app, state, require_auth); features["workflows"] = True
-reg_resilient(app, state, require_auth); features["resilient_ui"] = True
-reg_services(app, state, require_auth); features["services_and_tasks"] = True
-reg_fused_map(app, state, require_auth); features["fused_map"] = True
-reg_som(app, state, require_auth); features["som"] = True
-reg_agent_tools(app, state, require_auth); features["agent_tools"] = True
+if reg_background_agent:
+    reg_background_agent(app, state, require_auth)
+    features["background_agent"] = True
+if reg_macro_recorder:
+    reg_macro_recorder(app, state, require_auth)
+    features["macro_recorder"] = True
+if reg_confirmations:
+    reg_confirmations(app, state, require_auth)
+    features["confirmations"] = True
+if reg_app_launcher:
+    reg_app_launcher(app, state, require_auth)
+    features["app_launcher"] = True
+if reg_uia_table:
+    reg_uia_table(app, state, require_auth)
+    features["uia_table"] = True
+if reg_timeline:
+    reg_timeline(app, state, require_auth)
+    features["timeline"] = True
+if reg_verify:
+    reg_verify(app, state, require_auth)
+    features["self_verify"] = True
+if reg_triggers:
+    reg_triggers(app, state, require_auth)
+    features["triggers"] = True
+if reg_sandbox:
+    reg_sandbox(app, state, require_auth)
+    features["sandbox"] = True
+if reg_video:
+    reg_video(app, state, require_auth)
+    features["video_recording"] = True
+if reg_audio_mixer:
+    reg_audio_mixer(app, state, require_auth)
+    features["audio_mixer"] = True
+if reg_usb:
+    reg_usb(app, state, require_auth)
+    features["usb"] = True
+if reg_vlm:
+    reg_vlm(app, state, require_auth)
+    features["vlm"] = True
+if reg_workflows:
+    reg_workflows(app, state, require_auth)
+    features["workflows"] = True
+if reg_resilient:
+    reg_resilient(app, state, require_auth)
+    features["resilient_ui"] = True
+if reg_services:
+    reg_services(app, state, require_auth)
+    features["services_and_tasks"] = True
+if reg_fused_map:
+    reg_fused_map(app, state, require_auth)
+    features["fused_map"] = True
+if reg_som:
+    reg_som(app, state, require_auth)
+    features["som"] = True
+if reg_agent_tools:
+    reg_agent_tools(app, state, require_auth)
+    features["agent_tools"] = True
 reg_diagnostics(app, state, require_auth); features["diagnostics"] = True
 reg_layout(app, state, require_auth); features["layout_profiles"] = True
 if CEF_AVAILABLE:
