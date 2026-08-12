@@ -216,6 +216,17 @@ def _find_blobs_pil(binary_img):
 
 
 # ---------------------------------------------------------------------------
+# Display scale helper
+# ---------------------------------------------------------------------------
+
+def _get_display_scale(screen_width):
+    """Return scale factor to adapt thresholds for ultrawide / high-res displays."""
+    if screen_width > 2560:
+        return screen_width / 1920.0
+    return 1.0
+
+
+# ---------------------------------------------------------------------------
 # Color analysis + element classification
 # ---------------------------------------------------------------------------
 
@@ -232,8 +243,8 @@ def _dominant_color(pil_img):
         return "#808080"
 
 
-def _classify_element(region_img, aspect, w, h):
-    """Return (type_str, confidence 0-100) based on shape and color."""
+def _classify_element(region_img, aspect, w, h, scale=1.0):
+    """Return (type_str, confidence 0.0-1.0) based on shape and color."""
     try:
         small = region_img.resize((16, 16)).convert("RGB")
         pixels = list(small.getdata())
@@ -241,40 +252,53 @@ def _classify_element(region_img, aspect, w, h):
         g_avg = sum(p[1] for p in pixels) / len(pixels)
         b_avg = sum(p[2] for p in pixels) / len(pixels)
     except Exception:
-        return "unknown", 0
+        return "unknown", 0.0
 
     gray = (r_avg + g_avg + b_avg) / 3
     spread = max(abs(r_avg - gray), abs(g_avg - gray), abs(b_avg - gray))
 
-    # Input field: tall-ish, near-white background
-    if h > 24 and aspect < 10 and w > 60 and gray > 220 and spread < 20:
-        return "input", 65
+    # Container: very large region
+    if w > 400 * scale and h > 150 * scale:
+        return "container", 0.35
+
+    # Icon: small, roughly square
+    if w < 60 * scale and h < 60 * scale and 0.5 < aspect < 2.0:
+        return "icon", 0.45
+
+    # Input field: near-white background
+    if h > 24 * scale and aspect < 10 and w > 60 * scale and gray > 220 and spread < 20:
+        return "input", 0.65
 
     # NVIDIA / Spotify green action button
     if g_avg > max(r_avg, b_avg) * 1.15 and g_avg > 80:
-        return "button", 78
+        return "button", 0.78
 
     # Blue link / secondary button
     if b_avg > max(r_avg, g_avg) * 1.15 and b_avg > 80:
-        return "link", 68
+        return "link", 0.68
 
     # Red danger / cancel button
     if r_avg > max(g_avg, b_avg) * 1.25 and r_avg > 80:
-        return "button", 68
+        return "button", 0.68
+
+    # Wide rectangle (2:1 to 20:1 aspect) with sufficient height → button
+    if 2.0 <= aspect <= 20.0 and h > 18 * scale:
+        conf = 0.72 if aspect <= 10.0 else 0.58
+        return "button", conf
 
     # Low saturation (gray) → button or input depending on shape
     if spread < 18:
-        if 1.5 < aspect < 12 and 16 < h < 60:
-            return "button", 55
-        if h > 20 and w > 80:
-            return "input", 45
-        return "text", 28
+        if 1.5 < aspect < 12 and 16 * scale < h < 60 * scale:
+            return "button", 0.55
+        if h > 20 * scale and w > 80 * scale:
+            return "input", 0.45
+        return "text", 0.28
 
     # Moderately wide, moderate height → likely button
-    if 1.5 < aspect < 15 and 14 < h < 72:
-        return "button", 58
+    if 1.5 < aspect < 15 and 14 * scale < h < 72 * scale:
+        return "button", 0.58
 
-    return "text", 22
+    return "text", 0.22
 
 
 # ---------------------------------------------------------------------------
@@ -306,13 +330,16 @@ def _nms_elements(elements, iou_threshold=0.5):
 # Main detection pipeline
 # ---------------------------------------------------------------------------
 
-def _detect_elements(pil_img, offset=(0, 0)):
+def _detect_elements(pil_img, offset=(0, 0), screen_width=None):
     """Detect button-like UI elements.  Returns list of element dicts."""
     if not _HAS_PIL or pil_img is None:
         return []
 
     img_w, img_h = pil_img.size
     ox, oy = offset
+
+    # Use full screen width (not region width) for threshold scaling
+    scale = _get_display_scale(screen_width if screen_width else img_w)
 
     binary = _edge_binary(pil_img)
     dilated = _dilate_pil(binary, radius=8)
@@ -342,7 +369,7 @@ def _detect_elements(pil_img, offset=(0, 0)):
         cy2 = min(y + h, img_h)
         region = pil_img.crop((cx1, cy1, cx2, cy2))
 
-        elem_type, confidence = _classify_element(region, aspect, w, h)
+        elem_type, confidence = _classify_element(region, aspect, w, h, scale=scale)
         elements.append({
             "bbox": {"x": x + ox, "y": y + oy, "w": w, "h": h},
             "type": elem_type,
@@ -515,7 +542,20 @@ def register_routes(app, state, require_auth):
             return jsonify({"ok": False, "error": "Screen capture failed",
                             "code": "CAPTURE_FAILED"}), 500
 
-        elements = _detect_elements(img, offset=offset)
+        img_w, img_h = img.size
+
+        # For region/window captures the image is smaller than the screen;
+        # query the actual monitor width so scale is computed correctly.
+        screen_width = img_w
+        if region or window:
+            try:
+                import mss
+                with mss.mss() as sct:
+                    screen_width = sct.monitors[1]["width"]
+            except Exception:
+                pass
+
+        elements = _detect_elements(img, offset=offset, screen_width=screen_width)
 
         if want_ocr:
             ox, oy = offset
@@ -524,6 +564,16 @@ def register_routes(app, state, require_auth):
                 rel_y = elem["bbox"]["y"] - oy
                 elem["text"] = _ocr_elem_text(img, rel_x, rel_y,
                                               elem["bbox"]["w"], elem["bbox"]["h"])
+            # Reclassify elements confirmed to have text as buttons when shape matches
+            for elem in elements:
+                if (elem["text"] and
+                        elem["bbox"]["w"] > 60 and
+                        elem["bbox"]["h"] > 18 and
+                        elem["type"] not in ("button", "input")):
+                    ar = elem["bbox"]["w"] / max(elem["bbox"]["h"], 1)
+                    if 2.0 <= ar <= 20.0:
+                        elem["type"] = "button"
+                        elem["confidence"] = min(elem["confidence"] + 0.15, 0.85)
 
         return jsonify({
             "ok": True,
@@ -533,6 +583,7 @@ def register_routes(app, state, require_auth):
             "backend": "numpy+pil" if _HAS_NUMPY else "pil",
             "region": region,
             "window": window,
+            "display_info": {"width": img_w, "height": img_h},
         })
 
     @app.route("/vision/click", methods=["POST"])
@@ -598,7 +649,15 @@ def register_routes(app, state, require_auth):
                 })
 
         # --- Strategy 2: visual detection + color / element scoring -----------
-        elements = _detect_elements(img, offset=offset)
+        click_screen_w = img.size[0]
+        if region or window:
+            try:
+                import mss
+                with mss.mss() as sct:
+                    click_screen_w = sct.monitors[1]["width"]
+            except Exception:
+                pass
+        elements = _detect_elements(img, offset=offset, screen_width=click_screen_w)
 
         if elem_type_filter:
             typed = [e for e in elements if e["type"] == elem_type_filter]
