@@ -399,39 +399,41 @@ def _detect_cef_methods(proc, info: dict, check_dlls: bool = True) -> list[str]:
 
 def _scan_cef_processes() -> list[dict]:
     """Scan running processes for those advertising a CDP debug port."""
-    import psutil
-
     results = []
-    for proc in psutil.process_iter(["pid", "name", "cmdline"]):
-        try:
-            cmdline = proc.info.get("cmdline") or []
-            if not cmdline:
-                continue
-            cmdline_str = " ".join(cmdline)
-            if "--remote-debugging-port=" not in cmdline_str:
-                continue
-            # Extract port number
-            port = None
-            for part in cmdline:
-                if part.startswith("--remote-debugging-port="):
-                    try:
-                        port = int(part.split("=", 1)[1])
-                    except ValueError:
-                        pass
-                    break
-            if port is None:
-                continue
-
-            results.append({
-                "pid": proc.info["pid"],
-                "name": proc.info["name"],
-                "window_title": _window_title_for_pid(proc.info["pid"]),
-                "debug_port": port,
-                "debug_url": f"http://127.0.0.1:{port}/json",
-            })
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
-            continue
-
+    try:
+        ps_out = subprocess.run(
+            ["powershell", "-NoProfile", "-Command",
+             "Get-WmiObject Win32_Process | Where-Object {$_.CommandLine -like '*--remote-debugging-port=*'} | "
+             "Select-Object ProcessId,Name,CommandLine | ConvertTo-Json -Compress"],
+            capture_output=True, text=True, timeout=8
+        )
+        if ps_out.returncode == 0 and ps_out.stdout:
+            procs = _json.loads(ps_out.stdout)
+            if isinstance(procs, dict):
+                procs = [procs]
+            for p in procs:
+                cmd = p.get("CommandLine", "")
+                # Extract port
+                port = None
+                for part in cmd.split():
+                    if part.startswith("--remote-debugging-port="):
+                        try:
+                            port = int(part.split("=", 1)[1])
+                        except ValueError:
+                            pass
+                        break
+                if not port:
+                    continue
+                pid = p.get("ProcessId", 0)
+                results.append({
+                    "pid": pid,
+                    "name": p.get("Name", ""),
+                    "window_title": "",
+                    "debug_port": port,
+                    "debug_url": f"http://127.0.0.1:{port}/json",
+                })
+    except Exception:
+        pass
     return results
 
 
