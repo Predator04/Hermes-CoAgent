@@ -76,11 +76,9 @@ def _run_bitsadmin(args, timeout=30):
     exe = _find_bitsadmin()
     if not exe:
         raise RuntimeError("bitsadmin.exe not found on system")
-    # Use /RAWRETURN to get machine-parseable output where possible
-    full_args = ["/RAWRETURN"] + args
     try:
         result = subprocess.run(
-            [exe] + full_args,
+            [exe] + args,
             capture_output=True,
             text=True,
             timeout=timeout,
