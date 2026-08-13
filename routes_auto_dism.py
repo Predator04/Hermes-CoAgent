@@ -221,7 +221,7 @@ def register_routes(app, state, require_auth):
             return _missing_field("name")
         try:
             output = _run_dism(
-                ["/online", "/Disable-Feature", f"/FeatureName:{name}", "/Remove"],
+                ["/online", "/Disable-Feature", f"/FeatureName:{name}"],
                 timeout=180,
             )
             return jsonify({"ok": True, "feature": name, "output": output})
