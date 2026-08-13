@@ -650,6 +650,25 @@ foreach ($proc in $targets) {{
         state.log(f"server process cleanup exited {result.returncode}")
 
 
+def _server_launch_log_path(state: TrayState) -> Path:
+    return state.coagent_dir / "logs" / "server_launch.log"
+
+
+def _read_launch_log_tail(state: TrayState, max_lines: int = 15) -> str:
+    """Return last ``max_lines`` non-empty lines of the launch log, or ""."""
+    log_path = _server_launch_log_path(state)
+    try:
+        if not log_path.is_file():
+            return ""
+        text = log_path.read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        return ""
+    lines = [ln.rstrip() for ln in text.splitlines() if ln.strip()]
+    if not lines:
+        return ""
+    return "\n".join(lines[-max_lines:])
+
+
 def _start_server_process(state: TrayState, open_existing: bool = False) -> str:
     running, reason = _server_already_running(state)
     if running:
@@ -675,15 +694,41 @@ def _start_server_process(state: TrayState, open_existing: bool = False) -> str:
     if token:
         env["HERMES_COAGENT_TOKEN"] = token
 
-    subprocess.Popen(
-        args,
-        cwd=str(state.coagent_dir),
-        env=env,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        stdin=subprocess.DEVNULL,
-        creationflags=_creationflags(),
-    )
+    # Redirect stdout/stderr to a log file so startup tracebacks aren't lost.
+    # The global hidden-window Popen patch in shared.py keeps this windowless.
+    log_path = _server_launch_log_path(state)
+    log_handle = None
+    try:
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_handle = open(log_path, "a", encoding="utf-8", errors="replace")
+        log_handle.write(
+            f"\n===== launch {time.strftime('%Y-%m-%d %H:%M:%S')} =====\n"
+        )
+        log_handle.flush()
+        stdout_target = log_handle
+        stderr_target = subprocess.STDOUT
+    except Exception as exc:
+        state.log(f"server launch log unavailable: {exc}")
+        stdout_target = subprocess.DEVNULL
+        stderr_target = subprocess.DEVNULL
+
+    try:
+        subprocess.Popen(
+            args,
+            cwd=str(state.coagent_dir),
+            env=env,
+            stdout=stdout_target,
+            stderr=stderr_target,
+            stdin=subprocess.DEVNULL,
+            creationflags=_creationflags(),
+        )
+    finally:
+        # Popen dup'd the fd; we can close our handle in this process.
+        if log_handle is not None:
+            try:
+                log_handle.close()
+            except Exception:
+                pass
     return "launched"
 
 
@@ -851,7 +896,18 @@ def _start_tunnel(state: TrayState, icon=None) -> None:
         state.log("tunnel: server not running, auto-starting")
         _kill_server_processes(state)
         time.sleep(1)
-        result = _start_server_process(state, open_existing=False)
+        try:
+            result = _start_server_process(state, open_existing=False)
+        except FileNotFoundError as exc:
+            state.log(f"tunnel: auto-start failed: {exc}")
+            if icon:
+                _notify(icon, f"Server failed to start: {exc}")
+            return
+        except Exception as exc:
+            state.log(f"tunnel: auto-start failed: {type(exc).__name__}: {exc}")
+            if icon:
+                _notify(icon, f"Server failed to start: {type(exc).__name__}: {exc}")
+            return
         state.log(f"tunnel: auto-start result: {result}")
 
         # Wait for server to come up
@@ -867,8 +923,12 @@ def _start_tunnel(state: TrayState, icon=None) -> None:
                 pass
 
         if not server_ok:
+            tail = _read_launch_log_tail(state)
             if icon:
-                _notify(icon, "Server failed to start — tunnel cannot be created")
+                if tail:
+                    _notify(icon, f"Server failed to start:\n{tail}")
+                else:
+                    _notify(icon, "Server failed to start — tunnel cannot be created")
             return
 
     # Start the tunnel
