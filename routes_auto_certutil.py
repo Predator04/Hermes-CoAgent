@@ -84,10 +84,7 @@ def _parse_store_output(output):
                 certs.append(current_cert)
                 current_cert = {}
             continue
-        if "=" in stripped:
-            key, val = stripped.split("=", 1)
-            current_cert[key.strip()] = val.strip()
-        elif stripped.startswith("Subject:"):
+        if stripped.startswith("Subject:"):
             current_cert["subject"] = stripped[8:].strip()
         elif stripped.startswith("Issuer:"):
             current_cert["issuer"] = stripped[7:].strip()
@@ -97,6 +94,9 @@ def _parse_store_output(output):
             current_cert["not_before"] = stripped[10:].strip()
         elif stripped.startswith("NotAfter:"):
             current_cert["not_after"] = stripped[9:].strip()
+        elif "=" in stripped:
+            key, val = stripped.split("=", 1)
+            current_cert[key.strip()] = val.strip()
     if current_cert:
         certs.append(current_cert)
     return certs
@@ -140,17 +140,17 @@ def register_routes(app, state, require_auth):
                 "error": f"unsupported hash algorithm '{algorithm}'. Supported: {', '.join(HASH_ALGOS)}",
             }), 400
 
-        # Convert WSL path to Windows path if needed
+        # Verify file exists (on the original path, before WSL→Windows conversion)
+        if not os.path.isfile(filepath):
+            return jsonify({"ok": False, "error": f"file not found: {filepath}"}), 404
+
+        # Convert WSL path to Windows path if needed (for certutil.exe)
         if filepath.startswith("/mnt/"):
             parts = filepath.split("/")
-            drive = parts[2].upper()
-            win_path = f"{drive}:\\" + "\\".join(parts[3:])
-            filepath = win_path
-
-        # Verify file exists
-        if not os.path.isfile(filepath):
-            # Try via PowerShell to check existence
-            return jsonify({"ok": False, "error": f"file not found: {filepath}"}), 404
+            if len(parts) >= 3 and len(parts[2]) == 1:
+                drive = parts[2].upper()
+                win_path = f"{drive}:\\" + "\\".join(parts[3:])
+                filepath = win_path
 
         try:
             stdout, stderr, rc = _run_certutil(["-hashfile", filepath, algorithm], timeout=30)
@@ -197,11 +197,16 @@ def register_routes(app, state, require_auth):
 
         # certutil encodes to a temp .b64 file
         import tempfile
-        tmpfile = tempfile.mktemp(suffix=".b64")
+        fd, tmpfile = tempfile.mkstemp(suffix=".b64")
+        os.close(fd)  # certutil opens the path itself
 
         try:
             stdout, stderr, rc = _run_certutil(["-encode", filepath, tmpfile], timeout=30)
             if rc != 0:
+                try:
+                    os.unlink(tmpfile)
+                except OSError:
+                    pass
                 return jsonify({
                     "ok": False,
                     "error": stderr.strip() or "certutil encode failed",
@@ -248,7 +253,8 @@ def register_routes(app, state, require_auth):
         if not output_file:
             # Auto-generate output filename
             import tempfile
-            output_file = tempfile.mktemp(suffix=".decoded")
+            fd, output_file = tempfile.mkstemp(suffix=".decoded")
+            os.close(fd)  # certutil opens the path itself
 
         try:
             stdout, stderr, rc = _run_certutil(["-decode", encoded_file, output_file], timeout=30)
