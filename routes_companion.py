@@ -12,6 +12,7 @@ Command lifecycle:
     3. Extension executes the command, POSTs /browser/companion/result.
     4. The blocked /command call wakes and returns the result to the agent.
 """
+import math
 import time
 import uuid
 import threading
@@ -150,7 +151,7 @@ def register_routes(app, state, require_auth):
             timeout = float(raw_timeout)
         except (TypeError, ValueError):
             timeout = DEFAULT_COMMAND_TIMEOUT
-        if timeout <= 0:
+        if not math.isfinite(timeout) or timeout <= 0:
             timeout = DEFAULT_COMMAND_TIMEOUT
         if timeout > MAX_COMMAND_TIMEOUT:
             timeout = MAX_COMMAND_TIMEOUT
