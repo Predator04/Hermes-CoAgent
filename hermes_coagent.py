@@ -883,6 +883,13 @@ except ImportError:
     UAC_AVAILABLE = False
     _console("[WARN] routes_uac.py not found")
 
+try:
+    from routes_context import register_routes as reg_context
+    CONTEXT_OPTIMIZER_AVAILABLE = True
+except ImportError:
+    CONTEXT_OPTIMIZER_AVAILABLE = False
+    _console("[WARN] routes_context.py not found")
+
 # Telemetry module
 try:
     from telemetry import telem_bp, init_telem
@@ -1097,6 +1104,9 @@ reg_browser(app, state, require_auth)
 reg_browser_automation(app, state, require_auth)
 reg_companion(app, state, require_auth)
 reg_governance(app, state, require_auth)
+if CONTEXT_OPTIMIZER_AVAILABLE:
+    reg_context(app, state, require_auth)
+    features["context_optimizer"] = True
 reg_google(app, state, require_auth)
 reg_logs(app, state, require_auth)
 reg_recorder(app, state, require_auth)
