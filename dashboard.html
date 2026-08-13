@@ -676,6 +676,11 @@ tr:hover td { background: rgba(45, 212, 191, .04); }
               <button id="goalRun" class="primary">Start Goal</button>
               <button id="goalStop" class="danger" disabled>Stop</button>
             </div>
+            <div class="row goal-steer-row">
+              <input id="goalSteerInput" type="text" placeholder="Redirect / steer: e.g. 'use the cheaper supplier'" style="flex:1;min-width:220px">
+              <label class="small muted"><input id="goalSteerRollback" type="checkbox"> Roll back last step</label>
+              <button id="goalSteer" disabled>Redirect</button>
+            </div>
             <div class="goal-progress">
               <div class="goal-progress-meta">
                 <strong id="goalProgressLabel">Waiting for goal</strong>
@@ -1284,6 +1289,40 @@ tr:hover td { background: rgba(45, 212, 191, .04); }
     $("goalRun").disabled = active;
     $("goalStop").disabled = !active;
     $("goalRetry").disabled = !(state.activeGoalText && terminal);
+    const steerBtn = $("goalSteer");
+    if (steerBtn) steerBtn.disabled = !active;
+    renderSteerCards(Array.isArray(data.steers) ? data.steers : []);
+  }
+  function renderSteerCards(steers) {
+    const host = $("goalTimeline");
+    if (!host) return;
+    host.querySelectorAll(".steer-card").forEach(node => node.remove());
+    if (!steers.length) return;
+    steers.forEach(entry => {
+      const card = document.createElement("div");
+      card.className = "timeline-card steer-card";
+      card.setAttribute("role", "note");
+      card.style.borderColor = "rgba(255, 196, 87, .55)";
+      const main = document.createElement("div");
+      main.className = "timeline-card-main";
+      const icon = document.createElement("div");
+      icon.className = "timeline-icon";
+      icon.textContent = "🧭";
+      const title = document.createElement("div");
+      title.className = "timeline-title";
+      const strong = document.createElement("strong");
+      strong.textContent = "Steer" + (entry.rollback ? " (rollback)" : "");
+      const meta = document.createElement("span");
+      const when = entry.created_at_iso || (entry.created_at ? new Date(entry.created_at * 1000).toLocaleTimeString() : "");
+      meta.textContent = (entry.source || "operator") + (when ? " • " + when : "");
+      title.append(strong, meta);
+      const badge = document.createElement("span");
+      badge.className = "badge";
+      badge.textContent = entry.instruction || "";
+      main.append(icon, title, badge);
+      card.appendChild(main);
+      host.appendChild(card);
+    });
   }
   function resetGoalUi(goalText) {
     state.expandedSteps.clear();
@@ -1346,7 +1385,7 @@ tr:hover td { background: rgba(45, 212, 191, .04); }
     source.addEventListener("log", ev => {
       try { appendGoalLog(JSON.parse(ev.data)); } catch (_err) {}
     });
-    ["goal_status", "steps_planned", "step_start", "step_retry", "step_complete", "step_error"].forEach(name => {
+    ["goal_status", "steps_planned", "step_start", "step_retry", "step_complete", "step_error", "steer", "steer_rollback"].forEach(name => {
       source.addEventListener(name, scheduleGoalRefresh);
     });
     source.addEventListener("goal_complete", () => {
@@ -1403,6 +1442,25 @@ tr:hover td { background: rgba(45, 212, 191, .04); }
     if (!state.activeGoal) return;
     await api("/copilot/stop/" + encodeURIComponent(state.activeGoal), { method: "POST", body: {} });
     await refreshGoalTimeline(state.activeGoal);
+  }
+  async function steerGoal() {
+    if (!state.activeGoal) return toast("No active goal to steer");
+    const input = $("goalSteerInput");
+    const instruction = (input.value || "").trim();
+    if (!instruction) return toast("Enter a redirect instruction");
+    const rollback = $("goalSteerRollback").checked;
+    try {
+      await api("/goal-runner/" + encodeURIComponent(state.activeGoal) + "/steer", {
+        method: "POST",
+        body: { instruction, rollback },
+      });
+      input.value = "";
+      $("goalSteerRollback").checked = false;
+      toast("Redirect queued");
+      await refreshGoalTimeline(state.activeGoal);
+    } catch (err) {
+      toast("Redirect failed: " + err.message);
+    }
   }
   async function retryGoal() {
     const goal = state.activeGoalText || $("goalInput").value.trim();
@@ -2074,6 +2132,10 @@ tr:hover td { background: rgba(45, 212, 191, .04); }
     $("goalRun").addEventListener("click", runGoal);
     $("goalStop").addEventListener("click", () => stopGoal().catch(err => toast(err.message)));
     $("goalRetry").addEventListener("click", () => retryGoal().catch(err => toast("Retry failed: " + err.message)));
+    $("goalSteer").addEventListener("click", () => steerGoal().catch(err => toast("Redirect failed: " + err.message)));
+    $("goalSteerInput").addEventListener("keydown", ev => {
+      if (ev.key === "Enter") { ev.preventDefault(); steerGoal().catch(err => toast("Redirect failed: " + err.message)); }
+    });
     $("gifStart").addEventListener("click", () => gifStart().catch(err => toast(err.message)));
     $("gifStop").addEventListener("click", () => gifStop().catch(err => toast(err.message)));
     $("gifStatusBtn").addEventListener("click", () => gifStatus().catch(err => toast(err.message)));

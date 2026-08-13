@@ -26,6 +26,9 @@ MAX_STORED_GOALS = 50
 DEFAULT_TIMEOUT_SECONDS = 300
 MAX_GOAL_LOG_ENTRIES = 250
 MAX_GOAL_EVENTS = 500
+MAX_STEER_QUEUE = 20
+MAX_STEER_HISTORY = 50
+MAX_COMPLETED_RING = 10
 
 _GOALS = {}
 _GOAL_ORDER = []
@@ -354,6 +357,8 @@ def _timeline_from_goal(goal):
         "failed": sum(1 for step in steps if step.get("status") == "error"),
         "steps": steps,
         "log": list(goal.get("log") or []),
+        "steers": list(goal.get("steering_history") or []),
+        "steer_pending": len(goal.get("steering_queue") or []),
         "error": goal.get("error"),
         "created_at": goal.get("created_at"),
         "started_at": goal.get("started_at"),
@@ -1040,6 +1045,153 @@ def _snapshot_goal(goal):
     return payload
 
 
+def _push_completed_ring(goal_id, step_record):
+    """Ring-buffer track a just-completed step so rollback can undo it."""
+    with _GOALS_LOCK:
+        goal = _GOALS.get(goal_id)
+        if not goal:
+            return
+        ring = goal.setdefault("completed_ring", [])
+        ring.append({
+            "index": step_record.get("index"),
+            "action": step_record.get("action"),
+            "params": deepcopy(step_record.get("params") or {}),
+            "result": deepcopy(step_record.get("result") or {}),
+            "duration_ms": step_record.get("duration_ms"),
+            "recorded_at": _now(),
+        })
+        if len(ring) > MAX_COMPLETED_RING:
+            del ring[:-MAX_COMPLETED_RING]
+
+
+def _drain_steer_queue(goal_id):
+    with _GOALS_LOCK:
+        goal = _GOALS.get(goal_id)
+        if not goal:
+            return []
+        pending = list(goal.get("steering_queue") or [])
+        goal["steering_queue"] = []
+        return pending
+
+
+def _record_steer_history(goal_id, entry):
+    with _GOALS_LOCK:
+        goal = _GOALS.get(goal_id)
+        if not goal:
+            return
+        history = goal.setdefault("steering_history", [])
+        history.append(entry)
+        if len(history) > MAX_STEER_HISTORY:
+            del history[:-MAX_STEER_HISTORY]
+
+
+def _undo_step_action(auth_header, step_record):
+    """Best-effort inverse for a completed step. Uses routes_undo when possible."""
+    action = str(step_record.get("action") or "").lower()
+    params = step_record.get("params") or {}
+    result = step_record.get("result") if isinstance(step_record.get("result"), dict) else {}
+    try:
+        if action in {"click", "finder_click"}:
+            return {"status": "skipped", "reason": "click actions are not automatically reversible"}
+        if action == "type":
+            text = str(params.get("text", ""))
+            if text:
+                return _coagent_request(
+                    "POST",
+                    "/key/press",
+                    {"keys": ["backspace"] * min(len(text), 200)},
+                    auth_header=auth_header,
+                )
+            return {"status": "skipped", "reason": "no text to erase"}
+        if action == "mouse_scroll":
+            clicks = params.get("clicks", params.get("amount", params.get("dy", 0)))
+            try:
+                clicks = int(clicks)
+            except (TypeError, ValueError):
+                clicks = 0
+            return _coagent_request("POST", "/mouse/scroll", {"clicks": -clicks}, auth_header=auth_header)
+        if action == "mouse_drag":
+            return _coagent_request(
+                "POST",
+                "/mouse/drag",
+                {
+                    "x1": params.get("x2"),
+                    "y1": params.get("y2"),
+                    "x2": params.get("x1"),
+                    "y2": params.get("y1"),
+                },
+                auth_header=auth_header,
+            )
+        if action in {"key", "hotkey", "press"}:
+            return {"status": "skipped", "reason": "key press cannot be inverted"}
+        if action == "launch":
+            return {"status": "skipped", "reason": "launched app must be closed manually"}
+        return {"status": "skipped", "reason": f"no inverse defined for {action}"}
+    except Exception as exc:
+        return {"error": f"{type(exc).__name__}: {exc}"}
+
+
+def _rollback_last_completed(goal_id, auth_header):
+    with _GOALS_LOCK:
+        goal = _GOALS.get(goal_id)
+        if not goal:
+            return {"error": "goal not found"}
+        ring = goal.get("completed_ring") or []
+        if not ring:
+            return {"error": "no completed step to roll back"}
+        step_record = ring.pop()
+        index = step_record.get("index")
+        steps = goal.get("steps") or []
+        if isinstance(index, int) and 0 <= index < len(steps):
+            steps[index]["status"] = "pending"
+            steps[index].pop("result", None)
+            steps[index].pop("duration_ms", None)
+            steps[index].pop("duration", None)
+    outcome = _undo_step_action(auth_header, step_record)
+    return {
+        "rolled_back_index": step_record.get("index"),
+        "action": step_record.get("action"),
+        "result": outcome,
+    }
+
+
+def _revise_plan(goal_id, goal_text, instructions, remaining_index, max_steps, auth_header, agent, model):
+    """Re-plan the remaining steps folding in accumulated steering instructions."""
+    combined = str(goal_text or "")
+    if instructions:
+        formatted = "\n".join(f"- {text}" for text in instructions)
+        combined = (
+            f"{combined}\n\nOperator corrections to fold in (do not discard already-completed steps):\n{formatted}"
+        )
+    try:
+        new_steps, meta = _decompose_goal(combined, max_steps, auth_header, agent=agent, model=model)
+    except Exception as exc:
+        return False, {"error": f"{type(exc).__name__}: {exc}"}
+    remaining_slots = max(1, max_steps - remaining_index)
+    new_steps = list(new_steps)[:remaining_slots]
+    if not new_steps:
+        return False, {"error": "revised plan returned no steps"}
+    with _GOALS_LOCK:
+        goal = _GOALS.get(goal_id)
+        if not goal:
+            return False, {"error": "goal not found"}
+        steps = goal.get("steps") or []
+        kept = steps[:remaining_index]
+        appended = [
+            {
+                "index": remaining_index + offset,
+                "action": step["action"],
+                "params": step.get("params", {}),
+                "status": "pending",
+            }
+            for offset, step in enumerate(new_steps)
+        ]
+        goal["steps"] = kept + appended
+        goal["decomposition"] = meta
+        goal["updated_at"] = _now()
+    return True, {"revised_from": remaining_index, "new_steps": len(new_steps), "source": meta.get("source")}
+
+
 def _save_goal_update(goal_id, **updates):
     with _GOALS_LOCK:
         goal = _GOALS.get(goal_id)
@@ -1107,11 +1259,47 @@ def _run_goal(goal_id, auth_header):
         previous = {}
         failed = False
         failed_record = None
-        for index, step in enumerate(steps):
+        index = 0
+        while True:
+            with _GOALS_LOCK:
+                current_steps = list(_GOALS[goal_id].get("steps") or [])
+            if index >= len(current_steps):
+                break
+            step = {"action": current_steps[index]["action"], "params": current_steps[index].get("params", {})}
             if stop_event.is_set():
                 _log_entry(goal_id, "warn", f"Goal stopped before step {index + 1}", "\U0001F7E1")
                 _complete_goal(goal_id, "stopped")
                 return
+            pending_steers = _drain_steer_queue(goal_id)
+            if pending_steers:
+                instructions = [str(s.get("instruction") or "").strip() for s in pending_steers]
+                instructions = [text for text in instructions if text]
+                for entry in pending_steers:
+                    text = str(entry.get("instruction") or "").strip()
+                    label = _short_text(text, 120) or "(empty instruction)"
+                    _log_entry(goal_id, "info", f"Steer applied: {label}", "\U0001F9ED")
+                    _emit_goal_event(goal_id, "steer", {
+                        "index": index,
+                        "instruction": text,
+                        "rollback": bool(entry.get("rollback")),
+                        "applied_at": _now(),
+                    })
+                ok, meta = _revise_plan(
+                    goal_id, goal_text, instructions, index, max_steps, auth_header, agent, model
+                )
+                if ok:
+                    _log_entry(
+                        goal_id,
+                        "planning",
+                        f"Plan revised from step {index + 1} ({meta.get('new_steps')} new steps)",
+                        "\U0001F7E1",
+                    )
+                    _emit_goal_event(goal_id, "steps_planned", {"total": index + int(meta.get("new_steps") or 0)})
+                    _emit_goal_timeline(goal_id)
+                    continue
+                else:
+                    warning = meta.get("error") or "revise failed"
+                    _log_entry(goal_id, "warn", f"Plan revision failed: {warning}", "\U0001F7E1")
             start = _now()
             final_record = None
             label = _step_label({"index": index, "action": step["action"], "params": step.get("params", {})})
@@ -1168,6 +1356,7 @@ def _run_goal(goal_id, auth_header):
                 goal["updated_at"] = _now()
             if final_record["status"] == "ok":
                 previous = _prev_from_result(final_record.get("result") or {})
+                _push_completed_ring(goal_id, final_record)
                 _log_entry(goal_id, "success", f"{label} completed in {final_record['duration_ms']} ms", "\u2705")
                 _emit_goal_event(
                     goal_id,
@@ -1175,6 +1364,7 @@ def _run_goal(goal_id, auth_header):
                     {"index": index, "status": "ok", "duration_ms": final_record["duration_ms"], "label": label},
                 )
                 _emit_goal_timeline(goal_id)
+                index += 1
                 continue
             if final_record["status"] == "stopped":
                 _log_entry(goal_id, "warn", f"Stopped during {label}", "\U0001F7E1")
@@ -1188,12 +1378,14 @@ def _run_goal(goal_id, auth_header):
             _emit_goal_event(goal_id, "step_error", {"index": index, "error": error_text, "label": label})
             _emit_goal_timeline(goal_id)
             break
+        with _GOALS_LOCK:
+            total_steps = len(_GOALS[goal_id].get("steps") or [])
         if failed:
             error_text = _step_error_text(failed_record or {}) or "Goal failed"
             _log_entry(goal_id, "error", f"Goal failed: {error_text}", "\u274C")
             _complete_goal(goal_id, "failed", error=error_text)
         else:
-            _log_entry(goal_id, "success", f"Goal completed: {len(steps)} steps", "\u2705")
+            _log_entry(goal_id, "success", f"Goal completed: {total_steps} steps", "\u2705")
             _complete_goal(goal_id, "completed")
     except Exception as exc:
         _console(f"[copilot_enhanced] goal {goal_id} failed: {type(exc).__name__}: {exc}")
@@ -1484,6 +1676,9 @@ def route_copilot_goal():
         "events": [],
         "event_seq": 0,
         "subscribers": set(),
+        "steering_queue": [],
+        "steering_history": [],
+        "completed_ring": [],
         "max_steps": max_steps,
         "created_at": _now(),
         "created_at_iso": _iso(),
@@ -1587,6 +1782,74 @@ def route_copilot_goal_stop(goal_id):
     with _GOALS_LOCK:
         goal = _GOALS.get(goal_id)
         return jsonify(_snapshot_goal(goal))
+
+
+def _enqueue_steer(goal_id, instruction, rollback=False, source="operator"):
+    text = str(instruction or "").strip()
+    if not text:
+        return None, "instruction is required"
+    with _GOALS_LOCK:
+        goal = _GOALS.get(goal_id)
+        if not goal:
+            return None, "goal not found"
+        if goal.get("status") in _TERMINAL_GOAL_STATUSES:
+            return None, f"goal is {goal.get('status')} and cannot be steered"
+        queue_list = goal.setdefault("steering_queue", [])
+        if len(queue_list) >= MAX_STEER_QUEUE:
+            return None, "steering queue full"
+        entry = {
+            "id": uuid.uuid4().hex,
+            "instruction": text,
+            "rollback": bool(rollback),
+            "source": source,
+            "created_at": _now(),
+            "created_at_iso": _iso(),
+        }
+        queue_list.append(entry)
+    _record_steer_history(goal_id, entry)
+    _log_entry(goal_id, "info", f"Steer queued: {_short_text(text, 120)}", "\U0001F9ED")
+    return entry, None
+
+
+@copilot_enhanced_bp.route("/goal-runner/<goal_id>/steer", methods=["POST"])
+@copilot_enhanced_bp.route("/copilot/goal/<goal_id>/steer", methods=["POST"])
+def route_copilot_goal_steer(goal_id):
+    data = _json_body() or {}
+    instruction = str(data.get("instruction") or data.get("message") or "").strip()
+    if not instruction:
+        return jsonify({"error": "instruction is required"}), 400
+    rollback = str(data.get("rollback", "")).lower() in {"1", "true", "yes", "on"} or data.get("rollback") is True
+    source = str(data.get("source") or "operator")
+    with _GOALS_LOCK:
+        exists = goal_id in _GOALS
+    if not exists:
+        return jsonify({"error": "goal not found", "goal_id": goal_id}), 404
+    rollback_result = None
+    if rollback:
+        auth = _auth_header(request.headers.get("Authorization", ""))
+        rollback_result = _rollback_last_completed(goal_id, auth)
+        if rollback_result and rollback_result.get("rolled_back_index") is not None:
+            _log_entry(
+                goal_id,
+                "warn",
+                f"Rolled back step {int(rollback_result['rolled_back_index']) + 1} for steer",
+                "\U0001F9ED",
+            )
+            _emit_goal_event(goal_id, "steer_rollback", rollback_result)
+    entry, error = _enqueue_steer(goal_id, instruction, rollback=rollback, source=source)
+    if error:
+        return jsonify({"error": error, "goal_id": goal_id}), 409
+    _emit_goal_timeline(goal_id)
+    with _GOALS_LOCK:
+        goal = _GOALS.get(goal_id)
+        snapshot = _snapshot_goal(goal) if goal else {}
+    return jsonify({
+        "goal_id": goal_id,
+        "steer": entry,
+        "rollback": rollback_result,
+        "queued": len(snapshot.get("steering_queue") or []),
+        "status": snapshot.get("status"),
+    })
 
 
 def register_routes(app, state, require_auth):

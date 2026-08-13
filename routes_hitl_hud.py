@@ -119,6 +119,67 @@ def _hitl_resume():
     return jsonify({"ok": True, "paused": False})
 
 
+@hitl_bp.route("/hitl/redirect", methods=["POST"])
+def _hitl_redirect():
+    """Operator redirect prompt: enqueue a steering instruction on a running goal.
+
+    Body: {"goal_id": "abc123", "instruction": "use the cheaper supplier",
+           "rollback": false}
+    If goal_id is omitted, the latest active goal is used.
+    """
+    body = request.get_json(force=True, silent=True) or {}
+    instruction = str(body.get("instruction") or body.get("message") or "").strip()
+    if not instruction:
+        return jsonify({"ok": False, "error": "instruction is required"}), 400
+    rollback = bool(body.get("rollback"))
+    goal_id = str(body.get("goal_id") or "").strip()
+    try:
+        from routes_copilot_enhanced import (
+            _enqueue_steer,
+            _latest_goal,
+            _rollback_last_completed,
+            _emit_goal_timeline,
+            _emit_goal_event,
+            _log_entry,
+            _auth_header,
+            _GOALS_LOCK,
+            _GOALS,
+        )
+    except Exception as exc:
+        return jsonify({"ok": False, "error": f"copilot_enhanced unavailable: {exc}"}), 503
+    if not goal_id:
+        active = _latest_goal(active_only=True)
+        if not active:
+            return jsonify({"ok": False, "error": "no active goal"}), 404
+        goal_id = active.get("goal_id") or active.get("id")
+    with _GOALS_LOCK:
+        exists = goal_id in _GOALS
+    if not exists:
+        return jsonify({"ok": False, "error": "goal not found", "goal_id": goal_id}), 404
+    rollback_result = None
+    if rollback:
+        auth = _auth_header(request.headers.get("Authorization", ""))
+        rollback_result = _rollback_last_completed(goal_id, auth)
+        if rollback_result and rollback_result.get("rolled_back_index") is not None:
+            _log_entry(
+                goal_id,
+                "warn",
+                f"HITL rollback of step {int(rollback_result['rolled_back_index']) + 1}",
+                "\U0001F9ED",
+            )
+            _emit_goal_event(goal_id, "steer_rollback", rollback_result)
+    entry, error = _enqueue_steer(goal_id, instruction, rollback=rollback, source="hitl")
+    if error:
+        return jsonify({"ok": False, "error": error, "goal_id": goal_id}), 409
+    _emit_goal_timeline(goal_id)
+    return jsonify({
+        "ok": True,
+        "goal_id": goal_id,
+        "steer": entry,
+        "rollback": rollback_result,
+    })
+
+
 @hitl_bp.route("/hitl/configure", methods=["POST"])
 def _hitl_configure():
     body = request.get_json(force=True, silent=True) or {}
