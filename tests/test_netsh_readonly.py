@@ -26,9 +26,13 @@ def test_ras_context_cannot_run_state_changing_subcommand():
 
 
 def test_interface_show_is_permitted_past_the_guard():
-    # A valid read-only subcommand must pass the allowlist guard (it may still
+    # A valid read-only subcommand must pass the allowlist guard (it may then
     # fail later trying to actually run netsh, but not with a 400 guard error).
-    resp = _client().post("/auto/netsh/command", json={"context": "interface", "command": "set bogus"})
-    assert resp.status_code == 400  # 'set' is not in interface allowlist -> rejected
-    resp2 = _client().post("/auto/netsh/command", json={"context": "advfirewall", "command": "delete rule"})
-    assert resp2.status_code == 400  # 'delete' rejected
+    resp = _client().post("/auto/netsh/command", json={"context": "interface", "command": "show interfaces"})
+    assert resp.status_code != 400  # read-only subcommand passes the guard
+    # 'set' is not in the interface allowlist -> rejected
+    resp2 = _client().post("/auto/netsh/command", json={"context": "interface", "command": "set bogus"})
+    assert resp2.status_code == 400
+    # 'delete' is not in the advfirewall allowlist -> rejected
+    resp3 = _client().post("/auto/netsh/command", json={"context": "advfirewall", "command": "delete rule"})
+    assert resp3.status_code == 400
