@@ -890,6 +890,13 @@ except ImportError:
     CONTEXT_OPTIMIZER_AVAILABLE = False
     _console("[WARN] routes_context.py not found")
 
+try:
+    from routes_trace import register_routes as reg_trace
+    TRACE_AVAILABLE = True
+except ImportError:
+    TRACE_AVAILABLE = False
+    _console("[WARN] routes_trace.py not found")
+
 # Telemetry module
 try:
     from telemetry import telem_bp, init_telem
@@ -1350,6 +1357,10 @@ if GROUND_AVAILABLE:
 if UAC_AVAILABLE:
     reg_uac(app, state, require_auth)
     features["uac_automation"] = True
+if TRACE_AVAILABLE:
+    # Registered LAST so wrap_action_endpoints() sees every earlier route.
+    reg_trace(app, state, require_auth)
+    features["action_tracing"] = True
 
 features["web_dashboard_overhaul"] = True
 features["mcp_mode"] = True

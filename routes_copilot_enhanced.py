@@ -18,6 +18,14 @@ from flask import Blueprint, jsonify, request, stream_with_context
 from shared import _self_port, COAGENT_DIR, _console, _json_body, _wrap_registered_blueprint_routes
 from shared import sse_pack, sse_stream_response
 
+try:
+    from routes_trace import Span as _TraceSpan, current_span as _trace_current_span
+    _TRACE_AVAILABLE = True
+except Exception:
+    _TraceSpan = None
+    _trace_current_span = lambda: None
+    _TRACE_AVAILABLE = False
+
 
 copilot_enhanced_bp = Blueprint("copilot_enhanced", __name__)
 
@@ -484,6 +492,14 @@ def _coagent_request(method, path, data=None, auth_header=None, timeout=30):
     token = _auth_header(auth_header)
     if token:
         headers["Authorization"] = token
+    if _TRACE_AVAILABLE:
+        try:
+            cur = _trace_current_span()
+            if cur is not None:
+                from routes_trace import build_traceparent
+                headers["traceparent"] = build_traceparent(cur["run_id"], cur["span_id"])
+        except Exception:
+            pass
     req = urllib.request.Request(
         f"http://127.0.0.1:{_self_port()}{path}",
         data=body,
@@ -1304,6 +1320,36 @@ def _run_goal(goal_id, auth_header):
             final_record = None
             label = _step_label({"index": index, "action": step["action"], "params": step.get("params", {})})
             icon = _step_icon(step)
+            step_span = None
+            step_ctx_pushed = False
+            if _TRACE_AVAILABLE and _TraceSpan is not None:
+                try:
+                    step_span = _TraceSpan(
+                        name=f"goal.step.{step['action']}",
+                        run_id=goal_id,
+                        parent=None,
+                        attributes={
+                            "coagent.step.index": index,
+                            "coagent.step.action": step["action"],
+                            "coagent.goal.id": goal_id,
+                        },
+                    )
+                    step_span.set_params(step.get("params") or {})
+                    # Push onto the tracer stack so nested action HTTP calls
+                    # (via _coagent_request) parent themselves under this span.
+                    from routes_trace import _cur_stack as _trace_stack
+                    _trace_stack().append(step_span)
+                    step_ctx_pushed = True
+                    # Best-effort "before" screenshot for the timeline viewer.
+                    try:
+                        before = _coagent_request("GET", "/screen/base64", auth_header=auth_header, timeout=5)
+                        if isinstance(before, dict) and (before.get("path") or before.get("file")):
+                            step_span.set_screenshots(before=before.get("path") or before.get("file"))
+                    except Exception:
+                        pass
+                except Exception:
+                    step_span = None
+                    step_ctx_pushed = False
             for attempt in (1, 2):
                 with _GOALS_LOCK:
                     goal = _GOALS[goal_id]
@@ -1354,6 +1400,33 @@ def _run_goal(goal_id, auth_header):
                 goal = _GOALS[goal_id]
                 goal["steps"][index].update(final_record)
                 goal["updated_at"] = _now()
+            if step_span is not None:
+                try:
+                    if step_ctx_pushed:
+                        from routes_trace import _cur_stack as _trace_stack
+                        stack = _trace_stack()
+                        if stack and stack[-1] is step_span:
+                            stack.pop()
+                        step_ctx_pushed = False
+                    step_span.set_result({
+                        "status": final_record.get("status"),
+                        "duration_ms": final_record.get("duration_ms"),
+                        "attempt": final_record.get("attempt"),
+                        "result": final_record.get("result"),
+                    })
+                    step_span.set_attribute("coagent.step.status", final_record.get("status") or "unknown")
+                    if final_record.get("status") == "error":
+                        step_span.set_error(_step_error_text(final_record) or "step failed")
+                    try:
+                        after = _coagent_request("GET", "/screen/base64", auth_header=auth_header, timeout=5)
+                        if isinstance(after, dict) and (after.get("path") or after.get("file")):
+                            step_span.set_screenshots(after=after.get("path") or after.get("file"))
+                    except Exception:
+                        pass
+                    step_span.end()
+                except Exception:
+                    pass
+                step_span = None
             if final_record["status"] == "ok":
                 previous = _prev_from_result(final_record.get("result") or {})
                 _push_completed_ring(goal_id, final_record)
