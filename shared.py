@@ -19,6 +19,60 @@ import ctypes
 
 from flask import Response, jsonify, request
 
+# ---------------------------------------------------------------------------
+# Global subprocess.Popen patch — hide console windows on Windows
+# ---------------------------------------------------------------------------
+# Hermes CoAgent spawns ~27 subprocesses during normal operation (updaters,
+# health probes, tunnel checks, macro/auto-tool execution, etc.). Without
+# CREATE_NO_WINDOW + a hiding STARTUPINFO, each spawn briefly flashes a
+# blank console window on the user's desktop — very distracting.
+#
+# subprocess.run / call / check_call / check_output all funnel through
+# subprocess.Popen, so patching Popen once here covers every call site
+# repo-wide with a single change. shared.py is imported at the top of
+# hermes_coagent.py and every route module, and no module uses
+# `from subprocess import Popen` (verified via grep), so the patch is
+# guaranteed to be in effect before any subprocess spawn happens.
+#
+# Behavior:
+#   * ORs subprocess.CREATE_NO_WINDOW into `creationflags`
+#   * When the caller did NOT supply `startupinfo`, attaches a STARTUPINFO
+#     with STARTF_USESHOWWINDOW and wShowWindow=SW_HIDE (0)
+#   * Caller-supplied `creationflags` and `startupinfo` are preserved —
+#     the wrapper only ADDS hiding, it never strips anything
+#
+# Escape hatches (rare cases where a visible window is intentional):
+#   * Pass `creationflags` including `subprocess.CREATE_NEW_CONSOLE`, or
+#   * Pass the pseudo-kwarg `_show_window=True` (stripped before Popen)
+#
+# On non-Windows this block is a complete no-op. The wrapper is idempotent
+# via the `_hermes_no_window_wrapped` marker so reloading shared.py does
+# not double-wrap.
+# ---------------------------------------------------------------------------
+if os.name == "nt" and not getattr(subprocess.Popen, "_hermes_no_window_wrapped", False):
+    _ORIGINAL_POPEN = subprocess.Popen
+    _CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+    _CREATE_NEW_CONSOLE = getattr(subprocess, "CREATE_NEW_CONSOLE", 0x00000010)
+
+    class _HermesHiddenPopen(_ORIGINAL_POPEN):
+        """Popen subclass that hides console windows by default on Windows."""
+
+        _hermes_no_window_wrapped = True
+
+        def __init__(self, *args, **kwargs):
+            show_window = bool(kwargs.pop("_show_window", False))
+            creationflags = kwargs.get("creationflags", 0) or 0
+            if not show_window and not (creationflags & _CREATE_NEW_CONSOLE):
+                kwargs["creationflags"] = creationflags | _CREATE_NO_WINDOW
+                if kwargs.get("startupinfo") is None:
+                    startupinfo = subprocess.STARTUPINFO()
+                    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                    startupinfo.wShowWindow = 0  # SW_HIDE
+                    kwargs["startupinfo"] = startupinfo
+            super().__init__(*args, **kwargs)
+
+    subprocess.Popen = _HermesHiddenPopen
+
 COAGENT_DIR = Path(__file__).parent.resolve()
 
 def _load_version() -> str:
