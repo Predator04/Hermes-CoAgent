@@ -54,7 +54,6 @@ Version is stored in `VERSION` file (single source of truth). All Python modules
 | `routes_bypass.py` | AI bypass toolkit: leetspeak, homoglyph, zero-width, prefill templates |
 | `routes_voice.py` | Voice command recognition, speech-to-text |
 | `routes_mcp.py` | JSON-RPC MCP bridge — auto-discovers CoAgent endpoints as MCP tools |
-| `routes_store.py` | E-commerce store automation pipeline |
 
 ### Browser Automation
 
