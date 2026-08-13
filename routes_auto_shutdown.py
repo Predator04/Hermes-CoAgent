@@ -57,26 +57,51 @@ def _run_shutdown(args, timeout=30):
 
 
 def _validate_reason_code(reason):
-    """Validate shutdown reason code format 'p:rr:c'."""
+    """Validate a shutdown reason code in the Windows /d format '[p|u:]xx:yy'."""
     r = str(reason or "").strip()
     if not r:
         return None
     parts = r.split(":")
-    if len(parts) != 3:
-        raise ValueError("reason code must be in format 'p:rr:c' (e.g., '0:0:0' for Other/Other)")
+    if len(parts) == 3:
+        prefix, major_s, minor_s = parts
+        if prefix.lower() not in ("p", "u"):
+            raise ValueError("reason prefix must be 'p' (planned) or 'u' (unplanned)")
+    elif len(parts) == 2:
+        major_s, minor_s = parts
+    else:
+        raise ValueError("reason code must be in format '[p|u:]xx:yy' (e.g., 'p:0:0' or '0:0')")
     try:
-        p = int(parts[0])
-        rr = int(parts[1])
-        c = int(parts[2])
+        major = int(major_s)
+        minor = int(minor_s)
     except ValueError:
         raise ValueError("reason code parts must be integers")
-    if p not in (0, 1):  # 0 = user, 1 = application
-        raise ValueError("major reason must be 0 (user) or 1 (application)")
-    if rr < 0 or rr > 255:
-        raise ValueError("minor reason must be 0-255")
-    if c < 0 or c > 1:
-        raise ValueError("category must be 0 or 1")
+    if major < 0 or major > 255:
+        raise ValueError("major reason must be 0-255")
+    if minor < 0 or minor > 65535:
+        raise ValueError("minor reason must be 0-65535")
     return r
+
+
+def _parse_delay(value, default=30):
+    try:
+        d = int(value)
+    except (TypeError, ValueError):
+        raise ValueError("delay must be an integer number of seconds")
+    if d < 0 or d > 315360000:
+        raise ValueError("delay must be between 0 and 315360000 seconds (10 years)")
+    return d
+
+
+def _parse_bool(value, default=False):
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        return value.strip().lower() in ("1", "true", "yes", "on")
+    return default
 
 
 def register_routes(app, state, require_auth):
@@ -107,14 +132,14 @@ def register_routes(app, state, require_auth):
         except Exception:
             return jsonify({"ok": False, "error": "invalid JSON body"}), 400
 
-        delay = int(body.get("delay", 30))
-        force = bool(body.get("force", False))
+        try:
+            delay = _parse_delay(body.get("delay", 30))
+        except ValueError as e:
+            return jsonify({"ok": False, "error": str(e)}), 400
+        force = _parse_bool(body.get("force", False))
         message = str(body.get("message", ""))
         reason = body.get("reason", None)
         remote = str(body.get("remote", ""))
-
-        if delay < 0 or delay > 315360000:
-            return jsonify({"ok": False, "error": "delay must be between 0 and 315360000 seconds (10 years)"}), 400
 
         exe = _find_shutdown()
         if not exe:
@@ -168,15 +193,15 @@ def register_routes(app, state, require_auth):
         except Exception:
             return jsonify({"ok": False, "error": "invalid JSON body"}), 400
 
-        delay = int(body.get("delay", 30))
-        force = bool(body.get("force", False))
+        try:
+            delay = _parse_delay(body.get("delay", 30))
+        except ValueError as e:
+            return jsonify({"ok": False, "error": str(e)}), 400
+        force = _parse_bool(body.get("force", False))
         message = str(body.get("message", ""))
         reason = body.get("reason", None)
         remote = str(body.get("remote", ""))
-        boot_to_firmware = bool(body.get("boot_to_firmware", False))
-
-        if delay < 0 or delay > 315360000:
-            return jsonify({"ok": False, "error": "delay must be between 0 and 315360000 seconds (10 years)"}), 400
+        boot_to_firmware = _parse_bool(body.get("boot_to_firmware", False))
 
         exe = _find_shutdown()
         if not exe:
@@ -329,11 +354,11 @@ def register_routes(app, state, require_auth):
         except Exception:
             return jsonify({"ok": False, "error": "invalid JSON body"}), 400
 
-        delay = int(body.get("delay", 0))
-        force = bool(body.get("force", False))
-
-        if delay < 0 or delay > 315360000:
-            return jsonify({"ok": False, "error": "delay must be between 0 and 315360000 seconds"}), 400
+        try:
+            delay = _parse_delay(body.get("delay", 0))
+        except ValueError as e:
+            return jsonify({"ok": False, "error": str(e)}), 400
+        force = _parse_bool(body.get("force", False))
 
         exe = _find_shutdown()
         if not exe:
