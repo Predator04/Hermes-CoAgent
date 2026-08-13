@@ -28,7 +28,7 @@ def _find_kopia():
         return exe
     for p in [
         r"C:\ProgramData\chocolatey\bin\kopia.exe",
-        r"C:\Users\Admin\scoop\shims\kopia.exe",
+        os.path.expandvars(r"%USERPROFILE%\scoop\shims\kopia.exe"),
         r"C:\Program Files\kopia\kopia.exe",
         r"C:\Program Files\Kopia\kopia.exe",
     ]:

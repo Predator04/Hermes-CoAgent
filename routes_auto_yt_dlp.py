@@ -30,7 +30,7 @@ def _find_yt_dlp():
         os.path.expandvars(r"%LOCALAPPDATA%\yt-dlp\yt-dlp.exe"),
         os.path.expandvars(r"%APPDATA%\yt-dlp\yt-dlp.exe"),
         r"C:\ProgramData\chocolatey\bin\yt-dlp.exe",
-        r"C:\Users\Admin\AppData\Local\Microsoft\WindowsApps\yt-dlp.exe",
+        os.path.expandvars(r"%LOCALAPPDATA%\Microsoft\WindowsApps\yt-dlp.exe"),
     ]:
         if os.path.isfile(p):
             return p

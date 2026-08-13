@@ -36,7 +36,7 @@ def _find_mkcert():
     # Common install locations
     for p in [
         r"C:\ProgramData\chocolatey\bin\mkcert.exe",
-        r"C:\Users\Admin\scoop\shims\mkcert.exe",
+        os.path.expandvars(r"%USERPROFILE%\scoop\shims\mkcert.exe"),
         r"C:\Program Files\mkcert\mkcert.exe",
     ]:
         if os.path.isfile(p):
