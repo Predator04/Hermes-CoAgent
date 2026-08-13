@@ -112,6 +112,7 @@ def _list_bundle_files(skill_dir: Path) -> Dict[str, List[str]]:
     if not skill_dir.is_dir():
         return out
     remaining = _MAX_BUNDLE_FILES
+    capped = False
     for sub in _BUNDLE_DIRS:
         sub_path = skill_dir / sub
         if not sub_path.is_dir() or sub_path.is_symlink():
@@ -125,7 +126,12 @@ def _list_bundle_files(skill_dir: Path) -> Dict[str, List[str]]:
                 out[sub].append(rel)
                 remaining -= 1
                 if remaining <= 0:
-                    return out
+                    capped = True
+                    break
+            if capped:
+                break
+        if capped:
+            break
     for k in out:
         out[k].sort()
     return out
@@ -207,8 +213,8 @@ class _SkillCache:
 
     def _scan_locked(self) -> None:
         root = _skills_root()
-        self._by_name.clear()
         if not root.is_dir():
+            self._by_name.clear()
             self._loaded = True
             return
         seen: List[Path] = []
@@ -221,13 +227,17 @@ class _SkillCache:
             _log(f"skills: scan error under {root}: {e}")
             self._loaded = False
             return
-        self._loaded = True
+        # Build into a local dict and swap only on success — a transient scan
+        # error (or a malformed entry) must not wipe the existing cache.
+        built: Dict[str, Dict[str, Any]] = {}
         for skill_md in seen:
             entry = _load_one(skill_md)
             if entry is None:
                 continue
             # last-write-wins on duplicate names
-            self._by_name[entry["name"]] = entry
+            built[entry["name"]] = entry
+        self._by_name = built
+        self._loaded = True
 
     def _refresh_stale_locked(self) -> None:
         """Cheap mtime check: reload any SKILL.md whose mtime changed."""
