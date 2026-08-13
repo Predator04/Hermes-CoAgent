@@ -187,20 +187,23 @@ def register_routes(app, state, require_auth):
             }), 503
 
         try:
-            workspace = int(data.get("workspace", 1))
-            if workspace < 1 or workspace > 9:
-                raise ValueError("workspace must be 1-9")
+            workspace = int(data.get("workspace", 0))
+            if workspace < 0 or workspace > 9:
+                raise ValueError("workspace must be 0-9")
         except (TypeError, ValueError) as exc:
             return jsonify({"ok": False, "error": str(exc)}), 400
 
-        subcommand = data.get("subcommand", "focus").strip().lower()
+        subcommand = (data.get("subcommand") or "focus").strip().lower()
         if subcommand not in ("focus", "move"):
             return jsonify({
                 "ok": False,
                 "error": "subcommand must be 'focus' or 'move'",
             }), 400
 
-        command = [exe, subcommand, "workspace", str(workspace)]
+        # komorebic uses hyphenated subcommands (focus-workspace / move-to-workspace),
+        # and workspace indices are zero-based.
+        cmd_subcommand = "focus-workspace" if subcommand == "focus" else "move-to-workspace"
+        command = [exe, cmd_subcommand, str(workspace)]
         try:
             result = subprocess.run(
                 command,
