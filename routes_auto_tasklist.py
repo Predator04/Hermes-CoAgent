@@ -10,7 +10,7 @@ import shutil
 import subprocess
 
 from flask import jsonify
-from shared import _json_body, _missing_field
+from shared import _json_body
 
 FEATURE_INFO = {
     "repo": "microsoft/windows",
@@ -99,7 +99,7 @@ def _clean_filter(filter_str):
     # Only allow safe characters for tasklist filters
     allowed_chars = set(
         "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 "
-        "_-'eqnltg*"
+        "_-'eqnltg*.,:\\"
     )
     for c in f:
         if c not in allowed_chars:
@@ -198,7 +198,7 @@ def register_routes(app, state, require_auth):
 
             return jsonify({
                 "ok": True,
-                "count": len(processes),
+                "count": min(len(processes), 500),
                 "processes": processes[:500],  # cap at 500 to avoid huge responses
                 "total_found": len(processes),
             })
@@ -293,7 +293,7 @@ def register_routes(app, state, require_auth):
         if pid_raw is None and not name_raw:
             return jsonify({
                 "ok": False,
-                "error": _missing_field("pid or name (at least one required)"),
+                "error": "pid or name (at least one required)",
             }), 400
 
         tk = _find_taskkill()
