@@ -37,8 +37,13 @@ def _has_uiaccess():
             win32api.GetCurrentProcess(),
             win32security.TOKEN_QUERY,
         )
-        info = win32security.GetTokenInformation(token, win32security.TokenUIAccess)
-        return bool(info)
+        try:
+            info = win32security.GetTokenInformation(
+                token, getattr(win32security, "TokenUIAccess", 26)
+            )
+            return bool(info)
+        finally:
+            win32api.CloseHandle(token)
     except Exception:
         return False
 
@@ -55,6 +60,7 @@ def _find_uac_window():
             title = win32gui.GetWindowText(hwnd)
             if any(t in title for t in UAC_TITLES):
                 found[0] = (hwnd, title)
+                return False
             return True
 
         win32gui.EnumWindows(_cb, None)
@@ -72,15 +78,17 @@ def _click_button(hwnd, labels):
         import win32con
 
         result = [None]
+        label_set = {lbl.lower() for lbl in labels}
 
         def _child_cb(child, _):
             if result[0]:
-                return True
+                return False
             cls = win32gui.GetClassName(child)
             if cls in ("Button", "CCPushButton"):
-                text = win32gui.GetWindowText(child)
-                if any(lbl.lower() in text.lower() for lbl in labels):
+                text = win32gui.GetWindowText(child).replace("&", "").strip().lower()
+                if text in label_set:
                     result[0] = child
+                    return False
             return True
 
         win32gui.EnumChildWindows(hwnd, _child_cb, None)
@@ -110,11 +118,11 @@ def cmd_list(_args):
 
 
 def cmd_click(args):
-    button = (args.click or "yes").strip().lower()
+    button = args.click
     labels = YES_LABELS if button == "yes" else NO_LABELS
 
     has_ua = _has_uiaccess()
-    deadline = time.time() + float(args.timeout or 5)
+    deadline = time.time() + args.timeout
 
     while time.time() < deadline:
         hwnd, title = _find_uac_window()
@@ -142,7 +150,8 @@ def cmd_click(args):
 
 def main():
     parser = argparse.ArgumentParser(description="UIAccess UAC helper")
-    parser.add_argument("--click", metavar="yes|no", help="Click Yes or No on UAC dialog")
+    parser.add_argument("--click", metavar="yes|no", type=str.lower, choices=["yes", "no"],
+                        help="Click Yes or No on UAC dialog")
     parser.add_argument("--list", action="store_true", help="List UAC windows")
     parser.add_argument("--timeout", type=float, default=5.0, help="Wait timeout (seconds)")
     args = parser.parse_args()
