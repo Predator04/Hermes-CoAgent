@@ -58,15 +58,27 @@ def _is_mkcert_available():
         return False
 
 
-def _run_mkcert(args, timeout=30):
+def _run_mkcert(args, timeout=30, cwd=None):
     """Run mkcert with given args, return (stdout, stderr, exit_code)."""
     exe = _find_mkcert()
     if not exe:
         raise RuntimeError("mkcert not found on system")
     result = subprocess.run(
-        [exe] + args, capture_output=True, text=True, timeout=timeout
+        [exe] + args, capture_output=True, text=True, timeout=timeout, cwd=cwd
     )
     return result.stdout, result.stderr, result.returncode
+
+
+def _validate_output_name(name, field):
+    """Validate an output filename: no path separators or parent traversal."""
+    n = str(name or "").strip()
+    if not n:
+        raise ValueError(f"{field} must not be empty")
+    if "\x00" in n:
+        raise ValueError(f"{field} cannot contain null bytes")
+    if "/" in n or "\\" in n or ".." in n:
+        raise ValueError(f"{field} must be a plain filename (no path separators or '..')")
+    return n
 
 
 def register_routes(app, state, require_auth):
@@ -190,10 +202,15 @@ def register_routes(app, state, require_auth):
         for d in domains:
             if not isinstance(d, str) or not d.strip():
                 return jsonify({"ok": False, "error": "Each domain must be a non-empty string"}), 400
+            if d.strip().startswith("-"):
+                return jsonify({"ok": False, "error": f"domain '{d}' must not start with '-'"}), 400
 
         output_dir = (body.get("output_dir") or ".").strip()
-        cert_file = (body.get("cert_file") or "cert.pem").strip()
-        key_file = (body.get("key_file") or "key.pem").strip()
+        try:
+            cert_file = _validate_output_name(body.get("cert_file") or "cert.pem", "cert_file")
+            key_file = _validate_output_name(body.get("key_file") or "key.pem", "key_file")
+        except ValueError as e:
+            return jsonify({"ok": False, "error": str(e)}), 400
         p12 = body.get("p12", False)
         ec = body.get("ec", False)
 
@@ -205,13 +222,14 @@ def register_routes(app, state, require_auth):
         args.extend(["-cert-file", cert_file, "-key-file", key_file])
         args.extend(domains)
 
-        # Change to output directory context for the subprocess
-        old_cwd = os.getcwd()
         try:
-            os.chdir(output_dir)
-            stdout, stderr, rc = _run_mkcert(args, timeout=30)
-        finally:
-            os.chdir(old_cwd)
+            stdout, stderr, rc = _run_mkcert(args, timeout=30, cwd=output_dir)
+        except subprocess.TimeoutExpired:
+            return jsonify({"ok": False, "error": "mkcert certificate generation timed out"}), 504
+        except RuntimeError as e:
+            return jsonify({"ok": False, "error": str(e)}), 503
+        except OSError as e:
+            return jsonify({"ok": False, "error": str(e)}), 503
 
         if rc != 0:
             return jsonify({
@@ -270,7 +288,7 @@ def register_routes(app, state, require_auth):
         body = _json_body()
 
         confirm = body.get("confirm", False)
-        if not confirm:
+        if confirm is not True:
             return jsonify({
                 "ok": False,
                 "error": "Confirmation required — set 'confirm: true' to proceed. This removes the mkcert CA from the system trust store."
