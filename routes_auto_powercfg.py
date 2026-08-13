@@ -281,15 +281,19 @@ def register_routes(app, state, require_auth):
         if enable is None:
             return _missing_field("enable")
 
+        # Coerce `enable` robustly: JSON booleans pass through, and common
+        # string spellings ("on"/"true"/"yes"/"1"/"enable") are accepted.
+        if isinstance(enable, bool):
+            enable_flag = enable
+        else:
+            enable_flag = str(enable).strip().lower() in ("on", "true", "yes", "1", "enable")
+
         try:
-            action = "/H" if body.get("mode", "").lower() in ("on", "enable", "yes", "1", "true") else "/H OFF"
-            if isinstance(enable, bool):
-                action = "/H ON" if enable else "/H OFF"
-            args = action.split()
+            args = ["/H", "ON" if enable_flag else "OFF"]
             stdout, stderr, rc = _run_powercfg(args, timeout=15)
             return jsonify({
                 "ok": rc == 0,
-                "enable": "ON" in action.upper(),
+                "enable": enable_flag,
                 "exit_code": rc,
                 "stdout": stdout.strip(),
                 "stderr": stderr.strip(),
