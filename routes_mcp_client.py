@@ -418,8 +418,11 @@ class HttpServer:
             timeout,
         )
 
-        sid = resp.headers.get("Mcp-Session-Id") or resp.headers.get("mcp-session-id")
-        if sid:
+        sid = next(
+            (v for k, v in resp.headers.items() if k.lower() == "mcp-session-id"),
+            None,
+        )
+        if sid and 200 <= resp.status_code < 300:
             self.session_id = sid
 
         if resp.status_code == 202 and not expect_response:
@@ -668,14 +671,14 @@ def register_routes(app, state, require_auth):
                 server = _register_stdio(
                     name=name,
                     command=body.get("command"),
-                    args=body.get("args") or [],
-                    env=body.get("env") or {},
+                    args=body.get("args", []),
+                    env=body.get("env", {}),
                 )
             else:
                 server = _register_http(
                     name=name,
                     url=body.get("url"),
-                    headers=body.get("headers") or {},
+                    headers=body.get("headers", {}),
                 )
         except MCPError as e:
             _log(f"[mcp-client] register '{name}' failed: {_sanitize_error(e)}")
