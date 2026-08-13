@@ -892,6 +892,24 @@ def _start_tunnel(state: TrayState, icon=None) -> None:
                     pass
             else:
                 _notify(icon, "Tunnel started (check /tunnel/status for URL)")
+    except urllib.error.HTTPError as e:
+        # Server returned a structured JSON error (e.g. 404 ngrok not found,
+        # 502 tunnel exited, 504 timeout) — surface its actual message instead
+        # of a generic "Tunnel failed: HTTP Error 404".
+        detail = ""
+        try:
+            body = json.loads(e.read().decode("utf-8", errors="replace") or "{}")
+            err_msg = body.get("error") or body.get("message") or ""
+            recent = body.get("recent_output") or []
+            if err_msg:
+                detail = err_msg
+            if recent:
+                tail = recent[-1] if isinstance(recent, list) else str(recent)
+                detail = f"{detail} — {tail}" if detail else str(tail)
+        except Exception:
+            pass
+        if icon:
+            _notify(icon, f"Tunnel failed ({e.code}): {detail or e.reason}")
     except Exception as e:
         if icon:
             _notify(icon, f"Tunnel failed: {e}")

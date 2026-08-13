@@ -26,6 +26,7 @@ _TUNNEL_URL_RE = re.compile(r"https?://[A-Za-z0-9][A-Za-z0-9._~:/?#@!$&'()*+,;=%
 _TUNNEL_PUBLIC_HOSTS = (
     "trycloudflare.com",
     "ngrok-free.app",
+    "ngrok-free.dev",  # ngrok's current default free domain
     "ngrok.io",
     "ngrok.app",
     "ngrok.dev",
@@ -90,10 +91,59 @@ def _install_record_action_hook():
 
 _install_record_action_hook()
 
+# Common Windows install locations for tunnel binaries — the server's PATH
+# often doesn't include the user's per-user install dir (e.g. %LOCALAPPDATA%\ngrok),
+# so shutil.which alone misses them and "Start Tunnel" 404s.
+_TUNNEL_EXE_CANDIDATES = {
+    "ngrok": (
+        r"%LOCALAPPDATA%\ngrok\ngrok.exe",
+        r"%USERPROFILE%\ngrok.exe",
+        r"C:\ngrok\ngrok.exe",
+        r"%ProgramData%\chocolatey\bin\ngrok.exe",
+        r"%USERPROFILE%\scoop\shims\ngrok.exe",
+    ),
+    "cloudflared": (
+        r"%LOCALAPPDATA%\cloudflared\cloudflared.exe",
+        r"%USERPROFILE%\cloudflared.exe",
+        r"C:\cloudflared\cloudflared.exe",
+        r"%ProgramData%\chocolatey\bin\cloudflared.exe",
+        r"%USERPROFILE%\scoop\shims\cloudflared.exe",
+    ),
+}
+
+def _find_tunnel_exe(name, candidates):
+    """Return the full path to a tunnel binary, or None.
+
+    First tries PATH via shutil.which; on Windows, falls back to scanning
+    common per-user install locations (case-insensitive, env vars expanded).
+    """
+    hit = shutil.which(name) or shutil.which(f"{name}.exe")
+    if hit:
+        return hit
+    if os.name != "nt":
+        return None
+    for raw in candidates or ():
+        expanded = os.path.expandvars(raw)
+        if "%" in expanded:  # unresolved env var — skip
+            continue
+        if os.path.isfile(expanded):
+            return expanded
+        # case-insensitive fallback: scan parent dir for a matching filename
+        parent = os.path.dirname(expanded)
+        target = os.path.basename(expanded).lower()
+        try:
+            if os.path.isdir(parent):
+                for entry in os.listdir(parent):
+                    if entry.lower() == target:
+                        return os.path.join(parent, entry)
+        except OSError:
+            continue
+    return None
+
 def _tunnel_tools():
     return {
-        "cloudflare": shutil.which("cloudflared") or shutil.which("cloudflared.exe"),
-        "ngrok": shutil.which("ngrok") or shutil.which("ngrok.exe"),
+        "cloudflare": _find_tunnel_exe("cloudflared", _TUNNEL_EXE_CANDIDATES["cloudflared"]),
+        "ngrok": _find_tunnel_exe("ngrok", _TUNNEL_EXE_CANDIDATES["ngrok"]),
     }
 
 def _coerce_tunnel_port(value):
