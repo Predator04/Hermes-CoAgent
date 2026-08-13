@@ -1054,11 +1054,6 @@ except ImportError:
     reg_vlm = None
     features["vlm"] = False
 try:
-    from routes_workflows import register_routes as reg_workflows
-except ImportError:
-    reg_workflows = None
-    features["workflows"] = False
-try:
     from routes_resilient import register_routes as reg_resilient
 except ImportError:
     reg_resilient = None
@@ -1322,9 +1317,6 @@ if reg_usb:
 if reg_vlm:
     reg_vlm(app, state, require_auth)
     features["vlm"] = True
-if reg_workflows:
-    reg_workflows(app, state, require_auth)
-    features["workflows"] = True
 if reg_resilient:
     reg_resilient(app, state, require_auth)
     features["resilient_ui"] = True
