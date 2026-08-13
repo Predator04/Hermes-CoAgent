@@ -4,6 +4,7 @@
 # Install: winget install gsudo  OR  scoop install gsudo
 # CLI: gsudo [command]  — runs a command elevated via UAC
 
+import os
 import shutil
 import subprocess
 
@@ -85,7 +86,13 @@ def register_routes(app, state, require_auth):
         command = body.get("command", "").strip()
         if not command:
             return _missing_field("command")
-        timeout = int(body.get("timeout", 30))
+        try:
+            timeout = int(body.get("timeout", 30))
+        except (TypeError, ValueError):
+            return jsonify({"error": "timeout must be an integer", "command": command}), 400
+        if timeout <= 0:
+            return jsonify({"error": "timeout must be positive", "command": command}), 400
+        timeout = min(timeout, 120)
         accept = body.get("accept_elevation", False)
 
         exe = _find_gsudo()
@@ -103,14 +110,16 @@ def register_routes(app, state, require_auth):
             }), 403
 
         try:
-            # Build args: gsudo accepts command as remaining args
+            # Build args: gsudo accepts command as remaining args.
+            # posix=False on Windows keeps backslashes intact (POSIX rules
+            # would mangle paths like C:\Users\x into C:Usersx).
             import shlex
-            args = [exe] + shlex.split(command)
+            args = [exe] + shlex.split(command, posix=(os.name != "nt"))
             r = subprocess.run(
                 args,
                 capture_output=True,
                 text=True,
-                timeout=min(timeout, 120),
+                timeout=timeout,
             )
             return jsonify({
                 "stdout": r.stdout,
