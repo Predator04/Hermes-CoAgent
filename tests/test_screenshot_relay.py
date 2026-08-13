@@ -8,8 +8,9 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+for _dir in (ROOT, ROOT / "scripts"):
+    if str(_dir) not in sys.path:
+        sys.path.insert(0, str(_dir))
 
 import screenshot_relay
 
