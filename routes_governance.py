@@ -248,6 +248,10 @@ class _Governor:
             if not isinstance(partial, dict):
                 return copy.deepcopy(self._policy), ["partial policy must be a JSON object"]
             errors = self._validate(partial)
+            if errors:
+                # Never merge/save a policy that fails validation — otherwise
+                # malformed input silently corrupts the persisted state.
+                return copy.deepcopy(self._policy), errors
             merged = _deep_merge(self._policy, partial)
             self._policy = merged
             self.save(merged)
@@ -526,6 +530,8 @@ def register_routes(app, state, require_auth):
         if not isinstance(partial, dict):
             return jsonify({"ok": False, "error": "body must be a JSON object"}), 400
         new_policy, errors = _GOVERNOR.update_policy(partial)
+        if errors:
+            return jsonify({"ok": False, "policy": new_policy, "errors": errors}), 400
         return jsonify({"ok": True, "policy": new_policy, "errors": errors})
 
     @app.route("/governance/policy/reset", methods=["POST"])
