@@ -27,7 +27,6 @@ def _find_winget():
     # Common fallback paths
     for p in [
         os.path.expandvars(r"%LOCALAPPDATA%\Microsoft\WindowsApps\winget.exe"),
-        r"C:\Users\Admin\AppData\Local\Microsoft\WindowsApps\winget.exe",
         r"C:\Windows\system32\winget.exe",
     ]:
         if os.path.isfile(p):
@@ -260,10 +259,17 @@ def register_routes(app, state, require_auth):
             return jsonify({"ok": False, "error": "invalid JSON body"}), 400
 
         package_id = body.get("package_id", "")
+        upgrade_all = body.get("all", False) is True
         try:
             package_id = _clean_package_id(package_id) if package_id else None
         except ValueError as e:
             return jsonify({"ok": False, "error": str(e)}), 400
+
+        if not package_id and not upgrade_all:
+            return jsonify({
+                "ok": False,
+                "error": "package_id is required (or set \"all\": true to upgrade every package)",
+            }), 400
 
         exe = _find_winget()
         if not exe:
