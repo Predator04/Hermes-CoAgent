@@ -495,6 +495,97 @@ tr:hover td { background: rgba(45, 212, 191, .04); }
   .panel-tools > input, .panel-tools > select, .panel-tools > button { flex: 1; }
   th:nth-child(3), td:nth-child(3), th:nth-child(4), td:nth-child(4) { display: none; }
 }
+/* Workflow builder */
+.wf-shell {
+  display: grid;
+  grid-template-columns: 220px 1fr 300px;
+  gap: 10px;
+  height: 100%;
+  min-height: 520px;
+}
+.wf-palette .panel-body { gap: 8px; }
+.wf-palette-list { display: flex; flex-direction: column; gap: 6px; }
+.wf-palette-item {
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #142132;
+  cursor: pointer;
+  font-size: 12.5px;
+}
+.wf-palette-item:hover { border-color: var(--accent); background: #17334a; }
+.wf-palette-item .wf-pi-type { display: block; color: var(--muted); font-size: 10.5px; margin-top: 2px; }
+.wf-canvas-panel { display: flex; flex-direction: column; min-height: 0; }
+.wf-canvas-body {
+  position: relative;
+  flex: 1;
+  min-height: 400px;
+  border-top: 1px solid var(--line);
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 30% 20%, rgba(45,212,191,.08), transparent 40%),
+    linear-gradient(180deg, #0a1219, #060a10);
+}
+.wf-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  cursor: default;
+}
+.wf-hint {
+  position: absolute;
+  left: 10px;
+  bottom: 8px;
+  right: 10px;
+  margin: 0;
+  padding: 6px 8px;
+  background: rgba(6,12,18,.72);
+  border: 1px dashed var(--line);
+  font-size: 11px;
+  color: var(--muted);
+  pointer-events: none;
+}
+.wf-node-rect {
+  fill: #16212b;
+  stroke: #365267;
+  stroke-width: 1.4;
+  rx: 8;
+  ry: 8;
+}
+.wf-node.selected .wf-node-rect { stroke: var(--accent); stroke-width: 2; }
+.wf-node.trigger .wf-node-rect { fill: #14322f; stroke: #2dd4bf; }
+.wf-node.condition .wf-node-rect { fill: #33270f; stroke: #f59e0b; }
+.wf-node.loop .wf-node-rect { fill: #241933; stroke: #a78bfa; }
+.wf-node-title { fill: var(--text); font-size: 12px; font-weight: 600; }
+.wf-node-sub { fill: var(--muted); font-size: 10.5px; }
+.wf-port { fill: #0b1117; stroke: #5bd6c1; stroke-width: 1.6; cursor: crosshair; }
+.wf-port.input { stroke: #38bdf8; }
+.wf-edge { fill: none; stroke: #5bd6c1; stroke-width: 1.8; marker-end: url(#wfArrow); }
+.wf-edge.selected { stroke: var(--warn); stroke-width: 2.4; }
+.wf-pending-edge { fill: none; stroke: #f59e0b; stroke-dasharray: 4 3; stroke-width: 1.6; pointer-events: none; }
+.wf-inspector .panel-body { gap: 10px; }
+.wf-inspector label { display: block; font-size: 11px; color: var(--muted); margin-bottom: 3px; }
+.wf-inspector input, .wf-inspector textarea, .wf-inspector select { width: 100%; }
+.wf-hr { border: none; border-top: 1px solid var(--line-soft); margin: 4px 0; }
+.wf-list { display: flex; flex-direction: column; gap: 4px; max-height: 160px; overflow: auto; }
+.wf-list-item {
+  display: flex;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 6px 8px;
+  border: 1px solid var(--line-soft);
+  border-radius: 6px;
+  background: #10171f;
+  font-size: 12px;
+  cursor: pointer;
+}
+.wf-list-item:hover { border-color: var(--accent); }
+.wf-list-item .wf-li-name { font-weight: 600; }
+.wf-list-item .wf-li-meta { color: var(--muted); font-size: 10.5px; }
+@media (max-width: 1100px) {
+  .wf-shell { grid-template-columns: 180px 1fr 260px; }
+}
 </style>
 </head>
 <body>
@@ -520,6 +611,7 @@ tr:hover td { background: rgba(45, 212, 191, .04); }
     <button class="tab active" data-tab="desktop">🖥️ Desktop</button>
     <button class="tab" data-tab="copilot">🤖 AI Copilot</button>
     <button class="tab" data-tab="recorder">🎬 Recorder</button>
+    <button class="tab" data-tab="workflows">🧩 Workflows</button>
     <button class="tab" data-tab="files">📁 Files</button>
     <button class="tab" data-tab="metrics">📊 Metrics</button>
     <button class="tab" data-tab="settings">⚙️ Settings</button>
@@ -643,6 +735,64 @@ tr:hover td { background: rgba(45, 212, 191, .04); }
             <pre id="regionOutput" class="output">Select a region on the Desktop tab.</pre>
           </div>
         </section>
+      </div>
+    </section>
+
+    <section id="workflows" class="view">
+      <div class="wf-shell">
+        <aside class="panel wf-palette">
+          <div class="panel-head"><h2>Palette</h2></div>
+          <div class="panel-body stack">
+            <div class="small muted">Triggers</div>
+            <div class="wf-palette-list" data-group="triggers"></div>
+            <div class="small muted">Conditions &amp; Loops</div>
+            <div class="wf-palette-list" data-group="logic"></div>
+            <div class="small muted">Actions</div>
+            <div class="wf-palette-list" data-group="actions"></div>
+          </div>
+        </aside>
+        <section class="panel wf-canvas-panel">
+          <div class="panel-head">
+            <h2>Workflow Canvas</h2>
+            <div class="panel-tools">
+              <input id="wfName" type="text" placeholder="Workflow name" style="min-width:180px">
+              <button id="wfNew">New</button>
+              <button id="wfSave" class="primary">Save</button>
+              <button id="wfCompile">Compile</button>
+              <button id="wfRun" class="primary">Run</button>
+              <button id="wfExport">Export</button>
+              <label class="pill" style="cursor:pointer">Import<input id="wfImport" type="file" accept="application/json" style="display:none"></label>
+              <button id="wfDelete" class="danger">Delete</button>
+            </div>
+          </div>
+          <div class="wf-canvas-body">
+            <svg id="wfCanvas" class="wf-canvas" xmlns="http://www.w3.org/2000/svg">
+              <defs>
+                <marker id="wfArrow" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                  <path d="M0,0 L10,5 L0,10 z" fill="#5bd6c1"></path>
+                </marker>
+              </defs>
+              <g id="wfEdgesLayer"></g>
+              <g id="wfNodesLayer"></g>
+              <path id="wfPendingEdge" class="wf-pending-edge" d=""></path>
+            </svg>
+            <pre id="wfHint" class="wf-hint">Click a palette item to add a node. Drag nodes to move. Drag from a node’s right port to another node’s left port to wire. Select and press Delete to remove.</pre>
+          </div>
+        </section>
+        <aside class="panel wf-inspector">
+          <div class="panel-head"><h2>Inspector</h2></div>
+          <div class="panel-body stack">
+            <div id="wfInspector" class="stack">
+              <div class="muted small">Select a node to edit its parameters.</div>
+            </div>
+            <hr class="wf-hr">
+            <div class="panel-head" style="padding:0"><h2>Saved Workflows</h2><div class="panel-tools"><button id="wfListRefresh">Refresh</button></div></div>
+            <div id="wfList" class="wf-list"></div>
+            <div class="panel-head" style="padding:0"><h2>Templates</h2></div>
+            <div id="wfTemplates" class="wf-list"></div>
+            <pre id="wfOutput" class="output" style="max-height:180px">Ready.</pre>
+          </div>
+        </aside>
       </div>
     </section>
 
@@ -1395,6 +1545,515 @@ tr:hover td { background: rgba(45, 212, 191, .04); }
     const data = await api("/update/check");
     setJson("settingsOutput", data);
   }
+  // ---------------- Workflow builder ----------------
+  const WF_NODE_TYPES = [
+    { group: "triggers", type: "trigger.manual", title: "Manual Trigger", fields: [] },
+    { group: "triggers", type: "trigger.schedule", title: "Schedule",
+      fields: [{ key: "schedule", label: "Schedule", placeholder: "every 5 minutes | hourly | daily at 09:00 | cron" }] },
+    { group: "triggers", type: "trigger.webhook", title: "Webhook",
+      fields: [{ key: "name", label: "Webhook name", placeholder: "my-webhook" }] },
+    { group: "triggers", type: "trigger.file_watch", title: "File Change",
+      fields: [{ key: "path", label: "Path", placeholder: "C:\\watched\\folder" }] },
+    { group: "triggers", type: "trigger.window_open", title: "Window Open",
+      fields: [{ key: "title", label: "Window title", placeholder: "Notepad" }] },
+    { group: "triggers", type: "trigger.notification", title: "Notification",
+      fields: [{ key: "keyword", label: "Keyword", placeholder: "error" }] },
+    { group: "logic", type: "condition.wait_for", title: "Wait For Text",
+      fields: [{ key: "text", label: "Text on screen", placeholder: "Welcome" }] },
+    { group: "logic", type: "loop.repeat", title: "Repeat N Times",
+      fields: [{ key: "count", label: "Count", type: "number", placeholder: "3" }] },
+    { group: "actions", type: "action.wait", title: "Wait",
+      fields: [{ key: "seconds", label: "Seconds", type: "number", placeholder: "2" }] },
+    { group: "actions", type: "action.launch", title: "Launch App",
+      fields: [{ key: "query", label: "App / path", placeholder: "notepad" }] },
+    { group: "actions", type: "action.click", title: "Click",
+      fields: [
+        { key: "text", label: "Target text (optional)", placeholder: "OK" },
+        { key: "x", label: "X (optional)", type: "number" },
+        { key: "y", label: "Y (optional)", type: "number" }
+      ] },
+    { group: "actions", type: "action.type", title: "Type Text",
+      fields: [{ key: "text", label: "Text", placeholder: "hello world" }] },
+    { group: "actions", type: "action.key", title: "Press Key",
+      fields: [{ key: "keys", label: "Keys", placeholder: "ctrl+s" }] },
+    { group: "actions", type: "action.screenshot", title: "Screenshot", fields: [] },
+    { group: "actions", type: "action.ocr_find", title: "OCR Find",
+      fields: [{ key: "text", label: "Text", placeholder: "Save" }] },
+    { group: "actions", type: "action.telegram_send", title: "Send Telegram",
+      fields: [{ key: "message", label: "Message", placeholder: "Hello from CoAgent" }] },
+    { group: "actions", type: "action.finder_click", title: "Finder Click",
+      fields: [{ key: "query", label: "Query", placeholder: "Save button" }] },
+    { group: "actions", type: "action.finder_type", title: "Finder Type",
+      fields: [
+        { key: "query", label: "Query", placeholder: "Search field" },
+        { key: "text", label: "Text", placeholder: "hello" }
+      ] },
+  ];
+  const wf = {
+    id: null,
+    name: "",
+    nodes: [],
+    edges: [],
+    selectedNodeId: null,
+    selectedEdgeId: null,
+    drag: null,
+    pending: null
+  };
+  const wfSvgNS = "http://www.w3.org/2000/svg";
+  function wfShortId() { return Math.random().toString(36).slice(2, 10); }
+  function wfClassify(type) {
+    if (type.startsWith("trigger.")) return "trigger";
+    if (type.startsWith("condition.")) return "condition";
+    if (type.startsWith("loop.")) return "loop";
+    return "action";
+  }
+  function wfTypeMeta(type) {
+    return WF_NODE_TYPES.find(t => t.type === type) || { type, title: type, fields: [] };
+  }
+  function wfBuildPalette() {
+    const groups = { triggers: [], logic: [], actions: [] };
+    WF_NODE_TYPES.forEach(t => { (groups[t.group] || groups.actions).push(t); });
+    document.querySelectorAll(".wf-palette-list").forEach(list => {
+      const group = list.dataset.group;
+      list.innerHTML = "";
+      (groups[group] || []).forEach(t => {
+        const item = document.createElement("div");
+        item.className = "wf-palette-item";
+        item.innerHTML = `<strong>${t.title}</strong><span class="wf-pi-type">${t.type}</span>`;
+        item.addEventListener("click", () => wfAddNode(t.type));
+        list.appendChild(item);
+      });
+    });
+  }
+  function wfAddNode(type, position, params) {
+    const meta = wfTypeMeta(type);
+    const node = {
+      id: "n_" + wfShortId(),
+      type,
+      label: meta.title,
+      position: position || { x: 60 + wf.nodes.length * 30, y: 80 + (wf.nodes.length % 6) * 40 },
+      params: params || {}
+    };
+    wf.nodes.push(node);
+    wf.selectedNodeId = node.id;
+    wf.selectedEdgeId = null;
+    wfRender();
+    wfRenderInspector();
+  }
+  function wfRemoveSelection() {
+    if (wf.selectedEdgeId) {
+      wf.edges = wf.edges.filter(e => e.id !== wf.selectedEdgeId);
+      wf.selectedEdgeId = null;
+    } else if (wf.selectedNodeId) {
+      wf.nodes = wf.nodes.filter(n => n.id !== wf.selectedNodeId);
+      wf.edges = wf.edges.filter(e => e.source !== wf.selectedNodeId && e.target !== wf.selectedNodeId);
+      wf.selectedNodeId = null;
+    }
+    wfRender();
+    wfRenderInspector();
+  }
+  function wfNodeSize() { return { w: 170, h: 66 }; }
+  function wfNodeById(id) { return wf.nodes.find(n => n.id === id); }
+  function wfPortCoords(node, side) {
+    const size = wfNodeSize();
+    return {
+      x: node.position.x + (side === "out" ? size.w : 0),
+      y: node.position.y + size.h / 2
+    };
+  }
+  function wfEdgePath(x1, y1, x2, y2) {
+    const dx = Math.max(40, Math.abs(x2 - x1) / 2);
+    return `M ${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}`;
+  }
+  function wfRender() {
+    const nodesLayer = $("wfNodesLayer");
+    const edgesLayer = $("wfEdgesLayer");
+    if (!nodesLayer || !edgesLayer) return;
+    edgesLayer.innerHTML = "";
+    nodesLayer.innerHTML = "";
+    const size = wfNodeSize();
+    wf.edges.forEach(edge => {
+      const source = wfNodeById(edge.source);
+      const target = wfNodeById(edge.target);
+      if (!source || !target) return;
+      const s = wfPortCoords(source, "out");
+      const t = wfPortCoords(target, "in");
+      const path = document.createElementNS(wfSvgNS, "path");
+      path.setAttribute("class", "wf-edge" + (edge.id === wf.selectedEdgeId ? " selected" : ""));
+      path.setAttribute("d", wfEdgePath(s.x, s.y, t.x, t.y));
+      path.addEventListener("click", ev => {
+        ev.stopPropagation();
+        wf.selectedEdgeId = edge.id;
+        wf.selectedNodeId = null;
+        wfRender();
+        wfRenderInspector();
+      });
+      edgesLayer.appendChild(path);
+    });
+    wf.nodes.forEach(node => {
+      const g = document.createElementNS(wfSvgNS, "g");
+      g.setAttribute("class", "wf-node " + wfClassify(node.type) + (node.id === wf.selectedNodeId ? " selected" : ""));
+      g.setAttribute("transform", `translate(${node.position.x}, ${node.position.y})`);
+      g.dataset.nodeId = node.id;
+      const rect = document.createElementNS(wfSvgNS, "rect");
+      rect.setAttribute("class", "wf-node-rect");
+      rect.setAttribute("width", size.w);
+      rect.setAttribute("height", size.h);
+      g.appendChild(rect);
+      const title = document.createElementNS(wfSvgNS, "text");
+      title.setAttribute("class", "wf-node-title");
+      title.setAttribute("x", 12);
+      title.setAttribute("y", 22);
+      title.textContent = node.label || wfTypeMeta(node.type).title;
+      g.appendChild(title);
+      const sub = document.createElementNS(wfSvgNS, "text");
+      sub.setAttribute("class", "wf-node-sub");
+      sub.setAttribute("x", 12);
+      sub.setAttribute("y", 40);
+      sub.textContent = node.type;
+      g.appendChild(sub);
+      const summary = wfSummarizeParams(node);
+      if (summary) {
+        const s2 = document.createElementNS(wfSvgNS, "text");
+        s2.setAttribute("class", "wf-node-sub");
+        s2.setAttribute("x", 12);
+        s2.setAttribute("y", 56);
+        s2.textContent = summary;
+        g.appendChild(s2);
+      }
+      const inPort = document.createElementNS(wfSvgNS, "circle");
+      inPort.setAttribute("class", "wf-port input");
+      inPort.setAttribute("cx", 0);
+      inPort.setAttribute("cy", size.h / 2);
+      inPort.setAttribute("r", 6);
+      inPort.addEventListener("mouseup", ev => wfFinishEdge(node.id, ev));
+      g.appendChild(inPort);
+      const outPort = document.createElementNS(wfSvgNS, "circle");
+      outPort.setAttribute("class", "wf-port");
+      outPort.setAttribute("cx", size.w);
+      outPort.setAttribute("cy", size.h / 2);
+      outPort.setAttribute("r", 6);
+      outPort.addEventListener("mousedown", ev => wfStartEdge(node.id, ev));
+      g.appendChild(outPort);
+      g.addEventListener("mousedown", ev => wfStartDrag(node.id, ev));
+      nodesLayer.appendChild(g);
+    });
+  }
+  function wfSummarizeParams(node) {
+    const params = node.params || {};
+    const keys = Object.keys(params).filter(k => params[k] !== "" && params[k] != null);
+    if (!keys.length) return "";
+    const first = keys[0];
+    const value = String(params[first]);
+    return `${first}: ${value.length > 24 ? value.slice(0, 24) + "…" : value}`;
+  }
+  function wfCanvasPoint(ev) {
+    const svg = $("wfCanvas");
+    const rect = svg.getBoundingClientRect();
+    return { x: ev.clientX - rect.left, y: ev.clientY - rect.top };
+  }
+  function wfStartDrag(nodeId, ev) {
+    if (ev.target.classList && ev.target.classList.contains("wf-port")) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    const node = wfNodeById(nodeId);
+    if (!node) return;
+    const p = wfCanvasPoint(ev);
+    wf.drag = { nodeId, offsetX: p.x - node.position.x, offsetY: p.y - node.position.y };
+    wf.selectedNodeId = nodeId;
+    wf.selectedEdgeId = null;
+    wfRender();
+    wfRenderInspector();
+  }
+  function wfStartEdge(sourceId, ev) {
+    ev.preventDefault();
+    ev.stopPropagation();
+    wf.pending = { sourceId, point: wfCanvasPoint(ev) };
+    wfUpdatePendingEdge();
+  }
+  function wfFinishEdge(targetId, ev) {
+    if (!wf.pending) return;
+    ev.stopPropagation();
+    const sourceId = wf.pending.sourceId;
+    wf.pending = null;
+    $("wfPendingEdge").setAttribute("d", "");
+    if (sourceId && targetId && sourceId !== targetId) {
+      const exists = wf.edges.some(e => e.source === sourceId && e.target === targetId);
+      if (!exists) {
+        wf.edges.push({ id: "e_" + wfShortId(), source: sourceId, target: targetId });
+        wfRender();
+      }
+    }
+  }
+  function wfUpdatePendingEdge() {
+    if (!wf.pending) { $("wfPendingEdge").setAttribute("d", ""); return; }
+    const source = wfNodeById(wf.pending.sourceId);
+    if (!source) return;
+    const s = wfPortCoords(source, "out");
+    $("wfPendingEdge").setAttribute("d", wfEdgePath(s.x, s.y, wf.pending.point.x, wf.pending.point.y));
+  }
+  function wfOnMouseMove(ev) {
+    if (wf.drag) {
+      const p = wfCanvasPoint(ev);
+      const node = wfNodeById(wf.drag.nodeId);
+      if (node) {
+        node.position.x = Math.max(0, p.x - wf.drag.offsetX);
+        node.position.y = Math.max(0, p.y - wf.drag.offsetY);
+        wfRender();
+      }
+    } else if (wf.pending) {
+      wf.pending.point = wfCanvasPoint(ev);
+      wfUpdatePendingEdge();
+    }
+  }
+  function wfOnMouseUp() {
+    wf.drag = null;
+    if (wf.pending) {
+      wf.pending = null;
+      $("wfPendingEdge").setAttribute("d", "");
+    }
+  }
+  function wfRenderInspector() {
+    const box = $("wfInspector");
+    if (!box) return;
+    box.innerHTML = "";
+    const node = wf.selectedNodeId ? wfNodeById(wf.selectedNodeId) : null;
+    if (!node) {
+      box.innerHTML = '<div class="muted small">Select a node to edit its parameters.</div>';
+      return;
+    }
+    const meta = wfTypeMeta(node.type);
+    const wrap = document.createElement("div");
+    wrap.className = "stack";
+    const heading = document.createElement("div");
+    heading.innerHTML = `<div class="small muted">${node.type}</div><strong>${meta.title}</strong>`;
+    wrap.appendChild(heading);
+    const nameLabel = document.createElement("label");
+    nameLabel.textContent = "Label";
+    const nameInput = document.createElement("input");
+    nameInput.type = "text";
+    nameInput.value = node.label || meta.title;
+    nameInput.addEventListener("input", () => { node.label = nameInput.value; wfRender(); });
+    wrap.appendChild(nameLabel);
+    wrap.appendChild(nameInput);
+    (meta.fields || []).forEach(field => {
+      const label = document.createElement("label");
+      label.textContent = field.label || field.key;
+      const input = document.createElement(field.type === "textarea" ? "textarea" : "input");
+      if (field.type && field.type !== "textarea") input.type = field.type;
+      input.value = node.params && node.params[field.key] != null ? node.params[field.key] : "";
+      if (field.placeholder) input.placeholder = field.placeholder;
+      input.addEventListener("input", () => {
+        node.params = node.params || {};
+        node.params[field.key] = input.value;
+        wfRender();
+      });
+      wrap.appendChild(label);
+      wrap.appendChild(input);
+    });
+    const remove = document.createElement("button");
+    remove.className = "danger";
+    remove.textContent = "Delete node";
+    remove.addEventListener("click", wfRemoveSelection);
+    wrap.appendChild(remove);
+    box.appendChild(wrap);
+  }
+  function wfCurrentGraph() {
+    return {
+      id: wf.id || undefined,
+      name: ($("wfName").value || "").trim() || "Untitled workflow",
+      nodes: wf.nodes.map(n => ({
+        id: n.id, type: n.type, label: n.label,
+        position: n.position, params: n.params || {}
+      })),
+      edges: wf.edges.map(e => ({ id: e.id, source: e.source, target: e.target }))
+    };
+  }
+  function wfLoadGraph(graph, opts) {
+    wf.id = graph.id || null;
+    wf.nodes = (graph.nodes || []).map(n => ({
+      id: n.id || "n_" + wfShortId(),
+      type: n.type,
+      label: n.label || wfTypeMeta(n.type).title,
+      position: {
+        x: (n.position && n.position.x) || 60,
+        y: (n.position && n.position.y) || 60
+      },
+      params: n.params || {}
+    }));
+    wf.edges = (graph.edges || []).map(e => ({
+      id: e.id || "e_" + wfShortId(),
+      source: e.source,
+      target: e.target
+    }));
+    wf.selectedNodeId = null;
+    wf.selectedEdgeId = null;
+    $("wfName").value = graph.name || "";
+    if (!(opts && opts.keepOutput)) setText("wfOutput", "Loaded: " + (graph.name || wf.id || "unnamed"));
+    wfRender();
+    wfRenderInspector();
+  }
+  async function wfSave() {
+    try {
+      const graph = wfCurrentGraph();
+      if (!graph.id) graph.id = "wf_" + wfShortId();
+      const data = await api("/workflows", { method: "POST", body: graph });
+      wf.id = data.id || graph.id;
+      setJson("wfOutput", data);
+      await wfListLoad();
+    } catch (err) {
+      toast("Save failed: " + err.message);
+    }
+  }
+  async function wfCompile() {
+    try {
+      const graph = wfCurrentGraph();
+      if (!graph.id) { await wfSave(); }
+      const data = await api(`/workflows/${encodeURIComponent(wf.id)}/compile`,
+                             { method: "POST", body: {} });
+      setJson("wfOutput", data);
+    } catch (err) {
+      toast("Compile failed: " + err.message);
+    }
+  }
+  async function wfRun() {
+    try {
+      if (!wf.id) { await wfSave(); }
+      setText("wfOutput", "Running...");
+      const data = await api(`/workflows/${encodeURIComponent(wf.id)}/run`,
+                             { method: "POST", body: {} });
+      setJson("wfOutput", data);
+    } catch (err) {
+      toast("Run failed: " + err.message);
+    }
+  }
+  async function wfDelete() {
+    if (!wf.id) { wfNew(); return; }
+    if (!confirm("Delete workflow " + wf.id + "?")) return;
+    try {
+      await api(`/workflows/${encodeURIComponent(wf.id)}`, { method: "DELETE" });
+      wfNew();
+      await wfListLoad();
+    } catch (err) {
+      toast("Delete failed: " + err.message);
+    }
+  }
+  function wfNew() {
+    wf.id = null;
+    wf.nodes = [];
+    wf.edges = [];
+    wf.selectedNodeId = null;
+    wf.selectedEdgeId = null;
+    $("wfName").value = "";
+    setText("wfOutput", "New workflow.");
+    wfRender();
+    wfRenderInspector();
+  }
+  function wfExport() {
+    const graph = wfCurrentGraph();
+    const blob = new Blob([JSON.stringify(graph, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = (graph.name || "workflow").replace(/\s+/g, "_") + ".json";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+  function wfImport(files) {
+    const file = files && files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const parsed = JSON.parse(reader.result);
+        wfLoadGraph(parsed);
+      } catch (err) {
+        toast("Import failed: " + err.message);
+      }
+    };
+    reader.readAsText(file);
+  }
+  async function wfListLoad() {
+    try {
+      const data = await api("/workflows");
+      const list = $("wfList");
+      list.innerHTML = "";
+      (data.workflows || []).forEach(item => {
+        const row = document.createElement("div");
+        row.className = "wf-list-item";
+        row.innerHTML = `<span><span class="wf-li-name">${item.name || item.id}</span><br><span class="wf-li-meta">${item.node_count || 0} nodes · ${item.edge_count || 0} edges</span></span><span class="wf-li-meta">${(item.updated_at || "").slice(11, 16)}</span>`;
+        row.addEventListener("click", () => wfLoadById(item.id));
+        list.appendChild(row);
+      });
+      if (!(data.workflows || []).length) list.innerHTML = '<div class="muted small">No saved workflows yet.</div>';
+    } catch (err) {
+      toast("List failed: " + err.message);
+    }
+  }
+  async function wfLoadById(id) {
+    try {
+      const data = await api(`/workflows/${encodeURIComponent(id)}`);
+      wfLoadGraph(data);
+    } catch (err) {
+      toast("Load failed: " + err.message);
+    }
+  }
+  async function wfTemplatesLoad() {
+    try {
+      const data = await api("/workflows/templates");
+      const list = $("wfTemplates");
+      list.innerHTML = "";
+      (data.templates || []).forEach(item => {
+        const row = document.createElement("div");
+        row.className = "wf-list-item";
+        row.innerHTML = `<span><span class="wf-li-name">${item.name}</span><br><span class="wf-li-meta">${item.description || ""}</span></span>`;
+        row.addEventListener("click", () => {
+          const clone = JSON.parse(JSON.stringify(item));
+          clone.id = null;
+          clone.name = item.name;
+          wfLoadGraph(clone);
+        });
+        list.appendChild(row);
+      });
+    } catch (err) {
+      // templates optional; skip toast
+    }
+  }
+  function wfBindCanvas() {
+    const svg = $("wfCanvas");
+    if (!svg) return;
+    svg.addEventListener("mousemove", wfOnMouseMove);
+    svg.addEventListener("mouseup", wfOnMouseUp);
+    svg.addEventListener("mouseleave", wfOnMouseUp);
+    svg.addEventListener("mousedown", ev => {
+      if (ev.target === svg || ev.target.tagName === "g" && ev.target.id === "wfEdgesLayer") {
+        wf.selectedNodeId = null;
+        wf.selectedEdgeId = null;
+        wfRender();
+        wfRenderInspector();
+      }
+    });
+    document.addEventListener("keydown", ev => {
+      const view = document.getElementById("workflows");
+      if (!view || !view.classList.contains("active")) return;
+      if (ev.key === "Delete" || ev.key === "Backspace") {
+        const target = ev.target;
+        if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) return;
+        wfRemoveSelection();
+      }
+    });
+  }
+  function wfInit() {
+    wfBuildPalette();
+    wfBindCanvas();
+    wfRender();
+    wfRenderInspector();
+    wfListLoad().catch(() => {});
+    wfTemplatesLoad().catch(() => {});
+  }
+
   function bindEvents() {
     document.querySelectorAll(".tab").forEach(btn => btn.addEventListener("click", () => showTab(btn.dataset.tab)));
     $("commandRun").addEventListener("click", runCommand);
@@ -1425,6 +2084,14 @@ tr:hover td { background: rgba(45, 212, 191, .04); }
     $("tgClear").addEventListener("click", () => clearTelegram().catch(err => toast(err.message)));
     $("webhooksLoad").addEventListener("click", () => listWebhooks().catch(err => toast(err.message)));
     $("updateCheck").addEventListener("click", () => checkUpdate().catch(err => toast(err.message)));
+    $("wfNew").addEventListener("click", wfNew);
+    $("wfSave").addEventListener("click", () => wfSave().catch(err => toast("Save failed: " + err.message)));
+    $("wfCompile").addEventListener("click", () => wfCompile().catch(err => toast("Compile failed: " + err.message)));
+    $("wfRun").addEventListener("click", () => wfRun().catch(err => toast("Run failed: " + err.message)));
+    $("wfDelete").addEventListener("click", () => wfDelete().catch(err => toast("Delete failed: " + err.message)));
+    $("wfExport").addEventListener("click", wfExport);
+    $("wfImport").addEventListener("change", ev => wfImport(ev.target.files));
+    $("wfListRefresh").addEventListener("click", () => wfListLoad().catch(err => toast(err.message)));
     const drop = $("dropZone");
     drop.addEventListener("dragover", ev => { ev.preventDefault(); drop.classList.add("drag"); });
     drop.addEventListener("dragleave", () => drop.classList.remove("drag"));
@@ -1443,6 +2110,7 @@ tr:hover td { background: rgba(45, 212, 191, .04); }
     }
     setText("authState", token ? "token" : "missing");
     bindEvents();
+    wfInit();
     updateRegionText();
     await Promise.allSettled([loadVersion(), ping(), refreshScreen(), loadTelegram(), loadFiles()]);
     refreshMetrics();

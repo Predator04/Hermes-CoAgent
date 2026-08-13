@@ -814,6 +814,13 @@ except ImportError:
     _console("[WARN] routes_recipes.py not found")
 
 try:
+    from routes_workflows import register_routes as reg_workflows
+    WORKFLOWS_AVAILABLE = True
+except ImportError:
+    WORKFLOWS_AVAILABLE = False
+    _console("[WARN] routes_workflows.py not found")
+
+try:
     from routes_healer import register_routes as reg_healer
     HEALER_AVAILABLE = True
 except ImportError:
@@ -1161,6 +1168,9 @@ if SWARM_AVAILABLE:
 if RECIPES_AVAILABLE:
     reg_recipes(app, state, require_auth)
     features["scheduled_recipes"] = True
+if WORKFLOWS_AVAILABLE:
+    reg_workflows(app, state, require_auth)
+    features["visual_workflows"] = True
 if HEALER_AVAILABLE:
     reg_healer(app, state, require_auth)
     features["self_healing_mode"] = True
