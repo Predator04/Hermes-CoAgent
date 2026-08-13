@@ -9,7 +9,7 @@ import subprocess
 import json as json_lib
 
 from flask import jsonify
-from shared import _json_body, _log, _missing_field
+from shared import _json_body, _log
 
 FEATURE_INFO = {
     "repo": "kopia/kopia",
@@ -253,13 +253,13 @@ def register_routes(app, state, require_auth):
 
         storage_type = (body.get("storage_type") or "filesystem").strip().lower()
         location = (body.get("path_or_bucket") or body.get("location") or "").strip()
-        password = body.get("password", "").strip()
+        password = body.get("password") or ""
         hostname = (body.get("hostname") or "").strip()
 
         if not location:
             return jsonify({
                 "ok": False,
-                "error": _missing_field("path_or_bucket (storage location)")
+                "error": "path_or_bucket (storage location) is required"
             }), 400
 
         args = ["repository", "connect", f"{storage_type}://{location}"]
@@ -274,7 +274,7 @@ def register_routes(app, state, require_auth):
 
         exe = _find_kopia()
         if not exe:
-            return _missing_field("kopia not found")
+            return jsonify({"ok": False, "error": "kopia not found"}), 503
 
         try:
             result = subprocess.run(
@@ -314,20 +314,20 @@ def register_routes(app, state, require_auth):
 
         storage_type = (body.get("storage_type") or "filesystem").strip().lower()
         location = (body.get("path_or_bucket") or body.get("location") or "").strip()
-        password = (body.get("password") or "").strip()
+        password = body.get("password") or ""
         hostname = (body.get("hostname") or "").strip()
         max_revision = body.get("max_revision_size")
 
         if not location:
             return jsonify({
                 "ok": False,
-                "error": _missing_field("path_or_bucket (storage location)")
+                "error": "path_or_bucket (storage location) is required"
             }), 400
 
         if not password:
             return jsonify({
                 "ok": False,
-                "error": _missing_field("password (required for new repo)")
+                "error": "password is required for a new repository"
             }), 400
 
         args = ["repository", "create", f"{storage_type}://{location}"]
@@ -377,8 +377,8 @@ def register_routes(app, state, require_auth):
         args = ["maintenance", "run"]
         if full:
             args.append("--full")
-        if safe:
-            args.append("--safe")
+        if not safe:
+            args.append("--safety=none")
 
         try:
             stdout, stderr, rc = _run_kopia(args, timeout=300)
