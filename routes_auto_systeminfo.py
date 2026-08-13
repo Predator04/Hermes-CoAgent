@@ -75,8 +75,10 @@ def _is_systeminfo_available():
     if not exe:
         return False
     try:
-        result = subprocess.run([exe], capture_output=True, text=True, timeout=10)
-        return result.returncode == 0
+        # `/?` prints usage instantly; a bare `systeminfo` can take 20-60s on
+        # slow/domain-joined machines and would falsely report unavailable.
+        result = subprocess.run([exe, "/?"], capture_output=True, text=True, timeout=10)
+        return result.returncode in (0, 1)
     except (subprocess.TimeoutExpired, OSError):
         return False
 
@@ -130,17 +132,16 @@ def _parse_systeminfo_output(text):
             # Parse hotfix entries like "[01]: KB123456"
             if "]" in line_stripped and "KB" in line_stripped:
                 hotfixes.append(line_stripped)
-            elif KEY_VALUE_RE.match(line_stripped):
-                # May be next key-value, go back to general parsing
-                current_section = None
-            continue
+                continue
+            # Otherwise this line is the next key/value — fall through so it
+            # isn't silently dropped.
+            current_section = None
 
         if current_section == "network":
             if "]" in line_stripped and ":" in line_stripped:
                 networks.append(line_stripped)
-            elif KEY_VALUE_RE.match(line_stripped):
-                current_section = None
-            continue
+                continue
+            current_section = None
 
         m = KEY_VALUE_RE.match(line_stripped)
         if m:
