@@ -24,10 +24,10 @@ FEATURE_INFO = {
 
 # Regex for parsing sc query output
 SERVICE_LINE_RE = re.compile(
-    r"^\s+SERVICE_NAME:\s+(.+)$"
+    r"^\s*SERVICE_NAME:\s+(.+)$"
 )
 DISPLAY_NAME_RE = re.compile(
-    r"^\s+DISPLAY_NAME:\s+(.+)$"
+    r"^\s*DISPLAY_NAME:\s+(.+)$"
 )
 TYPE_RE = re.compile(
     r"^\s+TYPE\s+:\s+(\d+)\s+(.+)$"
@@ -150,30 +150,32 @@ def _parse_sc_qc_output(text):
     result = {}
     lines = text.split("\n")
 
+    mapping = {
+        "SERVICE_NAME": "service_name",
+        "DISPLAY_NAME": "display_name",
+        "TYPE": "type",
+        "START_TYPE": "start_type",
+        "ERROR_CONTROL": "error_control",
+        "BINARY_PATH_NAME": "binary_path",
+        "LOAD_ORDER_GROUP": "load_order_group",
+        "TAG": "tag",
+        "DEPENDENCIES": "dependencies_raw",
+        "SERVICE_START_NAME": "service_start_name",
+    }
+
+    in_dependencies = False
     for line in lines:
         stripped = line.strip()
-        if ":" not in stripped:
+        if not stripped:
             continue
-        key, _, value = stripped.partition(":")
-        key = key.strip()
-        value = value.strip()
-
-        mapping = {
-            "SERVICE_NAME": "service_name",
-            "DISPLAY_NAME": "display_name",
-            "TYPE": "type",
-            "START_TYPE": "start_type",
-            "ERROR_CONTROL": "error_control",
-            "BINARY_PATH_NAME": "binary_path",
-            "LOAD_ORDER_GROUP": "load_order_group",
-            "TAG": "tag",
-            "DISPLAY_NAME": "display_name",
-            "DEPENDENCIES": "dependencies_raw",
-            "SERVICE_START_NAME": "service_start_name",
-        }
-
-        mapped = mapping.get(key)
-        if mapped:
+        if ":" in stripped:
+            key, _, value = stripped.partition(":")
+            key = key.strip()
+            value = value.strip()
+            mapped = mapping.get(key)
+            if not mapped:
+                in_dependencies = False
+                continue
             # Clean known values
             if mapped == "start_type":
                 if "DEMAND_START" in value:
@@ -187,11 +189,18 @@ def _parse_sc_qc_output(text):
                 elif "SYSTEM_START" in value:
                     value = "System"
                 result[mapped] = value
+                in_dependencies = False
             elif mapped == "dependencies_raw":
-                # Collapse multi-line dependencies into list
-                result["dependencies"] = [d.strip() for d in value.split("\n") if d.strip()]
+                result["dependencies"] = [value] if value else []
+                in_dependencies = True
             else:
                 result[mapped] = value
+                in_dependencies = False
+        else:
+            # Continuation line — additional DEPENDENCIES are listed one per
+            # line without a field prefix in 'sc qc' output.
+            if in_dependencies:
+                result.setdefault("dependencies", []).append(stripped)
 
     return result
 
@@ -238,10 +247,10 @@ def register_routes(app, state, require_auth):
                     "ok": False,
                     "error": f"invalid state filter '{state_filter}'. Use one of: {', '.join(sorted(valid_states))}"
                 }), 400
-            args.append(f"state={state_filter}")
+            args.extend(["state=", state_filter])
 
         # Use type=service to focus on services (not drivers)
-        args.append("type=service")
+        args.extend(["type=", "service"])
 
         try:
             stdout, stderr, rc = _run_sc(args, timeout=30)
