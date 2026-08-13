@@ -713,6 +713,7 @@ from routes_mcp import register_routes as reg_mcp, run_stdio_server
 from routes_mcp_client import register_routes as reg_mcp_client
 from routes_git import register_routes as reg_git
 from routes_dashboard import register_routes as reg_dashboard
+from routes_onboarding import register_routes as reg_onboarding
 from routes_obsidian import register_routes as reg_obsidian
 from routes_wol import register_routes as reg_wol
 from routes_phone import register_routes as reg_phone
@@ -1114,6 +1115,7 @@ reg_logs(app, state, require_auth)
 reg_recorder(app, state, require_auth)
 reg_git(app, state, require_auth)
 reg_dashboard(app, state, require_auth)
+reg_onboarding(app, state, require_auth)
 reg_obsidian(app, state, require_auth)
 reg_wol(app, state, require_auth)
 reg_phone(app, state, require_auth)

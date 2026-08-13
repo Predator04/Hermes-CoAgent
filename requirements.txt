@@ -16,6 +16,7 @@ anthropic>=0.30
 py-cpuinfo>=9.0
 croniter>=2.0
 pytest>=8.0
+qrcode>=7.4  # optional — first-run onboarding page renders QR server-side when present
 
 pywin32>=305; sys_platform == "win32"
 pywinauto>=0.6.8; sys_platform == "win32"
