@@ -7,6 +7,7 @@ import glob
 import shutil
 import subprocess
 import os
+import tempfile
 import json
 from flask import jsonify, request
 from shared import _json_body, _log, _missing_field
@@ -191,7 +192,7 @@ def register_routes(app, state, require_auth):
         Start: launches scrcpy --no-window --record=<output> in the background.
         Stop: kills the running scrcpy recording process.
         """
-        body = _json_body(request)
+        body = _json_body()
         if body is None:
             return jsonify({"error": "JSON body required"}), 400
 
@@ -215,8 +216,22 @@ def register_routes(app, state, require_auth):
                 pass
 
         if action == "start":
-            duration = body.get("duration", 30)
-            output_path = body.get("output", os.path.join(os.environ.get("TEMP", os.getcwd()), "scrcpy_record.mp4"))
+            raw_duration = body.get("duration", 30)
+            try:
+                duration = int(raw_duration)
+            except (TypeError, ValueError):
+                return jsonify({"error": "duration must be an integer number of seconds"}), 400
+            # Clamp to a bounded range: --time-limit=0 disables auto-stop, and
+            # huge values can pin the recorder indefinitely.
+            duration = max(1, min(duration, 3600))
+
+            # Sandbox the output to the temp dir (basename only) so a caller
+            # can't direct scrcpy to overwrite arbitrary files via `output`.
+            raw_output = body.get("output")
+            output_name = os.path.basename(str(raw_output)) if raw_output else "scrcpy_record.mp4"
+            if output_name in ("", ".", ".."):
+                output_name = "scrcpy_record.mp4"
+            output_path = os.path.join(tempfile.gettempdir(), output_name)
 
             try:
                 # Build command
@@ -225,7 +240,7 @@ def register_routes(app, state, require_auth):
                     "--no-window",
                     "--no-playback",
                     f"--record={output_path}",
-                    f"--time-limit={int(duration)}",
+                    f"--time-limit={duration}",
                 ]
                 # Launch in background via CREATE_NEW_PROCESS_GROUP
                 proc = subprocess.Popen(
