@@ -800,6 +800,13 @@ except ImportError:
     _console("[WARN] routes_copilot_enhanced.py not found")
 
 try:
+    from routes_swarm import register_routes as reg_swarm
+    SWARM_AVAILABLE = True
+except ImportError:
+    SWARM_AVAILABLE = False
+    _console("[WARN] routes_swarm.py not found")
+
+try:
     from routes_recipes import register_routes as reg_recipes
     RECIPES_AVAILABLE = True
 except ImportError:
@@ -1148,6 +1155,9 @@ if COPILOT_ENHANCED_AVAILABLE:
     reg_copilot_enhanced(app, state, require_auth)
     features["copilot_enhanced"] = True
     features["goal_runner_timeline_sse"] = True
+if SWARM_AVAILABLE:
+    reg_swarm(app, state, require_auth)
+    features["swarm"] = True
 if RECIPES_AVAILABLE:
     reg_recipes(app, state, require_auth)
     features["scheduled_recipes"] = True
