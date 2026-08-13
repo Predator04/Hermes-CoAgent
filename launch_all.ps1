@@ -14,6 +14,40 @@ $pidFile = Join-Path $coagentDir "coagent.pid"
 $serverScript = Join-Path $coagentDir "hermes_coagent.py"
 $trayScript = Join-Path $coagentDir "tray_icon.py"
 $relayScript = Join-Path $coagentDir "scripts\screenshot_relay.py"
+$tokenFile = Join-Path $coagentDir ".token"
+
+# --- Ensure .token exists BEFORE launching server or tray -------------------
+# The server (--secure) and tray both read .token from $coagentDir. If either
+# process starts before the file is written, or if they resolve different
+# COAGENT_DIRs, they end up with different tokens and every tray → server
+# call 401s. Pre-generating the token here eliminates the race and guarantees
+# a single source of truth for the whole session.
+$authToken = ""
+if (Test-Path -LiteralPath $tokenFile) {
+    try {
+        $authToken = (Get-Content -LiteralPath $tokenFile -Raw -ErrorAction Stop).Trim()
+    } catch {
+        $authToken = ""
+    }
+}
+if (-not $authToken) {
+    $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+    try {
+        $bytes = New-Object byte[] 32
+        $rng.GetBytes($bytes)
+        $authToken = ([BitConverter]::ToString($bytes) -replace '-','').ToLower()
+    } finally {
+        $rng.Dispose()
+    }
+    try {
+        # UTF-8 with NO BOM — Python reads .token with plain read_text() and
+        # a BOM would show up as leading garbage in the bearer token.
+        [System.IO.File]::WriteAllText($tokenFile, $authToken, (New-Object System.Text.UTF8Encoding($false)))
+        Write-Output "  Generated new .token ($($authToken.Substring(0,16))...)"
+    } catch {
+        Write-Output "  WARNING: could not write .token: $($_.Exception.Message)"
+    }
+}
 
 $pythonwCandidates = @(
     "$env:LOCALAPPDATA\Programs\Python\Python313\pythonw.exe"
@@ -123,11 +157,19 @@ $env:MCP_FAST = "1"
 if ($serverAlreadyRunning) {
     Write-Output "  Already running - server launch skipped"
 } else {
+    # Pass the token explicitly so the running server is guaranteed to use
+    # the same value that's on disk (and therefore the same value the tray
+    # will read). Without --token=, --secure would re-read .token itself —
+    # which is normally fine, but being explicit removes any ambiguity when
+    # the file was just written and Windows may still be flushing metadata.
     $serverArgs = @(
         "`"$serverScript`""
         "--secure"
         "--allow-external"
     )
+    if ($authToken) {
+        $serverArgs += "--token=$authToken"
+    }
     $serverProc = Start-Process -FilePath $pythonw -ArgumentList $serverArgs -WorkingDirectory $coagentDir -PassThru -WindowStyle Hidden -ErrorAction SilentlyContinue
     if (-not $serverProc) {
         $serverProc = Start-Process -FilePath $python -ArgumentList $serverArgs -WorkingDirectory $coagentDir -PassThru -WindowStyle Hidden -ErrorAction SilentlyContinue
@@ -161,8 +203,21 @@ if (Test-TrayRunning) {
             "--coagent-dir"
             "`"$coagentDir`""
         )
+        if ($authToken) {
+            $trayArgs += "--token"
+            $trayArgs += $authToken
+        }
         try {
-            Start-Process -FilePath $pythonw -ArgumentList $trayArgs -WorkingDirectory $coagentDir -WindowStyle Hidden -ErrorAction Stop | Out-Null
+            # Also set HERMES_COAGENT_TOKEN in the child env as a belt-and-
+            # suspenders alternative — the tray reads it if --token wasn't
+            # parsed for any reason.
+            $prevEnvToken = $env:HERMES_COAGENT_TOKEN
+            if ($authToken) { $env:HERMES_COAGENT_TOKEN = $authToken }
+            try {
+                Start-Process -FilePath $pythonw -ArgumentList $trayArgs -WorkingDirectory $coagentDir -WindowStyle Hidden -ErrorAction Stop | Out-Null
+            } finally {
+                $env:HERMES_COAGENT_TOKEN = $prevEnvToken
+            }
             Write-Output "  Tray launch requested with tray_icon.py"
             $trayLaunched = $true
         } catch {
@@ -177,8 +232,19 @@ if (Test-TrayRunning) {
         )
         $trayExe = $trayExeCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
         if ($trayExe) {
+            $trayExeArgs = @("$serverPort", "--coagent-dir", "`"$coagentDir`"")
+            if ($authToken) {
+                $trayExeArgs += "--token"
+                $trayExeArgs += $authToken
+            }
             try {
-                Start-Process -FilePath $trayExe -ArgumentList @("$serverPort", "--coagent-dir", "`"$coagentDir`"") -WorkingDirectory $coagentDir -WindowStyle Hidden -ErrorAction Stop | Out-Null
+                $prevEnvToken = $env:HERMES_COAGENT_TOKEN
+                if ($authToken) { $env:HERMES_COAGENT_TOKEN = $authToken }
+                try {
+                    Start-Process -FilePath $trayExe -ArgumentList $trayExeArgs -WorkingDirectory $coagentDir -WindowStyle Hidden -ErrorAction Stop | Out-Null
+                } finally {
+                    $env:HERMES_COAGENT_TOKEN = $prevEnvToken
+                }
                 Write-Output "  Tray launch requested with $trayExe"
             } catch {
                 Write-Output "  Tray EXE launch failed: $($_.Exception.Message)"

@@ -104,31 +104,55 @@ def _load_token():
 
 
 def _save_token(token):
-    """Persist token to disk atomically to avoid corruption on crash."""
+    """Persist token to disk atomically to avoid corruption on crash.
+
+    Returns True on success. Failures are logged to stderr so a broken
+    filesystem/permissions issue is visible (before, a silent failure could
+    leave the server with an in-memory token that the tray could not read).
+    """
     tp = _token_path()
     if not tp:
-        return
+        print("[Auth] WARNING: _save_token called with no COAGENT_DIR — token NOT persisted", file=sys.stderr)
+        return False
+    try:
+        tp.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        print(f"[Auth] ERROR: cannot create token dir {tp.parent}: {e}", file=sys.stderr)
+        return False
     # Write to temp file in same dir, then atomic rename. Create with 0o600
     # from the outset so there's no world-readable window before chmod.
     tmp = tp.with_suffix(".tmp")
-    if os.name != "nt":
-        try:
-            fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                f.write(token)
-        except OSError:
-            # Fall back to write_text (still chmod right after)
-            tmp.write_text(token, encoding="utf-8")
+    try:
+        if os.name != "nt":
             try:
-                os.chmod(tmp, 0o600)
+                fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    f.write(token)
             except OSError:
-                pass
-    else:
-        tmp.write_text(token, encoding="utf-8")
-    os.replace(tmp, tp)  # atomic on both Windows and POSIX
+                # Fall back to write_text (still chmod right after)
+                tmp.write_text(token, encoding="utf-8")
+                try:
+                    os.chmod(tmp, 0o600)
+                except OSError:
+                    pass
+        else:
+            tmp.write_text(token, encoding="utf-8")
+        os.replace(tmp, tp)  # atomic on both Windows and POSIX
+    except OSError as e:
+        print(f"[Auth] ERROR: failed writing token to {tp}: {e}", file=sys.stderr)
+        try:
+            if tmp.exists():
+                tmp.unlink()
+        except OSError:
+            pass
+        return False
     old_suffix = tp.with_suffix(".token_tok")
     if old_suffix.exists():
-        old_suffix.unlink()
+        try:
+            old_suffix.unlink()
+        except OSError:
+            pass
+    return True
 
 
 def generate_token():
@@ -146,11 +170,26 @@ def _token_from_password(password):
 
 def init_auth(port=9123, coag_dir=None):
     global AUTH_TOKEN, AUTH_ENABLED, COAGENT_DIR
+    # Always resolve to a real directory. If the caller didn't pass one, fall
+    # back to shared.COAGENT_DIR — which is anchored to shared.py's location,
+    # not cwd, so it survives being spawned via pythonw.exe/Start-Process where
+    # cwd semantics vary. Without this, --secure could silently fail to persist
+    # the token and the tray would never see it.
+    if coag_dir is None:
+        try:
+            from shared import COAGENT_DIR as _SHARED_COAGENT_DIR
+            coag_dir = _SHARED_COAGENT_DIR
+        except Exception:
+            from pathlib import Path as _Path
+            coag_dir = _Path(__file__).resolve().parent
     COAGENT_DIR = coag_dir
     if COAGENT_DIR:
         old_suffix = COAGENT_DIR / ".token_tok"
         if old_suffix.exists():
-            old_suffix.unlink()
+            try:
+                old_suffix.unlink()
+            except OSError:
+                pass
 
     token = None
     token_from_arg = False
@@ -171,12 +210,30 @@ def init_auth(port=9123, coag_dir=None):
             if saved:
                 token = saved
             else:
-                token = generate_token()
-                print(f"[Auth] Generated token and saved it to {_token_path()}")
+                token = secrets.token_hex(32)
+                if _save_token(token):
+                    print(f"[Auth] Generated token and saved it to {_token_path()}")
+                else:
+                    # We could not persist the token. Under --secure that means
+                    # the tray (which reads .token off disk) will never know
+                    # the token and every tray → server call will 401. Bail
+                    # out loudly instead of silently landing users in that
+                    # broken state on a fresh install.
+                    print(
+                        f"[Auth] FATAL: --secure could not persist token to {_token_path()}."
+                        " Fix filesystem permissions on the install dir and retry.",
+                        file=sys.stderr,
+                    )
+                    sys.exit(1)
         else:
             # Only persist to disk when token came from --token= arg, not env
             if token_from_arg:
-                _save_token(token)
+                if not _save_token(token):
+                    print(
+                        f"[Auth] FATAL: --secure --token=... could not persist token to {_token_path()}.",
+                        file=sys.stderr,
+                    )
+                    sys.exit(1)
             else:
                 print(f"[Auth] --secure with env-provided token: not persisting to disk")
         AUTH_ENABLED = True
@@ -185,9 +242,9 @@ def init_auth(port=9123, coag_dir=None):
         AUTH_ENABLED = True
         AUTH_TOKEN = token
 
-    # Enforce --allow-external requires --secure
-    if allow_external and not (secure and AUTH_ENABLED):
-        print("[Auth] FATAL: --allow-external requires --secure. Refusing to start.")
+    # Enforce --allow-external requires auth (--secure OR --token=KEY)
+    if allow_external and not AUTH_ENABLED:
+        print("[Auth] FATAL: --allow-external requires auth (--secure or --token=KEY). Refusing to start.")
         sys.exit(1)
 
     if AUTH_ENABLED:

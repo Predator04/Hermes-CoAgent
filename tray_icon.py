@@ -345,12 +345,17 @@ def _find_coagent_dir(explicit: Optional[str] = None) -> Path:
 
 
 def _read_token_file(coagent_dir: Path) -> str:
+    # Only search paths that are anchored to the running install — do NOT
+    # hardcode machine-specific paths like ~/Desktop/Hermes CoAgent/.token,
+    # which caused the tray on one machine to pick up a stale token from
+    # an unrelated Desktop copy while the server (running from a different
+    # install dir) had a freshly generated one. Server and tray must always
+    # agree on the same COAGENT_DIR/.token.
     candidates = _unique_existing([
         coagent_dir / ".token",
-        Path.cwd() / ".token",
         _app_dir() / ".token",
         _app_dir().parent / ".token",
-        Path.home() / "Desktop" / "Hermes CoAgent" / ".token",
+        Path.cwd() / ".token",
     ])
     for token_path in candidates:
         try:
@@ -439,11 +444,16 @@ class TrayState:
     lock: threading.Lock = field(default_factory=threading.Lock)
 
     def current_token(self) -> str:
-        if self.token:
-            return self.token
-        token = _read_token_file(self.coagent_dir)
-        if token:
-            self.token = token
+        # Always re-check disk when we don't have a token in memory yet:
+        # on a fresh install the server may not have written .token until
+        # after tray startup, so the initial config read comes up empty.
+        # We also re-read whenever the current in-memory token no longer
+        # matches disk (server regenerated it via /auth/token POST).
+        disk_token = _read_token_file(self.coagent_dir)
+        if disk_token and disk_token != self.token:
+            self.token = disk_token
+        elif not self.token and disk_token:
+            self.token = disk_token
         return self.token
 
     def log(self, message: str) -> None:
