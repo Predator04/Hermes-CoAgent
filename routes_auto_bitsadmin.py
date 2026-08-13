@@ -203,9 +203,10 @@ def register_routes(app, state, require_auth):
         try:
             output = _run_bitsadmin(["/INFO", job_id, "/VERBOSE"], timeout=15)
             info = _parse_job_info(output)
-            # Extract job state from info
-            if "State" in info:
-                info["state"] = _parse_job_state(info["State"])
+            # Extract job state from info (bitsadmin emits the key in uppercase, e.g. "STATE")
+            state_key = next((k for k in info if k.lower() == "state"), None)
+            if state_key:
+                info["state"] = _parse_job_state(info[state_key])
             return jsonify({"ok": True, "job_id": job_id, "info": info, "raw": output})
         except RuntimeError as e:
             return jsonify({"ok": False, "error": str(e)}), 503
