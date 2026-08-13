@@ -60,8 +60,13 @@ def _parse_procs_json(raw_json):
     """Parse procs JSON output into a list of process dicts with selected fields."""
     try:
         processes = json.loads(raw_json)
+        if not isinstance(processes, list):
+            _log(f"procs_parse: unexpected JSON shape: {type(processes).__name__}")
+            return []
         result = []
         for p in processes:
+            if not isinstance(p, dict):
+                continue
             entry = {
                 "pid": p.get("pid"),
                 "ppid": p.get("ppid"),
@@ -83,8 +88,8 @@ def _parse_procs_json(raw_json):
             entry = {k: v for k, v in entry.items() if v is not None}
             result.append(entry)
         return result
-    except (json.JSONDecodeError, TypeError) as e:
-        _log("procs_parse", f"JSON parse error: {e}")
+    except (json.JSONDecodeError, TypeError, AttributeError) as e:
+        _log(f"procs_parse: JSON parse error: {e}")
         return []
 
 
@@ -137,7 +142,7 @@ def register_routes(app, state, require_auth):
 
             r = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
             if r.returncode != 0:
-                _log("procs_list", f"procs exited {r.returncode}: {r.stderr.strip()}")
+                _log(f"procs_list: procs exited {r.returncode}: {r.stderr.strip()}")
                 return jsonify({"error": r.stderr.strip(), "processes": [], "count": 0}), 500
 
             processes = _parse_procs_json(r.stdout)
@@ -151,14 +156,17 @@ def register_routes(app, state, require_auth):
                     pass
 
             if user_filter:
-                processes = [p for p in processes if user_filter.lower() in (p.get("user", "")).lower()]
+                processes = [p for p in processes if user_filter.lower() in str(p.get("user") or "").lower()]
 
             total = len(processes)
             if limit:
                 try:
-                    processes = processes[:int(limit)]
+                    lim_int = int(limit)
                 except ValueError:
-                    pass
+                    return jsonify({"error": f"Invalid limit: {limit}", "processes": [], "count": 0}), 400
+                if lim_int <= 0:
+                    return jsonify({"error": "limit must be positive", "processes": [], "count": 0}), 400
+                processes = processes[:lim_int]
 
             return jsonify({
                 "processes": processes,
@@ -171,10 +179,10 @@ def register_routes(app, state, require_auth):
                 },
             })
         except subprocess.TimeoutExpired:
-            _log("procs_list", "procs --json timed out")
+            _log("procs_list: procs --json timed out")
             return jsonify({"error": "procs timed out", "processes": [], "count": 0}), 504
         except Exception as e:
-            _log("procs_list", f"Error: {e}")
+            _log(f"procs_list: Error: {e}")
             return jsonify({"error": str(e), "processes": [], "count": 0}), 500
 
     @app.route("/auto/procs/tree", methods=["GET"])
@@ -198,7 +206,7 @@ def register_routes(app, state, require_auth):
 
             r = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
             if r.returncode != 0:
-                _log("procs_tree", f"procs --tree exited {r.returncode}: {r.stderr.strip()}")
+                _log(f"procs_tree: procs --tree exited {r.returncode}: {r.stderr.strip()}")
                 return jsonify({"error": r.stderr.strip(), "processes": [], "count": 0}), 500
 
             processes = _parse_procs_json(r.stdout)
@@ -219,10 +227,10 @@ def register_routes(app, state, require_auth):
                 "total": len(processes),
             })
         except subprocess.TimeoutExpired:
-            _log("procs_tree", "procs --tree timed out")
+            _log("procs_tree: procs --tree timed out")
             return jsonify({"error": "procs timed out", "processes": [], "count": 0}), 504
         except Exception as e:
-            _log("procs_tree", f"Error: {e}")
+            _log(f"procs_tree: Error: {e}")
             return jsonify({"error": str(e), "processes": [], "count": 0}), 500
 
     @app.route("/auto/procs/find", methods=["GET"])
@@ -277,7 +285,7 @@ def register_routes(app, state, require_auth):
         except subprocess.TimeoutExpired:
             return jsonify({"error": "procs timed out", "found": False}), 504
         except Exception as e:
-            _log("procs_find", f"Error: {e}")
+            _log(f"procs_find: Error: {e}")
             return jsonify({"error": str(e), "found": False}), 500
 
     @app.route("/auto/procs/kill", methods=["POST"])
@@ -296,6 +304,13 @@ def register_routes(app, state, require_auth):
             pid_int = int(pid)
         except (ValueError, TypeError):
             return jsonify({"error": f"Invalid PID: {pid}"}), 400
+
+        if pid_int <= 4 or pid_int in (os.getpid(), os.getppid()):
+            return jsonify({
+                "error": f"Refusing to kill protected PID {pid_int}",
+                "pid": pid_int,
+                "success": False,
+            }), 400
 
         force = body.get("force", False) or request.args.get("force") in ("1", "true", "yes")
 
@@ -322,5 +337,5 @@ def register_routes(app, state, require_auth):
         except subprocess.TimeoutExpired:
             return jsonify({"error": "taskkill timed out", "pid": pid_int, "success": False}), 504
         except Exception as e:
-            _log("procs_kill", f"Error killing PID {pid_int}: {e}")
+            _log(f"procs_kill: Error killing PID {pid_int}: {e}")
             return jsonify({"error": str(e), "pid": pid_int, "success": False}), 500
