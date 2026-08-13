@@ -870,6 +870,13 @@ except ImportError:
     _console("[WARN] routes_vision.py not found")
 
 try:
+    from routes_ground import register_routes as reg_ground
+    GROUND_AVAILABLE = True
+except ImportError:
+    GROUND_AVAILABLE = False
+    _console("[WARN] routes_ground.py not found")
+
+try:
     from routes_uac import register_routes as reg_uac
     UAC_AVAILABLE = True
 except ImportError:
@@ -1327,6 +1334,9 @@ if TEMPLATE_AVAILABLE:
 if VISION_AVAILABLE:
     reg_vision(app, state, require_auth)
     features["vision_detection"] = True
+if GROUND_AVAILABLE:
+    reg_ground(app, state, require_auth)
+    features["grounding_model"] = True
 if UAC_AVAILABLE:
     reg_uac(app, state, require_auth)
     features["uac_automation"] = True
