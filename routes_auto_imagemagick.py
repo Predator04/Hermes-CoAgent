@@ -297,6 +297,12 @@ def register_routes(app, state, require_auth):
                 ["compare", "-metric", metric.upper(), safe_ref, safe_test, "null:"],
                 timeout=30
             )
+            # compare exit codes: 0=identical, 1=different, 2=error
+            if code == 2:
+                return jsonify({
+                    "ok": False,
+                    "error": stderr.strip() or stdout.strip() or "compare failed",
+                }), 502
             # ImageMagick outputs the metric value to stderr
             metric_value = stderr.strip() if stderr else stdout.strip()
             return jsonify({
@@ -336,15 +342,30 @@ def register_routes(app, state, require_auth):
             return _missing_field("width and/or height")
 
         try:
+            # Validate width/height are integers within a sane bound
+            w = None
+            h = None
+            for name, val in (("width", width), ("height", height)):
+                if val in (None, ""):
+                    continue
+                try:
+                    n = int(str(val).strip())
+                except (TypeError, ValueError):
+                    raise ValueError(f"{name} must be an integer")
+                if n < 0 or n > 20000:
+                    raise ValueError(f"{name} must be between 0 and 20000")
+                if name == "width":
+                    w = n
+                else:
+                    h = n
+
             safe_source = _safe_path(source)
             safe_output = _safe_path(output)
             if not os.path.isfile(safe_source):
                 return jsonify({"ok": False, "error": f"file not found: {source}"}), 404
 
             # Build geometry
-            w = str(width) if width else ""
-            h = str(height) if height else ""
-            geom = f"{w}x{h}"
+            geom = f"{w if w is not None else ''}x{h if h is not None else ''}"
             if keep_aspect:
                 geom += ">"  # only shrink, preserve aspect
 
