@@ -7,8 +7,7 @@ Guided setup page shown on fresh installs so users can:
   3. Optionally start a public tunnel and get a phone-scannable URL (QR)
   4. Toggle auto-start on login (schtasks /Change /Enable|/Disable)
 
-The blueprint is named "onboarding" (NOT "setup" — that name is taken by the
-Shopify wizard in routes_setup.py). A marker file .onboarded is written to
+The blueprint is named "onboarding". A marker file .onboarded is written to
 COAGENT_DIR on completion; while it is absent, GET / and GET /dashboard are
 redirected to /setup by a before_request hook.
 

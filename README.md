@@ -221,7 +221,6 @@ Hermes-CoAgent/
 | `routes_recorder_gif.py` | Animated GIF recorder |
 | `routes_reminders.py` | Timed reminders and alerts |
 | `routes_stealth_browser.py` | Undetectable browser (13 patches) |
-| `routes_store.py` | E-commerce store automation |
 | `routes_stream.py` | Screen streaming (SSE/WS) |
 | `routes_system.py` | System info, volume, brightness |
 | `routes_telegram.py` | Telegram bot relay |

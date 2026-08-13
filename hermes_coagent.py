@@ -687,8 +687,6 @@ from routes_system import register_routes as reg_system
 from routes_diagnostics import register_routes as reg_diagnostics
 from routes_layout import register_routes as reg_layout
 from routes_webcam import register_routes as reg_webcam
-from routes_store import register_routes as reg_store
-from routes_setup import register_routes as reg_setup
 from routes_v63 import register_routes as reg_v63
 from routes_stream import register_routes as reg_stream
 from routes_process import register_routes as reg_process
@@ -1089,9 +1087,6 @@ reg_file(app, state, require_auth)
 reg_media(app, state, require_auth)
 reg_system(app, state, require_auth)
 reg_webcam(app, jsonify, request, COAGENT_DIR, _log, _json_body, require_auth)
-reg_store(app, state, require_auth)
-features["store_automation"] = True
-reg_setup(app, state, require_auth)
 reg_v63(app, state, require_auth)
 reg_stream(app, state, require_auth)
 reg_process(app, state, require_auth)
