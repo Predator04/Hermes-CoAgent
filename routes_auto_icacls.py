@@ -273,9 +273,11 @@ def register_routes(app, state, require_auth):
         if not exe:
             return jsonify({"ok": False, "error": "icacls not found"}), 503
 
-        args = [target, "/grant", f"{user}:{perm}"]
         if inherit:
-            args[-1] += "(OI)(CI)"
+            grant_str = f"{user}:(OI)(CI){perm}"
+        else:
+            grant_str = f"{user}:{perm}"
+        args = [target, "/grant", grant_str]
         try:
             stdout, stderr, rc = _run_icacls(args, timeout=15)
             success = rc == 0
@@ -326,9 +328,11 @@ def register_routes(app, state, require_auth):
         if not exe:
             return jsonify({"ok": False, "error": "icacls not found"}), 503
 
-        args = [target, "/deny", f"{user}:{perm}"]
         if inherit:
-            args[-1] += "(OI)(CI)"
+            deny_str = f"{user}:(OI)(CI){perm}"
+        else:
+            deny_str = f"{user}:{perm}"
+        args = [target, "/deny", deny_str]
         try:
             stdout, stderr, rc = _run_icacls(args, timeout=15)
             success = rc == 0
@@ -533,11 +537,9 @@ def register_routes(app, state, require_auth):
         if not exe:
             return jsonify({"ok": False, "error": "icacls not found"}), 503
 
-        args = [acl_file, "/restore"]
-        if target:
-            args.extend([target])
-        else:
-            args.append("/t")
+        if not target:
+            return jsonify({"ok": False, "error": "target path is required for restore"}), 400
+        args = [target, "/restore", acl_file]
 
         try:
             stdout, stderr, rc = _run_icacls(args, timeout=30)
@@ -545,7 +547,7 @@ def register_routes(app, state, require_auth):
             return jsonify({
                 "ok": success,
                 "acl_file": acl_file,
-                "target": target or "original paths",
+                "target": target,
                 "exit_code": rc,
                 "message": stdout.strip() or stderr.strip(),
             })
