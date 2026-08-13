@@ -1,5 +1,13 @@
-"""Undetectable browser launch routes backed by patchright when available."""
+"""Undetectable browser launch routes backed by patchright when available.
 
+Each session runs on a dedicated per-session worker thread so that every
+Playwright operation (create -> navigate -> close) happens on the *same*
+thread. Playwright's sync API binds every object to the event loop of its
+creating thread; closing objects from a different thread raises greenlet/loop
+errors and leaks the Chromium process + node driver (issue #55).
+"""
+
+import queue
 import random
 import threading
 import time
@@ -14,6 +22,10 @@ browser_automation_bp = Blueprint("browser_automation", __name__)
 
 _SESSIONS = {}
 _SESSIONS_LOCK = threading.RLock()
+
+# Seconds to wait for a session's worker thread to acknowledge a close before
+# giving up. Playwright close() should be near-instant; 30s is generous.
+_CLOSE_TIMEOUT = 30.0
 
 _USER_AGENTS = [
     (
@@ -163,28 +175,131 @@ def _session_metadata(browser_id, info):
     }
 
 
-def _close_session(browser_id):
-    with _SESSIONS_LOCK:
-        info = _SESSIONS.pop(browser_id, None)
-    if not info:
-        raise KeyError("browser session not found")
-    errors = []
-    for key in ("context", "browser"):
+class _SessionWorker(threading.Thread):
+    """Owns a single Playwright sync session on its own dedicated thread.
+
+    Every Playwright object (playwright/browser/context/page) is created, used,
+    and closed on this thread, so the sync API never observes cross-thread
+    access. The HTTP route marshals commands to the worker through queues and
+    blocks for results, preserving the request/response shape.
+    """
+
+    def __init__(self, browser_id, sync_playwright, browser_error, engine,
+                 config, stealth_script):
+        super().__init__(daemon=True, name=f"pw-undetectable-{browser_id[:8]}")
+        self.browser_id = browser_id
+        self._sync_playwright = sync_playwright
+        self._browser_error = browser_error
+        self._engine = engine
+        self._config = config
+        self._stealth_script = stealth_script
+        self._cmd_queue = queue.Queue()
+        self._result_queue = queue.Queue()
+        self.info = None
+
+    # -- lifecycle (runs on the worker thread) -------------------------------
+
+    def run(self):
+        pw = browser = context = page = None
         try:
-            obj = info.get(key)
-            if obj is not None:
-                obj.close()
+            pw = self._sync_playwright().start()
+            browser = pw.chromium.launch(
+                headless=self._config["headless"],
+                args=self._config["launch_args"],
+            )
+            context = browser.new_context(
+                viewport=self._config["viewport"],
+                user_agent=self._config["user_agent"],
+                locale=self._config["locale"],
+                extra_http_headers={"Accept-Language": self._config["accept_language"]},
+                color_scheme=self._config["color_scheme"],
+                timezone_id=self._config["timezone_id"],
+            )
+            context.add_init_script(self._stealth_script)
+            page = context.new_page()
+
+            warning = None
+            try:
+                page.goto(
+                    self._config["url"],
+                    wait_until=self._config["wait_until"],
+                    timeout=self._config["timeout_ms"],
+                )
+            except self._browser_error as exc:
+                warning = f"{type(exc).__name__}: {exc}"
+            title = ""
+            try:
+                title = page.title()
+            except Exception:
+                title = ""
+
+            self.info = {
+                "engine": self._engine,
+                "status": "opened",
+                "url": page.url,
+                "title": title,
+                "headless": self._config["headless"],
+                "viewport": self._config["viewport"],
+                "user_agent": self._config["user_agent"],
+                "accept_language": self._config["accept_language"],
+                "created_at": time.time(),
+            }
+            # Signal the HTTP handler that the session is ready.
+            self._result_queue.put(("ready", warning))
         except Exception as exc:
-            errors.append(f"{key}: {type(exc).__name__}: {exc}")
-    try:
-        pw = info.get("playwright")
-        if pw is not None:
-            pw.stop()
-    except Exception as exc:
-        errors.append(f"playwright: {type(exc).__name__}: {exc}")
-    if errors:
-        return {"status": "closed_with_errors", "browser_id": browser_id, "errors": errors}
-    return {"status": "closed", "browser_id": browser_id}
+            self._cleanup(pw, browser, context)
+            self._result_queue.put(("error", f"{type(exc).__name__}: {exc}"))
+            return
+
+        # Hold the session open on this thread until told to close.
+        self._cmd_queue.get()
+
+        errors = self._cleanup(pw, browser, context)
+        if errors:
+            self._result_queue.put(("closed", {
+                "status": "closed_with_errors",
+                "browser_id": self.browser_id,
+                "errors": errors,
+            }))
+        else:
+            self._result_queue.put(("closed", {
+                "status": "closed",
+                "browser_id": self.browser_id,
+            }))
+
+    @staticmethod
+    def _cleanup(pw, browser, context):
+        errors = []
+        for key, obj in (("context", context), ("browser", browser)):
+            try:
+                if obj is not None:
+                    obj.close()
+            except Exception as exc:
+                errors.append(f"{key}: {type(exc).__name__}: {exc}")
+        try:
+            if pw is not None:
+                pw.stop()
+        except Exception as exc:
+            errors.append(f"playwright: {type(exc).__name__}: {exc}")
+        return errors
+
+    # -- marshaling API (called from the HTTP handler thread) ----------------
+
+    def wait_ready(self, timeout):
+        """Block until the worker signals ready/error. Returns (status, payload)."""
+        try:
+            return self._result_queue.get(timeout=timeout)
+        except queue.Empty:
+            raise TimeoutError("browser session failed to become ready")
+
+    def request_close(self, timeout=_CLOSE_TIMEOUT):
+        """Signal close and block for the worker's result. Returns a status dict."""
+        self._cmd_queue.put("close")
+        try:
+            status, payload = self._result_queue.get(timeout=timeout)
+        except queue.Empty:
+            return {"status": "close_timed_out", "browser_id": self.browser_id}
+        return payload
 
 
 @browser_automation_bp.route("/browser/undetectable", methods=["POST"])
@@ -222,87 +337,69 @@ def route_browser_undetectable():
             f"--window-size={viewport['width']},{viewport['height']}",
         ])
 
-    pw = browser = context = page = None
     browser_id = uuid.uuid4().hex
-    try:
-        pw = sync_playwright().start()
-        browser = pw.chromium.launch(headless=headless, args=launch_args)
-        context = browser.new_context(
-            viewport=viewport,
-            user_agent=user_agent,
-            locale=locale,
-            extra_http_headers={"Accept-Language": accept_language},
-            color_scheme=str(data.get("color_scheme") or "light"),
-            timezone_id=str(data.get("timezone_id") or "America/Los_Angeles"),
-        )
-        context.add_init_script(_stealth_init_script(accept_language))
-        page = context.new_page()
-        warning = None
-        try:
-            page.goto(url, wait_until=data.get("wait_until", "load"), timeout=timeout_ms)
-        except BrowserError as exc:
-            warning = f"{type(exc).__name__}: {exc}"
-        title = ""
-        try:
-            title = page.title()
-        except Exception:
-            title = ""
+    config = {
+        "url": url,
+        "wait_until": data.get("wait_until", "load"),
+        "timeout_ms": timeout_ms,
+        "viewport": viewport,
+        "locale": locale,
+        "accept_language": accept_language,
+        "user_agent": user_agent,
+        "headless": headless,
+        "color_scheme": str(data.get("color_scheme") or "light"),
+        "timezone_id": str(data.get("timezone_id") or "America/Los_Angeles"),
+        "launch_args": launch_args,
+    }
 
-        info = {
-            "playwright": pw,
-            "browser": browser,
-            "context": context,
-            "page": page,
-            "engine": engine,
-            "status": "opened",
-            "url": page.url,
-            "title": title,
-            "headless": headless,
-            "viewport": viewport,
-            "user_agent": user_agent,
-            "accept_language": accept_language,
-            "created_at": time.time(),
-        }
-        with _SESSIONS_LOCK:
-            _SESSIONS[browser_id] = info
-        return jsonify({
-            **_session_metadata(browser_id, info),
-            "warning": warning,
-            "stealth_options": {
-                "random_viewport": True,
-                "webdriver_flag_disabled": True,
-                "accept_language_spoofed": True,
-                "realistic_user_agent": True,
-            },
-        })
-    except Exception as exc:
-        for obj in (context, browser):
-            try:
-                if obj is not None:
-                    obj.close()
-            except Exception:
-                pass
-        try:
-            if pw is not None:
-                pw.stop()
-        except Exception:
-            pass
-        return _error(f"{type(exc).__name__}: {exc}", 500)
+    worker = _SessionWorker(
+        browser_id, sync_playwright, BrowserError, engine, config,
+        _stealth_init_script(accept_language),
+    )
+    worker.start()
+
+    # Give the worker the navigation timeout plus launch overhead.
+    ready_timeout = (timeout_ms / 1000.0) + 60.0
+    try:
+        status, payload = worker.wait_ready(ready_timeout)
+    except TimeoutError:
+        return _error("browser session failed to start within timeout", 500,
+                      browser_id=browser_id)
+    if status == "error":
+        return _error(payload, 500)
+
+    with _SESSIONS_LOCK:
+        _SESSIONS[browser_id] = worker
+
+    return jsonify({
+        **_session_metadata(browser_id, worker.info),
+        "warning": payload,
+        "stealth_options": {
+            "random_viewport": True,
+            "webdriver_flag_disabled": True,
+            "accept_language_spoofed": True,
+            "realistic_user_agent": True,
+        },
+    })
 
 
 @browser_automation_bp.route("/browser/undetectable/list", methods=["GET"])
 def route_browser_undetectable_list():
     with _SESSIONS_LOCK:
-        sessions = [_session_metadata(browser_id, info) for browser_id, info in _SESSIONS.items()]
+        sessions = [
+            _session_metadata(browser_id, worker.info or {})
+            for browser_id, worker in _SESSIONS.items()
+        ]
     return jsonify({"sessions": sessions, "count": len(sessions)})
 
 
 @browser_automation_bp.route("/browser/undetectable/<browser_id>/close", methods=["POST"])
 def route_browser_undetectable_close(browser_id):
-    try:
-        return jsonify(_close_session(browser_id))
-    except KeyError as exc:
-        return _error(str(exc), 404, browser_id=browser_id)
+    with _SESSIONS_LOCK:
+        worker = _SESSIONS.pop(browser_id, None)
+    if worker is None:
+        return _error("browser session not found", 404, browser_id=browser_id)
+    return jsonify(worker.request_close())
 
 
 def register_routes(app, state, require_auth):
