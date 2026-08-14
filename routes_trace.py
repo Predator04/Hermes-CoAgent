@@ -15,7 +15,7 @@ Jaeger). Otherwise OTLP is silently skipped.
 import functools
 import json
 import os
-import random
+import secrets
 import re
 import threading
 import time
@@ -83,7 +83,7 @@ def _try_init_otlp():
 
 
 def _rand_hex(n):
-    return "".join(f"{random.randint(0, 15):x}" for _ in range(n))
+    return secrets.token_hex(n // 2)
 
 
 def _new_trace_id():
