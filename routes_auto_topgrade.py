@@ -4,9 +4,11 @@
 # Install: winget install topgrade-rs.topgrade  OR  scoop install topgrade
 
 import glob
+import re
 import shutil
 import subprocess
 import os
+import threading
 from flask import jsonify, request
 from shared import _json_body, _log, _missing_field
 
@@ -45,7 +47,11 @@ def _find_topgrade():
         if "*" in c:
             matches = glob.glob(c)
             if matches:
-                return matches[0]
+                # WinGet installs into versioned dirs like
+                # topgrade-rs.topgrade_<version>_<hash>; glob order is
+                # filesystem-dependent, so pick the newest to avoid running
+                # a stale binary after an upgrade.
+                return max(matches, key=os.path.getmtime)
         elif os.path.isfile(c):
             return c
     return None
@@ -69,6 +75,25 @@ def _split_steps(value):
     else:
         parts = [p.strip() for p in str(value).split(",") if p.strip()]
     return parts or None
+
+
+_STEP_RE = re.compile(r"^[a-z0-9_-]+$")
+_RUN_LOCK = threading.Lock()
+
+
+def _validate_steps(steps):
+    """Reject step names with control chars or flag-like values.
+
+    Steps are joined into a single --only/--disable argument and written to
+    the log; allowing newlines or leading '-' enables log injection and
+    confusing topgrade flag parsing.
+    """
+    if not steps:
+        return None
+    for s in steps:
+        if not _STEP_RE.match(s):
+            return f"invalid step name: {s!r}"
+    return None
 
 
 def _find_config():
@@ -149,6 +174,9 @@ def register_routes(app, state, require_auth):
         body = _json_body()
         only_steps = _split_steps(body.get("only"))
         disable_steps = _split_steps(body.get("disable"))
+        steps_err = _validate_steps(only_steps) or _validate_steps(disable_steps)
+        if steps_err:
+            return jsonify({"error": steps_err}), 400
         cleanup = bool(body.get("cleanup", False))
         timeout = body.get("timeout", 600)
 
@@ -173,6 +201,12 @@ def register_routes(app, state, require_auth):
         if cleanup:
             cmd.append("--cleanup")
 
+        if not _RUN_LOCK.acquire(blocking=False):
+            return jsonify({
+                "error": "a topgrade run is already in progress",
+                "success": False,
+            }), 409
+
         _log(f"topgrade_run: {' '.join(cmd)}")
 
         try:
@@ -196,6 +230,8 @@ def register_routes(app, state, require_auth):
         except Exception as e:
             _log(f"topgrade_run: Error: {e}")
             return jsonify({"error": str(e), "success": False}), 500
+        finally:
+            _RUN_LOCK.release()
 
     @app.route("/auto/topgrade/config", methods=["GET"])
     @require_auth
@@ -209,8 +245,12 @@ def register_routes(app, state, require_auth):
             })
         try:
             with open(cfg, "r", encoding="utf-8", errors="replace") as fh:
-                content = fh.read()
-            return jsonify({"config": cfg, "content": content})
+                content = fh.read(65536)
+            return jsonify({
+                "config": cfg,
+                "content": content,
+                "truncated": len(content) >= 65536,
+            })
         except Exception as e:
             _log(f"topgrade_config: Error reading {cfg}: {e}")
             return jsonify({"config": cfg, "error": str(e)}), 500
