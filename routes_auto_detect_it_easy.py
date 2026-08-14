@@ -95,6 +95,8 @@ def register_routes(app, state, require_auth):
         Body: {"path": "C:\\sample.exe", "json": true, "deep": false, "heuristic": false, "recursive": false, "info": false}
         """
         body = _json_body()
+        if not isinstance(body, dict):
+            return _missing_field("path")
         target = body.get("path")
         if not target:
             return _missing_field("path")
