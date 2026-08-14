@@ -41,7 +41,7 @@ def _is_wevtutil_available():
         return False
     try:
         result = subprocess.run(
-            [exe, "--version"],
+            [exe, "el"],
             capture_output=True,
             text=True,
             timeout=10,
