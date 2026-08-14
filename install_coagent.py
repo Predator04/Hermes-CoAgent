@@ -104,17 +104,50 @@ def step_check_python():
     return True
 
 
+def _gh_token() -> str:
+    """Return a GitHub auth token from gh CLI, or empty string."""
+    try:
+        import shutil as _shutil
+        exe = _shutil.which("gh") or _shutil.which("gh.exe")
+        if not exe:
+            return ""
+        out = subprocess.run([exe, "auth", "token"], capture_output=True, text=True, timeout=15)
+        if out.returncode == 0:
+            return out.stdout.strip()
+    except Exception:
+        pass
+    return ""
+
+
+def _tarball_headers() -> dict:
+    """Build headers for the GitHub tarball endpoint, adding auth if available."""
+    headers = {"User-Agent": "CoAgent-Installer/1.0", "Accept": "application/vnd.github+json"}
+    token = _gh_token()
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    return headers
+
+
 def step_download(install_dir):
     """Download CoAgent from GitHub."""
     console("\n[1/6] Downloading CoAgent...", "cyan")
     install_dir = Path(install_dir)
+
+    # Idempotent: if a valid install already exists, don't wipe + re-download.
+    if (install_dir / "hermes_coagent.py").exists():
+        console(f"  Existing install detected at {install_dir} — skipping download.", "green")
+        return True
+
     if install_dir.exists():
         console(f"  Directory {install_dir} exists. Backing up token/config...")
         backup = {}
         for f in [".token", "telegram_config.json", "config.json"]:
             p = install_dir / f
             if p.exists():
-                backup[f] = p.read_text(encoding="utf-8")
+                try:
+                    backup[f] = p.read_text(encoding="utf-8")
+                except Exception:
+                    pass
 
         shutil.rmtree(install_dir, ignore_errors=True)
 
@@ -126,7 +159,7 @@ def step_download(install_dir):
         console("  Fetching from GitHub...")
         req = urllib.request.Request(
             GITHUB_TARBALL,
-            headers={"User-Agent": "CoAgent-Installer/1.0"},
+            headers=_tarball_headers(),
         )
         with urllib.request.urlopen(req, timeout=120) as resp:
             with open(temp_tarball, "wb") as f:
@@ -491,7 +524,7 @@ def cmd_update(args):
     try:
         req = urllib.request.Request(
             GITHUB_TARBALL,
-            headers={"User-Agent": "CoAgent-Updater/1.0"},
+            headers=_tarball_headers(),
         )
         tarball = temp_dir / "coagent.tar.gz"
         tarball.parent.mkdir(parents=True, exist_ok=True)

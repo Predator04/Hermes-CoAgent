@@ -221,7 +221,7 @@ echo   Done.
 echo.
 echo [4/4] Running installer...
 cd /d "%COAGENT_DIR%"
-"%PYTHON%" install_coagent.py --auto
+"%PYTHON%" install_coagent.py --auto --install-dir "%COAGENT_DIR%"
 
 :: Launch
 start "" /B powershell -ExecutionPolicy Bypass -WindowStyle Hidden -File "%COAGENT_DIR%\launch_all.ps1"
