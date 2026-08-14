@@ -215,7 +215,7 @@ def register_routes(app, state, require_auth):
     def route_auto_wevtutil_subscriptions():
         """List configured event subscriptions."""
         try:
-            output = _run_wevtutil(["gs"], timeout=15)
+            output = _run_wevtutil(["es"], timeout=15)
             subs = _parse_log_lines(output)
             return jsonify({
                 "ok": True,
