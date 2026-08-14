@@ -113,11 +113,14 @@ def _first_run_or_authed() -> bool:
     Open on first run (marker absent); requires bearer token afterward so a
     completed install cannot be re-scraped for its token by anyone with
     network reach to the port.
+
+    Note: after onboarding we always require a valid bearer token — even when
+    auth was booted disabled. Otherwise an unauthenticated caller could hit
+    /onboard/token on a no-auth boot, mint a token via create_if_missing=True,
+    and seize control of the install.
     """
     if not _is_onboarded():
         return True
-    if not _auth.AUTH_ENABLED:
-        return True  # server was started with no auth at all — nothing to protect
     header = request.headers.get("Authorization", "")
     if not header.startswith("Bearer "):
         return False
@@ -302,7 +305,12 @@ def route_onboard_tunnel():
     try:
         with urllib.request.urlopen(req, timeout=45) as resp:
             data = json.loads(resp.read().decode("utf-8", errors="replace") or "{}")
-            return jsonify({"ok": True, "url": data.get("url"), **data})
+            if not isinstance(data, dict):
+                return jsonify({"ok": False, "error": "unexpected upstream body"}), 502
+            # Preserve upstream fields but never let them clobber the outer
+            # envelope ("ok" in particular).
+            payload = {k: v for k, v in data.items() if k != "ok"}
+            return jsonify({"ok": True, "url": data.get("url"), **payload})
     except urllib.error.HTTPError as e:
         try:
             payload = json.loads(e.read().decode("utf-8", errors="replace") or "{}")
