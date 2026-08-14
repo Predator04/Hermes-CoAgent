@@ -41,13 +41,21 @@ def _clean_output_path(value):
         raise ValueError("output must not be empty")
     if "\x00" in output:
         raise ValueError("output cannot contain null bytes")
+    if any(ord(c) < 32 for c in output):
+        raise ValueError("output cannot contain control characters")
     suffix = Path(output).suffix.lower()
     if suffix not in {".png", ".jpg", ".jpeg", ".bmp"}:
         raise ValueError("output must end with .png, .jpg, .jpeg, or .bmp")
-    # Block path traversal — only allow relative filenames or paths within screenshots dir
-    resolved = Path(output).resolve()
+    # Block path traversal — anchor relative filenames to the screenshots dir
+    # and reject anything that resolves outside it (absolute paths or escapes).
+    candidate = Path(output)
+    root = SCREENSHOTS_DIR.resolve()
+    if candidate.is_absolute():
+        resolved = candidate.resolve()
+    else:
+        resolved = (SCREENSHOTS_DIR / candidate).resolve()
     try:
-        resolved.relative_to(SCREENSHOTS_DIR.resolve())
+        resolved.relative_to(root)
     except ValueError:
         raise ValueError("output path must be within screenshots directory")
     return str(resolved)
