@@ -136,6 +136,12 @@ def register_routes(app, state, require_auth):
         minidump = _as_bool(body.get("minidump"), False)
         dmode = str(body.get("dmode") or "A").strip().upper()
         out_dir = body.get("dir", "")
+        if out_dir is not None:
+            out_dir = str(out_dir)
+            if any(ord(c) < 32 for c in out_dir):
+                return jsonify({"error": "dir cannot contain control characters"}), 400
+            if out_dir.startswith("-") or out_dir.startswith("/"):
+                return jsonify({"error": "dir must be a directory path, not a CLI flag"}), 400
 
         if dmode and dmode not in _DMODE_WHITELIST:
             return jsonify({
