@@ -56,7 +56,8 @@ def _find_diec():
 def _get_version(exe):
     for flag in ("--version", "-v"):
         try:
-            r = subprocess.run([exe, flag], capture_output=True, text=True, timeout=5)
+            r = subprocess.run([exe, flag], capture_output=True, text=True, timeout=5,
+                               encoding="utf-8", errors="replace")
             out = (r.stdout.strip() or r.stderr.strip())
             if out:
                 first = out.split("\n")[0].strip()
@@ -134,7 +135,8 @@ def register_routes(app, state, require_auth):
                 cmd.append("-i")
             cmd.append(target)
 
-            r = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=60,
+                               encoding="utf-8", errors="replace")
 
             if r.returncode != 0 and not r.stdout:
                 _log("die_detect", f"diec exited {r.returncode}: {r.stderr.strip()}")
