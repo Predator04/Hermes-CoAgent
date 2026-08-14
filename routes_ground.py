@@ -177,8 +177,14 @@ def _normalize_bbox(raw, image_size):
             x, y = raw.get("x", raw.get("left", 0)), raw.get("y", raw.get("top", 0))
             w, h = raw["width"], raw["height"]
         elif "right" in raw and "bottom" in raw:
-            x, y = raw.get("left", 0), raw.get("top", 0)
-            w, h = raw["right"] - x, raw["bottom"] - y
+            try:
+                left = float(raw.get("left", 0))
+                top = float(raw.get("top", 0))
+                right = float(raw["right"])
+                bottom = float(raw["bottom"])
+            except (TypeError, ValueError):
+                return None
+            x, y, w, h = left, top, right - left, bottom - top
     elif isinstance(raw, (list, tuple)) and len(raw) >= 4:
         a, b, c, d = raw[0], raw[1], raw[2], raw[3]
         # heuristic: if c > a and d > b and both look like coords, it may be x2/y2
