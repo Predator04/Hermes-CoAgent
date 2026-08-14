@@ -66,6 +66,7 @@ def _run_trip(target, mode="json", cycles=5, protocol="icmp", timeout=30, extra_
     ]
     if extra_args:
         args.extend(extra_args)
+    args.append("--")
     args.append(target)
 
     try:
@@ -124,9 +125,14 @@ def register_routes(app, state, require_auth):
         body = _json_body()
         if not body:
             return jsonify({"error": "JSON body required"}), 400
-        target = body.get("target", "").strip()
+        target = body.get("target", "")
+        if not isinstance(target, str):
+            return jsonify({"error": "target must be a string"}), 400
+        target = target.strip()
         if not target:
             return _missing_field("target")
+        if target.startswith("-"):
+            return jsonify({"error": "target must not look like a CLI flag"}), 400
 
         mode = body.get("mode", "json")
         cycles = int(body.get("cycles", 5))
@@ -186,6 +192,7 @@ def register_routes(app, state, require_auth):
         """
         targets_str = request.args.get("targets", "google.com,cloudflare.com,github.com")
         targets = [t.strip() for t in targets_str.split(",") if t.strip()][:5]
+        targets = [t for t in targets if not t.startswith("-")]
         if not targets:
             return jsonify({"error": "No valid targets"}), 400
 
