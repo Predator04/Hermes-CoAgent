@@ -138,7 +138,7 @@ def register_routes(app, state, require_auth):
         except Exception:
             drive = "c:"
 
-        drive = drive.rstrip("\\").rstrip("/").strip()
+        drive = drive.strip().rstrip("\\/")
         if not drive.endswith(":"):
             drive = drive + ":"
 
@@ -208,7 +208,7 @@ def register_routes(app, state, require_auth):
             drive = "c:"
             query = "allocationreport"
 
-        drive = drive.rstrip("\\").rstrip("/").strip()
+        drive = drive.strip().rstrip("\\/")
         if not drive.endswith(":"):
             drive = drive + ":"
 
