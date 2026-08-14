@@ -74,7 +74,9 @@ def _load_config():
     cfg = {}
     if _CONFIG_PATH.exists():
         try:
-            cfg.update(json.loads(_CONFIG_PATH.read_text(encoding="utf-8")))
+            loaded = json.loads(_CONFIG_PATH.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                cfg.update(loaded)
         except (OSError, ValueError) as exc:
             _log(f"[ground] failed to read {_CONFIG_PATH}: {exc}")
 
