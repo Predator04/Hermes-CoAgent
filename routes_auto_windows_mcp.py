@@ -178,7 +178,7 @@ def register_routes(app, state, require_auth):
                 cmd,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
-                creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATION_FLAGS") else 0,
+                creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0,
             )
         except OSError as exc:
             _log(f"[windows_mcp] server start failed: {exc}")
