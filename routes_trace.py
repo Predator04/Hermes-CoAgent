@@ -126,6 +126,29 @@ def _summarize(value, limit):
     return text
 
 
+_SENSITIVE_KEY_PARTS = (
+    "password", "passwd", "secret", "token", "api_key", "apikey",
+    "authorization", "cookie", "credential", "private_key", "session",
+)
+
+
+def _scrub(value, depth=0):
+    """Recursively redact sensitive fields before persisting/exporting spans."""
+    if depth > 8 or value is None:
+        return value
+    if isinstance(value, dict):
+        out = {}
+        for key, val in value.items():
+            if any(part in str(key).lower() for part in _SENSITIVE_KEY_PARTS):
+                out[key] = "[REDACTED]"
+            else:
+                out[key] = _scrub(val, depth + 1)
+        return out
+    if isinstance(value, (list, tuple)):
+        return [_scrub(v, depth + 1) for v in value]
+    return value
+
+
 def _cur_stack():
     stack = getattr(_CURRENT_SPAN, "stack", None)
     if stack is None:
@@ -368,8 +391,8 @@ def trace_action(name):
                 span_obj.set_params({
                     "path": getattr(request, "path", ""),
                     "method": getattr(request, "method", ""),
-                    "body": request.get_json(silent=True) if request.method != "GET" else {},
-                    "query": dict(request.args or {}),
+                    "body": _scrub(request.get_json(silent=True) if request.method != "GET" else {}),
+                    "query": _scrub(dict(request.args or {})),
                 })
                 span_obj.set_attribute("http.method", request.method)
                 span_obj.set_attribute("http.path", request.path)
