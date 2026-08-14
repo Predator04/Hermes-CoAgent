@@ -271,8 +271,8 @@ class Span(dict):
             self["duration_ms"] = int(round((self["end"] - self["start"]) * 1000))
             if self["status"] == "running":
                 self["status"] = "ok"
-        _persist_span(self["run_id"], dict(self))
-        _export_otlp(self)
+            _persist_span(self["run_id"], dict(self))
+            _export_otlp(self)
 
 
 class _SpanCtx:
