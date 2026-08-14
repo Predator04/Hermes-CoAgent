@@ -370,10 +370,15 @@ Shortcut.Save
         "/it", "/f", "/delay", "0000:30"
     ]
     if username:
-        schtasks_cmd.insert(6, "/ru")
-        schtasks_cmd.insert(7, username)
-    run(schtasks_cmd, timeout=15, check=False)
-    console("  ✓ Auto-start scheduled task created")
+        schtasks_cmd += ["/ru", username]
+    r = run(schtasks_cmd, timeout=15, check=False)
+    if r is None or r.returncode != 0:
+        err = (r.stderr or "").strip() if r else "schtasks not found"
+        console(f"  ⚠  Auto-start task FAILED to create: {err[:200]}", "yellow")
+        console("     (run the installer as Administrator, or create it manually:)", "yellow")
+        console(f'     schtasks /create /tn "CoAgent" /tr "\\"{bat_path}\\"" /sc onlogon /it /f', "yellow")
+    else:
+        console("  ✓ Auto-start scheduled task created")
 
     return True
 
