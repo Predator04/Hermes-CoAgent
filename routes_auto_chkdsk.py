@@ -38,24 +38,34 @@ def _find_chkdsk():
 
 
 def _is_chkdsk_available():
-    """Check chkdsk responds by running a quick read-only scan (no repair)."""
+    """Check chkdsk responds via its help flag (avoids a real scan)."""
     exe = _find_chkdsk()
     if not exe:
         return False
     try:
-        result = subprocess.run([exe, "C:"], capture_output=True, text=True, timeout=15)
-        return result.returncode == 0 and bool(result.stdout.strip())
+        result = subprocess.run(
+            [exe, "/?"], capture_output=True, text=True, timeout=10,
+            stdin=subprocess.DEVNULL,
+        )
+        return result.returncode == 0
     except (subprocess.TimeoutExpired, OSError):
         return False
 
 
-def _run_chkdsk(args, timeout=120):
+def _run_chkdsk(args, timeout=120, input_text=None):
     """Run chkdsk.exe with given args, return parsed output or raise."""
     exe = _find_chkdsk()
     if not exe:
         raise RuntimeError("chkdsk.exe not found on system")
+    kwargs = {}
+    if input_text is not None:
+        kwargs["input"] = input_text
+    else:
+        kwargs["stdin"] = subprocess.DEVNULL
     try:
-        result = subprocess.run([exe] + args, capture_output=True, text=True, timeout=timeout)
+        result = subprocess.run(
+            [exe] + args, capture_output=True, text=True, timeout=timeout, **kwargs
+        )
     except subprocess.TimeoutExpired:
         raise RuntimeError("chkdsk operation timed out")
     except OSError as e:
@@ -97,6 +107,16 @@ def _parse_chkdsk_output(output):
     return result
 
 
+def _sanitize_volume(volume):
+    """Validate a chkdsk volume, rejecting flag-like inputs."""
+    v = (volume or "").strip().rstrip("\\")
+    if not v:
+        raise ValueError("volume must not be empty")
+    if v.startswith(("/", "-")):
+        raise ValueError(f"invalid volume: {v}")
+    return v
+
+
 def register_routes(app, state, require_auth):
     @app.route("/auto/chkdsk/info", methods=["GET"])
     @require_auth
@@ -114,7 +134,10 @@ def register_routes(app, state, require_auth):
     def route_auto_chkdsk_scan():
         """Run a read-only scan on a volume (no repair) — safe, non-destructive."""
         body = _json_body()
-        volume = (body.get("volume") or "C:").strip().rstrip("\\")
+        try:
+            volume = _sanitize_volume(body.get("volume") or "C:")
+        except ValueError as e:
+            return jsonify({"ok": False, "volume": None, "error": str(e)}), 400
         try:
             output = _run_chkdsk([volume], timeout=120)
             parsed = _parse_chkdsk_output(output)
@@ -127,7 +150,10 @@ def register_routes(app, state, require_auth):
     def route_auto_chkdsk_repair():
         """Schedule a repair scan (/F) — may require volume dismount or next boot."""
         body = _json_body()
-        volume = (body.get("volume") or "C:").strip().rstrip("\\")
+        try:
+            volume = _sanitize_volume(body.get("volume") or "C:")
+        except ValueError as e:
+            return jsonify({"ok": False, "volume": None, "error": str(e)}), 400
         try:
             output = _run_chkdsk([volume, "/F"], timeout=300)
             parsed = _parse_chkdsk_output(output)
@@ -140,7 +166,10 @@ def register_routes(app, state, require_auth):
     def route_auto_chkdsk_thorough():
         """Run a thorough scan (/R) — locates bad sectors and recovers readable info."""
         body = _json_body()
-        volume = (body.get("volume") or "C:").strip().rstrip("\\")
+        try:
+            volume = _sanitize_volume(body.get("volume") or "C:")
+        except ValueError as e:
+            return jsonify({"ok": False, "volume": None, "error": str(e)}), 400
         try:
             output = _run_chkdsk([volume, "/R"], timeout=600)
             parsed = _parse_chkdsk_output(output)
@@ -153,7 +182,10 @@ def register_routes(app, state, require_auth):
     def route_auto_chkdsk_force_dismount():
         """Force dismount before scan (/X) — useful for non-system volumes."""
         body = _json_body()
-        volume = (body.get("volume") or "D:").strip().rstrip("\\")
+        try:
+            volume = _sanitize_volume(body.get("volume") or "D:")
+        except ValueError as e:
+            return jsonify({"ok": False, "volume": None, "error": str(e)}), 400
         try:
             output = _run_chkdsk([volume, "/X", "/F"], timeout=300)
             parsed = _parse_chkdsk_output(output)
@@ -166,9 +198,12 @@ def register_routes(app, state, require_auth):
     def route_auto_chkdsk_schedule():
         """Schedule chkdsk to run on next boot (for system volumes in use)."""
         body = _json_body()
-        volume = (body.get("volume") or "C:").strip().rstrip("\\")
         try:
-            output = _run_chkdsk([volume, "/F", "/R", "/OfflineScanAndFix"], timeout=30)
+            volume = _sanitize_volume(body.get("volume") or "C:")
+        except ValueError as e:
+            return jsonify({"ok": False, "volume": None, "error": str(e)}), 400
+        try:
+            output = _run_chkdsk([volume, "/F", "/R"], timeout=30, input_text="Y\n")
             parsed = _parse_chkdsk_output(output)
             return jsonify({"ok": True, "volume": volume, "parsed": parsed})
         except RuntimeError as e:
