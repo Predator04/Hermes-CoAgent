@@ -153,7 +153,7 @@ def register_routes(app, state, require_auth):
             return jsonify({"error": "timeout must be between 1 and 60"}), 400
 
         # Validate mode
-        valid_modes = {"tui", "stream", "pretty", "markdown", "csv", "json", "dot", "flows", "silent"}
+        valid_modes = {"pretty", "markdown", "csv", "json", "dot", "flows"}
         if mode not in valid_modes:
             return jsonify({"error": f"Invalid mode '{mode}'. Valid: {sorted(valid_modes)}"}), 400
 
