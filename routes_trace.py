@@ -173,11 +173,11 @@ def _persist_span(run_id, span_dict):
             _ACTIVE_RUNS[safe] = entry
             if len(_ACTIVE_RUNS) > MAX_RUNS_LISTED:
                 _ACTIVE_RUNS.popitem(last=False)
-    try:
-        with path.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(span_dict, default=str, ensure_ascii=False) + "\n")
-    except OSError as exc:
-        _console(f"[trace] persist failed for {safe}: {type(exc).__name__}: {exc}")
+        try:
+            with path.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(span_dict, default=str, ensure_ascii=False) + "\n")
+        except OSError as exc:
+            _console(f"[trace] persist failed for {safe}: {type(exc).__name__}: {exc}")
 
 
 def _export_otlp(span_dict):
