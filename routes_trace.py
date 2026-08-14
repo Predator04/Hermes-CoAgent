@@ -188,10 +188,11 @@ def _export_otlp(span_dict):
         from opentelemetry import trace as otel_trace
         start_ns = int(span_dict.get("start", time.time()) * 1e9)
         end_ns = int(span_dict.get("end", time.time()) * 1e9)
-        with tracer.start_as_current_span(
+        s = tracer.start_span(
             span_dict.get("name") or "coagent.action",
             start_time=start_ns,
-        ) as s:
+        )
+        try:
             attrs = span_dict.get("attributes") or {}
             for key, value in attrs.items():
                 try:
@@ -215,6 +216,7 @@ def _export_otlp(span_dict):
                     s.set_status(otel_trace.Status(otel_trace.StatusCode.ERROR, str(span_dict["error"])))
                 except Exception:
                     pass
+        finally:
             s.end(end_time=end_ns)
     except Exception as exc:
         _console(f"[trace] otlp export failed: {type(exc).__name__}: {exc}")
