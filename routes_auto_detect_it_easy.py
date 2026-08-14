@@ -102,6 +102,8 @@ def register_routes(app, state, require_auth):
             return _missing_field("path")
 
         target = os.path.expandvars(os.path.expanduser(str(target)))
+        if target.startswith("-"):
+            return jsonify({"error": "path must not look like a CLI flag"}), 400
         if not os.path.exists(target):
             return jsonify({"error": f"Path does not exist: {target}"}), 404
 
