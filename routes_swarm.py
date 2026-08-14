@@ -805,7 +805,11 @@ def _run_dag(run_id, auth_header):
             pending_left = any(t.get("status") == "pending" for t in current_tasks)
             if not pending_left and not active:
                 break
-            ready = _ready_tasks(current_tasks) if pending_left else []
+            if pending_left:
+                with _RUNS_LOCK:
+                    ready = _ready_tasks(current_tasks)
+            else:
+                ready = []
             launched = 0
             for t in ready:
                 if len(active) >= max_workers:
