@@ -51,7 +51,7 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_auto_cognee_recall():
         data = _json_body()
-        if "query" not in data:
+        if not isinstance(data, dict) or "query" not in data:
             return _missing_field("query")
 
         exe = _find_cognee_cli()
@@ -67,6 +67,9 @@ def register_routes(app, state, require_auth):
             timeout = max(1, min(int(data.get("timeout", 60)), 300))
         except (TypeError, ValueError) as exc:
             return jsonify({"ok": False, "error": str(exc)}), 400
+
+        if query.startswith("-"):
+            return jsonify({"ok": False, "error": "query must not look like a CLI flag"}), 400
 
         command = [exe, "recall", query]
         try:
