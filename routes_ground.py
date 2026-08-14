@@ -536,14 +536,22 @@ def register_routes(app, state, require_auth):
         click_ok = False
         try:
             from routes_mouse import _mouse_action  # local import: primitive
-            click_response = _mouse_action("click", click_x, click_y, button,
-                                           True, state)
-            try:
-                click_result = click_response.get_json(silent=True)
-            except AttributeError:
-                click_result = None
-            click_ok = bool(click_result and click_result.get("status") == "ok")
         except ImportError:
+            _mouse_action = None
+
+        if _mouse_action is not None:
+            try:
+                click_response = _mouse_action("click", click_x, click_y, button,
+                                               True, state)
+                try:
+                    click_result = click_response.get_json(silent=True)
+                except AttributeError:
+                    click_result = None
+                click_ok = bool(click_result and click_result.get("status") == "ok")
+            except Exception as exc:
+                click_ok = False
+                click_result = {"status": "error", "error": str(exc)}
+        else:
             # Fall back to direct pyautogui / Win32 so /ground/click still works
             try:
                 import pyautogui
@@ -551,6 +559,7 @@ def register_routes(app, state, require_auth):
                 click_ok = True
                 click_result = {"status": "ok", "fallback": "pyautogui"}
             except Exception as exc:
+                click_ok = False
                 click_result = {"status": "error", "error": str(exc)}
 
         return jsonify({
