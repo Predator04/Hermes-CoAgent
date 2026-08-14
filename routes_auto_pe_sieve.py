@@ -76,6 +76,18 @@ def _get_version(exe):
     return "unknown"
 
 
+def _as_bool(value, default=False):
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        return value.strip().lower() in ("1", "true", "yes", "on")
+    return default
+
+
 def register_routes(app, state, require_auth):
     @app.route("/auto/pe_sieve/info", methods=["GET"])
     @require_auth
@@ -119,9 +131,9 @@ def register_routes(app, state, require_auth):
         if pid <= 0:
             return jsonify({"error": "PID must be a positive integer"}), 400
 
-        json_out = bool(body.get("json", True))
-        quiet = bool(body.get("quiet", False))
-        minidump = bool(body.get("minidump", False))
+        json_out = _as_bool(body.get("json"), True)
+        quiet = _as_bool(body.get("quiet"), False)
+        minidump = _as_bool(body.get("minidump"), False)
         dmode = str(body.get("dmode", "A")).strip().upper()
         out_dir = body.get("dir", "")
 
