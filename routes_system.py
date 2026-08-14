@@ -905,6 +905,8 @@ $form.Add_Shown({
         py = _sys.executable
         cwd = str(COAGENT_DIR)
         argv_str = " ".join([main_script] + _sys.argv[1:])
+        import getpass as _getpass
+        username = os.environ.get("USERNAME") or _getpass.getuser()
 
         # Write Python restart script to temp (no spaces in path for scheduled task)
         script_path = os.path.join(os.environ.get("TEMP", cwd), "_coagent_restart.py")
@@ -926,7 +928,7 @@ subprocess.run([
     "powershell","-NoProfile","-Command",
     "$a=New-ScheduledTaskAction -Execute '" + _py + "' -Argument '" + _argv + "' -WorkingDirectory '" + _cwd + "';"
     "$t=New-ScheduledTaskTrigger -Once -At (Get-Date).AddSeconds(2);"
-    "$p=New-ScheduledTaskPrincipal -UserId 'Admin' -LogonType Interactive -RunLevel Highest;"
+    "$p=New-ScheduledTaskPrincipal -UserId '{username}' -LogonType Interactive -RunLevel Highest;"
     "Register-ScheduledTask -TaskName CoAgentLaunch -Action $a -Trigger $t -Principal $p -Force|Out-Null;"
     "Start-ScheduledTask -TaskName CoAgentLaunch"
 ], capture_output=True, timeout=15)

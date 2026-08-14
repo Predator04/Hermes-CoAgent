@@ -4,6 +4,7 @@ Discovers the CoAgent PID dynamically (reads from PID file or finds by process n
 rather than using a hardcoded PID. Supports custom Python path and script path via env vars.
 """
 import os
+import getpass
 import subprocess
 import sys
 import time
@@ -76,7 +77,7 @@ def _launch_via_scheduled_task():
         f"-Argument '{COAGENT_SCRIPT} --secure --allow-external' "
         f"-WorkingDirectory '{os.path.dirname(COAGENT_SCRIPT)}';"
         "$t=New-ScheduledTaskTrigger -Once -At (Get-Date).AddSeconds(2);"
-        "$p=New-ScheduledTaskPrincipal -UserId 'Admin' -LogonType Interactive -RunLevel Highest;"
+        f"$p=New-ScheduledTaskPrincipal -UserId '{getpass.getuser()}' -LogonType Interactive -RunLevel Highest;"
         "Register-ScheduledTask -TaskName CoAgentLaunch -Action $a -Trigger $t -Principal $p -Force|Out-Null;"
         "Start-ScheduledTask -TaskName CoAgentLaunch"
     )

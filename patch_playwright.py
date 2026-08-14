@@ -3,12 +3,18 @@ import shutil
 import os
 import sys
 
-filepath = r"C:\Program Files\Python312\Lib\site-packages\playwright\sync_api\_context_manager.py"
+# Resolve playwright's install path dynamically (no hardcoded Python version)
+try:
+    import playwright as _pw
+    filepath = os.path.join(os.path.dirname(os.path.abspath(_pw.__file__)), "sync_api", "_context_manager.py")
+except Exception:
+    filepath = ""
+
 backup = filepath + ".backup"
 
 # Check file exists
-if not os.path.exists(filepath):
-    print(f"ERROR: Playwright file not found at {filepath}", file=sys.stderr)
+if not filepath or not os.path.exists(filepath):
+    print("ERROR: Playwright file not found", file=sys.stderr)
     print("Use: py -c \"import playwright; print(playwright.__file__)\" to find the correct path")
     sys.exit(1)
 
