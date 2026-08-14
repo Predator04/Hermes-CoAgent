@@ -300,12 +300,21 @@ def register_routes(app, state, require_auth):
 
         args = ["quota", subcommand, drive]
         if subcommand == "modify":
-            threshold = body.get("threshold", "")
-            limit = body.get("limit", "")
-            if threshold:
-                args.extend(["/threshold", str(threshold)])
-            if limit:
-                args.extend(["/limit", str(limit)])
+            threshold = body.get("threshold")
+            limit = body.get("limit")
+            username = body.get("username")
+            if threshold is None or threshold == "":
+                return _missing_field("threshold")
+            if limit is None or limit == "":
+                return _missing_field("limit")
+            try:
+                threshold = int(threshold)
+                limit = int(limit)
+            except (TypeError, ValueError):
+                return jsonify({"ok": False, "error": "threshold and limit must be integers"}), 400
+            args.extend([str(threshold), str(limit)])
+            if username:
+                args.append(str(username).strip())
 
         try:
             stdout, stderr, rc = _run_fsutil(args, timeout=15)
