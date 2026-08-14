@@ -265,10 +265,13 @@ def _provider_aria(prompt, png_bytes, image_size, cfg):
     except (ValueError, UnicodeDecodeError) as exc:
         raise ProviderError(f"Aria-UI returned non-JSON: {exc}") from exc
 
-    items = (parsed.get("elements")
-             or parsed.get("result")
-             or parsed.get("boxes")
-             or [])
+    if isinstance(parsed, list):
+        items = parsed
+    else:
+        items = (parsed.get("elements")
+                 or parsed.get("result")
+                 or parsed.get("boxes")
+                 or [])
     if isinstance(items, dict):
         items = [items]
 
