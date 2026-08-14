@@ -209,14 +209,14 @@ def register_routes(app, state, require_auth):
             })
 
         try:
-            if hasattr(signal, "CTRL_C_EVENT"):
-                _SERVER_PROCESS.send_signal(signal.CTRL_C_EVENT)
-            else:
-                _SERVER_PROCESS.terminate()
+            _SERVER_PROCESS.terminate()
             _SERVER_PROCESS.wait(timeout=5)
         except subprocess.TimeoutExpired:
             _SERVER_PROCESS.kill()
-            _SERVER_PROCESS.wait(timeout=3)
+            try:
+                _SERVER_PROCESS.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                pass
         except OSError as exc:
             _log(f"[windows_mcp] server stop failed: {exc}")
 
