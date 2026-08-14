@@ -157,6 +157,9 @@ _SIMPLE_ACTIONS = {
 }
 
 
+_MAX_COMPILED_STEPS = 5000
+
+
 def _params_only(params, allowed):
     if not allowed:
         return {}
@@ -206,6 +209,8 @@ def _compile_workflow(workflow):
     visited = set()
 
     def walk(node_id):
+        if len(steps) > _MAX_COMPILED_STEPS:
+            raise ValueError(f"workflow expands beyond {_MAX_COMPILED_STEPS} steps (nested loops too deep)")
         if node_id in visited or node_id not in nodes:
             return
         visited.add(node_id)
@@ -239,6 +244,10 @@ def _compile_workflow(workflow):
             for _ in range(count):
                 for step in body:
                     steps.append(deepcopy(step))
+                    if len(steps) > _MAX_COMPILED_STEPS:
+                        raise ValueError(
+                            f"workflow expands beyond {_MAX_COMPILED_STEPS} steps (nested loops too deep)"
+                        )
             return
 
         for child_id in successors.get(node_id, []):
