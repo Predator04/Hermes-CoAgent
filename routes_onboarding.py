@@ -179,6 +179,37 @@ def _autostart_enabled() -> bool | None:
     return None
 
 
+def _autostart_task_exists() -> bool:
+    """Return True if the CoAgent scheduled task exists (regardless of state)."""
+    if os.name != "nt":
+        return False
+    rc, _out, _err = _run_schtasks(["/Query", "/TN", SCHEDULED_TASK_NAME])
+    return rc == 0
+
+
+def _create_autostart_task() -> tuple[bool, str]:
+    """Create the on-logon scheduled task pointing at start_coagent.bat.
+
+    Returns (ok, detail). Used when the user enables autostart but the task
+    was never registered (e.g. installed via the ZIP method, which skips
+    install_coagent.py's schtasks step)."""
+    launcher = COAGENT_DIR / "start_coagent.bat"
+    if not launcher.exists():
+        return False, f"launcher not found: {launcher}"
+    username = os.environ.get("USERNAME", "").strip()
+    args = [
+        "/Create", "/TN", SCHEDULED_TASK_NAME,
+        "/TR", f'"{launcher}"',
+        "/SC", "onlogon", "/IT", "/F", "/DELAY", "0000:30",
+    ]
+    if username:
+        args += ["/RU", username]
+    rc, _out, err = _run_schtasks(args)
+    if rc != 0:
+        return False, (err or "").strip() or "schtasks /Create failed"
+    return True, ""
+
+
 # ── routes ───────────────────────────────────────────────────────
 
 @onboarding_bp.route("/setup", methods=["GET"])
@@ -291,6 +322,16 @@ def route_onboard_autostart():
     data = request.get_json(silent=True) or {}
     enabled = bool(data.get("enabled"))
     action = "/Enable" if enabled else "/Disable"
+    if enabled and not _autostart_task_exists():
+        ok, detail = _create_autostart_task()
+        if not ok:
+            return jsonify({
+                "ok": False,
+                "error": "failed to create autostart task",
+                "detail": detail,
+            }), 500
+        _log("[onboarding] autostart task created (was missing); enabled")
+        return jsonify({"ok": True, "enabled": True})
     rc, _out, err = _run_schtasks(["/Change", "/TN", SCHEDULED_TASK_NAME, action])
     if rc != 0:
         return jsonify({
