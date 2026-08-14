@@ -1084,6 +1084,7 @@ reg_background(app, state, require_auth)
 features["background_control"] = True
 reg_mouse(app, state, require_auth)
 reg_ocr(app, state, require_auth)
+features["fullpage_capture"] = True
 reg_uia(app, state, require_auth)
 reg_file(app, state, require_auth)
 reg_media(app, state, require_auth)
@@ -1093,6 +1094,7 @@ reg_v63(app, state, require_auth)
 reg_stream(app, state, require_auth)
 reg_process(app, state, require_auth)
 reg_voice(app, state, require_auth)
+features["voice_stt"] = True
 reg_cua(app, state, require_auth)
 reg_copilot(app, state, require_auth)
 reg_buddy(app, state, require_auth)
@@ -1180,6 +1182,7 @@ if COPILOT_ENHANCED_AVAILABLE:
     reg_copilot_enhanced(app, state, require_auth)
     features["copilot_enhanced"] = True
     features["goal_runner_timeline_sse"] = True
+    features["loop_stall_detection"] = True
 if SWARM_AVAILABLE:
     reg_swarm(app, state, require_auth)
     features["swarm"] = True

@@ -11,7 +11,7 @@ import hashlib
 import urllib.error, urllib.request
 from io import BytesIO
 from flask import Response, jsonify, request
-from shared import _json_body, _log, _missing_field, get_host_ip, TRAY_PORT
+from shared import _json_body, _log, _missing_field, get_host_ip, SERVER_PORT, TRAY_PORT
 from shared_fallbacks import FallbackChain
 
 
@@ -605,6 +605,108 @@ def ocr_find_text(text, pil_img=None):
     except Exception as e:
         return [{"error": str(e)}]
 
+def _fullpage_auth_headers():
+    headers = {"Content-Type": "application/json"}
+    try:
+        import auth as _auth
+        if getattr(_auth, "AUTH_ENABLED", False) and getattr(_auth, "AUTH_TOKEN", None):
+            headers["Authorization"] = f"Bearer {_auth.AUTH_TOKEN}"
+    except Exception:
+        pass
+    token = os.environ.get("COAGENT_TOKEN") or os.environ.get("HERMES_COAGENT_TOKEN")
+    if token and "Authorization" not in headers:
+        headers["Authorization"] = f"Bearer {token}"
+    return headers
+
+
+def _fullpage_scroll(clicks, timeout=5.0):
+    """Trigger a mouse scroll via the local server. Returns True on 2xx."""
+    url = f"http://127.0.0.1:{SERVER_PORT}/mouse/scroll"
+    body = json.dumps({"clicks": int(clicks)}).encode("utf-8")
+    req = urllib.request.Request(url, data=body, headers=_fullpage_auth_headers(), method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            status = getattr(resp, "status", 200)
+            resp.read(256)
+            return 200 <= status < 300
+    except Exception as e:
+        _log(f"fullpage scroll failed: {type(e).__name__}: {e}")
+        return False
+
+
+def _fullpage_frame_signature(pil_img, size=64):
+    """Downscale to grayscale NxN and return raw bytes for cheap diffing."""
+    if pil_img is None or not HAS_PIL:
+        return b""
+    try:
+        small = pil_img.convert("L").resize((size, size))
+        return small.tobytes()
+    except Exception as e:
+        _log(f"fullpage signature failed: {type(e).__name__}: {e}")
+        return b""
+
+
+def _fullpage_signatures_similar(sig_a, sig_b, threshold=3.0):
+    """Mean absolute difference between two equal-length byte signatures."""
+    if not sig_a or not sig_b or len(sig_a) != len(sig_b):
+        return False
+    total = 0
+    for a, b in zip(sig_a, sig_b):
+        total += abs(a - b)
+    mean_diff = total / float(len(sig_a))
+    return mean_diff < threshold
+
+
+def _fullpage_stitch(frames, overlap=120):
+    """Stitch a list of PIL images vertically, trimming overlap between frames.
+    Returns (stitched_image, width, height) or (None, 0, 0) on failure."""
+    if not HAS_PIL or not frames:
+        return None, 0, 0
+    try:
+        widths = [im.width for im in frames]
+        heights = [im.height for im in frames]
+        width = min(widths)
+        trim = max(0, int(overlap))
+        total_height = heights[0]
+        for h in heights[1:]:
+            total_height += max(1, h - trim)
+        stitched = Image.new("RGB", (width, total_height), (0, 0, 0))
+        y_offset = 0
+        for idx, im in enumerate(frames):
+            src = im.convert("RGB")
+            if src.width != width:
+                src = src.crop((0, 0, width, src.height))
+            if idx == 0:
+                stitched.paste(src, (0, y_offset))
+                y_offset += src.height
+            else:
+                cropped = src.crop((0, trim, width, src.height)) if trim > 0 else src
+                stitched.paste(cropped, (0, y_offset))
+                y_offset += cropped.height
+        return stitched, width, y_offset
+    except Exception as e:
+        _log(f"fullpage stitch failed: {type(e).__name__}: {e}")
+        return None, 0, 0
+
+
+def _fullpage_ocr_text(pil_img):
+    """Return best-effort OCR text for a PIL image, or empty string on failure."""
+    if pil_img is None:
+        return ""
+    try:
+        res = _windows_ocr(pil_img)
+        if isinstance(res, dict) and res.get("success"):
+            return (res.get("text") or "").strip()
+    except Exception as e:
+        _log(f"fullpage windows OCR failed: {type(e).__name__}: {e}")
+    try:
+        import pytesseract
+        return (pytesseract.image_to_string(pil_img) or "").strip()
+    except Exception as e:
+        _log(f"fullpage tesseract fallback failed: {type(e).__name__}: {e}")
+        return ""
+
+
 def register_routes(app, state, require_auth):
     @app.route("/screen", methods=["GET"])
     @require_auth
@@ -921,6 +1023,163 @@ def register_routes(app, state, require_auth):
             "monitor": monitor_index,
             "elapsed_ms": elapsed_ms,
         })
+
+    @app.route("/screen/fullpage", methods=["POST"])
+    @require_auth
+    def route_screen_fullpage():
+        """Scroll-stitch a full-page capture across multiple frames.
+        Body (all optional):
+          monitor_index (int, default 0)
+          scroll_clicks (int, default -5; negative = scroll down)
+          max_frames    (int, default 20)
+          overlap       (int, default 120; pixels trimmed between frames)
+          region        {"x","y","w","h"} optional viewport crop
+          settle_ms     (int, default 250) delay after scroll before capture
+          similarity_threshold (float, default 3.0) mean-diff stop threshold
+          max_image_bytes (int, default 4194304) omit base64 image when larger
+        """
+        d = _json_body() or {}
+        try:
+            monitor_index = _coerce_monitor_index(d.get("monitor_index", 0))
+            scroll_clicks = int(d.get("scroll_clicks", -5))
+            max_frames = max(1, min(60, int(d.get("max_frames", 20))))
+            overlap = max(0, int(d.get("overlap", 120)))
+            settle_ms = max(0, int(d.get("settle_ms", 250)))
+            similarity_threshold = float(d.get("similarity_threshold", 3.0))
+            max_image_bytes = int(d.get("max_image_bytes", 4 * 1024 * 1024))
+        except (TypeError, ValueError) as exc:
+            return jsonify({
+                "ok": False,
+                "error": "Invalid parameter type",
+                "detail": f"{type(exc).__name__}: {exc}",
+                "code": "INVALID_PARAM",
+            }), 400
+
+        region = d.get("region")
+        region_box = None
+        if region is not None:
+            if not isinstance(region, dict):
+                return jsonify({
+                    "ok": False,
+                    "error": "region must be an object",
+                    "detail": "expected {\"x\", \"y\", \"w\", \"h\"}",
+                    "code": "INVALID_REGION",
+                }), 400
+            try:
+                rx = max(0, int(region.get("x", 0)))
+                ry = max(0, int(region.get("y", 0)))
+                rw = int(region.get("w", region.get("width", 0)))
+                rh = int(region.get("h", region.get("height", 0)))
+            except (TypeError, ValueError) as exc:
+                return jsonify({
+                    "ok": False,
+                    "error": "Invalid region coordinates",
+                    "detail": f"{type(exc).__name__}: {exc}",
+                    "code": "INVALID_REGION",
+                }), 400
+            if rw <= 0 or rh <= 0:
+                return jsonify({
+                    "ok": False,
+                    "error": "Region has zero or negative area",
+                    "detail": f"w={rw}, h={rh}",
+                    "code": "ZERO_AREA_REGION",
+                }), 400
+            region_box = (rx, ry, rw, rh)
+
+        frames_pil = []
+        frame_texts = []
+        signatures = []
+        stopped_reason = "max_frames"
+
+        def _capture_one():
+            raw = _capture_raw(force=True, monitor_index=monitor_index)
+            if not raw or not HAS_PIL:
+                return None
+            try:
+                img = Image.open(BytesIO(raw)).convert("RGB")
+            except Exception as exc:
+                _log(f"fullpage frame decode failed: {type(exc).__name__}: {exc}")
+                return None
+            if region_box is not None:
+                rx, ry, rw, rh = region_box
+                iw, ih = img.size
+                rx = min(rx, iw)
+                ry = min(ry, ih)
+                rw = min(rw, iw - rx)
+                rh = min(rh, ih - ry)
+                if rw <= 0 or rh <= 0:
+                    return None
+                img = img.crop((rx, ry, rx + rw, ry + rh))
+            return img
+
+        try:
+            for i in range(max_frames):
+                frame = _capture_one()
+                if frame is None:
+                    stopped_reason = "error"
+                    _log(f"fullpage capture returned no image at frame {i}")
+                    break
+                frames_pil.append(frame)
+                frame_texts.append(_fullpage_ocr_text(frame))
+                sig = _fullpage_frame_signature(frame)
+                signatures.append(sig)
+                if len(signatures) >= 2 and _fullpage_signatures_similar(
+                    signatures[-1], signatures[-2], threshold=similarity_threshold
+                ):
+                    stopped_reason = "no_progress"
+                    break
+                if i == max_frames - 1:
+                    stopped_reason = "max_frames"
+                    break
+                if not _fullpage_scroll(scroll_clicks):
+                    stopped_reason = "error"
+                    _log("fullpage scroll API call failed; stopping")
+                    break
+                if settle_ms:
+                    time.sleep(settle_ms / 1000.0)
+        except Exception as exc:
+            _log(f"fullpage capture loop failed: {type(exc).__name__}: {exc}")
+            stopped_reason = "error"
+
+        frame_count = len(frames_pil)
+        stitched_img = None
+        width = height = 0
+        if HAS_PIL and frame_count >= 1:
+            stitched_img, width, height = _fullpage_stitch(frames_pil, overlap=overlap)
+
+        stitched_flag = stitched_img is not None
+        image_b64 = None
+        image_too_large = False
+        if stitched_flag:
+            try:
+                buf = BytesIO()
+                stitched_img.save(buf, format="PNG")
+                png_bytes = buf.getvalue()
+                if len(png_bytes) > max_image_bytes:
+                    image_too_large = True
+                else:
+                    image_b64 = base64.b64encode(png_bytes).decode("ascii")
+            except Exception as exc:
+                _log(f"fullpage encode failed: {type(exc).__name__}: {exc}")
+                stopped_reason = stopped_reason if stopped_reason != "max_frames" else "error"
+
+        concatenated = "\n".join(t for t in frame_texts if t).strip()
+
+        payload = {
+            "ok": frame_count > 0 and stopped_reason != "error",
+            "stitched": stitched_flag,
+            "frames": frame_count,
+            "width": int(width) if stitched_flag else 0,
+            "height": int(height) if stitched_flag else 0,
+            "ocr_text": _redact(concatenated),
+            "frame_ocr": [_redact(t) for t in frame_texts],
+            "image_base64": image_b64,
+            "stopped_reason": stopped_reason,
+            "monitor_index": monitor_index,
+        }
+        if image_too_large:
+            payload["image_too_large"] = True
+        return jsonify(payload)
 
     @app.route("/describe", methods=["GET"])
     @require_auth

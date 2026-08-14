@@ -1,5 +1,7 @@
 """Enhanced multi-step AI copilot goal execution routes."""
 
+import base64 as _base64
+import hashlib
 import json
 import os
 import queue
@@ -37,6 +39,16 @@ MAX_GOAL_EVENTS = 500
 MAX_STEER_QUEUE = 20
 MAX_STEER_HISTORY = 50
 MAX_COMPLETED_RING = 10
+
+# Loop/stall detection (issue #353): observational only, never auto-stops.
+LOOP_WINDOW = 12
+LOOP_REPEAT_THRESHOLD = 4
+STALL_UNCHANGED_THRESHOLD = 3
+STALL_CAPTURE_EVERY = 2
+
+_VOLATILE_PARAM_KEYS = {"timestamp", "ts", "time", "nonce", "request_id", "trace_id", "attempt"}
+_COORD_PARAM_KEYS = {"x", "y", "x1", "y1", "x2", "y2", "cx", "cy", "left", "top", "right", "bottom"}
+_SCROLL_PARAM_KEYS = {"clicks", "amount", "dy", "dx", "delta"}
 
 _GOALS = {}
 _GOAL_ORDER = []
@@ -974,6 +986,121 @@ def _local_appdata_path(*parts):
     return str(Path.home().joinpath("AppData", "Local", *parts))
 
 
+def _bucket_number(value, bucket):
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return value
+    if bucket <= 0:
+        return number
+    return int(round(number / bucket) * bucket)
+
+
+def _normalize_fingerprint_params(action, params):
+    if not isinstance(params, dict):
+        return params
+    normalized = {}
+    for key in sorted(params.keys()):
+        if key in _VOLATILE_PARAM_KEYS:
+            continue
+        value = params[key]
+        lower_key = str(key).lower()
+        if lower_key in _COORD_PARAM_KEYS:
+            value = _bucket_number(value, 25)
+        elif lower_key in _SCROLL_PARAM_KEYS:
+            value = _bucket_number(value, 3)
+        elif isinstance(value, dict):
+            value = _normalize_fingerprint_params(action, value)
+        elif isinstance(value, list):
+            value = [
+                _normalize_fingerprint_params(action, item) if isinstance(item, dict) else item
+                for item in value
+            ]
+        elif isinstance(value, str):
+            value = value.strip().lower() if lower_key in {"keys", "key"} else value
+        normalized[str(key).lower()] = value
+    return normalized
+
+
+def _action_fingerprint(step):
+    """Stable sha1 hash of (normalized action, normalized params) for loop detection."""
+    try:
+        action = str((step or {}).get("action") or "").strip().lower()
+        params = (step or {}).get("params") if isinstance((step or {}).get("params"), dict) else {}
+        normalized = _normalize_fingerprint_params(action, params or {})
+        canonical = json.dumps([action, normalized], sort_keys=True, default=str)
+        return hashlib.sha1(canonical.encode("utf-8")).hexdigest()
+    except Exception:
+        try:
+            return hashlib.sha1(repr(step).encode("utf-8", errors="replace")).hexdigest()
+        except Exception:
+            return ""
+
+
+def _detect_action_loop(fingerprints, window=LOOP_WINDOW, threshold=LOOP_REPEAT_THRESHOLD):
+    """Return (repeated_fingerprint, count) if a fingerprint (or 2/3-length subsequence) has
+    repeated at least `threshold` times within the last `window` entries. Otherwise (None, 0)."""
+    if not fingerprints:
+        return None, 0
+    recent = list(fingerprints)[-window:]
+    counts = {}
+    for fp in recent:
+        counts[fp] = counts.get(fp, 0) + 1
+    for fp, count in counts.items():
+        if count >= threshold and fp:
+            return fp, count
+    for pattern_len in (2, 3):
+        if len(recent) < pattern_len * threshold:
+            continue
+        pattern_counts = {}
+        for start in range(0, len(recent) - pattern_len + 1):
+            chunk = tuple(recent[start:start + pattern_len])
+            pattern_counts[chunk] = pattern_counts.get(chunk, 0) + 1
+        for chunk, count in pattern_counts.items():
+            if count >= threshold:
+                return "|".join(chunk), count
+    return None, 0
+
+
+def _frame_stall_signature(img_bytes):
+    """Return a small perceptual signature bytes for a screenshot, or None if unavailable.
+    Downscales the decoded image to 32x32 grayscale using PIL. If PIL is missing, returns None."""
+    if not img_bytes:
+        return None
+    try:
+        from PIL import Image  # type: ignore
+    except ImportError:
+        return None
+    except Exception:
+        return None
+    try:
+        import io
+        with Image.open(io.BytesIO(img_bytes)) as im:
+            small = im.convert("L").resize((32, 32))
+            data = small.tobytes()
+        return hashlib.sha1(data).digest()
+    except Exception:
+        return None
+
+
+def _capture_stall_signature(auth_header):
+    """Best-effort screen fetch reduced to a perceptual signature. Never raises."""
+    try:
+        response = _coagent_request("GET", "/screen/base64", auth_header=auth_header, timeout=5)
+    except Exception:
+        return None
+    if not isinstance(response, dict) or response.get("error"):
+        return None
+    encoded = response.get("data") or response.get("image") or response.get("screen")
+    if not encoded or not isinstance(encoded, str):
+        return None
+    try:
+        raw = _base64.b64decode(encoded, validate=False)
+    except Exception:
+        return None
+    return _frame_stall_signature(raw)
+
+
 def _run_step(step, previous, stop_event, auth_header):
     action = step.get("action", "")
     params = _resolve_refs(deepcopy(step.get("params") or {}), previous)
@@ -1052,7 +1179,15 @@ def _run_step(step, previous, stop_event, auth_header):
 
 
 def _snapshot_goal(goal):
-    internal = {"thread", "stop_event", "subscribers", "events", "event_seq"}
+    internal = {
+        "thread",
+        "stop_event",
+        "subscribers",
+        "events",
+        "event_seq",
+        "_loop_fingerprints",
+        "_stall_signatures",
+    }
     payload = {key: value for key, value in goal.items() if key not in internal}
     payload["completed"] = sum(1 for step in payload.get("steps", []) if step.get("status") == "ok")
     payload["failed"] = sum(1 for step in payload.get("steps", []) if step.get("status") == "error")
@@ -1234,6 +1369,87 @@ def _complete_goal(goal_id, status, error=None):
     return payload
 
 
+def _loop_stall_guard(goal_id, index, step, auth_header):
+    """Observational loop + stall detection (issue #353). Emits events, never auto-stops.
+    TODO(#353-followup): a future issue may add auto-stop wiring here when a loop/stall is
+    detected — this is where that hook belongs. Detection is intentionally side-effect-free."""
+    fingerprint = _action_fingerprint(step)
+    action_name = str((step or {}).get("action") or "").lower()
+
+    loop_hit = None
+    with _GOALS_LOCK:
+        goal = _GOALS.get(goal_id)
+        if not goal:
+            return
+        fps = goal.setdefault("_loop_fingerprints", [])
+        fps.append(fingerprint)
+        if len(fps) > LOOP_WINDOW * 2:
+            del fps[:-LOOP_WINDOW * 2]
+        repeated, count = _detect_action_loop(fps)
+        if repeated and count >= LOOP_REPEAT_THRESHOLD:
+            goal["loop_detection_count"] = int(goal.get("loop_detection_count") or 0) + 1
+            goal["last_loop_fingerprint"] = repeated
+            goal["last_loop_action"] = action_name
+            loop_hit = {
+                "index": index,
+                "fingerprint": repeated,
+                "action": action_name,
+                "recent_count": int(count),
+            }
+
+    if loop_hit:
+        _emit_goal_event(goal_id, "loop_detected", loop_hit)
+        _log_entry(
+            goal_id,
+            "warn",
+            f"Loop detected -- repeating action(s): {action_name} x{loop_hit['recent_count']}",
+            "\U0001F7E1",
+        )
+
+    with _GOALS_LOCK:
+        goal = _GOALS.get(goal_id)
+        if not goal:
+            return
+        counter = int(goal.get("stall_capture_counter") or 0)
+        goal["stall_capture_counter"] = counter + 1
+        should_capture = (counter % STALL_CAPTURE_EVERY) == 0
+    if not should_capture:
+        return
+
+    signature = _capture_stall_signature(auth_header)
+    if signature is None:
+        return
+
+    stall_hit = None
+    with _GOALS_LOCK:
+        goal = _GOALS.get(goal_id)
+        if not goal:
+            return
+        sigs = goal.setdefault("_stall_signatures", [])
+        streak = int(goal.get("stall_unchanged_streak") or 0)
+        if sigs and sigs[-1] == signature:
+            streak += 1
+        else:
+            streak = 1
+        sigs.append(signature)
+        if len(sigs) > STALL_UNCHANGED_THRESHOLD * 2:
+            del sigs[:-STALL_UNCHANGED_THRESHOLD * 2]
+        goal["stall_unchanged_streak"] = streak
+        if streak >= STALL_UNCHANGED_THRESHOLD:
+            goal["stall_detection_count"] = int(goal.get("stall_detection_count") or 0) + 1
+            goal["last_stall_unchanged_frames"] = streak
+            stall_hit = {"index": index, "unchanged_frames": streak}
+
+    if stall_hit:
+        _emit_goal_event(goal_id, "stall_detected", stall_hit)
+        _log_entry(
+            goal_id,
+            "warn",
+            f"Stall detected -- screen unchanged for {stall_hit['unchanged_frames']} frames",
+            "\U0001F7E1",
+        )
+
+
 def _run_goal(goal_id, auth_header):
     with _GOALS_LOCK:
         goal = _GOALS.get(goal_id)
@@ -1272,6 +1488,16 @@ def _run_goal(goal_id, auth_header):
         _emit_goal_event(goal_id, "steps_planned", {"total": len(steps)})
         _emit_goal_event(goal_id, "goal_status", {"status": "running", "icon": _STATUS_ICONS["running"]})
         _emit_goal_timeline(goal_id)
+        with _GOALS_LOCK:
+            _GOALS[goal_id].setdefault("_loop_fingerprints", [])
+            _GOALS[goal_id].setdefault("_stall_signatures", [])
+            _GOALS[goal_id].setdefault("loop_detection_count", 0)
+            _GOALS[goal_id].setdefault("last_loop_fingerprint", None)
+            _GOALS[goal_id].setdefault("last_loop_action", None)
+            _GOALS[goal_id].setdefault("stall_detection_count", 0)
+            _GOALS[goal_id].setdefault("last_stall_unchanged_frames", 0)
+            _GOALS[goal_id].setdefault("stall_unchanged_streak", 0)
+            _GOALS[goal_id].setdefault("stall_capture_counter", 0)
         previous = {}
         failed = False
         failed_record = None
@@ -1316,6 +1542,7 @@ def _run_goal(goal_id, auth_header):
                 else:
                     warning = meta.get("error") or "revise failed"
                     _log_entry(goal_id, "warn", f"Plan revision failed: {warning}", "\U0001F7E1")
+            _loop_stall_guard(goal_id, index, step, auth_header)
             start = _now()
             final_record = None
             label = _step_label({"index": index, "action": step["action"], "params": step.get("params", {})})
@@ -1837,6 +2064,49 @@ def route_goal_events(goal_id):
 
 
 route_goal_events._hermes_auth_wrapped = True
+
+
+def _goal_diagnostics_payload(goal):
+    fps = list(goal.get("_loop_fingerprints") or [])[-LOOP_WINDOW:]
+    return {
+        "goal_id": goal.get("goal_id") or goal.get("id"),
+        "status": goal.get("status"),
+        "loop_detection_count": int(goal.get("loop_detection_count") or 0),
+        "last_loop_fingerprint": goal.get("last_loop_fingerprint"),
+        "last_loop_action": goal.get("last_loop_action"),
+        "stall_detection_count": int(goal.get("stall_detection_count") or 0),
+        "last_stall_unchanged_frames": int(goal.get("last_stall_unchanged_frames") or 0),
+        "current_stall_streak": int(goal.get("stall_unchanged_streak") or 0),
+        "recent_fingerprints": fps,
+        "window": LOOP_WINDOW,
+        "loop_repeat_threshold": LOOP_REPEAT_THRESHOLD,
+        "stall_unchanged_threshold": STALL_UNCHANGED_THRESHOLD,
+    }
+
+
+@copilot_enhanced_bp.route("/goal-runner/diagnostics", methods=["GET"])
+@copilot_enhanced_bp.route("/copilot/goal/<goal_id>/diagnostics", methods=["GET"])
+def route_goal_runner_diagnostics(goal_id=None):
+    if goal_id is None:
+        goal_id = request.args.get("goal_id") or request.args.get("id")
+    with _GOALS_LOCK:
+        if goal_id:
+            goal = _GOALS.get(goal_id)
+            if not goal:
+                return jsonify({"error": "goal not found", "goal_id": goal_id}), 404
+            return jsonify(_goal_diagnostics_payload(goal))
+        goals = [
+            _goal_diagnostics_payload(goal)
+            for goal in _GOALS.values()
+            if goal.get("status") in {"queued", "planning", "running", "stopping"}
+        ]
+    return jsonify({
+        "active_goals": len(goals),
+        "goals": goals,
+        "window": LOOP_WINDOW,
+        "loop_repeat_threshold": LOOP_REPEAT_THRESHOLD,
+        "stall_unchanged_threshold": STALL_UNCHANGED_THRESHOLD,
+    })
 
 
 @copilot_enhanced_bp.route("/copilot/stop/<goal_id>", methods=["POST"])
