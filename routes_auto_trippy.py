@@ -135,9 +135,22 @@ def register_routes(app, state, require_auth):
             return jsonify({"error": "target must not look like a CLI flag"}), 400
 
         mode = body.get("mode", "json")
-        cycles = int(body.get("cycles", 5))
         protocol = body.get("protocol", "icmp")
-        timeout = int(body.get("timeout", 30))
+        if not isinstance(mode, str) or not isinstance(protocol, str):
+            return jsonify({"error": "mode and protocol must be strings"}), 400
+        raw_cycles = body.get("cycles", 5)
+        raw_timeout = body.get("timeout", 30)
+        if isinstance(raw_cycles, bool) or isinstance(raw_timeout, bool):
+            return jsonify({"error": "cycles and timeout must be integers, not booleans"}), 400
+        try:
+            cycles = int(raw_cycles)
+            timeout = int(raw_timeout)
+        except (ValueError, TypeError):
+            return jsonify({"error": "cycles and timeout must be integers"}), 400
+        if not 1 <= cycles <= 100:
+            return jsonify({"error": "cycles must be between 1 and 100"}), 400
+        if not 1 <= timeout <= 60:
+            return jsonify({"error": "timeout must be between 1 and 60"}), 400
 
         # Validate mode
         valid_modes = {"tui", "stream", "pretty", "markdown", "csv", "json", "dot", "flows", "silent"}
