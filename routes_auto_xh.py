@@ -7,6 +7,10 @@ import shutil
 import subprocess
 import os
 import time
+import json
+import ipaddress
+import socket
+import urllib.parse
 from flask import jsonify, request
 from shared import _json_body, _log, _missing_field
 
@@ -79,13 +83,117 @@ def _parse_xh_output(raw):
 
 
 def _build_request_items(body):
-    """Convert optional dicts into xh request-item tokens."""
+    """Convert optional dicts into xh request-item tokens.
+
+    Header/query keys and values are sanitised: CR/LF are stripped (they are
+    the header-injection / request-smuggling vector) and empty keys are skipped.
+    """
     items = []
     for k, v in (body.get("headers") or {}).items():
-        items.append(f"{k}:{v}")
+        key = str(k).replace("\r", "").replace("\n", "").strip()
+        val = str(v).replace("\r", "").replace("\n", "")
+        if not key:
+            continue
+        items.append(f"{key}:{val}")
     for k, v in (body.get("query") or {}).items():
-        items.append(f"{k}=={v}")
+        key = str(k).replace("\r", "").replace("\n", "").strip()
+        val = str(v).replace("\r", "").replace("\n", "")
+        if not key:
+            continue
+        items.append(f"{key}=={val}")
     return items
+
+
+_ALLOWED_METHODS = {"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"}
+
+
+def _validate_url(url):
+    """Validate an outgoing request URL for the xh client.
+
+    Returns an error string on failure, or None if the URL is acceptable.
+    Guards against argument injection (leading '-'), non-http schemes, and
+    SSRF (loopback / link-local / private / multicast / unspecified targets,
+    including DNS-rebinding where the hostname resolves to a blocked address).
+    """
+    if not isinstance(url, str):
+        return "url must be a string"
+    url = url.strip()
+    if not url:
+        return "url is required"
+    if url.startswith("-"):
+        return "url must not start with '-'"
+    try:
+        parsed = urllib.parse.urlsplit(url)
+    except ValueError:
+        return "invalid URL"
+    if parsed.scheme.lower() not in ("http", "https"):
+        return "only http/https URLs are allowed"
+    host = parsed.hostname
+    if not host:
+        return "URL has no hostname"
+    host_l = host.lower().rstrip(".")
+    if host_l in {"localhost", "metadata", "metadata.google.internal", "0.0.0.0"}:
+        return "host is blocked"
+    try:
+        ip = ipaddress.ip_address(host_l)
+    except ValueError:
+        # Hostname — resolve and reject if any address is private/loopback/etc.
+        try:
+            infos = socket.getaddrinfo(host, None)
+        except OSError:
+            return None  # let xh surface the resolution error itself
+        for info in infos:
+            addr = info[4][0]
+            try:
+                a = ipaddress.ip_address(addr)
+            except ValueError:
+                continue
+            if _is_blocked_ip(a):
+                return f"host {host!r} resolves to a blocked address"
+        return None
+    if _is_blocked_ip(ip):
+        return "IP address is blocked"
+    return None
+
+
+def _is_blocked_ip(ip):
+    return (
+        ip.is_private
+        or ip.is_loopback
+        or ip.is_link_local
+        or ip.is_multicast
+        or ip.is_unspecified
+    )
+
+
+def _redact_url(url):
+    """Strip credentials and query values from a URL for safe logging."""
+    try:
+        p = urllib.parse.urlsplit(url)
+    except ValueError:
+        return "<invalid-url>"
+    host = p.hostname or ""
+    if p.username or p.password:
+        host = "***:***@" + host
+    query = ""
+    if p.query:
+        query = "?" + "&".join(
+            f"{k}=***" for k, _ in urllib.parse.parse_qsl(p.query, keep_blank_values=True)
+        )
+    return f"{p.scheme}://{host}{p.path}{query}"
+
+
+def _serialize_body(req_body):
+    """Serialize a request body for xh's stdin.
+
+    dict/list become JSON (matching the documented behaviour), everything else
+    is passed through as a string. None means no body at all.
+    """
+    if req_body is None:
+        return None
+    if isinstance(req_body, (dict, list)):
+        return json.dumps(req_body)
+    return str(req_body)
 
 
 def register_routes(app, state, require_auth):
@@ -132,7 +240,13 @@ def register_routes(app, state, require_auth):
             return missing
 
         url = body["url"]
+        url_err = _validate_url(url)
+        if url_err:
+            return jsonify({"error": f"Invalid url: {url_err}"}), 400
+        url = url.strip()
         method = str(body.get("method", "GET")).upper()
+        if method not in _ALLOWED_METHODS:
+            return jsonify({"error": f"Unsupported method: {method}"}), 400
         timeout = body.get("timeout", 30)
         follow = bool(body.get("follow", True))
         verify = bool(body.get("verify", True))
@@ -164,13 +278,13 @@ def register_routes(app, state, require_auth):
         if req_body is None:
             cmd.append("--ignore-stdin")
 
-        _log(f"xh_request: {method} {url}")
+        _log(f"xh_request: {method} {_redact_url(url)}")
 
         try:
             start = time.time()
             r = subprocess.run(
                 cmd,
-                input=None if req_body is None else str(req_body),
+                input=_serialize_body(req_body),
                 capture_output=True, text=True, timeout=timeout + 10,
             )
             elapsed_ms = int((time.time() - start) * 1000)
@@ -200,7 +314,7 @@ def register_routes(app, state, require_auth):
                 result["stderr"] = r.stderr.strip()
             return jsonify(result)
         except subprocess.TimeoutExpired:
-            _log(f"xh_request: timed out ({timeout}s): {method} {url}")
+            _log(f"xh_request: timed out ({timeout}s): {method} {_redact_url(url)}")
             return jsonify({
                 "error": f"xh timed out after {timeout}s",
                 "method": method,
@@ -218,6 +332,10 @@ def register_routes(app, state, require_auth):
         url = request.args.get("url", "")
         if not url:
             return jsonify({"error": "Provide ?url=<url>"}), 400
+        url_err = _validate_url(url)
+        if url_err:
+            return jsonify({"error": f"Invalid url: {url_err}"}), 400
+        url = url.strip()
         follow = request.args.get("follow", "1") in ("1", "true", "yes")
         timeout = request.args.get("timeout", "30")
         try:
