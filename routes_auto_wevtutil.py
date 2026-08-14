@@ -200,7 +200,7 @@ def register_routes(app, state, require_auth):
     def route_auto_wevtutil_publishers():
         """List all event log publishers/providers."""
         try:
-            output = _run_wevtutil(["gp"], timeout=15)
+            output = _run_wevtutil(["ep"], timeout=15)
             publishers = _parse_log_lines(output)
             return jsonify({
                 "ok": True,
