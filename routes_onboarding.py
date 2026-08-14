@@ -558,9 +558,19 @@ async function startTunnel() {
   } finally { btn.disabled = false; }
 }
 
-function showQr(url) {
-  // Include the token in the QR so a phone scans directly into an authed session.
-  const full = url + (url.includes("?") ? "&" : "?") + "token=" + encodeURIComponent(token);
+async function showQr(url) {
+  // Mint a short-lived, single-use handoff code instead of embedding the
+  // permanent token in the QR. The code maps to the real token server-side
+  // and is exchanged by the dashboard on scan, so the permanent token never
+  // leaves the machine in a URL or a scannable image.
+  let full = url;
+  try {
+    const r = await fetch("/auth/phone-link", { method: "POST", headers: h(), body: "{}" });
+    const d = await r.json();
+    if (r.ok && d.code) {
+      full = url + (url.includes("?") ? "&" : "?") + "handoff=" + encodeURIComponent(d.code);
+    }
+  } catch (e) { /* fall back to plain URL — user can enter token manually */ }
   document.getElementById("qrUrl").textContent = full;
   const box = document.getElementById("qrBox");
   box.classList.remove("hidden");
@@ -604,8 +614,16 @@ async function complete() {
       }),
     });
     if (!r.ok) throw new Error((await r.json()).error || "failed");
-    // Hand the token off to the dashboard via URL fragment so it stays out of history.
-    location.href = "/dashboard?token=" + encodeURIComponent(token);
+    // Hand the session off via a single-use handoff code — never put the
+    // permanent token in the URL (it would land in browser history and
+    // server/tunnel access logs).
+    let next = "/";
+    try {
+      const hc = await fetch("/auth/phone-link", { method: "POST", headers: h(), body: "{}" });
+      const hd = await hc.json();
+      if (hc.ok && hd.code) next = "/?handoff=" + encodeURIComponent(hd.code);
+    } catch (e) { /* fall back to bare root; user can paste token manually */ }
+    location.href = next;
   } catch (e) {
     setPageMsg("Setup could not be saved: " + e.message, "err");
     btn.disabled = false;

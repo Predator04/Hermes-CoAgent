@@ -31,6 +31,7 @@ _CSRF_TTL = 3600  # 1 hour
 _DASHBOARD_HANDOFFS: dict[str, tuple[str, float]] = {}
 _DASHBOARD_HANDOFF_LOCK = threading.Lock()
 _DASHBOARD_HANDOFF_TTL = 60
+_PHONE_LINK_TTL = 600  # 10 min for onboarding QR / phone handoff
 
 
 def csrf_token_store():
@@ -52,6 +53,22 @@ def _prune_dashboard_handoffs(now=None):
     stale = [code for code, (_token, expires_at) in _DASHBOARD_HANDOFFS.items() if expires_at < now]
     for code in stale:
         _DASHBOARD_HANDOFFS.pop(code, None)
+
+
+def _mint_handoff(ttl: int) -> str:
+    """Create a single-use, expiring handoff code mapping to the real token.
+
+    Caller must have already validated auth (this only mints; it does not
+    check privileges). Codes land in the same pool the dashboard handoff
+    exchange drains, so tray and onboarding codes share the single-use/TTL
+    semantics regardless of which endpoint minted them.
+    """
+    now = time.time()
+    code = secrets.token_urlsafe(24)
+    with _DASHBOARD_HANDOFF_LOCK:
+        _prune_dashboard_handoffs(now)
+        _DASHBOARD_HANDOFFS[code] = (AUTH_TOKEN, now + ttl)
+    return code
 
 
 def csrf_check():
@@ -408,12 +425,22 @@ def register_auth_routes(app):
         """Create a short-lived one-time dashboard token handoff code."""
         if not AUTH_ENABLED or not AUTH_TOKEN:
             return jsonify({"error": "Auth not enabled"}), 400
-        now = time.time()
-        code = secrets.token_urlsafe(24)
-        with _DASHBOARD_HANDOFF_LOCK:
-            _prune_dashboard_handoffs(now)
-            _DASHBOARD_HANDOFFS[code] = (AUTH_TOKEN, now + _DASHBOARD_HANDOFF_TTL)
+        code = _mint_handoff(_DASHBOARD_HANDOFF_TTL)
         return jsonify({"code": code, "expires_in": _DASHBOARD_HANDOFF_TTL})
+
+    @app.route("/auth/phone-link", methods=["POST"])
+    @require_auth
+    def auth_phone_link_create():
+        """Mint a longer-lived one-time code for onboarding QR / phone handoff.
+
+        The permanent token never rides in a URL or QR: the phone scans a
+        ``?handoff=`` URL and the dashboard exchanges the code server-side
+        (single use) via /auth/dashboard-handoff/exchange.
+        """
+        if not AUTH_ENABLED or not AUTH_TOKEN:
+            return jsonify({"error": "Auth not enabled"}), 400
+        code = _mint_handoff(_PHONE_LINK_TTL)
+        return jsonify({"code": code, "expires_in": _PHONE_LINK_TTL})
 
     @app.route("/auth/dashboard-handoff/exchange", methods=["POST"])
     def auth_dashboard_handoff_exchange():
