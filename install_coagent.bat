@@ -1,6 +1,7 @@
 @echo off
 REM Hermes CoAgent — One-Command Installer
 REM Download and double-click. Tries git, gh, then direct ZIP download.
+REM Handles fresh installs, updates in place, and wipe-and-restart.
 
 setlocal enabledelayedexpansion
 
@@ -13,8 +14,100 @@ echo.
 set "COAGENT_DIR=%LOCALAPPDATA%\Hermes CoAgent"
 set "REPO=https://github.com/Predator04/Hermes-CoAgent.git"
 
-:: Try method 1: git clone (works if gh CLI is authenticated)
+:: ---------------------------------------------------------------
+:: If an existing install is detected, ask what to do.
+:: ---------------------------------------------------------------
+if exist "%COAGENT_DIR%\hermes_coagent.py" (
+    echo  An existing CoAgent installation was found at:
+    echo    %COAGENT_DIR%
+    echo.
+    echo  What would you like to do?
+    echo    [U] Update in place  — keep your token, config, and recordings
+    echo    [W] Wipe and reinstall — delete the folder and start fresh
+    echo    [C] Cancel
+    echo.
+    set /p CHOICE="  Choice (U/W/C): "
+    if /i "!CHOICE!"=="C" (
+        echo  Cancelled.
+        exit /b 0
+    )
+    if /i "!CHOICE!"=="W" (
+        echo  Wiping %COAGENT_DIR% ...
+        rmdir /s /q "%COAGENT_DIR%" 2>nul
+        if exist "%COAGENT_DIR%" (
+            echo  WARNING: Could not fully delete the folder. Close CoAgent first, then re-run.
+            echo  (taskkill /f /im pythonw.exe  will stop it)
+            pause
+            exit /b 1
+        )
+        goto :fresh_download
+    )
+    if /i "!CHOICE!"=="U" goto :update_in_place
+    :: Anything else — treat as update (safe default)
+    goto :update_in_place
+)
+
+goto :fresh_download
+
+:: ---------------------------------------------------------------
+:: UPDATE IN PLACE — download fresh code, overlay onto existing
+:: install, preserving .token / config / recordings.
+:: ---------------------------------------------------------------
+:update_in_place
+echo.
+echo  Updating in place (keeping your token and settings)...
+
+set "TOKEN="
+where gh >nul 2>nul
+if %errorlevel% equ 0 (
+    for /f "tokens=*" %%t in ('gh auth token 2^>nul') do set "TOKEN=%%t"
+)
+
+set "STAGE=%TEMP%\coagent_update_stage"
+if exist "%STAGE%" rmdir /s /q "%STAGE%" 2>nul
+mkdir "%STAGE%"
+
+if not "%TOKEN%"=="" (
+    echo   Downloading latest code with auth...
+    powershell -NoProfile -Command "$headers = @{'Authorization'='Bearer %TOKEN%'; 'Accept'='application/vnd.github+json'}; Invoke-WebRequest -Uri 'https://api.github.com/repos/Predator04/Hermes-CoAgent/zipball/main' -Headers $headers -OutFile '%STAGE%\coagent.zip'" 2>nul
+    if exist "%STAGE%\coagent.zip" (
+        powershell -NoProfile -Command "Expand-Archive -Path '%STAGE%\coagent.zip' -DestinationPath '%STAGE%' -Force" 2>nul
+        del "%STAGE%\coagent.zip" 2>nul
+    )
+)
+
+:: Fallback: try git pull if the folder is a git checkout
+if not exist "%STAGE%\Predator04-Hermes-CoAgent-*" (
+    if exist "%COAGENT_DIR%\.git" (
+        echo   Git checkout detected, pulling latest...
+        cd /d "%COAGENT_DIR%"
+        git pull 2>&1
+        goto :got_code
+    )
+)
+
+:: Overlay the downloaded code onto the existing install.
+:: .token / config / recordings are not in the repo, so they survive.
+for /d %%d in ("%STAGE%\Predator04-Hermes-CoAgent-*") do (
+    echo   Overlaying fresh code...
+    robocopy "%%d" "%COAGENT_DIR%" /E /IS /NFL /NDL /NJH /NJS >nul
+    if exist "%COAGENT_DIR%\hermes_coagent.py" (
+        rmdir /s /q "%STAGE%" 2>nul
+        goto :got_code
+    )
+)
+
+rmdir /s /q "%STAGE%" 2>nul
+echo   Update download failed. Falling back to fresh install...
+goto :fresh_download
+
+:: ---------------------------------------------------------------
+:: FRESH DOWNLOAD — standard 3-method download into an empty dir.
+:: ---------------------------------------------------------------
+:fresh_download
 echo [1/4] Getting CoAgent code...
+
+:: Try method 1: git clone (works if gh CLI is authenticated)
 where git >nul 2>nul
 if %errorlevel% equ 0 (
     echo   Using git clone...
@@ -35,7 +128,7 @@ if %errorlevel% equ 0 (
     :: Extract the zip
     for %%f in ("%COAGENT_DIR%\*.zip") do (
         echo   Extracting %%f...
-        powershell -Command "Expand-Archive -Path '%%f' -DestinationPath '%COAGENT_DIR%' -Force" 2>nul
+        powershell -NoProfile -Command "Expand-Archive -Path '%%f' -DestinationPath '%COAGENT_DIR%' -Force" 2>nul
         del "%%f" 2>nul
     )
     if exist "%COAGENT_DIR%\hermes_coagent.py" goto :got_code
@@ -61,12 +154,9 @@ if %errorlevel% equ 0 (
 
 if not "%TOKEN%"=="" (
     echo   Downloading with auth...
-    powershell -Command ^
-      "$headers = @{'Authorization'='Bearer %TOKEN%'; 'Accept'='application/vnd.github+json'}; ^
-       Invoke-WebRequest -Uri 'https://api.github.com/repos/Predator04/Hermes-CoAgent/zipball/main' ^
-       -Headers $headers -OutFile '%TEMP%\coagent.zip'" 2>nul
+    powershell -NoProfile -Command "$headers = @{'Authorization'='Bearer %TOKEN%'; 'Accept'='application/vnd.github+json'}; Invoke-WebRequest -Uri 'https://api.github.com/repos/Predator04/Hermes-CoAgent/zipball/main' -Headers $headers -OutFile '%TEMP%\coagent.zip'" 2>nul
     if exist "%TEMP%\coagent.zip" (
-        powershell -Command "Expand-Archive -Path '%TEMP%\coagent.zip' -DestinationPath '%COAGENT_DIR%' -Force" 2>nul
+        powershell -NoProfile -Command "Expand-Archive -Path '%TEMP%\coagent.zip' -DestinationPath '%COAGENT_DIR%' -Force" 2>nul
         del "%TEMP%\coagent.zip" 2>nul
         :: Move from subfolder
         for /d %%d in ("%COAGENT_DIR%\Predator04-Hermes-CoAgent-*") do (
