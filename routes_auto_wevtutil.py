@@ -184,7 +184,7 @@ def register_routes(app, state, require_auth):
         try:
             args = ["cl", logname]
             if backup_path:
-                args += [backup_path]
+                args += [f"/bu:{backup_path}"]
             output = _run_wevtutil(args, timeout=30)
             return jsonify({
                 "ok": True,
