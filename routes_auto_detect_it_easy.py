@@ -67,6 +67,18 @@ def _get_version(exe):
     return "unknown"
 
 
+def _as_bool(value, default=False):
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        return value.strip().lower() in ("1", "true", "yes", "on")
+    return default
+
+
 def register_routes(app, state, require_auth):
     @app.route("/auto/detect_it_easy/info", methods=["GET"])
     @require_auth
@@ -108,11 +120,11 @@ def register_routes(app, state, require_auth):
         if not os.path.exists(target):
             return jsonify({"error": f"Path does not exist: {target}"}), 404
 
-        json_out = bool(body.get("json", True))
-        deep = bool(body.get("deep", False))
-        heuristic = bool(body.get("heuristic", False))
-        recursive = bool(body.get("recursive", False))
-        info_only = bool(body.get("info", False))
+        json_out = _as_bool(body.get("json"), True)
+        deep = _as_bool(body.get("deep"), False)
+        heuristic = _as_bool(body.get("heuristic"), False)
+        recursive = _as_bool(body.get("recursive"), False)
+        info_only = _as_bool(body.get("info"), False)
 
         exe = _find_diec()
         if not exe:
