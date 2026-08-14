@@ -105,6 +105,8 @@ def register_routes(app, state, require_auth):
         Body: {"pid": 1234, "json": true, "dmode": "A", "quiet": false, "minidump": false, "dir": "C:\\out"}
         """
         body = _json_body()
+        if not isinstance(body, dict):
+            return _missing_field("pid")
         pid = body.get("pid")
         if pid is None:
             return _missing_field("pid")
