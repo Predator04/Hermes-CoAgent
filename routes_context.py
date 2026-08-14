@@ -247,6 +247,8 @@ def truncate_log(text, budget=DEFAULT_BUDGET, head=40, tail=40):
             + f"\n... [truncated {len(text) - max_chars} chars] ...\n"
             + text[-half:]
         )
+        if len(clipped) >= len(text):
+            return text, {"truncated": False, "reason": "under_budget"}
         return clipped, {
             "truncated": True,
             "orig_bytes": len(text),
@@ -314,11 +316,14 @@ def _walk_truncate(obj, per_string_max):
         return [_walk_truncate(x, per_string_max) for x in obj]
     if isinstance(obj, str) and len(obj) > per_string_max:
         cut = per_string_max // 2
-        return (
+        truncated = (
             obj[:cut]
             + f"... [truncated {len(obj) - per_string_max} chars] ..."
             + obj[-cut:]
         )
+        if len(truncated) >= len(obj):
+            return obj
+        return truncated
     return obj
 
 
