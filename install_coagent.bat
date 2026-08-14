@@ -1,5 +1,5 @@
 @echo off
-REM Hermes CoAgent — One-Command Installer
+REM Hermes CoAgent - One-Command Installer
 REM Download and double-click. Tries git, gh, then direct ZIP download.
 REM Handles fresh installs, updates in place, and wipe-and-restart.
 
@@ -7,7 +7,7 @@ setlocal enabledelayedexpansion
 
 echo.
 echo ==========================================
-echo  Hermes CoAgent — One-Click Installer
+echo  Hermes CoAgent - One-Click Installer
 echo ==========================================
 echo.
 
@@ -22,8 +22,8 @@ if exist "%COAGENT_DIR%\hermes_coagent.py" (
     echo    %COAGENT_DIR%
     echo.
     echo  What would you like to do?
-    echo    [U] Update in place  — keep your token, config, and recordings
-    echo    [W] Wipe and reinstall — delete the folder and start fresh
+    echo    [U] Update in place  - keep your token, config, and recordings
+    echo    [W] Wipe and reinstall - delete the folder and start fresh
     echo    [C] Cancel
     echo.
     set /p CHOICE="  Choice (U/W/C): "
@@ -43,14 +43,14 @@ if exist "%COAGENT_DIR%\hermes_coagent.py" (
         goto :fresh_download
     )
     if /i "!CHOICE!"=="U" goto :update_in_place
-    :: Anything else — treat as update (safe default)
+    :: Anything else - treat as update (safe default)
     goto :update_in_place
 )
 
 goto :fresh_download
 
 :: ---------------------------------------------------------------
-:: UPDATE IN PLACE — download fresh code, overlay onto existing
+:: UPDATE IN PLACE - download fresh code, overlay onto existing
 :: install, preserving .token / config / recordings.
 :: ---------------------------------------------------------------
 :update_in_place
@@ -102,7 +102,7 @@ echo   Update download failed. Falling back to fresh install...
 goto :fresh_download
 
 :: ---------------------------------------------------------------
-:: FRESH DOWNLOAD — standard 3-method download into an empty dir.
+:: FRESH DOWNLOAD - standard 3-method download into an empty dir.
 :: ---------------------------------------------------------------
 :fresh_download
 echo [1/4] Getting CoAgent code...
