@@ -111,17 +111,30 @@ def register_routes(app, state, require_auth):
         except Exception:
             return jsonify({"ok": False, "error": "invalid JSON body"}), 400
 
-        filepath = body.get("path", "").strip()
+        filepath = body.get("path", "")
+        if not isinstance(filepath, str):
+            return jsonify({"ok": False, "error": "path must be a string"}), 400
+        filepath = filepath.strip()
         if not filepath:
             return _missing_field("path")
+        if (
+            filepath.startswith(("/", "-"))
+            or "\x00" in filepath
+            or "\n" in filepath
+            or "\r" in filepath
+            or '"' in filepath
+        ):
+            return jsonify({"ok": False, "error": "path must not contain flags, quotes, or newlines"}), 400
 
         args = ["/F", filepath]
 
         if body.get("recursive", False):
             args.append("/R")
             da = body.get("default_answer", "")
-            if da and da.upper() in ("Y", "N"):
-                args.extend(["/D", da.upper()])
+            if da and str(da).upper() in ("Y", "N"):
+                args.extend(["/D", str(da).upper()])
+            else:
+                args.extend(["/D", "Y"])
 
         if body.get("admins", False):
             args.append("/A")
