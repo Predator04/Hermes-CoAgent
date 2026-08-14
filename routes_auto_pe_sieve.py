@@ -134,7 +134,7 @@ def register_routes(app, state, require_auth):
         json_out = _as_bool(body.get("json"), True)
         quiet = _as_bool(body.get("quiet"), False)
         minidump = _as_bool(body.get("minidump"), False)
-        dmode = str(body.get("dmode", "A")).strip().upper()
+        dmode = str(body.get("dmode") or "A").strip().upper()
         out_dir = body.get("dir", "")
 
         if dmode and dmode not in _DMODE_WHITELIST:
