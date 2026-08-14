@@ -52,9 +52,47 @@ def _run_defrag(args, timeout=120):
     if not exe:
         raise RuntimeError("defrag not found")
     result = subprocess.run(
-        [exe] + args, capture_output=True, text=True, timeout=timeout
+        [exe] + args, capture_output=True, text=True, timeout=timeout,
+        errors="replace",
     )
     return result.stdout, result.stderr, result.returncode
+
+
+_ALLOWED_DEFRAG_SPECIALS = ("/C", "/AllVolumes", "/E")
+
+
+def _sanitize_volume(value):
+    """Validate a volume specifier, rejecting flag-like inputs."""
+    v = str(value or "").strip()
+    if not v:
+        raise ValueError("empty volume specifier")
+    if v in _ALLOWED_DEFRAG_SPECIALS:
+        return v
+    if v.startswith(("/", "-")):
+        raise ValueError(f"invalid volume specifier: {v}")
+    return v
+
+
+def _build_volume_args(body):
+    """Build defrag volume arguments from a request body, rejecting flags."""
+    volumes = body.get("volumes", "")
+    if not volumes:
+        raise ValueError("volumes is required")
+    args = []
+    if isinstance(volumes, list):
+        for v in volumes:
+            args.append(_sanitize_volume(v))
+    else:
+        v = _sanitize_volume(volumes)
+        args.append(v)
+        if v == "/E":
+            exceptions = body.get("except", [])
+            if not exceptions:
+                raise ValueError("/E requires an 'except' list of volumes to exclude")
+            exc_list = exceptions if isinstance(exceptions, list) else [exceptions]
+            for e in exc_list:
+                args.append(_sanitize_volume(e))
+    return args
 
 
 def register_routes(app, state, require_auth):
@@ -95,17 +133,10 @@ def register_routes(app, state, require_auth):
         if not volumes:
             return _missing_field("volumes")
 
-        args = []
-        if isinstance(volumes, list):
-            args.extend(volumes)
-        elif isinstance(volumes, str):
-            if volumes in ("/C", "/AllVolumes", "/E"):
-                args.append(volumes)
-                exceptions = body.get("except", [])
-                if exceptions:
-                    args.extend(exceptions if isinstance(exceptions, list) else [exceptions])
-            else:
-                args.append(volumes)
+        try:
+            args = _build_volume_args(body)
+        except ValueError as e:
+            return jsonify({"ok": False, "error": str(e)}), 400
 
         args.append("/A")
 
@@ -155,19 +186,15 @@ def register_routes(app, state, require_auth):
         if not volumes:
             return _missing_field("volumes")
 
-        args = []
-        if isinstance(volumes, list):
-            args.extend(volumes)
-        elif isinstance(volumes, str):
-            if volumes in ("/C", "/AllVolumes", "/E"):
-                args.append(volumes)
-                exceptions = body.get("except", [])
-                if exceptions:
-                    args.extend(exceptions if isinstance(exceptions, list) else [exceptions])
-            else:
-                args.append(volumes)
+        try:
+            args = _build_volume_args(body)
+        except ValueError as e:
+            return jsonify({"ok": False, "error": str(e)}), 400
 
-        mode = body.get("mode", "optimize").lower()
+        mode = body.get("mode") or "optimize"
+        if not isinstance(mode, str):
+            return jsonify({"ok": False, "error": "mode must be a string"}), 400
+        mode = mode.lower()
         mode_flags = {
             "optimize": "/O",
             "defrag": "/D",
@@ -225,9 +252,14 @@ def register_routes(app, state, require_auth):
         except Exception:
             return jsonify({"ok": False, "error": "invalid JSON body"}), 400
 
-        volume = body.get("volume", "").strip()
+        volume = body.get("volume", "")
+        if not isinstance(volume, str):
+            return jsonify({"ok": False, "error": "volume must be a string"}), 400
+        volume = volume.strip()
         if not volume:
             return _missing_field("volume")
+        if volume.startswith(("/", "-")):
+            return jsonify({"ok": False, "error": "invalid volume specifier"}), 400
 
         args = [volume, "/T", "/U"]
 
