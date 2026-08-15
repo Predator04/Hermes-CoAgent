@@ -20,9 +20,32 @@ _PROTECTED_DELETE_DIRS = {
 
 
 def _is_protected_delete_path(path):
-    resolved = Path(path).resolve()
-    protected = {p.resolve() for p in _PROTECTED_DELETE_DIRS}
-    return resolved in protected
+    resolved = os.path.normcase(str(Path(path).resolve()))
+    for p in _PROTECTED_DELETE_DIRS:
+        if resolved == os.path.normcase(str(p.resolve())):
+            return True
+    return False
+
+
+def _is_within_delete_root(resolved):
+    resolved_n = os.path.normcase(str(resolved))
+    for root in _ALLOWED_DELETE_ROOTS:
+        root_n = os.path.normcase(str(root))
+        if resolved_n == root_n:
+            return True
+        try:
+            if os.path.commonpath([resolved_n, root_n]) == root_n:
+                return True
+        except ValueError:
+            continue
+    return False
+
+
+def _safe_is_dir(entry):
+    try:
+        return entry.is_dir()
+    except OSError:
+        return False
 
 def register_routes(app, state, require_auth):
     @app.route("/file/list", methods=["POST"])
@@ -35,13 +58,16 @@ def register_routes(app, state, require_auth):
             return jsonify({"error": str(e)}), 403
         try:
             entries = []
-            for e in sorted(os.scandir(path), key=lambda x: (not x.is_dir(), x.name.lower())):
+            with os.scandir(path) as it:
+                entries_raw = list(it)
+            entries_raw.sort(key=lambda x: (not _safe_is_dir(x), x.name.lower()))
+            for e in entries_raw:
                 try:
                     st = e.stat()
                     entries.append({"name": e.name, "path": e.path, "is_dir": e.is_dir(),
                                     "size": st.st_size, "mtime": int(st.st_mtime)})
-                except Exception as e:
-                    _log(f"[file] stat failed for {e!r}: {e}")
+                except Exception as ex:
+                    _log(f"[file] stat failed for {e.path!r}: {ex}")
             return jsonify({"path": path, "entries": entries, "count": len(entries)})
         except Exception as ex:
             return jsonify({"error": str(ex)}), 500
@@ -98,8 +124,8 @@ def register_routes(app, state, require_auth):
             resolved = Path(path).resolve()
             if _is_protected_delete_path(resolved):
                 return jsonify({"error": "Refusing to delete a protected directory", "path": str(resolved)}), 403
-            # Verify path is within allowed delete roots
-            if not any(resolved == root or str(resolved).startswith(str(root) + os.sep) for root in _ALLOWED_DELETE_ROOTS):
+            # Verify path is within allowed delete roots (case-insensitive on Windows)
+            if not _is_within_delete_root(resolved):
                 return jsonify({"error": "Path outside allowed delete roots", "path": str(resolved)}), 403
             if d.get("confirm") is not True:
                 return jsonify({"error": "Deletion requires confirm: true", "path": str(resolved)}), 400
