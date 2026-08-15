@@ -19,21 +19,40 @@ def _get_token():
     global _TOKEN
     if _TOKEN:
         return _TOKEN
-    tok = os.environ.get("REMOTE_AGENT_TOKEN", "")
+    tok = (os.environ.get("REMOTE_AGENT_TOKEN") or "").strip()
+    if tok:
+        _TOKEN = tok
+        return _TOKEN
+    token_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".remote_token")
+    # Prefer an existing token (another process may have created it).
+    try:
+        with open(token_file) as f:
+            tok = f.read().strip()
+    except OSError:
+        tok = ""
     if not tok:
-        token_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".remote_token")
-        if os.path.exists(token_file):
-            tok = open(token_file).read().strip()
+        # Generate a fresh token atomically with restrictive permissions.
+        tok = secrets.token_hex(32)
+        try:
+            fd = os.open(token_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except FileExistsError:
+            # Lost a race with a concurrent start — adopt the on-disk token.
+            try:
+                with open(token_file) as f:
+                    tok = f.read().strip()
+            except OSError:
+                tok = ""
         else:
-            tok = secrets.token_hex(32)
-            with open(token_file, "w") as f:
+            with os.fdopen(fd, "w") as f:
                 f.write(tok)
     _TOKEN = tok
     return _TOKEN
 
 class Handler(http.server.BaseHTTPRequestHandler):
     def _check_auth(self):
-        token = self.headers.get("Authorization", "").replace("Bearer ", "")
+        token = self.headers.get("Authorization", "")
+        if token.startswith("Bearer "):
+            token = token[7:]
         if not token or not secrets.compare_digest(token, _get_token()):
             self.send_response(401)
             self.send_header("Content-Type", "application/json")
