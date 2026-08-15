@@ -393,14 +393,14 @@ def _provider_generic(prompt, model, api_key, base_url, timeout):
     return {"role": "assistant", "content": _content_from_openai_payload(data)}
 
 
-def _provider_openai(prompt, model, api_key, timeout):
+def _provider_openai(prompt, model, api_key, base_url, timeout):
     if not api_key:
         raise ValueError("api_key is required for openai provider")
     return _provider_generic(
         prompt,
         model or PROVIDER_DEFAULTS["openai"]["model"],
         api_key,
-        PROVIDER_DEFAULTS["openai"]["base_url"],
+        base_url or PROVIDER_DEFAULTS["openai"]["base_url"],
         timeout,
     )
 
@@ -467,7 +467,7 @@ def _call_provider(provider, prompt, settings, timeout):
     api_key = settings.get("api_key")
     base_url = settings.get("base_url")
     if provider == "openai":
-        return _provider_openai(prompt, model, api_key, timeout)
+        return _provider_openai(prompt, model, api_key, base_url, timeout)
     if provider == "anthropic":
         return _provider_anthropic(prompt, model, api_key, timeout)
     if provider == "deepseek":
@@ -1180,11 +1180,23 @@ def _run_command(command, prompt_input, timeout, workdir_path, env, log_id=None)
         stderr_thread.start()
 
         if prompt_input is not None and proc.stdin:
-            try:
-                proc.stdin.write(prompt_input)
-                proc.stdin.close()
-            except (BrokenPipeError, OSError):
-                pass
+            # Feed stdin from a daemon thread so a child that never reads its
+            # stdin cannot block the main thread on a full pipe buffer before
+            # the wait(timeout=...) guard below is reached.
+            def _feed_stdin(stream, data):
+                try:
+                    stream.write(data)
+                except (BrokenPipeError, OSError):
+                    pass
+                finally:
+                    try:
+                        stream.close()
+                    except (BrokenPipeError, OSError):
+                        pass
+
+            threading.Thread(
+                target=_feed_stdin, args=(proc.stdin, prompt_input), daemon=True
+            ).start()
 
         try:
             exit_code = proc.wait(timeout=timeout)
