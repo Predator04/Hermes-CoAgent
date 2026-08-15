@@ -105,7 +105,7 @@ def _fresh_screenshot():
             _mon = _sct.monitors[0]
             _sct_img = _sct.grab(_mon)
             return _PILImage.frombytes("RGB", _sct_img.size, _sct_img.rgb).convert("RGB")
-    except TypeError:
+    except Exception:
         try:
             with _mss_mod.mss() as _sct:
                 _mon = _sct.monitors[1] if len(_sct.monitors) > 1 else _sct.monitors[0]
