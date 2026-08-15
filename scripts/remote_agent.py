@@ -7,6 +7,7 @@ import os
 import sys
 import secrets
 import shlex
+import threading
 from PIL import ImageGrab
 PORT = 19124
 BIND_HOST = "127.0.0.1"  # never expose to network without auth
@@ -14,39 +15,43 @@ MAX_BODY = 1 * 1024 * 1024  # 1 MB max request body
 
 # Auth: read token from env or file, generate if neither exists
 _TOKEN = None
+_TOKEN_LOCK = threading.Lock()
 
 def _get_token():
     global _TOKEN
     if _TOKEN:
         return _TOKEN
-    tok = (os.environ.get("REMOTE_AGENT_TOKEN") or "").strip()
-    if tok:
+    with _TOKEN_LOCK:
+        if _TOKEN:
+            return _TOKEN
+        tok = (os.environ.get("REMOTE_AGENT_TOKEN") or "").strip()
+        if tok:
+            _TOKEN = tok
+            return _TOKEN
+        token_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".remote_token")
+        # Prefer an existing token (another process may have created it).
+        try:
+            with open(token_file) as f:
+                tok = f.read().strip()
+        except OSError:
+            tok = ""
+        if not tok:
+            # Generate a fresh token atomically with restrictive permissions.
+            tok = secrets.token_hex(32)
+            try:
+                fd = os.open(token_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            except FileExistsError:
+                # Lost a race with a concurrent start — adopt the on-disk token.
+                try:
+                    with open(token_file) as f:
+                        tok = f.read().strip()
+                except OSError:
+                    tok = ""
+            else:
+                with os.fdopen(fd, "w") as f:
+                    f.write(tok)
         _TOKEN = tok
         return _TOKEN
-    token_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".remote_token")
-    # Prefer an existing token (another process may have created it).
-    try:
-        with open(token_file) as f:
-            tok = f.read().strip()
-    except OSError:
-        tok = ""
-    if not tok:
-        # Generate a fresh token atomically with restrictive permissions.
-        tok = secrets.token_hex(32)
-        try:
-            fd = os.open(token_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        except FileExistsError:
-            # Lost a race with a concurrent start — adopt the on-disk token.
-            try:
-                with open(token_file) as f:
-                    tok = f.read().strip()
-            except OSError:
-                tok = ""
-        else:
-            with os.fdopen(fd, "w") as f:
-                f.write(tok)
-    _TOKEN = tok
-    return _TOKEN
 
 class Handler(http.server.BaseHTTPRequestHandler):
     def _check_auth(self):
@@ -141,4 +146,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_response(500); self.send_header("Content-Type","application/json"); self.end_headers()
             self.wfile.write(json.dumps({"error":"Internal error"}).encode())
 
-http.server.HTTPServer((BIND_HOST, PORT), Handler).serve_forever()
+class ThreadingHTTPServer(http.server.ThreadingHTTPServer):
+    daemon_threads = True
+
+ThreadingHTTPServer((BIND_HOST, PORT), Handler).serve_forever()
