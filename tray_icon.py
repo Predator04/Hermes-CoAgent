@@ -1062,10 +1062,9 @@ GITHUB_API_RELEASES = "https://api.github.com/repos/Predator04/Hermes-CoAgent/re
 def _fetch_latest_version(state: TrayState) -> Optional[str]:
     """Get the latest version tag from GitHub releases."""
     try:
-        token = state.current_token()
+        # The local CoAgent auth token must never be sent to third-party hosts.
+        # GitHub's public releases API requires no Authorization header.
         headers = {"Accept": "application/vnd.github+json"}
-        if token:
-            headers["Authorization"] = f"Bearer {token}"
         req = urllib.request.Request(GITHUB_API_RELEASES, headers=headers)
         with urllib.request.urlopen(req, timeout=10) as resp:
             data = json.loads(resp.read())
