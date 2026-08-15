@@ -164,7 +164,7 @@ def register_routes(app, state, require_auth):
                 [exe, "eval",
                  "--",
                  f"var items = []; "
-                 f"for (var i = 0; i < min(size(), {limit}); ++i) {{ "
+                 f"for (var i = 0; i < Math.min(size(), {limit}); ++i) {{ "
                  f"  items.push(str(read(i))); "
                  f"}}",
                  "items.join('\\n---SEPARATOR---\\n')"],
