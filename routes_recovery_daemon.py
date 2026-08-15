@@ -61,8 +61,8 @@ def _dismiss_popup(match):
     try:
         import urllib.request, json
         center = match.get("center", {})
-        x, y = center.get("x", 0), center.get("y", 0)
-        if x and y:
+        x, y = center.get("x"), center.get("y")
+        if x is not None and y is not None:
             # Click dismiss location (usually bottom-right of popup)
             dismiss_x = x + 50
             dismiss_y = y + 50
@@ -115,6 +115,12 @@ def _recovery_start():
     with _RECOVERY_LOCK:
         if _RECOVERY_STATE["running"]:
             return jsonify({"ok": True, "already_running": True})
+        # Ensure any previous thread has fully exited before starting a new one,
+        # so a rapid stop→start can't leave two OCR/click loops running at once.
+        prev = _RECOVERY_THREAD
+        if prev is not None and prev.is_alive():
+            _RECOVERY_STOP.set()
+            prev.join(timeout=_RECOVERY_STATE.get("check_interval_secs", 5) + 1)
         _RECOVERY_STOP.clear()
         _RECOVERY_THREAD = threading.Thread(target=_recovery_loop, daemon=True)
         _RECOVERY_THREAD.start()
@@ -145,8 +151,23 @@ def _recovery_dismissals():
 @recovery_bp.route("/recovery/configure", methods=["POST"])
 def _recovery_configure():
     body = request.get_json(force=True, silent=True) or {}
+    new_interval = None
+    if "check_interval_secs" in body:
+        try:
+            new_interval = int(body["check_interval_secs"])
+        except (TypeError, ValueError):
+            return jsonify({"error": "check_interval_secs must be an integer"}), 400
+        if new_interval <= 0:
+            return jsonify({"error": "check_interval_secs must be positive"}), 400
+    for key in ("popup_keywords", "dismiss_keywords"):
+        if key in body:
+            val = body[key]
+            if not isinstance(val, list) or not all(isinstance(k, str) and k.strip() for k in val):
+                return jsonify({"error": f"{key} must be a list of non-empty strings"}), 400
     with _RECOVERY_LOCK:
-        for key in ("check_interval_secs", "popup_keywords", "dismiss_keywords"):
+        if new_interval is not None:
+            _RECOVERY_STATE["check_interval_secs"] = new_interval
+        for key in ("popup_keywords", "dismiss_keywords"):
             if key in body:
                 _RECOVERY_STATE[key] = body[key]
     return jsonify({"ok": True, **_RECOVERY_STATE})
