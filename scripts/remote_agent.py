@@ -136,7 +136,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     self.send_response(400); self.send_header("Content-Type","application/json"); self.end_headers()
                     self.wfile.write(b'{"error":"Invalid command"}')
                     return
-                subprocess.Popen(args)
+                kwargs = {"stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
+                if os.name == "posix":
+                    kwargs["start_new_session"] = True
+                else:
+                    kwargs["creationflags"] = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+                subprocess.Popen(args, **kwargs)
                 self.send_response(200); self.send_header("Content-Type","application/json"); self.end_headers()
                 self.wfile.write(b'{"ok":true}')
 
