@@ -38,7 +38,13 @@ def _check_fts5(conn):
 def _init_db(conn):
     global _DB_READY
     if _DB_READY:
-        return
+        # Verify tables still exist — the DB file may have been deleted/replaced.
+        row = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='facts'"
+        ).fetchone()
+        if row:
+            return
+        _DB_READY = False
     _check_fts5(conn)
     conn.executescript(
         """
@@ -85,6 +91,16 @@ def _init_db(conn):
     _rebuild_fts_if_empty(conn)
     conn.commit()
     _DB_READY = True
+    # Enforce the 90-day retention policy once per process start.
+    try:
+        archived = _archive_old_facts(conn)
+        conn.commit()
+        if archived:
+            from shared import _log
+            _log(f"[memory] archived {archived} stale fact(s)")
+    except Exception as e:
+        from shared import _log
+        _log(f"[memory] archive sweep failed: {type(e).__name__}: {e}")
 
 
 def _rebuild_fts_if_empty(conn):
