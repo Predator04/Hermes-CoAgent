@@ -164,7 +164,7 @@ def _ocr_candidates_from_image(image):
             continue
         if w <= 0 or h <= 0:
             continue
-        candidates.append({"text": text, "x": x, "y": y, "w": w, "h": h, "confidence": max(0.0, confidence)})
+        candidates.append({"text": text, "x": x, "y": y, "w": w, "h": h, "confidence": max(0.0, confidence), "ocr_conf": max(0.0, confidence)})
         blk = ocr.get("block_num", [0] * n_texts)
         par = ocr.get("par_num", [0] * n_texts)
         lin = ocr.get("line_num", [0] * n_texts)
@@ -196,6 +196,7 @@ def _ocr_candidates_from_image(image):
             "w": max(1, right - x),
             "h": max(1, bottom - y),
             "confidence": round(sum(line["confs"]) / max(1, len(line["confs"])), 2),
+            "ocr_conf": round(sum(line["confs"]) / max(1, len(line["confs"])), 2),
         })
     return candidates, None
 
@@ -212,7 +213,7 @@ def _score_candidate(candidate, description, terms, hints, image_size):
         else:
             score += 25 * SequenceMatcher(None, term, text).ratio()
     try:
-        score += min(20.0, max(0.0, float(candidate.get("confidence", 0))) / 5)
+        score += min(20.0, max(0.0, float(candidate.get("ocr_conf", candidate.get("confidence", 0)))) / 5)
     except (TypeError, ValueError):
         pass
 
