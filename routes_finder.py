@@ -77,11 +77,23 @@ def _decode_screenshot(screenshot):
         return None
     from PIL import Image
 
+    max_bytes = 50 * 1024 * 1024  # 50 MB
+    max_pixels = 50_000_000
+
     raw = str(screenshot)
-    if "," in raw and raw.lstrip().lower().startswith("data:"):
+    if raw.lstrip().lower().startswith("data:"):
+        if "," not in raw:
+            raise ValueError("malformed data URI: missing comma separator")
         raw = raw.split(",", 1)[1]
     data = base64.b64decode(raw)
-    return Image.open(io.BytesIO(data)).convert("RGB")
+    if len(data) > max_bytes:
+        raise ValueError(f"screenshot too large ({len(data)} bytes)")
+    img = Image.open(io.BytesIO(data))
+    width, height = img.size
+    if width * height > max_pixels:
+        img.close()
+        raise ValueError(f"screenshot dimensions too large ({width}x{height})")
+    return img.convert("RGB")
 
 
 def _fresh_screenshot():
