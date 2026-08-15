@@ -126,6 +126,8 @@ def register_routes(app, state, require_auth):
                 [exe, "copy", text],
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=5,
             )
         except OSError as exc:
