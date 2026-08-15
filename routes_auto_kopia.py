@@ -62,6 +62,22 @@ def _run_kopia(args, timeout=60):
     return result.stdout, result.stderr, result.returncode
 
 
+# kopia takes the storage provider as a positional argument plus a
+# provider-specific flag; it does NOT accept URL-style "provider://location".
+_STORAGE_FLAGS = {
+    "filesystem": ("filesystem", "--path"),
+    "s3": ("s3", "--bucket"),
+    "gcs": ("gcs", "--bucket"),
+    "azure": ("azure", "--container"),
+}
+
+
+def _storage_connect_args(storage_type, location):
+    """Build the positional provider + flag args for repository connect/create."""
+    provider, flag = _STORAGE_FLAGS[storage_type]
+    return [provider, flag, location]
+
+
 def register_routes(app, state, require_auth):
 
     @app.route("/auto/kopia/info", methods=["GET"])
@@ -252,6 +268,11 @@ def register_routes(app, state, require_auth):
         body = _json_body()
 
         storage_type = (body.get("storage_type") or "filesystem").strip().lower()
+        if storage_type not in _STORAGE_FLAGS:
+            return jsonify({
+                "ok": False,
+                "error": f"Unsupported storage_type '{storage_type}'. Valid: {', '.join(sorted(_STORAGE_FLAGS))}"
+            }), 400
         location = (body.get("path_or_bucket") or body.get("location") or "").strip()
         password = body.get("password") or ""
         hostname = (body.get("hostname") or "").strip()
@@ -261,8 +282,13 @@ def register_routes(app, state, require_auth):
                 "ok": False,
                 "error": "path_or_bucket (storage location) is required"
             }), 400
+        if location.startswith("-"):
+            return jsonify({
+                "ok": False,
+                "error": "storage location must not begin with '-'"
+            }), 400
 
-        args = ["repository", "connect", f"{storage_type}://{location}"]
+        args = ["repository", "connect"] + _storage_connect_args(storage_type, location)
         if hostname:
             args.extend(["--override-hostname", hostname])
 
@@ -313,6 +339,11 @@ def register_routes(app, state, require_auth):
         body = _json_body()
 
         storage_type = (body.get("storage_type") or "filesystem").strip().lower()
+        if storage_type not in _STORAGE_FLAGS:
+            return jsonify({
+                "ok": False,
+                "error": f"Unsupported storage_type '{storage_type}'. Valid: {', '.join(sorted(_STORAGE_FLAGS))}"
+            }), 400
         location = (body.get("path_or_bucket") or body.get("location") or "").strip()
         password = body.get("password") or ""
         hostname = (body.get("hostname") or "").strip()
@@ -323,6 +354,11 @@ def register_routes(app, state, require_auth):
                 "ok": False,
                 "error": "path_or_bucket (storage location) is required"
             }), 400
+        if location.startswith("-"):
+            return jsonify({
+                "ok": False,
+                "error": "storage location must not begin with '-'"
+            }), 400
 
         if not password:
             return jsonify({
@@ -330,7 +366,7 @@ def register_routes(app, state, require_auth):
                 "error": "password is required for a new repository"
             }), 400
 
-        args = ["repository", "create", f"{storage_type}://{location}"]
+        args = ["repository", "create"] + _storage_connect_args(storage_type, location)
         if hostname:
             args.extend(["--override-hostname", hostname])
         if max_revision:
