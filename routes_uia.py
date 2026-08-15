@@ -535,13 +535,15 @@ def register_routes(app, state, require_auth):
 
         if window_title:
             needle = window_title.lower()
+            matched = False
             for win in windows:
                 win_name = str(win.get("name", "")).lower()
-                if needle in win_name or win_name in needle:
+                if win_name and (needle in win_name or win_name in needle):
                     matched_window = win.get("name", "")
                     collect_text(win)
+                    matched = True
                     break
-            if not texts:
+            if not matched:
                 available = [w.get("name", "") for w in windows[:10]]
                 return jsonify({
                     "ok": False,
