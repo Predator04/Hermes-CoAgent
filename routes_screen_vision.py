@@ -215,7 +215,7 @@ def _vision_find():
         return jsonify({"ok": False, "error": "Cannot capture screen"}), 500
 
     matches = _find_on_screen(query, screenshot)
-    context_regions = []
+    context_text = ""
 
     # If we found matches, also grab surrounding text for context
     if matches:
@@ -225,7 +225,7 @@ def _vision_find():
             from routes_ocr import _windows_ocr
             full_ocr = _windows_ocr(img)
             if full_ocr.get("success"):
-                context_regions = full_ocr.get("text", "")[:500]
+                context_text = full_ocr.get("text", "")[:500]
         except Exception:
             pass
 
@@ -237,7 +237,7 @@ def _vision_find():
         "query": query,
         "matches": matches,
         "count": len(matches),
-        "context": context_regions if context_regions else None,
+        "context": context_text or None,
     })
 
 
