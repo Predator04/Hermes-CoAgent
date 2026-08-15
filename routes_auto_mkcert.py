@@ -58,13 +58,13 @@ def _is_mkcert_available():
         return False
 
 
-def _run_mkcert(args, timeout=30, cwd=None):
+def _run_mkcert(args, timeout=30, cwd=None, env=None):
     """Run mkcert with given args, return (stdout, stderr, exit_code)."""
     exe = _find_mkcert()
     if not exe:
         raise RuntimeError("mkcert not found on system")
     result = subprocess.run(
-        [exe] + args, capture_output=True, text=True, timeout=timeout, cwd=cwd
+        [exe] + args, capture_output=True, text=True, timeout=timeout, cwd=cwd, env=env
     )
     return result.stdout, result.stderr, result.returncode
 
@@ -142,26 +142,23 @@ def register_routes(app, state, require_auth):
                 "error": f"Invalid trust_store. Valid: {', '.join(valid_stores)}"
             }), 400
 
-        args = ["-install"]
-        if trust_store == "nss":
-            args.append("-cert-file")  # mkcert -install uses the system by default,
-            pass                       # we just let mkcert decide per store flag
-        elif trust_store == "java":
-            args.append("-java")       # java trust store
-
         try:
-            # Use the global -install command
-            # mkcert -install installs to system trust store
-            # For specific stores, we need separate args
-            caroot_args = []
+            # mkcert installs into the system trust store by default and selects
+            # additional stores via the TRUST_STORES environment variable. Map
+            # the requested store to that variable instead of fabricating flags
+            # (mkcert has no -cert-file/-java/-nss install flags).
             if trust_store == "all":
-                caroot_args = ["-install"]
+                trust_stores = "system,nss,java"
             elif trust_store == "nss":
-                caroot_args = ["-install"]
+                trust_stores = "nss"
+            elif trust_store == "java":
+                trust_stores = "java"
             else:
-                caroot_args = ["-install"]
+                trust_stores = "system"
+            env = os.environ.copy()
+            env["TRUST_STORES"] = trust_stores
 
-            stdout, stderr, rc = _run_mkcert(caroot_args, timeout=30)
+            stdout, stderr, rc = _run_mkcert(["-install"], timeout=30, env=env)
             if rc != 0:
                 return jsonify({
                     "ok": False,
@@ -199,11 +196,15 @@ def register_routes(app, state, require_auth):
         if not domains or not isinstance(domains, list) or len(domains) == 0:
             return _missing_field("domains (list, min 1)")
 
+        cleaned_domains = []
         for d in domains:
             if not isinstance(d, str) or not d.strip():
                 return jsonify({"ok": False, "error": "Each domain must be a non-empty string"}), 400
-            if d.strip().startswith("-"):
+            d = d.strip()
+            if d.startswith("-"):
                 return jsonify({"ok": False, "error": f"domain '{d}' must not start with '-'"}), 400
+            cleaned_domains.append(d)
+        domains = cleaned_domains
 
         output_dir = (body.get("output_dir") or ".").strip()
         try:
@@ -220,6 +221,12 @@ def register_routes(app, state, require_auth):
         if p12:
             args.append("-pkcs12")
         args.extend(["-cert-file", cert_file, "-key-file", key_file])
+        p12_file = None
+        if p12:
+            # mkcert -pkcs12 ignores -cert-file/-key-file and writes its own
+            # default filename unless we pass -p12-file explicitly.
+            p12_file = cert_file.rsplit(".", 1)[0] + ".p12"
+            args.extend(["-p12-file", p12_file])
         args.extend(domains)
 
         try:
@@ -245,7 +252,6 @@ def register_routes(app, state, require_auth):
             "output": stdout.strip(),
         }
         if p12:
-            p12_file = cert_file.rsplit(".", 1)[0] + ".p12"
             result["p12_file"] = os.path.join(output_dir, p12_file)
 
         return jsonify(result)
