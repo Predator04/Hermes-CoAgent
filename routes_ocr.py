@@ -524,13 +524,16 @@ def _windows_ocr(pil_image):
 
 def _windows_ocr_powershell(pil_image):
     """Fallback: Windows OCR via PowerShell (temp file approach)."""
-    tmp_img = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
-    tmp_img_path = tmp_img.name
-    pil_image.save(tmp_img, format="PNG")
-    tmp_img.close()
-    tmp_ps1 = tempfile.NamedTemporaryFile(suffix=".ps1", mode="w", delete=False)
-    tmp_ps1_path = tmp_ps1.name
-    tmp_ps1.write(f"""$imgPath = "{tmp_img_path}"
+    tmp_img_path = None
+    tmp_ps1_path = None
+    try:
+        tmp_img = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+        tmp_img_path = tmp_img.name
+        pil_image.save(tmp_img, format="PNG")
+        tmp_img.close()
+        tmp_ps1 = tempfile.NamedTemporaryFile(suffix=".ps1", mode="w", delete=False)
+        tmp_ps1_path = tmp_ps1.name
+        tmp_ps1.write(f"""$imgPath = "{tmp_img_path}"
 Add-Type -AssemblyName System.Runtime.WindowsRuntime
 $null = [Windows.Media.Ocr.OcrEngine, Windows.Media.Ocr, ContentType=WindowsRuntime]
 $null = [Windows.Graphics.Imaging.BitmapDecoder, Windows.Graphics.Imaging, ContentType=WindowsRuntime]
@@ -558,8 +561,7 @@ foreach ($line in $result.Lines) {{
 [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(($output | ConvertTo-Json -Depth 10)))
 Remove-Item "$imgPath" -Force -ErrorAction SilentlyContinue
 """)
-    tmp_ps1.close()
-    try:
+        tmp_ps1.close()
         r = subprocess.run(["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", tmp_ps1_path],
                            capture_output=True, text=True, timeout=30,
                            creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0)
@@ -581,10 +583,11 @@ Remove-Item "$imgPath" -Force -ErrorAction SilentlyContinue
         return {"success": False, "error": str(e)}
     finally:
         for path in (tmp_ps1_path, tmp_img_path):
-            try:
-                os.unlink(path)
-            except OSError:
-                pass
+            if path:
+                try:
+                    os.unlink(path)
+                except OSError:
+                    pass
 
 def ocr_find_text(text, pil_img=None):
     """Find text on screen, return matches with positions."""
