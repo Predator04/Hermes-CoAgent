@@ -7,6 +7,7 @@ creating thread; closing objects from a different thread raises greenlet/loop
 errors and leaks the Chromium process + node driver (issue #55).
 """
 
+import json
 import queue
 import random
 import threading
@@ -76,6 +77,8 @@ def _validate_url(url):
     """Validate URL: allow only http/https, block private/localhost IPs, allow about:blank."""
     if url == "about:blank":
         return None
+    import ipaddress
+    import socket
     from urllib.parse import urlparse
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https"):
@@ -90,14 +93,35 @@ def _validate_url(url):
     }
     if hostname in blocked:
         return f"Access to {hostname} is blocked"
-    # Block private IP ranges
-    import ipaddress
+
+    def _is_private_ip(addr):
+        try:
+            ip = ipaddress.ip_address(addr)
+        except ValueError:
+            return False
+        if ip.version == 6 and getattr(ip, "ipv4_mapped", None) is not None:
+            ip = ip.ipv4_mapped
+        return ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast
+
+    # Literal IP?
     try:
-        ip = ipaddress.ip_address(hostname)
-        if ip.is_private or ip.is_loopback or ip.is_link_local:
+        ipaddress.ip_address(hostname)
+        if _is_private_ip(hostname):
             return f"Access to private IP {hostname} is blocked"
+        return None
     except ValueError:
-        pass  # Not an IP address, allow (DNS will resolve later)
+        pass
+
+    # Resolve the hostname and block if ANY resolved address is private
+    # (prevents DNS-rebinding SSRF: a domain that resolves to 127.0.0.1).
+    try:
+        infos = socket.getaddrinfo(hostname, None)
+    except socket.gaierror:
+        return None  # Unresolvable; let the browser surface the error naturally.
+    for info in infos:
+        addr = info[4][0]
+        if _is_private_ip(addr):
+            return f"Access to {hostname} (resolves to {addr}) is blocked"
     return None
 
 
@@ -144,9 +168,12 @@ def _random_viewport(data):
 
 def _stealth_init_script(locale):
     languages = [part.split(";")[0] for part in locale.split(",") if part.strip()]
+    # json.dumps produces a valid JS array and escapes U+2028/U+2029 (which
+    # Python's repr does not), preventing string-literal breakout injection.
+    langs_js = json.dumps(languages)
     return f"""
 Object.defineProperty(navigator, 'webdriver', {{ get: () => undefined }});
-Object.defineProperty(navigator, 'languages', {{ get: () => {languages!r} }});
+Object.defineProperty(navigator, 'languages', {{ get: () => {langs_js} }});
 Object.defineProperty(navigator, 'plugins', {{ get: () => [1, 2, 3, 4, 5] }});
 window.chrome = window.chrome || {{ runtime: {{}} }};
 const originalQuery = window.navigator.permissions && window.navigator.permissions.query;
@@ -292,14 +319,32 @@ class _SessionWorker(threading.Thread):
         except queue.Empty:
             raise TimeoutError("browser session failed to become ready")
 
+    def signal_close(self):
+        """Ask the worker to close without waiting for a result (best-effort)."""
+        try:
+            self._cmd_queue.put("close")
+        except Exception:
+            pass
+
     def request_close(self, timeout=_CLOSE_TIMEOUT):
         """Signal close and block for the worker's result. Returns a status dict."""
         self._cmd_queue.put("close")
-        try:
-            status, payload = self._result_queue.get(timeout=timeout)
-        except queue.Empty:
-            return {"status": "close_timed_out", "browser_id": self.browser_id}
-        return payload
+        deadline = time.time() + timeout
+        while True:
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                return {"status": "close_timed_out", "browser_id": self.browser_id}
+            try:
+                status, payload = self._result_queue.get(timeout=remaining)
+            except queue.Empty:
+                return {"status": "close_timed_out", "browser_id": self.browser_id}
+            if status == "closed":
+                return payload
+            if status == "error":
+                return {"status": "error", "browser_id": self.browser_id,
+                        "error": payload}
+            # status == "ready" is a stale late-launch result; keep waiting for
+            # the close acknowledgement instead of returning the wrong payload.
 
 
 @browser_automation_bp.route("/browser/undetectable", methods=["POST"])
@@ -363,6 +408,9 @@ def route_browser_undetectable():
     try:
         status, payload = worker.wait_ready(ready_timeout)
     except TimeoutError:
+        # The worker may still be mid-launch; ask it to shut down once it
+        # reaches its command loop so the Chromium process is not leaked.
+        worker.signal_close()
         return _error("browser session failed to start within timeout", 500,
                       browser_id=browser_id)
     if status == "error":
