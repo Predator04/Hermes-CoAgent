@@ -1,5 +1,6 @@
 """UIA accessibility tree, SOM overlay, and element-find routes."""
 import sys
+from pathlib import Path
 from flask import jsonify, request
 from shared import _json_body, _log, _missing_field, COAGENT_DIR
 
@@ -351,6 +352,27 @@ def _ocr_screen_text():
     if image is None:
         raise RuntimeError("screenshot unavailable")
     return pytesseract.image_to_string(image)
+
+
+def _safe_icon_path(icon_path):
+    """Constrain icon template lookups to COAGENT_DIR/templates.
+
+    Rejects empty, absolute, and '..'-traversal paths so callers cannot point
+    the template matcher at arbitrary files. Returns a resolved path string or
+    None when the input is not allowed.
+    """
+    if not icon_path or not isinstance(icon_path, str):
+        return None
+    p = Path(icon_path)
+    if p.is_absolute() or ".." in p.parts:
+        return None
+    templates_dir = (COAGENT_DIR / "templates").resolve()
+    resolved = (templates_dir / p).resolve()
+    try:
+        resolved.relative_to(templates_dir)
+    except ValueError:
+        return None
+    return str(resolved)
 
 
 def register_routes(app, state, require_auth):
@@ -780,7 +802,9 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_icon_find():
         d = _json_body()
-        icon_path = d.get("icon_path", "")
+        icon_path = _safe_icon_path(d.get("icon_path", ""))
+        if icon_path is None:
+            return jsonify({"found": False, "error": "Invalid icon_path", "strategy": "template_match"}), 400
         threshold = float(d.get("threshold", 0.8))
         result = ue.find_icon_by_template(icon_path, threshold)
         return jsonify(result)
@@ -789,7 +813,9 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_icon_click():
         d = _json_body()
-        icon_path = d.get("icon_path", "")
+        icon_path = _safe_icon_path(d.get("icon_path", ""))
+        if icon_path is None:
+            return jsonify({"found": False, "error": "Invalid icon_path", "strategy": "template_match"}), 400
         threshold = float(d.get("threshold", 0.8))
         button = d.get("button", "left")
         result = ue.click_icon_by_template(icon_path, threshold, button)
