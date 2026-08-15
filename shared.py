@@ -61,14 +61,17 @@ if os.name == "nt" and not getattr(subprocess.Popen, "_hermes_no_window_wrapped"
 
         def __init__(self, *args, **kwargs):
             show_window = bool(kwargs.pop("_show_window", False))
-            creationflags = kwargs.get("creationflags", 0) or 0
+            creationflags = kwargs.pop("creationflags", 0) or 0
             if not show_window and not (creationflags & _CREATE_NEW_CONSOLE):
-                kwargs["creationflags"] = creationflags | _CREATE_NO_WINDOW
+                creationflags |= _CREATE_NO_WINDOW
                 if kwargs.get("startupinfo") is None:
                     startupinfo = subprocess.STARTUPINFO()
                     startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
                     startupinfo.wShowWindow = 0  # SW_HIDE
                     kwargs["startupinfo"] = startupinfo
+            # Always write back the normalized int; a caller passing
+            # creationflags=None must not leak None through to Popen.
+            kwargs["creationflags"] = creationflags
             super().__init__(*args, **kwargs)
 
     subprocess.Popen = _HermesHiddenPopen
@@ -421,9 +424,9 @@ def get_host_ip():
             )
             if r.stdout.strip():
                 HOST_IP = r.stdout.strip().splitlines()[0]
+                _HOST_IP_LOADED = True
         except Exception:
             pass
-        _HOST_IP_LOADED = True
         return HOST_IP
 
 
