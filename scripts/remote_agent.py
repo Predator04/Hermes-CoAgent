@@ -54,40 +54,70 @@ def _get_token():
         return _TOKEN
 
 class Handler(http.server.BaseHTTPRequestHandler):
+    def _begin(self):
+        self._response_started = False
+
+    def _send_json(self, code, obj):
+        body = json.dumps(obj).encode()
+        self._response_started = True
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _send_bytes(self, code, content_type, body):
+        self._response_started = True
+        self.send_response(code)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def _check_auth(self):
         token = self.headers.get("Authorization", "")
         if token.startswith("Bearer "):
             token = token[7:]
         if not token or not secrets.compare_digest(token, _get_token()):
-            self.send_response(401)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(b'{"error":"Unauthorized"}')
+            self._send_json(401, {"error": "Unauthorized"})
             return False
         return True
 
+    def _fail(self, path, method, exc):
+        self.log_error("%s %s failed: %r", method, path, exc)
+        if not self._response_started:
+            try:
+                self._send_json(500, {"error": "Internal error"})
+            except Exception:
+                pass
+
     def do_GET(self):
+        self._begin()
         try:
             if self.path == "/screen":
                 if not self._check_auth(): return
                 img = ImageGrab.grab(all_screens=True)
-                b = io.BytesIO(); img.save(b, "PNG"); b.seek(0)
-                self.send_response(200); self.send_header("Content-Type","image/png"); self.end_headers()
-                self.wfile.write(b.getvalue())
+                b = io.BytesIO()
+                img.save(b, "PNG")
+                self._send_bytes(200, "image/png", b.getvalue())
             elif self.path == "/info":
                 if not self._check_auth(): return
-                self.send_response(200); self.send_header("Content-Type","application/json"); self.end_headers()
-                self.wfile.write(json.dumps({"pid":os.getpid(),"host":os.environ.get("COMPUTERNAME",""),"python":sys.version}).encode())
+                self._send_json(200, {
+                    "pid": os.getpid(),
+                    "host": os.environ.get("COMPUTERNAME", ""),
+                    "python": "%d.%d" % (sys.version_info.major, sys.version_info.minor),
+                })
             elif self.path == "/health":
-                self.send_response(200); self.send_header("Content-Type","application/json"); self.end_headers()
-                self.wfile.write(b'{"status":"ok"}')
+                self._send_json(200, {"status": "ok"})
             else:
-                self.send_response(404); self.send_header("Content-Type","application/json"); self.end_headers()
+                self._send_json(404, {"error": "Not found"})
+        except (BrokenPipeError, ConnectionResetError):
+            pass
         except Exception as e:
-            self.send_response(500); self.send_header("Content-Type","application/json"); self.end_headers()
-            self.wfile.write(json.dumps({"error":"Internal error"}).encode())
+            self._fail(self.path, "GET", e)
 
     def do_POST(self):
+        self._begin()
         try:
             if not self._check_auth(): return
 
@@ -96,60 +126,68 @@ class Handler(http.server.BaseHTTPRequestHandler):
             try:
                 length = int(length_str)
             except ValueError:
-                self.send_response(400); self.send_header("Content-Type","application/json"); self.end_headers()
-                self.wfile.write(b'{"error":"Bad Content-Length"}')
+                self._send_json(400, {"error": "Bad Content-Length"})
                 return
             if length < 0 or length > MAX_BODY:
-                self.send_response(413); self.send_header("Content-Type","application/json"); self.end_headers()
-                self.wfile.write(b'{"error":"Body too large"}')
+                self._send_json(413, {"error": "Body too large"})
                 return
 
             body = self.rfile.read(length) if length else b"{}"
-            data = json.loads(body) if body else {}
+            try:
+                data = json.loads(body) if body else {}
+            except json.JSONDecodeError:
+                self._send_json(400, {"error": "Invalid JSON"})
+                return
 
             if self.path == "/exec":
                 cmd_str = data.get("cmd", "")
                 if not cmd_str:
-                    self.send_response(400); self.send_header("Content-Type","application/json"); self.end_headers()
-                    self.wfile.write(b'{"error":"cmd required"}')
+                    self._send_json(400, {"error": "cmd required"})
                     return
                 # Parse safely — no shell=True
                 try:
                     args = shlex.split(cmd_str, posix=False)
                 except ValueError:
-                    self.send_response(400); self.send_header("Content-Type","application/json"); self.end_headers()
-                    self.wfile.write(b'{"error":"Invalid command"}')
+                    self._send_json(400, {"error": "Invalid command"})
                     return
-                r = subprocess.run(args, capture_output=True, text=True, timeout=30)
-                self.send_response(200); self.send_header("Content-Type","application/json"); self.end_headers()
-                self.wfile.write(json.dumps({"stdout":r.stdout,"stderr":r.stderr,"code":r.returncode}).encode())
+                try:
+                    r = subprocess.run(args, capture_output=True, text=True, timeout=30)
+                except subprocess.TimeoutExpired:
+                    self._send_json(504, {"error": "Command timed out"})
+                    return
+                except FileNotFoundError:
+                    self._send_json(404, {"error": "Executable not found"})
+                    return
+                self._send_json(200, {"stdout": r.stdout, "stderr": r.stderr, "code": r.returncode})
 
             elif self.path == "/launch":
                 cmd_str = data.get("cmd", "")
                 if not cmd_str:
-                    self.send_response(400); self.send_header("Content-Type","application/json"); self.end_headers()
-                    self.wfile.write(b'{"error":"cmd required"}')
+                    self._send_json(400, {"error": "cmd required"})
                     return
                 try:
                     args = shlex.split(cmd_str, posix=False)
                 except ValueError:
-                    self.send_response(400); self.send_header("Content-Type","application/json"); self.end_headers()
-                    self.wfile.write(b'{"error":"Invalid command"}')
+                    self._send_json(400, {"error": "Invalid command"})
                     return
                 kwargs = {"stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
                 if os.name == "posix":
                     kwargs["start_new_session"] = True
                 else:
                     kwargs["creationflags"] = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
-                subprocess.Popen(args, **kwargs)
-                self.send_response(200); self.send_header("Content-Type","application/json"); self.end_headers()
-                self.wfile.write(b'{"ok":true}')
+                try:
+                    subprocess.Popen(args, **kwargs)
+                except FileNotFoundError:
+                    self._send_json(404, {"error": "Executable not found"})
+                    return
+                self._send_json(200, {"ok": True})
 
             else:
-                self.send_response(404); self.send_header("Content-Type","application/json"); self.end_headers()
+                self._send_json(404, {"error": "Not found"})
+        except (BrokenPipeError, ConnectionResetError):
+            pass
         except Exception as e:
-            self.send_response(500); self.send_header("Content-Type","application/json"); self.end_headers()
-            self.wfile.write(json.dumps({"error":"Internal error"}).encode())
+            self._fail(self.path, "POST", e)
 
 class ThreadingHTTPServer(http.server.ThreadingHTTPServer):
     daemon_threads = True
