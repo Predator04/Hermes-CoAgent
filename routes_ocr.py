@@ -193,7 +193,10 @@ def _screenshot_dxcam(force=False, monitor_index=0):
             if camera is None:
                 camera = _DXCAM_MODULE.create(output_idx=output_idx, output_color="RGB")
                 _DXCAM_CAMERAS[output_idx] = camera
-            frame = camera.grab()
+        if camera is None:
+            return None
+        # grab() outside the lock so a stalled DXGI frame doesn't block other monitors.
+        frame = camera.grab()
         if frame is None:
             return None
         img = Image.fromarray(frame)
