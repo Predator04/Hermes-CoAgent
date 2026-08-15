@@ -196,6 +196,8 @@ def _vision_describe():
     with _VISION_LOCK:
         _VISION_STATE["total_describes"] += 1
         _VISION_STATE["last_method"] = ocr.get("method")
+        if ocr.get("success"):
+            _VISION_STATE["total_ocr"] += 1
 
     return jsonify(result)
 
