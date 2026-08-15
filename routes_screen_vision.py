@@ -126,9 +126,10 @@ def _get_dominant_colors(img, num=3):
     try:
         small = img.convert("RGB").resize((32, 32))
         pixels = list(small.getdata())
+        sampled = pixels[:256]
         # Rough color quantization
         buckets = {}
-        for r, g, b in pixels[:256]:
+        for r, g, b in sampled:
             key = (r // 64, g // 64, b // 64)
             buckets[key] = buckets.get(key, 0) + 1
         sorted_buckets = sorted(buckets.items(), key=lambda x: -x[1])[:num]
@@ -138,7 +139,7 @@ def _get_dominant_colors(img, num=3):
             g_mid = bg * 64 + 32
             b_mid = bb * 64 + 32
             name = _color_name(r_mid, g_mid, b_mid)
-            color_names.append({"color": name, "rgb": [r_mid, g_mid, b_mid], "pct": round(count / len(pixels) * 100, 1)})
+            color_names.append({"color": name, "rgb": [r_mid, g_mid, b_mid], "pct": round(count / len(sampled) * 100, 1)})
         return color_names
     except Exception:
         return []
