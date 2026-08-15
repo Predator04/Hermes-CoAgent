@@ -329,7 +329,8 @@ def register_routes(app, state, require_auth):
     def route_system_wifi_toggle():
         # Radio toggle via netsh
         cur, _, _ = _ps("netsh wlan show interfaces | findstr /C:\"State\"")
-        if "connected" in cur.lower() or "disconnected" in cur.lower():
+        state = cur.lower()
+        if "connected" in state and "disconnected" not in state:
             _ps("netsh wlan disconnect", timeout=5)
             return jsonify({"status": "ok", "wifi": "disconnected"})
         _ps("netsh wlan connect", timeout=10)
@@ -745,9 +746,15 @@ $form.Add_Shown({
             out2, _, _ = _ps("(Get-WmiObject -Namespace root/WMI -Class MBI10_Device -ErrorAction SilentlyContinue) | Select-Object *")
             return jsonify({"status": "ok", "supported": bool(has_kb or out2.strip()), "keyboard_brightness": None})
         elif action in ("on", "off"):
-            _ps(f"nircmd setbrightness {100 if action == 'on' else 0}" if _has_nircmd() else "", timeout=5)
-            _log(f"Keyboard backlight: {action}")
-            return jsonify({"status": "ok", "keyboard_backlight": action == "on"})
+            # `nircmd setbrightness` controls the *display* backlight, not the
+            # keyboard. Keyboard backlight is OEM-specific with no universal CLI,
+            # so report unsupported instead of silently dimming the screen.
+            return jsonify({
+                "status": "ok",
+                "supported": False,
+                "keyboard_backlight": None,
+                "error": "Keyboard backlight control not available (OEM-specific)",
+            }), 501
         return jsonify({"error": "Unknown action"}), 400
 
     # ── Media keys ───────────────────────────────────────────
