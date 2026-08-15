@@ -501,12 +501,16 @@ def _windows_ocr(pil_image):
             return {"success": False, "error": "No OCR engine"}
         result = ocr_engine.recognize_async(bitmap).get()
         words = []
+        lines = []
         for line in result.lines:
+            line_words = []
             for word in line.words:
                 bbox = word.bounding_rect
                 words.append({"text": word.text, "confidence": 100,
                               "bbox": [int(bbox.x), int(bbox.y), int(bbox.width), int(bbox.height)]})
-        return {"success": True, "words": words, "text": " ".join(w["text"] for w in words),
+                line_words.append(word.text)
+            lines.append(getattr(line, "text", "") or " ".join(line_words))
+        return {"success": True, "words": words, "text": "\n".join(lines),
                 "line_count": len(result.lines), "word_count": len(words)}
     except (ImportError, AttributeError, TypeError) as e:
         _log(f"WinRT OCR direct path unavailable; falling back to PowerShell: {type(e).__name__}: {e}")
@@ -562,11 +566,13 @@ Remove-Item "$imgPath" -Force -ErrorAction SilentlyContinue
         if r.returncode == 0 and r.stdout.strip():
             data = json.loads(base64.b64decode(r.stdout.strip()).decode())
             words = []
+            lines = []
             for line in data.get("lines", []):
                 for w in line.get("words", []):
                     words.append({"text": w["text"], "confidence": 100,
                                   "bbox": [w["x"], w["y"], w["w"], w["h"]]})
-            return {"success": True, "words": words, "text": " ".join(w["text"] for w in words),
+                lines.append(line.get("text") or " ".join(w["text"] for w in line.get("words", [])))
+            return {"success": True, "words": words, "text": "\n".join(lines),
                     "line_count": len(data.get("lines", [])), "word_count": len(words)}
         return {"success": False, "error": r.stderr[:200] if r.stderr else "unknown"}
     except subprocess.TimeoutExpired:
@@ -1189,7 +1195,7 @@ def register_routes(app, state, require_auth):
             return jsonify({"error": "Cannot capture screen"}), 500
         win_ocr = _windows_ocr(img)
         if win_ocr.get("success"):
-            lines = [l.strip() for l in win_ocr["text"].split(" ") if l.strip()]
+            lines = [l.strip() for l in win_ocr["text"].split("\n") if l.strip()]
             desc = "\n".join(lines[:100]) if lines else "(blank)"
             full = _redact(win_ocr["text"].strip())
             return jsonify({"status": "ok", "description": _redact(desc),
