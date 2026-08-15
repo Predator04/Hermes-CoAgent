@@ -23,6 +23,7 @@ Endpoints:
 
 import base64
 import threading
+from importlib import import_module
 from pathlib import Path
 
 from flask import Blueprint, jsonify
@@ -33,7 +34,8 @@ from shared import _is_private_url
 stealth_bp = Blueprint("stealth", __name__)
 
 _STEALTH_LOCK = threading.RLock()
-_PW = None        # Playwright module
+_PW = None        # Started sync Playwright driver (exposes .chromium)
+_PW_NAME = None   # Engine name: "patchright" or "playwright"
 _BROWSER = None   # Browser instance
 _CONTEXT = None   # Browser context
 _PAGE = None      # Active page
@@ -185,17 +187,25 @@ def _auth_blueprint(bp, require_auth):
 
 
 def _load_playwright():
-    """Load Patchright first (stealth-patched), fall back to Playwright."""
-    global _PW
+    """Load Patchright first (stealth-patched), fall back to Playwright.
+
+    Returns a *started* sync Playwright driver — the object that exposes
+    ``.chromium``. The top-level package (``import patchright``) only carries a
+    docstring and has no ``.chromium`` attribute, so we must go through the
+    sync API: ``sync_api.sync_playwright().start()``.
+    """
+    global _PW, _PW_NAME
     if _PW:
         return _PW
 
     for name in ["patchright", "playwright"]:
         try:
-            mod = __import__(name)
-            _PW = mod
-            return mod
-        except ImportError:
+            sync_api = import_module(f"{name}.sync_api")
+            pw = sync_api.sync_playwright().start()
+            _PW = pw
+            _PW_NAME = name
+            return pw
+        except (ImportError, AttributeError):
             continue
 
     raise RuntimeError(
@@ -286,7 +296,7 @@ def _current_status() -> dict:
         "profiles_dir": str(_PROFILES_DIR) if _PROFILES_DIR else None,
         "stealth_scripts": list(STEALTH_SCRIPTS.keys()),
         "launch_args_count": len(STEALTH_LAUNCH_ARGS),
-        "engine": "patchright" if _PW and "patchright" in _PW.__name__ else "playwright",
+        "engine": _PW_NAME or "playwright",
     }
 
 
@@ -339,7 +349,7 @@ def route_stealth_open():
             return jsonify({
                 "status": "opened",
                 "url": page.url,
-                "engine": "patchright" if _PW and "patchright" in _PW.__name__ else "playwright",
+                "engine": _PW_NAME or "playwright",
                 "stealth_scripts_injected": len(STEALTH_SCRIPTS),
                 "profile": profile,
             })
