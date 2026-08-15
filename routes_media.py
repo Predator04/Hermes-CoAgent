@@ -422,16 +422,15 @@ def register_routes(app, state, require_auth):
         """Enhanced monitor list: includes DPI, scaling %, work area (excluding taskbar),
         and exact pixel boundaries queried directly from the Windows API."""
         try:
+            import ctypes.wintypes as _wt
             class MONITORINFOEX(ctypes.Structure):
                 _fields_ = [
                     ("cbSize", ctypes.c_uint),
-                    ("rcMonitor", ctypes.wintypes.RECT),
-                    ("rcWork", ctypes.wintypes.RECT),
+                    ("rcMonitor", _wt.RECT),
+                    ("rcWork", _wt.RECT),
                     ("dwFlags", ctypes.c_uint),
                     ("szDevice", ctypes.c_wchar * 32),
                 ]
-
-            import ctypes.wintypes as _wt
             MonitorEnumProc = ctypes.WINFUNCTYPE(
                 ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p,
                 ctypes.POINTER(_wt.RECT), ctypes.c_longlong,
