@@ -985,6 +985,8 @@ from routes_auto_detect_it_easy import register_routes as reg_auto_detect_it_eas
 from routes_background import register_routes as reg_background
 from routes_auto_topgrade import register_routes as reg_auto_topgrade
 from routes_auto_xh import register_routes as reg_auto_xh
+from routes_auto_ollama import register_routes as reg_auto_ollama
+from routes_auto_llama_cpp import register_routes as reg_auto_llama_cpp
 
 features = {}
 
@@ -1280,6 +1282,8 @@ reg_auto_pe_sieve(app, state, require_auth)
 reg_auto_detect_it_easy(app, state, require_auth)
 reg_auto_topgrade(app, state, require_auth)
 reg_auto_xh(app, state, require_auth)
+reg_auto_ollama(app, state, require_auth)
+reg_auto_llama_cpp(app, state, require_auth)
 
 # v8.53 modules
 if reg_background_agent:
@@ -1442,6 +1446,8 @@ features["auto_pe_sieve"] = True
 features["auto_detect_it_easy"] = True
 features["auto_topgrade"] = True
 features["auto_xh"] = True
+features["auto_ollama"] = True
+features["auto_llama_cpp"] = True
 state.backup_file = backup_file
 
 # -- Core routes (stay in main) ----------------------------------
