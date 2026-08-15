@@ -22,15 +22,43 @@ FEATURE_INFO = {
 
 
 def _find_photoshop_mcp():
-    """Check if Photoshop MCP server is available via npx or local install."""
+    """Return the Photoshop MCP launch argv as a list (resolved exe + args)."""
     configured = os.environ.get("PHOTOSHOP_MCP_CMD", "").strip()
-    if configured and (shutil.which(configured) or Path(configured).is_file()):
-        return configured
-    # Check if npx is available and the package is installed
+    if configured:
+        parts = shlex.split(configured)
+        if parts:
+            exe = shutil.which(parts[0]) or (parts[0] if Path(parts[0]).is_file() else None)
+            if exe:
+                return [exe] + parts[1:]
     npx = shutil.which("npx")
     if npx:
-        return f"{npx} @photoshops/mcp-server"
+        return [npx, "@photoshops/mcp-server"]
     return None
+
+
+def _run_photoshop_mcp(cmd, payload, timeout):
+    """Run the MCP process; .cmd/.bat launchers must go through the shell on Windows."""
+    if cmd[0].lower().endswith((".cmd", ".bat")):
+        return subprocess.run(
+            subprocess.list2cmdline(cmd),
+            input=payload,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+            shell=True,
+        )
+    return subprocess.run(
+        cmd,
+        input=payload,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=timeout,
+        shell=False,
+    )
 
 
 def _clean_string(value, field):
@@ -67,7 +95,7 @@ def register_routes(app, state, require_auth):
             "status": "ok",
             "feature": "alisaitteke/photoshop-mcp",
             "available": bool(cmd),
-            "command": cmd or "npx @photoshops/mcp-server",
+            "command": " ".join(cmd) if cmd else "npx @photoshops/mcp-server",
             "hint": "Install with `npm install -g @photoshops/mcp-server` or `npx @photoshops/mcp-server`",
         })
 
@@ -102,9 +130,9 @@ def register_routes(app, state, require_auth):
 
         import json as _json
         try:
-            result = subprocess.run(
-                shlex.split(cmd),
-                input=_json.dumps({
+            result = _run_photoshop_mcp(
+                cmd,
+                _json.dumps({
                     "jsonrpc": "2.0",
                     "method": "tools/call",
                     "params": {
@@ -113,12 +141,7 @@ def register_routes(app, state, require_auth):
                     },
                     "id": 1,
                 }),
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=timeout,
-                shell=False,
+                timeout,
             )
         except subprocess.TimeoutExpired as exc:
             _log(f"[photoshop_mcp] Action timed out after {timeout}s action={action}")
@@ -171,9 +194,9 @@ def register_routes(app, state, require_auth):
 
         import json as _json
         try:
-            result = subprocess.run(
-                shlex.split(cmd),
-                input=_json.dumps({
+            result = _run_photoshop_mcp(
+                cmd,
+                _json.dumps({
                     "jsonrpc": "2.0",
                     "method": "tools/call",
                     "params": {
@@ -182,12 +205,7 @@ def register_routes(app, state, require_auth):
                     },
                     "id": 1,
                 }),
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=timeout,
-                shell=False,
+                timeout,
             )
         except subprocess.TimeoutExpired as exc:
             _log(f"[photoshop_mcp] runScript timed out after {timeout}s")
