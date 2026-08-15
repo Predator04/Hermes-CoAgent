@@ -100,12 +100,18 @@ def _process_list_powershell(limit=None):
         "Get-Process | Select-Object Id,ProcessName,WorkingSet64,CPU,MainWindowTitle "
         "| ConvertTo-Json -Compress"
     )
-    r = subprocess.run(["powershell.exe", "-NoProfile", "-Command", script],
-                       capture_output=True, text=True, timeout=15)
+    try:
+        r = subprocess.run(["powershell.exe", "-NoProfile", "-Command", script],
+                           capture_output=True, text=True, timeout=15)
+    except (OSError, subprocess.SubprocessError):
+        return []
     rows = []
     if r.returncode != 0 or not r.stdout.strip():
         return rows
-    data = json.loads(r.stdout)
+    try:
+        data = json.loads(r.stdout)
+    except ValueError:
+        return rows
     if data is None:
         return rows
     if isinstance(data, dict):
@@ -159,9 +165,9 @@ def _kill_with_psutil(data):
     elif data.get("name"):
         wanted = str(data["name"]).lower()
         # Guard against killing Python processes by name
-        if wanted.rstrip(".exe") in {"python", "pythonw", "python3", "python3w"}:
-            raise ValueError("Use pid when killing Python processes")
         wanted_base = wanted[:-4] if wanted.endswith(".exe") else wanted
+        if wanted_base in {"python", "pythonw", "python3", "python3w"}:
+            raise ValueError("Use pid when killing Python processes")
         for proc in psutil.process_iter(["pid", "name"]):
             try:
                 pname = (proc.info.get("name") or "").lower()
@@ -283,11 +289,17 @@ def _resources_fallback():
         "ProcessCount=(Get-Process).Count"
         "} | ConvertTo-Json -Compress"
     )
-    r = subprocess.run(["powershell.exe", "-NoProfile", "-Command", script],
-                       capture_output=True, text=True, timeout=15)
+    try:
+        r = subprocess.run(["powershell.exe", "-NoProfile", "-Command", script],
+                           capture_output=True, text=True, timeout=15)
+    except (OSError, subprocess.SubprocessError) as e:
+        return {"psutil": False, "error": str(e) or "resource query failed"}
     if r.returncode != 0 or not r.stdout.strip():
         return {"psutil": False, "error": (r.stderr or r.stdout).strip() or "resource query failed"}
-    data = json.loads(r.stdout)
+    try:
+        data = json.loads(r.stdout)
+    except ValueError as e:
+        return {"psutil": False, "error": f"resource query returned non-JSON: {e}"}
     total_mem = int(data.get("TotalMemKb") or 0) * 1024
     free_mem = int(data.get("FreeMemKb") or 0) * 1024
     disk_size = int(data.get("DiskSize") or 0)
