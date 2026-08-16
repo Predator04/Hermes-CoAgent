@@ -565,16 +565,14 @@ def _agent_hybrid_status():
 
 def register_routes(app, state, require_auth):
     """Register hybrid agent blueprint routes on the given Flask app."""
+    app.register_blueprint(hybrid_agent_bp)
     try:
         from shared import _wrap_registered_blueprint_routes
-    except Exception:
-        _wrap_registered_blueprint_routes = None
-
-    try:
-        _wrap = _wrap_registered_blueprint_routes or (lambda bp, auth: None)
-        _wrap(hybrid_agent_bp, require_auth)
+        _wrap_registered_blueprint_routes(app, hybrid_agent_bp.name, require_auth)
     except Exception as exc:
-        _debug_failure("wrap hybrid_agent_bp routes", exc)
-
-    app.register_blueprint(hybrid_agent_bp)
+        _LOGGER.error("Failed to wrap hybrid_agent_bp routes with auth: %s: %s", type(exc).__name__, exc)
+        # Fail closed: unregister the blueprint's routes so nothing runs unauthenticated.
+        prefix = f"{hybrid_agent_bp.name}."
+        for endpoint in [e for e in list(app.view_functions) if e.startswith(prefix)]:
+            app.view_functions.pop(endpoint, None)
     return hybrid_agent_bp
