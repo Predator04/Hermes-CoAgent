@@ -304,8 +304,10 @@ def register_routes(app, state, require_auth):
                 args.extend([f"/Shadow={shadow_id}"])
             elif vol:
                 args.extend([f"/For={vol}"])
-            else:
+            elif body.get("all") is True:
                 args.append("/All")
+            else:
+                return jsonify({"error": "Missing required field: volume or shadow_id (or set all=true to delete all shadow copies)"}), 400
             # quiet mode to avoid interactive prompt
             args.append("/Quiet")
             output = _run_vssadmin(args, timeout=30)
