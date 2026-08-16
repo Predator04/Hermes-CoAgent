@@ -41,17 +41,19 @@ JOB_TYPE_MAP = {
 
 
 def _find_bitsadmin():
-    """Locate bitsadmin.exe."""
-    exe = shutil.which("bitsadmin") or shutil.which("bitsadmin.exe")
-    if exe:
-        return exe
+    """Locate bitsadmin.exe.
+
+    Prefer the hardcoded system paths over PATH lookup: as an elevated
+    service, resolving through a writable PATH entry earlier than system32
+    could execute an attacker-controlled binary of the same name.
+    """
     for p in [
         r"C:\Windows\system32\bitsadmin.exe",
         r"C:\Windows\SysWOW64\bitsadmin.exe",
     ]:
         if os.path.isfile(p):
             return p
-    return None
+    return shutil.which("bitsadmin") or shutil.which("bitsadmin.exe")
 
 
 def _is_bitsadmin_available():
@@ -103,8 +105,10 @@ def _parse_job_line(line):
         if len(parts) >= 2:
             result["job_id"] = parts[0] + "}"
             rest = parts[1].strip()
-            # Try to extract type
-            for t, tname in JOB_TYPE_MAP.items():
+            # Try to extract type — longest key first so "UPLOAD-REPLY"
+            # is matched before the "UPLOAD" prefix (otherwise an
+            # upload-reply job is misclassified as a plain upload).
+            for t, tname in sorted(JOB_TYPE_MAP.items(), key=lambda kv: -len(kv[0])):
                 if rest.startswith(t):
                     result["type"] = tname
                     rest = rest[len(t):].strip()
@@ -133,6 +137,17 @@ def _parse_job_state(state_str):
     """Normalize job state string."""
     s = state_str.strip().upper()
     return JOB_STATE_MAP.get(s, s.lower())
+
+
+def _bad_handle(value):
+    """Return True if a job handle/name would be re-interpreted as a
+    bitsadmin switch (flag injection)."""
+    if not isinstance(value, str):
+        return True
+    v = value.strip()
+    if not v or v.startswith(("/", "-")):
+        return True
+    return any(ord(c) < 32 for c in v)
 
 
 def register_routes(app, state, require_auth):
@@ -200,6 +215,8 @@ def register_routes(app, state, require_auth):
         job_id = (body.get("job_id") or "").strip()
         if not job_id:
             return _missing_field("job_id")
+        if _bad_handle(job_id):
+            return jsonify({"ok": False, "error": "invalid job_id (must not start with '/' or '-')"}), 400
         try:
             output = _run_bitsadmin(["/INFO", job_id, "/VERBOSE"], timeout=15)
             info = _parse_job_info(output)
@@ -219,6 +236,8 @@ def register_routes(app, state, require_auth):
         name = (body.get("name") or "").strip()
         if not name:
             return _missing_field("name")
+        if _bad_handle(name):
+            return jsonify({"ok": False, "error": "invalid name (must not start with '/' or '-')"}), 400
         job_type = (body.get("type") or "download").strip().lower()
         if job_type not in ("download", "upload", "upload_reply"):
             return jsonify({"ok": False, "error": f"Invalid type '{job_type}'. Must be 'download', 'upload', or 'upload_reply'"}), 400
@@ -237,9 +256,13 @@ def register_routes(app, state, require_auth):
         job_id = (body.get("job_id") or "").strip()
         if not job_id:
             return _missing_field("job_id")
+        if _bad_handle(job_id):
+            return jsonify({"ok": False, "error": "invalid job_id (must not start with '/' or '-')"}), 400
         remote_url = (body.get("remote_url") or "").strip()
         if not remote_url:
             return _missing_field("remote_url")
+        if not (remote_url.lower().startswith("http://") or remote_url.lower().startswith("https://")):
+            return jsonify({"ok": False, "error": "remote_url must be http:// or https://"}), 400
         local_path = (body.get("local_path") or "").strip()
         if not local_path:
             return _missing_field("local_path")
@@ -263,6 +286,8 @@ def register_routes(app, state, require_auth):
         job_id = (body.get("job_id") or "").strip()
         if not job_id:
             return _missing_field("job_id")
+        if _bad_handle(job_id):
+            return jsonify({"ok": False, "error": "invalid job_id (must not start with '/' or '-')"}), 400
         try:
             output = _run_bitsadmin(["/RESUME", job_id], timeout=15)
             return jsonify({"ok": True, "job_id": job_id, "output": output})
@@ -277,6 +302,8 @@ def register_routes(app, state, require_auth):
         job_id = (body.get("job_id") or "").strip()
         if not job_id:
             return _missing_field("job_id")
+        if _bad_handle(job_id):
+            return jsonify({"ok": False, "error": "invalid job_id (must not start with '/' or '-')"}), 400
         try:
             output = _run_bitsadmin(["/SUSPEND", job_id], timeout=15)
             return jsonify({"ok": True, "job_id": job_id, "output": output})
@@ -291,6 +318,8 @@ def register_routes(app, state, require_auth):
         job_id = (body.get("job_id") or "").strip()
         if not job_id:
             return _missing_field("job_id")
+        if _bad_handle(job_id):
+            return jsonify({"ok": False, "error": "invalid job_id (must not start with '/' or '-')"}), 400
         try:
             output = _run_bitsadmin(["/CANCEL", job_id], timeout=15)
             return jsonify({"ok": True, "job_id": job_id, "output": output})
@@ -305,6 +334,8 @@ def register_routes(app, state, require_auth):
         job_id = (body.get("job_id") or "").strip()
         if not job_id:
             return _missing_field("job_id")
+        if _bad_handle(job_id):
+            return jsonify({"ok": False, "error": "invalid job_id (must not start with '/' or '-')"}), 400
         try:
             output = _run_bitsadmin(["/COMPLETE", job_id], timeout=15)
             return jsonify({"ok": True, "job_id": job_id, "output": output})
@@ -319,6 +350,8 @@ def register_routes(app, state, require_auth):
         job_id = (body.get("job_id") or "").strip()
         if not job_id:
             return _missing_field("job_id")
+        if _bad_handle(job_id):
+            return jsonify({"ok": False, "error": "invalid job_id (must not start with '/' or '-')"}), 400
         try:
             output = _run_bitsadmin(["/LISTFILES", job_id], timeout=15)
             return jsonify({"ok": True, "job_id": job_id, "output": output, "raw": output})
@@ -338,9 +371,15 @@ def register_routes(app, state, require_auth):
     @app.route("/auto/bitsadmin/reset", methods=["POST"])
     @require_auth
     def route_auto_bitsadmin_reset():
-        """Delete all jobs in the BITS transfer manager."""
+        """Delete BITS jobs. Requires explicit confirmation; per-user by default."""
+        body = _json_body()
+        if body.get("confirm") is not True:
+            return jsonify({"ok": False, "error": "confirm=true is required to reset BITS jobs"}), 400
+        args = ["/RESET"]
+        if body.get("all_users") is True:
+            args.append("/ALLUSERS")
         try:
-            output = _run_bitsadmin(["/RESET", "/ALLUSERS"], timeout=30)
+            output = _run_bitsadmin(args, timeout=30)
             return jsonify({"ok": True, "output": output})
         except RuntimeError as e:
             return jsonify({"ok": False, "error": str(e)}), 503
@@ -361,6 +400,8 @@ def register_routes(app, state, require_auth):
         """Delete items from BITS cache."""
         body = _json_body()
         record_id = (body.get("record_id") or "").strip()
+        if record_id and not record_id.replace("-", "").isalnum():
+            return jsonify({"ok": False, "error": "invalid record_id (digits/hex only)"}), 400
         try:
             args = ["/CACHE", "/DELETE"]
             if record_id:
