@@ -154,7 +154,7 @@ def register_routes(app, state, require_auth):
             if fd_exe:
                 # fd is faster and respects .gitignore
                 type_arg = [] if file_type == "all" else (["--type", file_type])
-                list_cmd = [fd_exe, "--color", "never", "--hidden", "--no-ignore"]
+                list_cmd = [fd_exe, "--color", "never", "--hidden", "--no-ignore", "--max-depth", "10"]
                 if type_arg:
                     list_cmd.extend(type_arg)
                 list_cmd.append(".")
@@ -165,7 +165,10 @@ def register_routes(app, state, require_auth):
                     text=True,
                     timeout=30,
                 )
-                items = [l for l in r_list.stdout.strip().split("\n") if l]
+                if r_list.returncode != 0 and not r_list.stdout.strip():
+                    _log("fzf fd listing failed", (r_list.stderr or "").strip())
+                    return jsonify({"error": "directory listing failed", "detail": (r_list.stderr or "").strip()}), 500
+                items = [l for l in r_list.stdout.splitlines() if l]
             else:
                 # Fallback: use dir /s /b on Windows, find on Linux
                 if os.name == "nt":
@@ -179,6 +182,9 @@ def register_routes(app, state, require_auth):
                         text=True,
                         timeout=30,
                     )
+                    if r_list.returncode != 0 and not r_list.stdout.strip():
+                        _log("fzf dir listing failed", (r_list.stderr or "").strip())
+                        return jsonify({"error": "directory listing failed", "detail": (r_list.stderr or "").strip()}), 500
                 else:
                     find_cmd = ["find", ".", "-maxdepth", "10"]
                     if file_type == "f":
@@ -192,7 +198,9 @@ def register_routes(app, state, require_auth):
                         text=True,
                         timeout=30,
                     )
-                items = [l for l in r_list.stdout.strip().split("\n") if l]
+                    if r_list.returncode != 0:
+                        _log("fzf find listing partial/failed", (r_list.stderr or "").strip())
+                items = [l for l in r_list.stdout.splitlines() if l]
 
             if not query:
                 return jsonify({
