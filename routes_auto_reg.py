@@ -289,12 +289,9 @@ def register_routes(app, state, require_auth):
             args = ["delete", key]
             if value_name:
                 args.extend(["/v", value_name])
-            else:
-                args.append("/ve")
-            if recursive:
-                args.append("/f")  # force delete recursively
-            else:
-                args.append("/f")  # always force to avoid confirmation prompt
+            # NOTE: no /ve fallback — omitting /v deletes the whole key (reg.exe
+            # `/ve` would only delete the default value, leaving the key intact).
+            args.append("/f")  # force delete without confirmation prompt
 
             stdout, stderr, rc = _run_reg(args, timeout=15)
             if rc != 0:
