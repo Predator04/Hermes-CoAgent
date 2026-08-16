@@ -66,8 +66,8 @@ def _parse_hash_output(output):
     """Parse certutil -hashfile output into structured result."""
     lines = output.strip().splitlines()
     if len(lines) >= 2:
-        # First line: algorithm, second line: hash
-        algo_line = lines[0].strip().strip(':')
+        # First line: "SHA256 hash of file <path>:" — take the leading algorithm token
+        algo_line = lines[0].strip().split()[0] if lines[0].strip() else ""
         hash_value = lines[1].strip()
         return algo_line, hash_value
     return None, output.strip()
