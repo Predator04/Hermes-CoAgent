@@ -128,6 +128,38 @@ def _tarball_headers() -> dict:
     return headers
 
 
+def _safe_extract_member(tar, member, root, dest_dir):
+    """Extract one tar member into dest_dir, stripping the commit-hash root.
+
+    Refuses any path that would escape dest_dir (TarSlip) and skips symlinks,
+    hardlinks, and device nodes, which GitHub tarballs should never contain.
+    Returns True if a member was written.
+    """
+    if member.name == root:
+        return False
+    rel_name = member.name[len(root) + 1:] if member.name.startswith(root + "/") else member.name
+    if not rel_name:
+        return False
+    dest_root = os.path.abspath(dest_dir)
+    target = os.path.abspath(os.path.join(dest_root, rel_name))
+    if not (target == dest_root or target.startswith(dest_root + os.sep)):
+        console(f"  ⚠ Skipping unsafe path in tarball: {member.name}", "yellow")
+        return False
+    if member.isdir():
+        os.makedirs(target, exist_ok=True)
+        return True
+    if not member.isfile():
+        # Symlink / hardlink / device — skip (don't extract or follow).
+        return False
+    os.makedirs(os.path.dirname(target), exist_ok=True)
+    src = tar.extractfile(member)
+    if src is None:
+        return False
+    with src, open(target, "wb") as f:
+        shutil.copyfileobj(src, f)
+    return True
+
+
 def step_download(install_dir):
     """Download CoAgent from GitHub."""
     console("\n[1/6] Downloading CoAgent...", "cyan")
@@ -138,9 +170,9 @@ def step_download(install_dir):
         console(f"  Existing install detected at {install_dir} — skipping download.", "green")
         return True
 
+    backup = {}
     if install_dir.exists():
         console(f"  Directory {install_dir} exists. Backing up token/config...")
-        backup = {}
         for f in [".token", "telegram_config.json", "config.json"]:
             p = install_dir / f
             if p.exists():
@@ -174,18 +206,7 @@ def step_download(install_dir):
 
             install_dir.mkdir(parents=True, exist_ok=True)
             for member in members:
-                if member.name == root:
-                    continue
-                # Strip the commit-hash prefix
-                rel_name = member.name[len(root) + 1:] if member.name.startswith(root + "/") else member.name
-                if not rel_name:
-                    continue
-                target = install_dir / rel_name
-                if member.isdir():
-                    target.mkdir(parents=True, exist_ok=True)
-                else:
-                    with open(target, "wb") as f:
-                        f.write(tar.extractfile(member).read())
+                _safe_extract_member(tar, member, root, install_dir)
 
         # Restore backups
         for name, content in backup.items():
@@ -198,10 +219,23 @@ def step_download(install_dir):
         console(f"✗ Download failed: {e}", "red")
         import traceback
         traceback.print_exc()
+        # Restore the pre-existing install so a failed upgrade doesn't leave
+        # the user with a wiped directory and no token/config.
+        if backup:
+            try:
+                install_dir.mkdir(parents=True, exist_ok=True)
+                for name, content in backup.items():
+                    (install_dir / name).write_text(content, encoding="utf-8")
+                    console(f"  Restored {name}")
+            except OSError as ex:
+                console(f"  ⚠ Backup restore failed: {ex}", "yellow")
         return False
     finally:
-        if temp_tarball.exists():
-            temp_tarball.unlink()
+        if temp_tarball is not None and temp_tarball.exists():
+            try:
+                temp_tarball.unlink()
+            except OSError:
+                pass
 
 
 def step_install_deps(install_dir):
@@ -272,7 +306,14 @@ def step_create_token(install_dir):
 
     import secrets
     token = secrets.token_hex(32)
-    token_file.write_text(token, encoding="utf-8")
+    # Write with 0o600 so other local users can't read the token and hit
+    # auth-protected endpoints.
+    if os.name != "nt":
+        fd = os.open(str(token_file), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(token)
+    else:
+        token_file.write_text(token, encoding="utf-8")
     console(f"✓ Token generated: {token[:16]}...", "green")
     return True
 
@@ -404,6 +445,11 @@ def step_verify(install_dir):
 
     # Check Python deps
     try:
+        import flask  # noqa: F401
+        import waitress  # noqa: F401
+        import PIL  # noqa: F401
+        import pyautogui  # noqa: F401
+        import pygetwindow  # noqa: F401
         print("  ✓ Python dependencies: flask, waitress, PIL, pyautogui, pygetwindow")
     except ImportError as e:
         print(f"  ⚠  Missing dependency: {e}")
@@ -546,16 +592,7 @@ def cmd_update(args):
             extract_dir = temp_dir / "extracted"
             extract_dir.mkdir()
             for member in members:
-                rel_name = member.name[len(root) + 1:] if member.name.startswith(root + "/") else member.name
-                if not rel_name:
-                    continue
-                target = extract_dir / rel_name
-                if member.isdir():
-                    target.mkdir(parents=True, exist_ok=True)
-                else:
-                    target.parent.mkdir(parents=True, exist_ok=True)
-                    with open(target, "wb") as f:
-                        f.write(tar.extractfile(member).read())
+                _safe_extract_member(tar, member, root, extract_dir)
 
             # Copy all new files over existing
             count = 0
