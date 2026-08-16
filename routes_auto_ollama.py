@@ -63,7 +63,7 @@ def _server_base():
     base = os.environ.get("OLLAMA_HOST", "").strip()
     if not base:
         base = _DEFAULT_BASE
-    if not base.startswith("http"):
+    if not base.startswith(("http://", "https://")):
         base = "http://" + base
     return base.rstrip("/")
 
@@ -206,13 +206,14 @@ def register_routes(app, state, require_auth):
         name = str(name).strip()
         if not name or any(c in name for c in ("\n", "\r", " ")):
             return jsonify({"error": "invalid model name"}), 400
-        insecure = bool(body.get("insecure", False))
+        _insecure = body.get("insecure", False)
+        insecure = _insecure is True or str(_insecure).strip().lower() in ("true", "1", "yes", "on")
 
         if not _PULL_LOCK.acquire(blocking=False):
             return jsonify({"error": "a pull is already in progress", "success": False}), 409
 
-        _log(f"ollama_pull: {name}")
         try:
+            _log(f"ollama_pull: {name}")
             payload = {"name": name, "stream": False}
             if insecure:
                 payload["insecure"] = True
