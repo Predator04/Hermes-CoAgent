@@ -296,6 +296,8 @@ def register_routes(app, state, require_auth):
     def route_auto_vssadmin_delete_shadows():
         """Delete volume shadow copies. Optionally specify volume and shadow copy ID."""
         body = _json_body()
+        if not isinstance(body, dict):
+            return _missing_field("body")
         try:
             args = ["delete", "shadows"]
             vol = (body.get("volume") or "").strip()
@@ -364,6 +366,8 @@ def register_routes(app, state, require_auth):
     def route_auto_vssadmin_resize_storage():
         """Resize shadow copy storage for a volume."""
         body = _json_body()
+        if not isinstance(body, dict):
+            return _missing_field("body")
         volume = (body.get("volume") or "").strip()
         if not volume:
             return _missing_field("volume")
