@@ -179,6 +179,28 @@ def _normalize_ocr_result(result):
     return {"source": "ocr", "match": result}
 
 
+def _extract_center(payload):
+    """Extract a click center {x, y} from an OCR/SOM/UIA payload, or None."""
+    if not isinstance(payload, dict):
+        return None
+    matches = payload.get("matches", [])
+    if matches and isinstance(matches[0], dict):
+        m = matches[0]
+        center = m.get("center")
+        if isinstance(center, dict) and "x" in center and "y" in center:
+            return {"x": int(center["x"]), "y": int(center["y"])}
+        bbox = m.get("bbox") or m.get("bounds") or m.get("rect")
+        if isinstance(bbox, (list, tuple)) and len(bbox) >= 4:
+            try:
+                return {"x": int(bbox[0] + bbox[2] // 2), "y": int(bbox[1] + bbox[3] // 2)}
+            except (TypeError, ValueError):
+                return None
+    center = payload.get("center")
+    if isinstance(center, dict) and "x" in center and "y" in center:
+        return {"x": int(center["x"]), "y": int(center["y"])}
+    return None
+
+
 def _hybrid_resolve(query):
     """Resolve a target through the hybrid pipeline.
 
@@ -493,7 +515,25 @@ def _agent_plan_and_execute():
                             step_record["error"] = str(exc)
                             overall_ok = False
                     else:
-                        step_record["ok"] = True
+                        # OCR/SOM: extract coordinates and click via CoAgent's mouse endpoint
+                        target_center = _extract_center(payload)
+                        if not target_center:
+                            step_record["error"] = "target resolved but no coordinates available"
+                            overall_ok = False
+                        else:
+                            try:
+                                import urllib.request
+                                import json as _json
+                                act = action if action in ("double_click", "right_click") else "click"
+                                _url = f"http://127.0.0.1:{_self_port()}/mouse/{act}"
+                                _data = _json.dumps({"x": target_center["x"], "y": target_center["y"]}).encode("utf-8")
+                                _req = urllib.request.Request(_url, data=_data, headers={"Content-Type": "application/json"})
+                                with urllib.request.urlopen(_req, timeout=10):
+                                    step_record["ok"] = True
+                            except Exception as exc:
+                                _debug_failure("plan-and-execute click", exc)
+                                step_record["error"] = str(exc)
+                                overall_ok = False
                     if method:
                         _bump_stat(f"{method}_hits")
                         methods_used.append(method)
