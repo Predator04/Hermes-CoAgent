@@ -65,12 +65,12 @@ def _server_base(body=None):
     if isinstance(body, dict):
         explicit = (body.get("base_url") or body.get("server") or "").strip()
         if explicit:
-            if not explicit.startswith("http"):
+            if not explicit.startswith(("http://", "https://")):
                 explicit = "http://" + explicit
             return explicit.rstrip("/")
     env = os.environ.get(_SERVER_URL_ENV, "").strip()
     if env:
-        if not env.startswith("http"):
+        if not env.startswith(("http://", "https://")):
             env = "http://" + env
         return env.rstrip("/")
     for port in _DEFAULT_PORTS:
@@ -183,10 +183,15 @@ def register_routes(app, state, require_auth):
             return jsonify({"error": _missing_field("prompt")}), 400
 
         base = _server_base(body)
+        try:
+            max_tokens = int(body.get("max_tokens", 256))
+            temperature = float(body.get("temperature", 0.8))
+        except (TypeError, ValueError):
+            return jsonify({"error": "max_tokens must be an integer and temperature must be a number"}), 400
         payload = {
             "prompt": str(prompt),
-            "max_tokens": int(body.get("max_tokens", 256)),
-            "temperature": float(body.get("temperature", 0.8)),
+            "max_tokens": max_tokens,
+            "temperature": temperature,
             "stream": False,
         }
         for opt in ("top_p", "top_k", "repeat_penalty", "stop", "seed"):
@@ -216,10 +221,15 @@ def register_routes(app, state, require_auth):
             return jsonify({"error": _missing_field("messages")}), 400
 
         base = _server_base(body)
+        try:
+            max_tokens = int(body.get("max_tokens", 256))
+            temperature = float(body.get("temperature", 0.8))
+        except (TypeError, ValueError):
+            return jsonify({"error": "max_tokens must be an integer and temperature must be a number"}), 400
         payload = {
             "messages": messages,
-            "max_tokens": int(body.get("max_tokens", 256)),
-            "temperature": float(body.get("temperature", 0.8)),
+            "max_tokens": max_tokens,
+            "temperature": temperature,
             "stream": False,
         }
         for opt in ("top_p", "top_k", "repeat_penalty", "stop", "seed"):
