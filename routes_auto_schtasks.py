@@ -353,6 +353,9 @@ def register_routes(app, state, require_auth):
         except (ValueError, TypeError):
             return jsonify({"ok": False, "error": "interval_days must be an integer"}), 400
 
+        if interval < 1 or interval > 365:
+            return jsonify({"ok": False, "error": "interval_days must be 1-365"}), 400
+
         args = [
             "/Create", "/SC", "DAILY", "/MO", str(interval),
             "/TN", task_name, "/TR", program,
