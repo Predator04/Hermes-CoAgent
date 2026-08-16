@@ -486,6 +486,10 @@ def _eventsource_authorized():
     auth_token = getattr(auth_module, "AUTH_TOKEN", "") if auth_module else ""
     if not auth_enabled:
         return True
+    if not auth_token:
+        # Auth enabled but no token configured — fail closed rather than
+        # matching an empty Bearer credential against an empty token.
+        return False
     auth_header = request.headers.get("Authorization", "")
     if auth_header.startswith("Bearer ") and secrets.compare_digest(auth_header[7:], auth_token or ""):
         return True
@@ -1107,7 +1111,10 @@ def _run_step(step, previous, stop_event, auth_header):
     if stop_event.is_set():
         return {"status": "stopped", "result": {"error": "goal stopped"}}
     if action == "wait":
-        seconds = max(0.0, min(float(params.get("seconds", 1)), 300.0))
+        try:
+            seconds = max(0.0, min(float(params.get("seconds", 1)), 300.0))
+        except (TypeError, ValueError):
+            seconds = 1.0
         if stop_event.wait(seconds):
             return {"status": "stopped", "result": {"error": "goal stopped during wait"}}
         return {"status": "ok", "result": {"status": "ok", "slept": seconds}}
@@ -1701,13 +1708,17 @@ def _active_goal_count():
 
 def _trim_goals():
     with _GOALS_LOCK:
-        while len(_GOAL_ORDER) > MAX_STORED_GOALS:
-            old_id = _GOAL_ORDER.pop(0)
-            goal = _GOALS.get(old_id)
-            if goal and goal.get("status") in {"queued", "planning", "running"}:
-                _GOAL_ORDER.append(old_id)
+        # Evict the oldest non-active goals. Scan past active/stopping goals at
+        # the head so a long run of active goals can't grow storage unbounded.
+        excess = len(_GOAL_ORDER) - MAX_STORED_GOALS
+        for _ in range(max(0, excess)):
+            for i, goal_id in enumerate(_GOAL_ORDER):
+                goal = _GOALS.get(goal_id)
+                if goal and goal.get("status") in {"queued", "planning", "running", "stopping"}:
+                    continue
+                _GOAL_ORDER.pop(i)
+                _GOALS.pop(goal_id, None)
                 break
-            _GOALS.pop(old_id, None)
 
 
 def _latest_goal(active_only=False):
@@ -1997,8 +2008,10 @@ def route_copilot_goal():
     _log_entry(goal_id, "info", f'Queued goal: "{goal_text}"', "\U0001F7E2")
     thread.start()
     _trim_goals()
+    with _GOALS_LOCK:
+        snapshot = _snapshot_goal(record)
     status_code = 202
-    return jsonify(_snapshot_goal(record)), status_code
+    return jsonify(snapshot), status_code
 
 
 @copilot_enhanced_bp.route("/copilot/goal/<goal_id>", methods=["GET"])
