@@ -26,7 +26,7 @@ from flask import jsonify
 from shared import COAGENT_DIR, _json_body, _log, _missing_field
 
 MACROS_DIR = COAGENT_DIR / "macros_recorded"
-MACROS_DIR.mkdir(exist_ok=True)
+MACROS_DIR.mkdir(parents=True, exist_ok=True)
 
 # Win32 message constants
 _WH_KEYBOARD_LL = 13
@@ -201,22 +201,36 @@ def _macro_path(name):
 def _replay(events, speed=1.0, stop_flag=None):
     """Replay recorded events. `speed` scales gaps (0.5 = half-speed = slower)."""
     import pyautogui as pg
-    from ctypes import c_ushort, c_ulong, byref, sizeof
+    from ctypes import c_ushort, c_ulong, c_long, c_size_t, byref, sizeof
+
+    KEYEVENTF_KEYUP = 0x0002
 
     class _KBDINPUT(ctypes.Structure):
         _fields_ = [("wVk", c_ushort), ("wScan", c_ushort),
                     ("dwFlags", c_ulong), ("time", c_ulong),
-                    ("dwExtraInfo", ctypes.POINTER(c_ulong))]
+                    ("dwExtraInfo", c_size_t)]
 
+    class _MOUSEINPUT(ctypes.Structure):
+        _fields_ = [("dx", c_long), ("dy", c_long),
+                    ("mouseData", c_ulong), ("dwFlags", c_ulong),
+                    ("time", c_ulong), ("dwExtraInfo", c_size_t)]
+
+    class _HARDWAREINPUT(ctypes.Structure):
+        _fields_ = [("uMsg", c_ulong), ("wParamL", c_ushort), ("wParamH", c_ushort)]
+
+    class _INPUT_UNION(ctypes.Union):
+        _fields_ = [("ki", _KBDINPUT), ("mi", _MOUSEINPUT), ("hi", _HARDWAREINPUT)]
+
+    # INPUT is a union sized to its largest member (MOUSEINPUT); on 64-bit
+    # Windows sizeof(INPUT) is 40 bytes. A struct holding only KBDINPUT is
+    # 32 bytes, which SendInput rejects with ERROR_INVALID_PARAMETER.
     class _INPUT(ctypes.Structure):
-        _fields_ = [("type", c_ulong), ("ki", _KBDINPUT)]
-
-    KEYEVENTF_KEYUP = 0x0002
+        _fields_ = [("type", c_ulong), ("u", _INPUT_UNION)]
 
     def _send_vk(vk, up=False):
         inp = _INPUT()
         inp.type = 1
-        inp.ki = _KBDINPUT(vk, 0, KEYEVENTF_KEYUP if up else 0, 0, None)
+        inp.u.ki = _KBDINPUT(int(vk), 0, KEYEVENTF_KEYUP if up else 0, 0, 0)
         ctypes.windll.user32.SendInput(1, byref(inp), sizeof(inp))
 
     for ev in events:
@@ -249,6 +263,10 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_rec_start():
         body = _json_body() or {}
+        try:
+            min_move_gap = max(0.01, float(body.get("min_move_gap", 0.05)))
+        except (TypeError, ValueError):
+            return jsonify({"ok": False, "error": "min_move_gap must be a number"}), 400
         with _STATE_LOCK:
             if _STATE["recording"]:
                 return jsonify({"ok": False, "error": "already recording"}), 409
@@ -258,7 +276,7 @@ def register_routes(app, state, require_auth):
             _STATE["last_ts"] = 0.0
             _STATE["last_move_at"] = 0.0
             _STATE["capture_moves"] = bool(body.get("capture_moves", False))
-            _STATE["min_move_gap"] = max(0.01, float(body.get("min_move_gap", 0.05)))
+            _STATE["min_move_gap"] = min_move_gap
         t = threading.Thread(target=_hook_thread, name="macro-rec-hook", daemon=True)
         _STATE["thread"] = t
         t.start()
@@ -279,7 +297,7 @@ def register_routes(app, state, require_auth):
         t = _STATE.get("thread")
         if t and t.is_alive():
             t.join(timeout=1.0)
-        name = body.get("name") or f"macro_{int(time.time())}"
+        name = body.get("name") or f"macro_{int(time.time())}_{uuid.uuid4().hex[:6]}"
         try:
             path = _macro_path(name)
         except ValueError as e:
@@ -292,7 +310,11 @@ def register_routes(app, state, require_auth):
             "event_count": len(events),
             "events": events,
         }
-        path.write_text(json.dumps(macro, indent=2), encoding="utf-8")
+        # Write atomically (temp file + rename) so a crash mid-write can't
+        # leave a truncated JSON file behind for /macro/get and /macro/replay.
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(macro, indent=2), encoding="utf-8")
+        tmp.replace(path)
         _log(f"[macro_rec] saved {name} ({len(events)} events)")
         return jsonify({"ok": True, "macro": {k: v for k, v in macro.items() if k != "events"},
                         "path": str(path)})
@@ -319,7 +341,11 @@ def register_routes(app, state, require_auth):
             return jsonify({"ok": False, "error": str(e)}), 400
         if not path.is_file():
             return jsonify({"ok": False, "error": "macro not found"}), 404
-        return jsonify({"ok": True, "macro": json.loads(path.read_text(encoding="utf-8"))})
+        try:
+            macro = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError) as e:
+            return jsonify({"ok": False, "error": f"failed to read macro: {e}"}), 500
+        return jsonify({"ok": True, "macro": macro})
 
     @app.route("/macro/delete/<name>", methods=["POST"])
     @require_auth
@@ -329,7 +355,10 @@ def register_routes(app, state, require_auth):
         except ValueError as e:
             return jsonify({"ok": False, "error": str(e)}), 400
         if path.is_file():
-            path.unlink()
+            try:
+                path.unlink()
+            except OSError as e:
+                return jsonify({"ok": False, "error": str(e)}), 500
             return jsonify({"ok": True, "deleted": str(path)})
         return jsonify({"ok": False, "error": "macro not found"}), 404
 
@@ -343,8 +372,14 @@ def register_routes(app, state, require_auth):
             return jsonify({"ok": False, "error": str(e)}), 400
         if not path.is_file():
             return jsonify({"ok": False, "error": "macro not found"}), 404
-        macro = json.loads(path.read_text(encoding="utf-8"))
-        speed = float(body.get("speed", 1.0))
+        try:
+            macro = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError) as e:
+            return jsonify({"ok": False, "error": f"failed to read macro: {e}"}), 500
+        try:
+            speed = float(body.get("speed", 1.0))
+        except (TypeError, ValueError):
+            return jsonify({"ok": False, "error": "speed must be a number"}), 400
         if speed <= 0.0:
             return jsonify({"ok": False, "error": "speed must be > 0"}), 400
         # Fire-and-forget with a stop flag tied to shared emergency_stop.
