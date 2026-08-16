@@ -78,20 +78,28 @@ def _decode_screenshot(screenshot):
     max_bytes = 50 * 1024 * 1024  # 50 MB
     max_pixels = 50_000_000
 
-    raw = str(screenshot)
+    if isinstance(screenshot, bytes):
+        raw = screenshot.decode("utf-8", errors="ignore")
+    else:
+        raw = str(screenshot)
     if raw.lstrip().lower().startswith("data:"):
         if "," not in raw:
             raise ValueError("malformed data URI: missing comma separator")
         raw = raw.split(",", 1)[1]
+    # Pre-check encoded size before decoding (base64 expands ~4/3 over raw bytes)
+    if len(raw) > (max_bytes * 4 // 3) + 4:
+        raise ValueError(f"screenshot too large ({len(raw)} encoded chars)")
     data = base64.b64decode(raw)
     if len(data) > max_bytes:
         raise ValueError(f"screenshot too large ({len(data)} bytes)")
     img = Image.open(io.BytesIO(data))
-    width, height = img.size
-    if width * height > max_pixels:
+    try:
+        width, height = img.size
+        if width * height > max_pixels:
+            raise ValueError(f"screenshot dimensions too large ({width}x{height})")
+        return img.convert("RGB")
+    finally:
         img.close()
-        raise ValueError(f"screenshot dimensions too large ({width}x{height})")
-    return img.convert("RGB")
 
 
 def _fresh_screenshot():
