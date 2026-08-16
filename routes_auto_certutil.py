@@ -206,10 +206,6 @@ def register_routes(app, state, require_auth):
         try:
             stdout, stderr, rc = _run_certutil(["-encode", filepath, tmpfile], timeout=30)
             if rc != 0:
-                try:
-                    os.unlink(tmpfile)
-                except OSError:
-                    pass
                 return jsonify({
                     "ok": False,
                     "error": stderr.strip() or "certutil encode failed",
@@ -220,10 +216,6 @@ def register_routes(app, state, require_auth):
             if os.path.isfile(tmpfile):
                 with open(tmpfile, 'r') as f:
                     encoded = f.read()
-                try:
-                    os.unlink(tmpfile)
-                except OSError:
-                    pass
             else:
                 encoded = ""
 
@@ -238,6 +230,11 @@ def register_routes(app, state, require_auth):
             return jsonify({"ok": False, "error": str(e)}), 503
         except OSError as e:
             return jsonify({"ok": False, "error": str(e)}), 503
+        finally:
+            try:
+                os.unlink(tmpfile)
+            except OSError:
+                pass
 
     @app.route("/auto/certutil/decode", methods=["POST"])
     @require_auth
@@ -253,12 +250,15 @@ def register_routes(app, state, require_auth):
             return _missing_field("encoded_file")
 
         output_file = (body.get("output_file") or "").strip()
+        auto_generated = False
         if not output_file:
             # Auto-generate output filename
             import tempfile
             fd, output_file = tempfile.mkstemp(suffix=".decoded")
             os.close(fd)  # certutil opens the path itself
+            auto_generated = True
 
+        keep_output = False
         try:
             stdout, stderr, rc = _run_certutil(["-decode", encoded_file, output_file], timeout=30)
             if rc != 0:
@@ -270,6 +270,7 @@ def register_routes(app, state, require_auth):
 
             # Check output file size
             file_size = os.path.getsize(output_file) if os.path.isfile(output_file) else 0
+            keep_output = True
 
             return jsonify({
                 "ok": True,
@@ -283,6 +284,12 @@ def register_routes(app, state, require_auth):
             return jsonify({"ok": False, "error": str(e)}), 503
         except OSError as e:
             return jsonify({"ok": False, "error": str(e)}), 503
+        finally:
+            if auto_generated and not keep_output:
+                try:
+                    os.unlink(output_file)
+                except OSError:
+                    pass
 
     @app.route("/auto/certutil/store", methods=["GET"])
     @require_auth
