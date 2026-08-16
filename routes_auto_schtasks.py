@@ -106,7 +106,10 @@ def register_routes(app, state, require_auth):
         if format_type not in ("TABLE", "CSV", "XML"):
             format_type = "TABLE"
 
-        args = ["Query", "/FO", format_type, "/NH"]
+        args = ["Query", "/FO", format_type]
+        # /NH (no header) is only valid with TABLE/CSV output.
+        if format_type in ("TABLE", "CSV"):
+            args.append("/NH")
         if folder:
             args.extend(["/TN", folder])
         elif task_path:
@@ -115,10 +118,10 @@ def register_routes(app, state, require_auth):
         try:
             stdout, stderr, rc = _run_schtasks(args, timeout=20)
             return jsonify({
-                "ok": rc in (0, 1),
+                "ok": rc == 0,
                 "format": format_type,
                 "exit_code": rc,
-                "stdout": stdout.strip() if rc == 0 else "",
+                "stdout": stdout.strip(),
                 "stderr": stderr.strip(),
             })
         except subprocess.TimeoutExpired:
