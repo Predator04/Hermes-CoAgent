@@ -38,6 +38,19 @@ STORAGE_USED_RE = re.compile(r"^\s*Used Shadow Copy Storage space:\s*(.+)$")
 STORAGE_ALLOC_RE = re.compile(r"^\s*Allocated Shadow Copy Storage space:\s*(.+)$")
 STORAGE_LIMIT_RE = re.compile(r"^\s*Maximum Shadow Copy Storage space:\s*(.+)$")
 
+# Validation patterns for user-supplied vssadmin flag values
+SHADOW_ID_PATTERN = re.compile(r"^\{[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}\}$")
+MAX_SIZE_PATTERN = re.compile(r"^\d+(?:%|[KMGT]B)?$", re.IGNORECASE)
+
+
+def _validate_flag_value(name, value, pattern=None):
+    """Reject vssadmin flag values that could smuggle extra args or are malformed."""
+    if any(ch.isspace() for ch in value) or "/" in value:
+        return jsonify({"error": f"Invalid {name}: must not contain whitespace or '/'"}), 400
+    if pattern is not None and not pattern.match(value):
+        return jsonify({"error": f"Invalid {name} format"}), 400
+    return None
+
 
 def _find_vssadmin():
     """Locate vssadmin.exe."""
@@ -303,8 +316,14 @@ def register_routes(app, state, require_auth):
             vol = (body.get("volume") or "").strip()
             shadow_id = (body.get("shadow_id") or "").strip()
             if shadow_id:
+                err = _validate_flag_value("shadow_id", shadow_id, SHADOW_ID_PATTERN)
+                if err:
+                    return err
                 args.extend([f"/Shadow={shadow_id}"])
             elif vol:
+                err = _validate_flag_value("volume", vol)
+                if err:
+                    return err
                 args.extend([f"/For={vol}"])
             elif body.get("all") is True:
                 args.append("/All")
@@ -371,9 +390,15 @@ def register_routes(app, state, require_auth):
         volume = (body.get("volume") or "").strip()
         if not volume:
             return _missing_field("volume")
+        err = _validate_flag_value("volume", volume)
+        if err:
+            return err
         max_size = (body.get("max_size") or "").strip()
         if not max_size:
             return _missing_field("max_size")
+        err = _validate_flag_value("max_size", max_size, MAX_SIZE_PATTERN)
+        if err:
+            return err
         try:
             output = _run_vssadmin(
                 ["resize", "shadowstorage", f"/For={volume}", f"/On={volume}", f"/MaxSize={max_size}"],
