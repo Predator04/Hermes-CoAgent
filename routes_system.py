@@ -37,54 +37,53 @@ _VOLUME_MAX = 100
 
 def _ps_get_volume():
     """Get current master volume level (0-100) and mute state."""
-    script = """
-$obj = (New-Object -ComObject Sapi.SpSharedRecognizer).AudioObject
-$vol = $obj.Volume
-$mute = $obj.Mute
-Write-Output "$vol|$mute"
-"""
-    out, _, rc = _ps(script)
-    if rc == 0 and "|" in out:
-        parts = out.split("|")
-        try:
-            return int(parts[0]), parts[1].strip().lower() == "true"
-        except ValueError:
-            pass
-    # Fallback: AudioEndpointVolume via WinRT (works on Win10+)
-    fallback = """
+    # Use waveOutGetVolume (the legacy wave mapper, which maps to the default
+    # output device) rather than Sapi.SpSharedRecognizer — the latter controls
+    # the speech recognizer's *microphone* input, not the system output volume.
+    script = r"""
 Add-Type -TypeDefinition @'
 using System.Runtime.InteropServices;
 public class AudioVol {
-    [DllImport(\"winmm.dll\")] public static extern int waveOutGetVolume(IntPtr h, out uint v);
+    [DllImport("winmm.dll")] public static extern int waveOutGetVolume(System.IntPtr h, out uint v);
+    public static int GetLevel() {
+        uint v; waveOutGetVolume(System.IntPtr.Zero, out v);
+        uint left = v & 0xFFFF;
+        uint right = (v >> 16) & 0xFFFF;
+        return (int)System.Math.Round(((left + right) / 2.0) / 65535.0 * 100);
+    }
 }
 '@
-uint v;
-AudioVol.waveOutGetVolume(IntPtr.Zero, out v);
-uint left = v & 0xFFFF;
-uint right = (v >> 16) & 0xFFFF;
-double pct = ((left + right) / 2.0) / 65535.0 * 100;
-Write-Output ([Math]::Round(pct))
+Write-Output ([AudioVol]::GetLevel())
 """
-    out2, _, rc2 = _ps(fallback)
-    if rc2 == 0 and out2:
+    out, _, rc = _ps(script)
+    if rc == 0 and out.strip():
         try:
-            return _coerce_int(out2, 50, 0, 100), False
-        except ValueError:
+            return _coerce_int(out.strip(), 50, 0, 100), False
+        except (TypeError, ValueError):
             pass
     return 50, False
 
 def _ps_set_volume(level):
     """Set master volume to 0-100."""
     level = _coerce_int(level, 50, 0, 100)
-    # Use nircmd if available, else PowerShell volume slider
+    # Use nircmd if available, else waveOutSetVolume (legacy master volume)
     if _has_nircmd():
         _ps(f"nircmd setsysvolume {round(level * 655.35)}", timeout=5)
     else:
-        # Use SendKeys (volume up/down) — less precise but no deps
-        _ps(f"""
-$obj = (New-Object -ComObject Sapi.SpSharedRecognizer).AudioObject
-$obj.Volume = {level}
-""", timeout=5)
+        script = r"""
+Add-Type -TypeDefinition @'
+using System.Runtime.InteropServices;
+public class AudioVol {
+    [DllImport("winmm.dll")] public static extern int waveOutSetVolume(System.IntPtr h, uint v);
+    public static void SetLevel(int pct) {
+        uint lvl = (uint)(System.Math.Max(0, System.Math.Min(100, pct)) * 655.35);
+        waveOutSetVolume(System.IntPtr.Zero, (lvl << 16) | lvl);
+    }
+}
+'@
+[AudioVol]::SetLevel(%d)
+""" % level
+        _ps(script, timeout=5)
     _log(f"Volume set to {level}%")
     return level
 
@@ -963,10 +962,18 @@ subprocess.run([
 
 def _send_media_key(vk_code):
     """Send a virtual key code via keyboard driver."""
-    # Use ctypes SendInput
-    kbi = ctypes.create_unicode_buffer(40)  # KEYBDINPUT size
-    ctypes.memset(kbi, 0, 40)
-    ctypes.memmove(kbi, ctypes.c_ushort(vk_code), 2)
+    # Define the full Win32 INPUT union so sizeof(INPUT) is correct on x64.
+    # SendInput requires cbSize == sizeof(INPUT) == 40 bytes on x64; a struct
+    # with only KEYBDINPUT is 32 bytes and silently fails (returns 0).
+    class MOUSEINPUT(ctypes.Structure):
+        _fields_ = [
+            ("dx", ctypes.c_long),
+            ("dy", ctypes.c_long),
+            ("mouseData", ctypes.c_ulong),
+            ("dwFlags", ctypes.c_ulong),
+            ("time", ctypes.c_ulong),
+            ("dwExtraInfo", ctypes.POINTER(ctypes.c_ulong)),
+        ]
 
     class KEYBDINPUT(ctypes.Structure):
         _fields_ = [
@@ -977,16 +984,30 @@ def _send_media_key(vk_code):
             ("dwExtraInfo", ctypes.POINTER(ctypes.c_ulong)),
         ]
 
+    class HARDWAREINPUT(ctypes.Structure):
+        _fields_ = [
+            ("uMsg", ctypes.c_ulong),
+            ("wParamL", ctypes.c_ushort),
+            ("wParamH", ctypes.c_ushort),
+        ]
+
+    class _INPUTUNION(ctypes.Union):
+        _fields_ = [
+            ("mi", MOUSEINPUT),
+            ("ki", KEYBDINPUT),
+            ("hi", HARDWAREINPUT),
+        ]
+
     class INPUT(ctypes.Structure):
         _fields_ = [
             ("type", ctypes.c_ulong),
-            ("ki", KEYBDINPUT),
+            ("u", _INPUTUNION),
         ]
 
     def _send(vk, flags=0):
         inp = INPUT()
         inp.type = 1  # INPUT_KEYBOARD
-        inp.ki = KEYBDINPUT(vk, 0, flags, 0, None)
+        inp.u.ki = KEYBDINPUT(vk, 0, flags, 0, None)
         ctypes.windll.user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(inp))
 
     _send(vk_code)

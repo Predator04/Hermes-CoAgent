@@ -385,10 +385,19 @@ def _get_cdp_browser():
     
     _CDP_URL = f"http://127.0.0.1:{port}"
     
-    # Kill any existing Chrome using same user_data_dir
+    # Kill only Chrome instances using this CoAgent profile directory (NOT the
+    # user's own browser, which uses a "User Data" dir). taskkill /IM chrome.exe
+    # would kill every Chrome process on the machine and cause data loss.
     try:
-        subprocess.run(['taskkill', '/F', '/IM', 'chrome.exe'], 
-                       capture_output=True, timeout=5)
+        ps_kill = (
+            "Get-CimInstance Win32_Process -Filter \"Name='chrome.exe'\" | "
+            "Where-Object { $_.CommandLine -like '*coagent_chrome_profile*' } | "
+            "ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"
+        )
+        subprocess.run(
+            ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", ps_kill],
+            capture_output=True, timeout=10,
+        )
     except Exception:
         pass
     _time.sleep(1)
@@ -429,6 +438,10 @@ def _ensure_browser_inner(cookies=None, stealth=False):
     if _BROWSER is not None and _CONTEXT is not None:
         try:
             pages = _CONTEXT.pages
+            # Keep the active tab (don't silently reset to pages[0], which would
+            # break /browser/switch-tab, /browser/new-tab, and popup capture).
+            if _PAGE is not None and not _PAGE.is_closed() and _PAGE in pages:
+                return _PAGE, None
             if pages:
                 _PAGE = pages[0]
                 return _PAGE, None
@@ -603,6 +616,16 @@ def route_browser_navigate():
             return error
         try:
             page.goto(url, wait_until=data.get("wait_until", "load"), timeout=_clamp_timeout(data, "timeout", 30000))
+            # Re-validate the final URL after any redirects (SSRF guard: a
+            # public host can redirect the browser to 127.0.0.1 / link-local
+            # 169.254.169.254 / internal addresses).
+            final_url_error = _navigation_url_error(page.url)
+            if final_url_error:
+                try:
+                    page.close()
+                except Exception:
+                    pass
+                return _error(f"navigation redirected to a blocked address: {final_url_error}", 403)
             title = ""
             try:
                 title = page.title()
@@ -878,36 +901,38 @@ def route_browser_cookies_import():
         shutil.copy2(cookie_path, tmp.name)
         
         conn = sqlite3.connect(tmp.name)
-        conn.row_factory = sqlite3.Row
-        cur = conn.cursor()
-        
-        cur.execute(
-            "SELECT host_key, name, value, path, expires_utc, is_secure, is_httponly, same_site "
-            "FROM cookies WHERE host_key LIKE ?",
-            (f"%{domain}",)
-        )
-        
-        cookies = []
-        for row in cur.fetchall():
-            cookie = {
-                "name": row["name"],
-                "value": row["value"],
-                "domain": row["host_key"],
-                "path": row["path"] or "/",
-                "secure": bool(row["is_secure"]),
-                "httpOnly": bool(row["is_httponly"]),
-            }
-            if row["expires_utc"] and row["expires_utc"] > 0:
-                cookie["expires"] = row["expires_utc"]
-            if row["same_site"] >= 0:
-                same_site_map = {0: "Strict", 1: "Lax", 2: "None"}
-                cookie["sameSite"] = same_site_map.get(row["same_site"], "Lax")
-            cookies.append(cookie)
-        
-        conn.close()
-        os.unlink(tmp.name)
-        
-        return jsonify({"cookies": cookies, "count": len(cookies), "domain": domain})
+        try:
+            conn.row_factory = sqlite3.Row
+            cur = conn.cursor()
+
+            cur.execute(
+                "SELECT host_key, name, value, path, expires_utc, is_secure, is_httponly, same_site "
+                "FROM cookies WHERE host_key LIKE ?",
+                (f"%{domain}",)
+            )
+
+            cookies = []
+            for row in cur.fetchall():
+                cookie = {
+                    "name": row["name"],
+                    "value": row["value"],
+                    "domain": row["host_key"],
+                    "path": row["path"] or "/",
+                    "secure": bool(row["is_secure"]),
+                    "httpOnly": bool(row["is_httponly"]),
+                }
+                if row["expires_utc"] and row["expires_utc"] > 0:
+                    cookie["expires"] = row["expires_utc"]
+                same_site = row["same_site"]
+                if same_site is not None and same_site >= 0:
+                    same_site_map = {0: "Strict", 1: "Lax", 2: "None"}
+                    cookie["sameSite"] = same_site_map.get(same_site, "Lax")
+                cookies.append(cookie)
+
+            return jsonify({"cookies": cookies, "count": len(cookies), "domain": domain})
+        finally:
+            conn.close()
+            os.unlink(tmp.name)
     except Exception as e:
         return _error(str(e), 500, type=type(e).__name__)
 
@@ -976,6 +1001,14 @@ def route_browser_network():
             })
         except Exception as e:
             return _error(str(e), 500, type=type(e).__name__)
+        finally:
+            # Remove listeners so they don't accumulate on the shared page
+            # across calls (memory growth + cross-call data leakage).
+            try:
+                page.remove_listener("request", on_request)
+                page.remove_listener("response", on_response)
+            except Exception:
+                pass
 
 
 @browser_bp.route("/browser/workflow", methods=["POST"])

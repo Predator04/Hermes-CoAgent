@@ -24,6 +24,10 @@ approvals_bp = Blueprint("approvals", __name__)
 class ApprovalQueue:
     """Thread-safe pending-approval store with TTL expiry."""
 
+    # Retain decided/expired items this long so callers can still fetch the
+    # result; beyond this they are pruned to bound memory.
+    DECIDED_RETENTION_SECONDS = 3600.0
+
     def __init__(self, default_ttl=300.0):
         self._items = {}
         self._lock = threading.Lock()
@@ -36,6 +40,9 @@ class ApprovalQueue:
             if item["status"] == "pending" and now >= item["expires_at"]:
                 item["status"] = "expired"
                 item["decided_at"] = now
+            elif item["status"] != "pending" and item.get("decided_at") is not None:
+                if now - item["decided_at"] > self.DECIDED_RETENTION_SECONDS:
+                    del self._items[aid]
 
     def request(self, action, detail=None, meta=None, ttl=None, now=None):
         now = time.time() if now is None else now

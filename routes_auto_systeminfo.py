@@ -143,26 +143,40 @@ def _parse_systeminfo_output(text):
                 continue
             current_section = None
 
-        m = KEY_VALUE_RE.match(line_stripped)
-        if m:
-            key = m.group(1).strip()
-            value = m.group(2).strip()
-            mapped = TARGET_KEYS.get(key)
-            if mapped:
-                # Try to convert memory values (e.g., "16,319 MB" -> 16319)
-                if "Memory" in key or "Virtual Memory" in key:
-                    try:
-                        num_str = value.split()[0].replace(",", "")
-                        result[mapped] = int(num_str)
-                    except (ValueError, IndexError):
-                        result[mapped] = value
-                elif key == "Hotfix(s)":
-                    try:
-                        result[mapped] = int(value)
-                    except ValueError:
-                        result[mapped] = value
-                else:
+        # Match known keys by prefix first — some systeminfo keys contain a
+        # colon (e.g. "Virtual Memory: Max Size"), which the generic non-greedy
+        # KEY_VALUE_RE would split at the *first* colon and silently drop.
+        mapped = None
+        key = None
+        value = None
+        for candidate in sorted(TARGET_KEYS, key=len, reverse=True):
+            prefix = candidate + ":"
+            if line_stripped.startswith(prefix):
+                key = candidate
+                value = line_stripped[len(prefix):].strip()
+                mapped = TARGET_KEYS[candidate]
+                break
+        if mapped is None:
+            m = KEY_VALUE_RE.match(line_stripped)
+            if m:
+                key = m.group(1).strip()
+                value = m.group(2).strip()
+                mapped = TARGET_KEYS.get(key)
+        if mapped:
+            # Try to convert memory values (e.g., "16,319 MB" -> 16319)
+            if "Memory" in key or "Virtual Memory" in key:
+                try:
+                    num_str = value.split()[0].replace(",", "")
+                    result[mapped] = int(num_str)
+                except (ValueError, IndexError):
                     result[mapped] = value
+            elif key == "Hotfix(s)":
+                try:
+                    result[mapped] = int(value)
+                except ValueError:
+                    result[mapped] = value
+            else:
+                result[mapped] = value
 
     if hotfixes:
         result["hotfix_list"] = hotfixes
