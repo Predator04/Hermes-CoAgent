@@ -191,9 +191,10 @@ def register_routes(app, state, require_auth):
         # Convert WSL path to Windows path if needed
         if filepath.startswith("/mnt/"):
             parts = filepath.split("/")
-            drive = parts[2].upper()
-            win_path = f"{drive}:\\" + "\\".join(parts[3:])
-            filepath = win_path
+            if len(parts) >= 3 and len(parts[2]) == 1:
+                drive = parts[2].upper()
+                win_path = f"{drive}:\\" + "\\".join(parts[3:])
+                filepath = win_path
 
         # certutil encodes to a temp .b64 file
         import tempfile
