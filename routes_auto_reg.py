@@ -333,7 +333,9 @@ def register_routes(app, state, require_auth):
         try:
             with tempfile.NamedTemporaryFile(suffix=".reg", delete=False) as tmp:
                 export_path = tmp.name
-            args = ["export", key, export_path]
+            # /y: overwrite the pre-created temp file without prompting (reg.exe
+            # otherwise prompts "Overwrite (Yes/No)?" and aborts on EOF stdin).
+            args = ["export", key, export_path, "/y"]
             stdout, stderr, rc = _run_reg(args, timeout=15)
             if rc != 0:
                 try:
@@ -346,9 +348,13 @@ def register_routes(app, state, require_auth):
                     "exit_code": rc,
                 }), 502
             try:
-                reg_content = open(export_path, "r", encoding="utf-16-le", errors="replace").read()
+                # reg.exe writes UTF-16 LE *with* a BOM; utf-16 (not utf-16-le)
+                # consumes the BOM so it isn't returned as a leading \ufeff.
+                with open(export_path, "r", encoding="utf-16", errors="replace") as f:
+                    reg_content = f.read()
             except UnicodeError:
-                reg_content = open(export_path, "r", encoding="utf-8", errors="replace").read()
+                with open(export_path, "r", encoding="utf-8", errors="replace") as f:
+                    reg_content = f.read()
             try:
                 os.unlink(export_path)
             except OSError:
