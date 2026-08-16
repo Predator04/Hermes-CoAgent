@@ -76,6 +76,9 @@ def _clean_path(path):
     for c in "|><&":
         if c in p:
             raise ValueError(f"path contains invalid character '{c}'")
+    # Reject icacls flag injection: a path must not begin with a switch char.
+    if p[0] in "/-":
+        raise ValueError("path must not begin with '/' or '-'")
     return p
 
 
@@ -88,6 +91,9 @@ def _clean_username(user):
         raise ValueError("user/group name too long (max 256 chars)")
     if "\x00" in u:
         raise ValueError("user/group name cannot contain null bytes")
+    # Reject icacls flag injection: a user/group must not begin with a switch char.
+    if u[0] in "/-":
+        raise ValueError("user/group name must not begin with '/' or '-'")
     return u
 
 
