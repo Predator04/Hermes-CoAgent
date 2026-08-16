@@ -85,7 +85,7 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_auto_fzf_filter():
         """Fuzzy-filter a list of strings. Body: {"query": "pattern", "items": ["str1", "str2", ...]}"""
-        body = _json_body(request)
+        body = _json_body()
         query = body.get("query", "")
         items = body.get("items", [])
 
@@ -133,7 +133,7 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_auto_fzf_search():
         """Fuzzy-search a directory. Body: {"query": "pattern", "path": "/some/dir", "type": "f|d|all"}"""
-        body = _json_body(request)
+        body = _json_body()
         query = body.get("query", "")
         search_path = body.get("path", ".")
         file_type = body.get("type", "all")  # f=files, d=dirs, all=both
