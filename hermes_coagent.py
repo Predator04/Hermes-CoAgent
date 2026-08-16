@@ -987,6 +987,8 @@ from routes_auto_topgrade import register_routes as reg_auto_topgrade
 from routes_auto_xh import register_routes as reg_auto_xh
 from routes_auto_ollama import register_routes as reg_auto_ollama
 from routes_auto_llama_cpp import register_routes as reg_auto_llama_cpp
+from routes_auto_aider import register_routes as reg_auto_aider
+from routes_auto_eza import register_routes as reg_auto_eza
 
 features = {}
 
@@ -1284,6 +1286,8 @@ reg_auto_topgrade(app, state, require_auth)
 reg_auto_xh(app, state, require_auth)
 reg_auto_ollama(app, state, require_auth)
 reg_auto_llama_cpp(app, state, require_auth)
+reg_auto_aider(app, state, require_auth)
+reg_auto_eza(app, state, require_auth)
 
 # v8.53 modules
 if reg_background_agent:
@@ -1448,6 +1452,8 @@ features["auto_topgrade"] = True
 features["auto_xh"] = True
 features["auto_ollama"] = True
 features["auto_llama_cpp"] = True
+features["auto_aider"] = True
+features["auto_eza"] = True
 state.backup_file = backup_file
 
 # -- Core routes (stay in main) ----------------------------------
