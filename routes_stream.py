@@ -89,7 +89,11 @@ def _broadcast_loop(key, monitor_index, quality):
             time.sleep(max(0.01, _FRAME_INTERVAL - elapsed))
     finally:
         with _STREAM_LOCK:
-            _STREAMS.pop(key, None)
+            entry = _STREAMS.get(key)
+            if entry and entry.get("thread") is threading.current_thread():
+                _STREAMS.pop(key, None)
+        with _LATEST_FRAMES_LOCK:
+            _LATEST_FRAMES.pop(key, None)
         _log(f"Screen stream stopped monitor={monitor_index} quality={quality}")
 
 
