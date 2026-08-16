@@ -17,36 +17,51 @@ COAGENT_SCRIPT = os.environ.get(
 PYTHON_EXE = os.environ.get("COAGENT_PYTHON", sys.executable)
 
 
+def _ps_quote(value):
+    """Quote a value for a PowerShell single-quoted string literal."""
+    return "'" + str(value).replace("'", "''") + "'"
+
+
+def _pid_is_coagent(pid):
+    """Return True if the given PID is a Python process running hermes_coagent."""
+    try:
+        result = subprocess.run(
+            ["powershell", "-NoProfile", "-Command",
+             f"(Get-CimInstance Win32_Process -Filter \"ProcessId={pid}\").CommandLine"],
+            capture_output=True, text=True, timeout=10,
+        )
+        return "hermes_coagent" in (result.stdout or "").lower()
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
 def _find_coagent_pid():
     """Discover CoAgent PID from PID file or by scanning process list."""
-    # 1. Try PID file first
+    # 1. Try PID file first (verify the process is actually CoAgent, so a
+    #    recycled PID pointing at an unrelated python.exe isn't killed).
     try:
         if os.path.isfile(COAGENT_PID_FILE):
             with open(COAGENT_PID_FILE) as f:
                 pid = int(f.read().strip())
-            # Verify the process still exists
-            result = subprocess.run(
-                ["tasklist", "/FI", f"PID eq {pid}", "/NH"],
-                capture_output=True, text=True, timeout=5,
-            )
-            if "python" in result.stdout.lower() or "coagent" in result.stdout.lower():
+            if _pid_is_coagent(pid):
                 return pid
     except (ValueError, OSError, subprocess.SubprocessError):
         pass
 
-    # 2. Fall back: find python process running hermes_coagent
+    # 2. Fall back: find python process running hermes_coagent via CommandLine
+    #    (wmic is deprecated/removed on newer Windows 11 builds).
     try:
         result = subprocess.run(
-            ["wmic", "process", "where", "name='python.exe' or name='pythonw.exe'",
-             "get", "ProcessId,CommandLine", "/format:csv"],
-            capture_output=True, text=True, timeout=10,
+            ["powershell", "-NoProfile", "-Command",
+             "Get-CimInstance Win32_Process -Filter \"Name='python.exe' or Name='pythonw.exe'\" | "
+             "Where-Object { $_.CommandLine -like '*hermes_coagent*' } | "
+             "Select-Object -ExpandProperty ProcessId"],
+            capture_output=True, text=True, timeout=15,
         )
         for line in result.stdout.splitlines():
-            if "hermes_coagent" in line:
-                parts = line.strip().split(",")
-                pid_str = parts[-1].strip()
-                if pid_str.isdigit():
-                    return int(pid_str)
+            line = line.strip()
+            if line.isdigit():
+                return int(line)
     except (OSError, subprocess.SubprocessError):
         pass
 
@@ -54,40 +69,55 @@ def _find_coagent_pid():
 
 
 def _kill_coagent(pid):
-    """Gracefully kill the CoAgent process by PID."""
+    """Kill the CoAgent process by PID, force-killing if it survives."""
     try:
         subprocess.run(
             ["taskkill", "/PID", str(pid)],
             capture_output=True, timeout=10,
         )
         time.sleep(2)
+        # taskkill without /F doesn't raise on non-zero exit; a console
+        # python.exe ignores WM_CLOSE, so force-kill if it's still alive.
+        if _pid_is_coagent(pid):
+            subprocess.run(
+                ["taskkill", "/F", "/PID", str(pid)],
+                capture_output=True, timeout=10,
+            )
+            time.sleep(1)
     except subprocess.SubprocessError:
-        # Force kill if graceful fails
-        subprocess.run(
-            ["taskkill", "/F", "/PID", str(pid)],
-            capture_output=True, timeout=10,
-        )
-        time.sleep(1)
+        pass
+    finally:
+        try:
+            os.remove(COAGENT_PID_FILE)
+        except OSError:
+            pass
 
 
 def _launch_via_scheduled_task():
     """Launch CoAgent via a one-shot Scheduled Task (runs as admin desktop user)."""
+    arg_string = f'"{COAGENT_SCRIPT}" --secure --allow-external'
     ps_cmd = (
-        f"$a=New-ScheduledTaskAction -Execute '{PYTHON_EXE}' "
-        f"-Argument '{COAGENT_SCRIPT} --secure --allow-external' "
-        f"-WorkingDirectory '{os.path.dirname(COAGENT_SCRIPT)}';"
+        f"$a=New-ScheduledTaskAction -Execute {_ps_quote(PYTHON_EXE)} "
+        f"-Argument {_ps_quote(arg_string)} "
+        f"-WorkingDirectory {_ps_quote(os.path.dirname(COAGENT_SCRIPT))};"
         "$t=New-ScheduledTaskTrigger -Once -At (Get-Date).AddSeconds(2);"
-        f"$p=New-ScheduledTaskPrincipal -UserId '{getpass.getuser()}' -LogonType Interactive -RunLevel Highest;"
+        f"$p=New-ScheduledTaskPrincipal -UserId {_ps_quote(getpass.getuser())} -LogonType Interactive -RunLevel Highest;"
         "Register-ScheduledTask -TaskName CoAgentLaunch -Action $a -Trigger $t -Principal $p -Force|Out-Null;"
         "Start-ScheduledTask -TaskName CoAgentLaunch"
     )
-    subprocess.run(
+    result = subprocess.run(
         ["powershell", "-NoProfile", "-Command", ps_cmd],
         capture_output=True, timeout=15,
     )
+    if result.returncode != 0:
+        print(f"Failed to launch scheduled task: {result.stderr or result.stdout}", file=sys.stderr)
+    return result.returncode == 0
 
 
 def main():
+    if sys.platform != "win32":
+        print("CoAgent restart is Windows-only.", file=sys.stderr)
+        sys.exit(1)
     pid = _find_coagent_pid()
     if pid:
         print(f"Found CoAgent PID: {pid}")
