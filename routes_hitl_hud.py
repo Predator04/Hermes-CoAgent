@@ -31,6 +31,7 @@ def _debug_failure(context, exc):
 
 def _flash_rect(bbox, duration_ms=2000, color_rgba=(255, 0, 0, 80)):
     """Draw a semi-transparent rectangle overlay using win32gui."""
+    global _PREVIEW_HWND
     try:
         import win32gui
         import win32con
@@ -51,26 +52,29 @@ def _flash_rect(bbox, duration_ms=2000, color_rgba=(255, 0, 0, 80)):
             if not hwnd:
                 return False
             win32gui.SetLayeredWindowAttributes(hwnd, 0, color_rgba[3], win32con.LWA_ALPHA)
+            # Show the window *before* drawing: a STATIC window repaints on
+            # WM_PAINT and would otherwise discard the rectangle drawn first.
+            _PREVIEW_HWND = hwnd
+            win32gui.ShowWindow(hwnd, win32con.SW_SHOW)
+            win32gui.UpdateWindow(hwnd)
             hwnd_dc = win32gui.GetDC(hwnd)
             from win32api import RGB
             brush = win32gui.CreateSolidBrush(RGB(color_rgba[0], color_rgba[1], color_rgba[2]))
             old_brush = win32gui.SelectObject(hwnd_dc, brush)
             win32gui.Rectangle(hwnd_dc, 0, 0, w, h)
+            time.sleep(duration_ms / 1000.0)
+            return True
         finally:
-            # Always restore GDI state before sleep, regardless of errors
+            # Always restore GDI state and destroy the window, even on errors.
             if hwnd_dc is not None and old_brush is not None:
                 win32gui.SelectObject(hwnd_dc, old_brush)
             if brush is not None:
                 win32gui.DeleteObject(brush)
             if hwnd is not None and hwnd_dc is not None:
                 win32gui.ReleaseDC(hwnd, hwnd_dc)
-        global _PREVIEW_HWND
-        _PREVIEW_HWND = hwnd
-        win32gui.ShowWindow(hwnd, win32con.SW_SHOW)
-        time.sleep(duration_ms / 1000.0)
-        win32gui.DestroyWindow(hwnd)
-        _PREVIEW_HWND = None
-        return True
+            if hwnd is not None:
+                win32gui.DestroyWindow(hwnd)
+            _PREVIEW_HWND = None
     except Exception as exc:
         _debug_failure("flash_rect", exc)
         return False
@@ -80,12 +84,15 @@ def _flash_rect(bbox, duration_ms=2000, color_rgba=(255, 0, 0, 80)):
 def _hitl_preview():
     body = request.get_json(force=True, silent=True) or {}
     bbox = body.get("bbox")
-    if not bbox or len(bbox) < 4:
+    if not isinstance(bbox, (list, tuple)) or len(bbox) < 4:
         return jsonify({"ok": False, "error": "bbox [x,y,w,h] required"}), 400
     try:
+        bbox = [int(v) for v in bbox[:4]]
         duration = max(100, min(int(body.get("duration_ms", 2000)), 5000))
-    except (TypeError, ValueError):
-        return jsonify({"ok": False, "error": "duration_ms must be a number"}), 400
+    except (TypeError, ValueError, OverflowError):
+        return jsonify({"ok": False, "error": "bbox and duration_ms must be numeric"}), 400
+    with _HITL_LOCK:
+        _HITL_STATE["preview_active"] = True
     ok = _flash_rect(bbox, duration)
     with _HITL_LOCK:
         _HITL_STATE["total_previews"] += 1
