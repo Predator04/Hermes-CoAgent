@@ -43,8 +43,10 @@ def _is_certutil_available():
     if not exe:
         return False
     try:
-        result = subprocess.run([exe], capture_output=True, text=True, timeout=10)
-        return result.returncode == 0 and "certutil" in result.stdout.lower()
+        # `certutil` with no args prints usage to stdout and exits non-zero;
+        # use a benign verb and accept usage exit codes (0 or 1).
+        result = subprocess.run([exe, "-?"], capture_output=True, text=True, timeout=10)
+        return result.returncode in (0, 1)
     except (subprocess.TimeoutExpired, OSError):
         return False
 
