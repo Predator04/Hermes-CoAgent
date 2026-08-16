@@ -22,18 +22,16 @@ POSITION_WORDS = {"top", "bottom", "left", "right", "middle", "center", "centre"
 
 
 def _auth_header():
-    try:
-        token_file = COAGENT_DIR / ".token"
-        if token_file.exists():
+    token_file = COAGENT_DIR / ".token"
+    if token_file.exists():
+        try:
             token = token_file.read_text(encoding="utf-8").strip()
-            # Validate token to prevent header injection
-            if token and "\n" not in token and "\r" not in token:
-                return f"Bearer {token}"
-        return request.headers.get("Authorization", "")
-    except RuntimeError:
-        return ""
-    except Exception:
-        return ""
+        except Exception:
+            token = ""
+        # Validate token to prevent header injection
+        if token and "\n" not in token and "\r" not in token:
+            return f"Bearer {token}"
+    return request.headers.get("Authorization", "")
 
 
 def _coagent_post(path, data):
