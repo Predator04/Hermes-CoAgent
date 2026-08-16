@@ -15,7 +15,7 @@ Token is saved to COAGENT_DIR/.token on first --secure launch (or when --token=K
 Subsequent --secure launches read the saved token.
 When HERMES_COAGENT_TOKEN env var is used with --secure, the token is NOT persisted to disk.
 """
-import os, sys, secrets, functools, hashlib, time, threading
+import os, sys, secrets, functools, hashlib, time, threading, tempfile
 from flask import jsonify, request
 
 AUTH_TOKEN = None
@@ -136,32 +136,26 @@ def _save_token(token):
     except OSError as e:
         print(f"[Auth] ERROR: cannot create token dir {tp.parent}: {e}", file=sys.stderr)
         return False
-    # Write to temp file in same dir, then atomic rename. Create with 0o600
-    # from the outset so there's no world-readable window before chmod.
-    tmp = tp.with_suffix(".tmp")
+    # Write to a unique temp file (mkstemp avoids the deterministic-name race
+    # between concurrent callers) created 0o600 from the outset so there's no
+    # world-readable window, then atomically rename into place.
     try:
-        if os.name != "nt":
+        fd, tmp_path = tempfile.mkstemp(prefix=".token", suffix=".tmp", dir=str(tp.parent))
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(token)
+            if os.name != "nt":
+                os.chmod(tmp_path, 0o600)
+            os.replace(tmp_path, tp)  # atomic on both Windows and POSIX
+        finally:
+            # Remove the temp file if anything failed before the rename.
             try:
-                fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-                with os.fdopen(fd, "w", encoding="utf-8") as f:
-                    f.write(token)
+                if os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
             except OSError:
-                # Fall back to write_text (still chmod right after)
-                tmp.write_text(token, encoding="utf-8")
-                try:
-                    os.chmod(tmp, 0o600)
-                except OSError:
-                    pass
-        else:
-            tmp.write_text(token, encoding="utf-8")
-        os.replace(tmp, tp)  # atomic on both Windows and POSIX
+                pass
     except OSError as e:
         print(f"[Auth] ERROR: failed writing token to {tp}: {e}", file=sys.stderr)
-        try:
-            if tmp.exists():
-                tmp.unlink()
-        except OSError:
-            pass
         return False
     old_suffix = tp.with_suffix(".token_tok")
     if old_suffix.exists():
@@ -175,7 +169,8 @@ def _save_token(token):
 def generate_token():
     """Generate and persist a new bearer token."""
     token = secrets.token_hex(32)
-    _save_token(token)
+    if not _save_token(token):
+        print("[Auth] WARNING: generated token could not be persisted", file=sys.stderr)
     return token
 
 
@@ -322,7 +317,11 @@ def register_auth_routes(app):
             # Re-check under lock to prevent TOCTOU race
             if AUTH_ENABLED or _load_token():
                 return jsonify({"error": "Already configured"}), 403
-            _save_token(token)
+            if not _save_token(token):
+                # Don't flip AUTH_ENABLED on a failed persist — otherwise the
+                # server restarts unauthenticated while the client believes
+                # setup succeeded.
+                return jsonify({"error": "Failed to persist token"}), 500
             AUTH_TOKEN = token
             AUTH_ENABLED = True
         return jsonify({
@@ -409,13 +408,19 @@ def register_auth_routes(app):
             AUTH_TOKEN = new_token
             # Persist inside the lock so in-memory and on-disk tokens can't
             # diverge under a concurrent regen.
-            _save_token(new_token)
+            saved = _save_token(new_token)
+        if not saved:
+            # Roll back the in-memory swap so the caller (and tray) don't end
+            # up with a token that was never persisted.
+            with _AUTH_LOCK:
+                AUTH_TOKEN = provided
+            return jsonify({"error": "Failed to persist new token"}), 500
 
         pre = new_token[:16]
         suf = new_token[-8:]
         return jsonify({
             "message": "Token regenerated successfully",
-            "token": f"{new_token[:4]}...{new_token[-4:]}",
+            "token": new_token,
             "token_preview": f"{pre}...{suf}",
         })
 
@@ -455,10 +460,17 @@ def register_auth_routes(app):
             entry = _DASHBOARD_HANDOFFS.pop(code, None)
         if not entry:
             return jsonify({"error": "Invalid or expired handoff code"}), 404
-        token, expires_at = entry
+        _stored_token, expires_at = entry
         if expires_at < now:
             return jsonify({"error": "Invalid or expired handoff code"}), 404
-        return jsonify({"token": token})
+        # Resolve the *current* token at exchange time. A token regenerated
+        # between mint and exchange would otherwise hand back a stale token
+        # that no longer authenticates (phone/dashboard silently locked out).
+        with _AUTH_LOCK:
+            current = AUTH_TOKEN
+        if not current:
+            return jsonify({"error": "Auth token not configured"}), 500
+        return jsonify({"token": current})
 
     @app.route("/csrf-token", methods=["GET"])
     @require_auth
