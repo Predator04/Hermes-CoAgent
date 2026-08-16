@@ -254,7 +254,7 @@ def register_routes(app, state, require_auth):
             return jsonify({"ok": False, "error": "invalid JSON body"}), 400
 
         task_name = body.get("task", "").strip()
-        force = body.get("force", True)
+        force = body.get("force", False)
 
         if not task_name:
             return _missing_field("task")
