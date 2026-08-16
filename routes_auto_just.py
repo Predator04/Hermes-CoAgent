@@ -154,7 +154,7 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_auto_just_run():
         """Run a just recipe. Body: {"recipe": "build", "args": ["--release"], "path": "/some/dir"}"""
-        body = _json_body(request)
+        body = _json_body()
         recipe = body.get("recipe", "")
         args = body.get("args", [])
         run_path = body.get("path", os.getcwd())

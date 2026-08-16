@@ -83,7 +83,7 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_auto_zoxide_query():
         """Query best-matching directory. Body: {"keywords": "project"}"""
-        body = _json_body(request)
+        body = _json_body()
         keywords = body.get("keywords", "")
 
         if not keywords or not keywords.strip():
@@ -173,7 +173,7 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_auto_zoxide_add():
         """Add a directory to zoxide's database. Body: {"path": "/some/dir"}"""
-        body = _json_body(request)
+        body = _json_body()
         dir_path = body.get("path", "")
 
         if not dir_path or not dir_path.strip():

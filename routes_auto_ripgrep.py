@@ -79,7 +79,7 @@ def register_routes(app, state, require_auth):
                 "hint": "Install with: winget install BurntSushi.ripgrep.MSVC",
             }), 503
 
-        body = _json_body(request)
+        body = _json_body()
         pattern = body.get("pattern")
         if not pattern:
             return _missing_field("pattern")
@@ -136,7 +136,7 @@ def register_routes(app, state, require_auth):
         if not exe:
             return jsonify({"error": "ripgrep not installed"}), 503
 
-        body = _json_body(request)
+        body = _json_body()
         pattern = body.get("pattern")
         if not pattern:
             return _missing_field("pattern")
@@ -173,7 +173,7 @@ def register_routes(app, state, require_auth):
         if not exe:
             return jsonify({"error": "ripgrep not installed"}), 503
 
-        body = _json_body(request) if request.is_json else {}
+        body = _json_body() if request.is_json else {}
         search_path = body.get("path", ".")
         file_glob = body.get("file_glob", None)
         try:

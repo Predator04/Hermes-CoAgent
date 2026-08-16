@@ -292,7 +292,7 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_auto_procs_kill():
         """Kill a process by PID. Optionally force-kill with ?force=1."""
-        body = _json_body(request)
+        body = _json_body()
         if body is None:
             body = {}
 
