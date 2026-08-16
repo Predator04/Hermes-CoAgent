@@ -5,14 +5,17 @@ aggregates their tools under a unified namespace, and exposes endpoints to
 register, list, call, and unregister them. Sibling to routes_mcp.py, which
 exposes CoAgent's OWN endpoints AS an MCP server; this module is the client.
 """
+import ipaddress
 import json
 import os
 import re
 import shlex
+import socket
 import subprocess
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from queue import Queue, Empty
 
@@ -79,6 +82,56 @@ def _read_bounded(stream, cap):
     return b"".join(chunks)
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Block HTTP redirects so a validated URL cannot 302 to an internal host."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+_NO_REDIRECT_OPENER = urllib.request.build_opener(_NoRedirect)
+
+
+def _resolve_host(host, port):
+    try:
+        infos = socket.getaddrinfo(host, port, proto=socket.IPPROTO_TCP)
+    except (socket.gaierror, UnicodeError):
+        return []
+    addrs = []
+    for info in infos:
+        try:
+            addrs.append(ipaddress.ip_address(info[4][0]))
+        except ValueError:
+            continue
+    return addrs
+
+
+def _url_is_unsafe(url):
+    """Return True if a URL resolves to a loopback/private/link-local/metadata host.
+
+    The HTTP MCP transport lets callers point the client at arbitrary
+    endpoints; without this guard an authenticated caller could SSRF internal
+    services and cloud metadata endpoints (169.254.169.254, fd00:ec2::254, etc.).
+    """
+    try:
+        parsed = urllib.parse.urlparse(url)
+    except ValueError:
+        return True
+    if parsed.scheme.lower() not in ("http", "https"):
+        return True
+    host = parsed.hostname
+    if not host:
+        return True
+    port = parsed.port
+    if port is None:
+        port = 443 if parsed.scheme.lower() == "https" else 80
+    for ip in _resolve_host(host, port):
+        if (ip.is_loopback or ip.is_private or ip.is_link_local
+                or ip.is_multicast or ip.is_reserved or ip.is_unspecified):
+            return True
+    return False
+
+
 def _http_post(url, data_bytes, headers, timeout):
     """POST bytes to ``url`` using stdlib urllib (no third-party dependency).
 
@@ -88,7 +141,7 @@ def _http_post(url, data_bytes, headers, timeout):
     """
     req = urllib.request.Request(url, data=data_bytes, headers=headers, method="POST")
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with _NO_REDIRECT_OPENER.open(req, timeout=timeout) as resp:
             body = _read_bounded(resp, MAX_HTTP_RESPONSE_BYTES).decode("utf-8", errors="replace")
             return _HttpResp(resp.status, dict(resp.headers.items()), body)
     except MCPError:
@@ -575,8 +628,14 @@ def _register_stdio(name, command, args, env):
 def _register_http(name, url, headers):
     if not isinstance(url, str) or not url:
         raise MCPError("http transport requires 'url'", status=400)
-    if not (url.startswith("http://") or url.startswith("https://")):
+    try:
+        parsed = urllib.parse.urlparse(url)
+    except ValueError:
+        raise MCPError("invalid url", status=400)
+    if parsed.scheme.lower() not in ("http", "https"):
         raise MCPError("url must be http:// or https://", status=400)
+    if _url_is_unsafe(url):
+        raise MCPError("url resolves to a loopback/private/link-local address (SSRF blocked)", status=400)
     if not isinstance(headers, dict):
         raise MCPError("'headers' must be an object", status=400)
     server = HttpServer(name=name, url=url, headers=headers)
