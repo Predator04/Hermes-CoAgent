@@ -99,6 +99,10 @@ def _init_db(conn):
             from shared import _log
             _log(f"[memory] archived {archived} stale fact(s)")
     except Exception as e:
+        # A mid-sweep failure leaves partial INSERT/DELETE statements in the
+        # open transaction; roll them back so the outer _db() commit can't
+        # persist a half-archived state.
+        conn.rollback()
         from shared import _log
         _log(f"[memory] archive sweep failed: {type(e).__name__}: {e}")
 
