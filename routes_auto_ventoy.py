@@ -116,11 +116,6 @@ def register_routes(app, state, require_auth):
                 kernel32 = ctypes.windll.kernel32
                 volume_buf = ctypes.create_unicode_buffer(256)
                 fs_buf = ctypes.create_unicode_buffer(256)
-                handle = kernel32.CreateFileW(
-                    d, 0, 0, None, 3, 0, None
-                )
-                if handle != -1:
-                    kernel32.CloseHandle(handle)
                 success = kernel32.GetVolumeInformationW(
                     d, volume_buf, 256, None, None, None, fs_buf, 256
                 )
@@ -169,8 +164,13 @@ def register_routes(app, state, require_auth):
 
         if not disk:
             return jsonify({"ok": False, "error": _missing_field("disk (e.g. /Drive:F: or /PhyDrive:1)")}), 400
-        if not isinstance(disk, str) or not re.match(r'^(/Drive:[A-Z]:|/PhyDrive:\d+)$', disk):
+        if not isinstance(disk, str) or not re.match(r'^(/Drive:[A-Za-z]:|/PhyDrive:\d{1,3})$', disk):
             return jsonify({"ok": False, "error": "disk must be /Drive:X: or /PhyDrive:N"}), 400
+        # Destructive operation guard: require explicit confirmation and refuse the OS disk.
+        if body.get("confirm") is not True:
+            return jsonify({"ok": False, "error": "confirm must be true to reformat a disk"}), 400
+        if disk == "/PhyDrive:0":
+            return jsonify({"ok": False, "error": "Refusing to target /PhyDrive:0 (system disk)"}), 400
         if not isinstance(cmd, str):
             return jsonify({"ok": False, "error": "cmd must be 'I' or 'U'"}), 400
         if cmd.upper() not in ("I", "U"):
