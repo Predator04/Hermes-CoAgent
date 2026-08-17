@@ -405,15 +405,18 @@ def register_auth_routes(app):
 
         new_token = secrets.token_hex(32)
         with _AUTH_LOCK:
+            previous = AUTH_TOKEN
             AUTH_TOKEN = new_token
             # Persist inside the lock so in-memory and on-disk tokens can't
             # diverge under a concurrent regen.
             saved = _save_token(new_token)
         if not saved:
-            # Roll back the in-memory swap so the caller (and tray) don't end
-            # up with a token that was never persisted.
+            # Roll back to the value that was actually in place when we swapped,
+            # not to the caller's presented token — a concurrent regen may have
+            # already swapped in a newer token, and rolling back to `provided`
+            # would desynchronize memory from disk.
             with _AUTH_LOCK:
-                AUTH_TOKEN = provided
+                AUTH_TOKEN = previous
             return jsonify({"error": "Failed to persist new token"}), 500
 
         pre = new_token[:16]
