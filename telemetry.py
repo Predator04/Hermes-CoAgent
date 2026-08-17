@@ -44,7 +44,13 @@ def init_telem(db_dir=None):
     global TELEMETRY_DB_PATH, _WARNED
     if db_dir is None:
         db_dir = Path(__file__).parent.resolve()
-    TELEMETRY_DB_PATH = Path(db_dir) / "telemetry.db"
+    db_path = Path(db_dir)
+    try:
+        db_path.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        _LOGGER.error("Cannot create telemetry DB directory: %s", db_path)
+        return False
+    TELEMETRY_DB_PATH = db_path / "telemetry.db"
     _WARNED = False
     db = _get_db()
     if db is None:
