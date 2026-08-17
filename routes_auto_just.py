@@ -155,12 +155,19 @@ def register_routes(app, state, require_auth):
     def route_auto_just_run():
         """Run a just recipe. Body: {"recipe": "build", "args": ["--release"], "path": "/some/dir"}"""
         body = _json_body()
+        if not isinstance(body, dict):
+            return jsonify({"error": "request body must be a JSON object"}), 400
         recipe = body.get("recipe", "")
         args = body.get("args", [])
         run_path = body.get("path", os.getcwd())
 
-        if not recipe or not recipe.strip():
-            return jsonify({"error": "'recipe' is required"}), 400
+        if not isinstance(recipe, str) or not recipe.strip():
+            return jsonify({"error": "'recipe' must be a non-empty string"}), 400
+        recipe = recipe.strip()
+        if recipe.startswith("-") or any(c.isspace() for c in recipe) or "\x00" in recipe:
+            return jsonify({"error": "recipe name contains invalid characters"}), 400
+        if not isinstance(args, list):
+            return jsonify({"error": "'args' must be a list"}), 400
 
         exe = _find_just()
         if not exe:
@@ -177,9 +184,8 @@ def register_routes(app, state, require_auth):
             }), 404
 
         try:
-            cmd = [exe, recipe.strip()]
-            if isinstance(args, list):
-                cmd.extend([str(a) for a in args])
+            cmd = [exe, "--", recipe]
+            cmd.extend([str(a) for a in args])
 
             r = subprocess.run(
                 cmd,
