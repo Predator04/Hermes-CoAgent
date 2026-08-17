@@ -90,13 +90,17 @@ def _grab_region(region=None, window=None):
     try:
         import mss
         with mss.mss() as sct:
-            mon = ({"left": bbox[0], "top": bbox[1],
-                    "width": max(1, bbox[2] - bbox[0]),
-                    "height": max(1, bbox[3] - bbox[1])}
-                   if bbox else sct.monitors[1])
+            if bbox:
+                mon = {"left": bbox[0], "top": bbox[1],
+                       "width": max(1, bbox[2] - bbox[0]),
+                       "height": max(1, bbox[3] - bbox[1])}
+                cap_off = (off_x, off_y)
+            else:
+                mon = sct.monitors[1]
+                cap_off = (mon["left"], mon["top"])
             raw = sct.grab(mon)
             img = Image.frombytes("RGB", raw.size, raw.rgb)
-            return img, (off_x, off_y)
+            return img, cap_off
     except Exception:
         pass
 
