@@ -28,6 +28,8 @@ def _clean_action(value):
         raise ValueError("action must not be empty")
     if "\x00" in action:
         raise ValueError("action cannot contain null bytes")
+    if action.startswith("-"):
+        raise ValueError("action cannot start with '-'")
     if not action.replace("-", "").replace("_", "").isalnum():
         raise ValueError("action contains invalid characters")
     return action
@@ -134,9 +136,14 @@ def register_routes(app, state, require_auth):
         command = [exe, action]
         # Some actions take a count or target parameter
         extras = data.get("args")
-        if extras and isinstance(extras, list):
+        if extras:
+            if not isinstance(extras, list):
+                return jsonify({"ok": False, "error": "args must be a list"}), 400
             for arg in extras:
-                command.append(str(arg))
+                s = str(arg)
+                if s.startswith("-") or "\x00" in s:
+                    return jsonify({"ok": False, "error": f"invalid arg: {s!r}"}), 400
+                command.append(s)
 
         try:
             result = subprocess.run(
