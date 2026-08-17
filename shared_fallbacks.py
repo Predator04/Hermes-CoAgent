@@ -31,11 +31,14 @@ class FallbackChain:
         """
         errors = []
         none_results = []
+        if not self.methods:
+            raise RuntimeError(f"No methods registered for fallback chain {self.name}")
+        self.last_success = None
         for method in self.methods:
             try:
                 result = method["fn"](*method["args"], **method["kwargs"])
             except Exception as e:
-                errors.append(f"{method['name']}: {e}")
+                errors.append(f"{method['name']}: {type(e).__name__}: {e}")
                 logging.debug("Fallback method failed: %s/%s", self.name, method["name"], exc_info=True)
                 continue
             if fallback_on_none:
