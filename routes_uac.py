@@ -104,6 +104,7 @@ def _run_elevated_via_task(command, arguments="", working_dir=None):
         f"Register-ScheduledTask -TaskName {_psq(task_name)} -Action $action "
         f"-Trigger (New-ScheduledTaskTrigger -Once -At (Get-Date).AddSeconds(1)) "
         f"-Principal (New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Highest) "
+        f"-Settings (New-ScheduledTaskSettingsSet -DeleteExpiredTaskAfter (New-TimeSpan -Seconds 60) -ExecutionTimeLimit (New-TimeSpan -Minutes 10)) "
         f"-Force | Out-Null; "
         f"Start-ScheduledTask -TaskName {_psq(task_name)}"
     )
@@ -131,15 +132,6 @@ def _run_elevated_via_task(command, arguments="", working_dir=None):
     except Exception as exc:
         _log(f"[uac] elevated-exec error: {exc}")
         return {"error": str(exc), "task_name": task_name}
-    finally:
-        try:
-            subprocess.run(
-                ["powershell.exe", "-NoProfile", "-Command",
-                 f"Unregister-ScheduledTask -TaskName {_psq(task_name)} -Confirm:$false -ErrorAction SilentlyContinue"],
-                capture_output=True, timeout=10,
-            )
-        except Exception:
-            pass
 
 
 # ---------------------------------------------------------------------------
