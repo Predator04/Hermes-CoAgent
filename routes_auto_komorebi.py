@@ -95,6 +95,8 @@ def register_routes(app, state, require_auth):
                 [exe, "state"],
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=5,
             )
         except OSError as exc:
@@ -216,6 +218,8 @@ def register_routes(app, state, require_auth):
                 command,
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=5,
             )
         except subprocess.TimeoutExpired:
