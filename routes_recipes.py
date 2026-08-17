@@ -319,10 +319,16 @@ def _load_recipes():
             return
         data = json.loads(RECIPES_FILE.read_text(encoding="utf-8"))
         if isinstance(data, list):
-            recipes = {str(item.get("recipe_id") or item.get("id")): item for item in data if isinstance(item, dict)}
+            recipes = {str(item.get("recipe_id") or item.get("id") or uuid.uuid4().hex): item for item in data if isinstance(item, dict)}
         else:
             recipes = data.get("recipes", data) if isinstance(data, dict) else {}
-        _RECIPES = {str(rid): _normalize_recipe(recipe, recipe_id=str(rid)) for rid, recipe in recipes.items()}
+        loaded = {}
+        for rid, recipe in recipes.items():
+            try:
+                loaded[str(rid)] = _normalize_recipe(recipe, recipe_id=str(rid))
+            except Exception as exc:
+                _console(f"[recipes] skipping invalid recipe {rid}: {type(exc).__name__}: {exc}")
+        _RECIPES = loaded
     except Exception as exc:
         _console(f"[recipes] failed to load recipes: {type(exc).__name__}: {exc}")
         _RECIPES = {}
