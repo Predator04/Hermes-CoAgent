@@ -526,8 +526,11 @@ def register_routes(app, state, require_auth):
         except (FileNotFoundError, ValueError) as exc:
             return jsonify({"error": str(exc)}), 404
 
-        threshold = max(0.1, min(0.99, float(body.get("threshold", 0.8))))
-        max_results = int(body.get("max_results", 10))
+        try:
+            threshold = max(0.1, min(0.99, float(body.get("threshold", 0.8))))
+            max_results = max(1, int(body.get("max_results", 10)))
+        except (TypeError, ValueError):
+            return jsonify({"error": "threshold must be a number and max_results an integer"}), 400
         scales_raw = body.get("scales")
         if scales_raw:
             try:
@@ -597,7 +600,10 @@ def register_routes(app, state, require_auth):
         except (FileNotFoundError, ValueError) as exc:
             return jsonify({"error": str(exc)}), 404
 
-        threshold = max(0.1, min(0.99, float(body.get("threshold", 0.8))))
+        try:
+            threshold = max(0.1, min(0.99, float(body.get("threshold", 0.8))))
+        except (TypeError, ValueError):
+            return jsonify({"error": "threshold must be a number"}), 400
         scales_raw = body.get("scales")
         if scales_raw:
             try:
@@ -609,8 +615,11 @@ def register_routes(app, state, require_auth):
                 return jsonify({"error": "scales values must be between 0.1 and 5.0"}), 400
         else:
             scales = None
-        offset_x = int(body.get("offset_x", 0))
-        offset_y = int(body.get("offset_y", 0))
+        try:
+            offset_x = int(body.get("offset_x", 0))
+            offset_y = int(body.get("offset_y", 0))
+        except (TypeError, ValueError):
+            return jsonify({"error": "offset_x and offset_y must be integers"}), 400
 
         capture_region, screen_offset, window_found = _resolve_region(body)
 
@@ -697,9 +706,15 @@ def register_routes(app, state, require_auth):
         except (FileNotFoundError, ValueError) as exc:
             return jsonify({"error": str(exc)}), 404
 
-        threshold = max(0.1, min(0.99, float(body.get("threshold", 0.8))))
-        offset_x = int(body.get("offset_x", 0))
-        offset_y = int(body.get("offset_y", 0))
+        try:
+            threshold = max(0.1, min(0.99, float(body.get("threshold", 0.8))))
+        except (TypeError, ValueError):
+            return jsonify({"error": "threshold must be a number"}), 400
+        try:
+            offset_x = int(body.get("offset_x", 0))
+            offset_y = int(body.get("offset_y", 0))
+        except (TypeError, ValueError):
+            return jsonify({"error": "offset_x and offset_y must be integers"}), 400
         window = (body.get("window") or "").strip()
 
         capture_region, screen_offset, window_found = _resolve_region(body)
