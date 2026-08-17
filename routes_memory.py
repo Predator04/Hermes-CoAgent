@@ -353,7 +353,7 @@ def register_routes(app, state, require_auth):
             return jsonify({"error": "key is required"}), 400
         try:
             with _db() as conn:
-                row = conn.execute("SELECT * FROM facts WHERE key = ?", (key,)).fetchone()
+                row = conn.execute("SELECT * FROM facts WHERE key = ?", (key.strip(),)).fetchone()
                 if not row:
                     return jsonify({"error": "fact not found", "key": key}), 404
                 return jsonify({"fact": _fact_payload(row)})
@@ -408,7 +408,7 @@ def register_routes(app, state, require_auth):
     def route_memory_recall(key):
         try:
             with _db() as conn:
-                row = conn.execute("SELECT * FROM facts WHERE key = ?", (key,)).fetchone()
+                row = conn.execute("SELECT * FROM facts WHERE key = ?", (key.strip(),)).fetchone()
                 if not row:
                     return jsonify({"error": "fact not found", "key": key}), 404
                 return jsonify({"key": row["key"], "value": row["value"], "fact": _fact_payload(row)})
@@ -534,7 +534,7 @@ def register_routes(app, state, require_auth):
     def route_memory_forget(key):
         try:
             with _db() as conn:
-                row = conn.execute("SELECT id FROM facts WHERE key = ?", (key,)).fetchone()
+                row = conn.execute("SELECT id FROM facts WHERE key = ?", (key.strip(),)).fetchone()
                 if not row:
                     return jsonify({"error": "fact not found", "key": key}), 404
                 fact_id = row["id"]
