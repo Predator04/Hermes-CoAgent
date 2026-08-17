@@ -24,6 +24,19 @@ FEATURE_INFO = {
 }
 
 
+def _as_bool(value, default=False):
+    """Coerce a query/body value to bool — GET params always arrive as strings."""
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        return value.strip().lower() in ("1", "true", "yes", "on")
+    return default
+
+
 def _find_tool():
     """Locate fd on this system."""
     exe = shutil.which("fd")
@@ -127,7 +140,7 @@ def register_routes(app, state, require_auth):
             cmd.extend(["--extension", ext.lstrip(".")])
 
         # Case sensitivity
-        if data.get("case_sensitive"):
+        if _as_bool(data.get("case_sensitive")):
             cmd.append("--case-sensitive")
 
         # Max depth
@@ -146,19 +159,19 @@ def register_routes(app, state, require_auth):
             max_results = 200
 
         # Absolute paths
-        if data.get("absolute"):
+        if _as_bool(data.get("absolute")):
             cmd.append("--absolute-path")
 
         # Hidden files
-        if data.get("hidden"):
+        if _as_bool(data.get("hidden")):
             cmd.append("--hidden")
 
         # No ignore (search everything including .gitignored)
-        if data.get("no_ignore"):
+        if _as_bool(data.get("no_ignore")):
             cmd.append("--no-ignore")
 
         # List details
-        if data.get("list_details"):
+        if _as_bool(data.get("list_details")):
             cmd.extend(["--list-details"])
 
         # Strip prefix for cleaner output
