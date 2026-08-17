@@ -182,7 +182,7 @@ def _validate_api_key(value):
     return value
 
 
-def _validate_base_url(value):
+def _validate_base_url(value, allow_private=False):
     if value in (None, ""):
         return None
     if not isinstance(value, str):
@@ -193,7 +193,7 @@ def _validate_base_url(value):
     parsed = urlparse(base_url)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         raise ValueError("base_url must be an http or https URL")
-    if _is_private_url(base_url):
+    if not allow_private and _is_private_url(base_url):
         raise ValueError("base_url resolves to a blocked private or internal address")
     return base_url
 
@@ -445,7 +445,9 @@ def _provider_ollama(prompt, model):
 
 
 def _provider_ollama_request(prompt, model, base_url, timeout):
-    base_url = _validate_base_url(base_url) or PROVIDER_DEFAULTS["ollama"]["base_url"]
+    # Ollama is a local model server (default http://127.0.0.1:11434) — allow
+    # private/loopback addresses that the generic SSRF check would reject.
+    base_url = _validate_base_url(base_url, allow_private=True) or PROVIDER_DEFAULTS["ollama"]["base_url"]
     payload = {
         "model": model or PROVIDER_DEFAULTS["ollama"]["model"],
         "stream": False,
