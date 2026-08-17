@@ -154,7 +154,7 @@ def register_routes(app, state, require_auth):
         # Max results
         max_results = data.get("max_results", 200)
         try:
-            max_results = min(int(max_results), 5000)
+            max_results = max(1, min(int(max_results), 5000))
         except (ValueError, TypeError):
             max_results = 200
 
