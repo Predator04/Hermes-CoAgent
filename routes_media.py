@@ -165,7 +165,7 @@ def _extract_tunnel_url(text):
             hostname = parsed.hostname or ""
         except Exception:
             continue
-        if hostname.endswith(_TUNNEL_PUBLIC_HOSTS):
+        if any(hostname == h or hostname.endswith("." + h) for h in _TUNNEL_PUBLIC_HOSTS):
             return match.rstrip(".,);]")
     return None
 
@@ -319,29 +319,38 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_win_activate():
         d = _json_body()
-        title = d.get("title", "")
+        title = d.get("title", "") or ""
+        if not isinstance(title, str):
+            return jsonify({"error": "title must be a string"}), 400
         needle = title.lower()
         gov = get_governor()
         allowed, reason = gov.check_app(title)
         if not allowed:
             gov.record_block("window_activate", title, reason)
             return jsonify({"error": reason}), 403
+        found = []
         try:
             import pygetwindow as gw
             for w in gw.getAllWindows():
-                if needle in w.title.lower():
+                if needle in (w.title or "").lower():
                     w.activate()
+                    found.append(w.title)
                     return jsonify({"status": "activated", "title": w.title})
         except Exception:
+            pass
+        if not found:
             def enum_cb(hwnd, _):
                 buf = ctypes.create_unicode_buffer(512)
                 ctypes.windll.user32.GetWindowTextW(hwnd, buf, 512)
                 if needle in buf.value.lower():
                     ctypes.windll.user32.ShowWindow(hwnd, 9)  # SW_RESTORE
                     ctypes.windll.user32.SetForegroundWindow(hwnd)
+                    found.append(True)
                     return False  # stop
                 return True
             ctypes.windll.user32.EnumWindows(ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)(enum_cb), 0)
+        if not found:
+            return jsonify({"error": f"No window matched '{title}'"}), 404
         return jsonify({"status": "activated", "title": title})
 
     # ── Wallpaper ──────────────────────────────────────
@@ -1090,9 +1099,13 @@ $s.Speak($text)
     @app.route("/history", methods=["GET"])
     @require_auth
     def route_history():
-        limit = max(0, min(int(request.args.get("limit", 50)), 500))
+        try:
+            limit = int(request.args.get("limit", 50))
+        except (TypeError, ValueError):
+            limit = 50
+        limit = max(0, min(limit, 500))
         with _ACTION_HISTORY_LOCK:
-            actions = list(_action_history)[-limit:]
+            actions = [] if limit == 0 else list(_action_history)[-limit:]
             total = len(_action_history)
         return jsonify({"actions": actions, "count": min(limit, total)})
 
@@ -1105,7 +1118,8 @@ $s.Speak($text)
     @require_auth
     def route_launch_ai():
         d = _json_body()
-        query = d.get("query", d.get("app", "")).lower()
+        raw = d.get("query", d.get("app", "")) or ""
+        query = raw.lower()
         if not query: return _missing_field("query")
         app_map = {"chrome": "chrome.exe", "google": "chrome.exe", "browser": "chrome.exe",
                    "firefox": "firefox.exe", "edge": "msedge.exe", "notepad": "notepad.exe",
@@ -1124,6 +1138,6 @@ $s.Speak($text)
                 except Exception as e:
                     return jsonify({"error": str(e)}), 500
         if re.match(r'^https?://', query):
-            webbrowser.open_new_tab(query)
-            return jsonify({"status": "launched", "app": "browser", "url": query})
+            webbrowser.open_new_tab(raw)
+            return jsonify({"status": "launched", "app": "browser", "url": raw})
         return jsonify({"error": f"Could not find app matching '{query}'"}), 404
