@@ -317,7 +317,7 @@ def register_routes(app, state, require_auth):
         if not command_id or not isinstance(command_id, str):
             return jsonify({"ok": False, "error": "missing 'command_id'"}), 400
 
-        ok_flag = bool(body.get("ok"))
+        ok_flag = body.get("ok") is True
         payload = {
             "ok": ok_flag,
             "data": body.get("data"),
