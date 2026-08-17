@@ -424,9 +424,11 @@ def get_host_ip():
             )
             if r.stdout.strip():
                 HOST_IP = r.stdout.strip().splitlines()[0]
-                _HOST_IP_LOADED = True
         except Exception:
             pass
+        # Cache the outcome even on failure so a broken PowerShell probe
+        # doesn't stall every subsequent caller for the full timeout.
+        _HOST_IP_LOADED = True
         return HOST_IP
 
 
