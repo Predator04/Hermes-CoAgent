@@ -82,7 +82,7 @@ def _load_version() -> str:
     """Read version from VERSION file (single source of truth)."""
     vf = COAGENT_DIR / "VERSION"
     if vf.is_file():
-        return vf.read_text().strip()
+        return vf.read_text(encoding="utf-8").strip()
     return "0.0.0"
 
 VERSION = _load_version()
