@@ -157,7 +157,7 @@ def _save_token(token):
     except OSError as e:
         print(f"[Auth] ERROR: failed writing token to {tp}: {e}", file=sys.stderr)
         return False
-    old_suffix = tp.with_suffix(".token_tok")
+    old_suffix = tp.parent / ".token_tok"
     if old_suffix.exists():
         try:
             old_suffix.unlink()
