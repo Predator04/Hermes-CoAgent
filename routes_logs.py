@@ -1,5 +1,6 @@
 """Log analyzer routes."""
 
+import os
 import re
 import time
 from collections import Counter
@@ -31,10 +32,47 @@ def _auth_blueprint(bp, require_auth):
 
 
 def _read_lines(limit=None):
-    if not SERVER_LOG.exists():
+    """Return up to `limit` most-recent lines without loading the whole file."""
+    if limit is None:
+        limit = 20000
+    if limit <= 0:
         return []
-    lines = SERVER_LOG.read_text(encoding="utf-8", errors="replace").splitlines()
-    return lines[-limit:] if limit else lines
+    offset = 0
+    data = b""
+    try:
+        with open(SERVER_LOG, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            size = f.tell()
+            if size > 0:
+                window = min(size, limit * 256 + 8192)
+                offset = size - window
+                f.seek(offset)
+                data = f.read()
+    except OSError:
+        return []
+    lines = data.decode("utf-8", errors="replace").splitlines()
+    if offset > 0 and lines:
+        lines = lines[1:]  # first line may be partial
+    return lines[-limit:]
+
+
+def _scan_log():
+    """Stream-count total/error/warn lines without materializing the whole file."""
+    total = 0
+    errors = 0
+    warns = 0
+    try:
+        with open(SERVER_LOG, "rb") as f:
+            for raw in f:
+                total += 1
+                line = raw.decode("utf-8", errors="replace")
+                if _is_error(line):
+                    errors += 1
+                if _is_warn(line):
+                    warns += 1
+    except OSError:
+        pass
+    return total, errors, warns
 
 
 def _redact(text):
@@ -75,6 +113,8 @@ def _suggestion(error):
 @logs_bp.route("/logs/analyze", methods=["POST"])
 def route_logs_analyze():
     data = _json_payload()
+    if not isinstance(data, dict):
+        data = {}
     try:
         limit = max(100, min(int(data.get("lines", 1000)), 20000))
     except (TypeError, ValueError):
@@ -103,15 +143,17 @@ def route_logs_analyze():
 
 @logs_bp.route("/logs/summary", methods=["GET"])
 def route_logs_summary():
-    lines = _read_lines()
+    total_lines, error_count, warn_count = _scan_log()
     modified_age = None
-    if SERVER_LOG.exists():
+    try:
         modified_age = round(time.time() - SERVER_LOG.stat().st_mtime, 2)
+    except OSError:
+        pass
     return jsonify({
         "log": str(SERVER_LOG),
-        "total_lines": len(lines),
-        "error_count": sum(1 for line in lines if _is_error(line)),
-        "warn_count": sum(1 for line in lines if _is_warn(line)),
+        "total_lines": total_lines,
+        "error_count": error_count,
+        "warn_count": warn_count,
         "last_modified_age_seconds": modified_age,
     })
 
