@@ -881,12 +881,22 @@ def _active_run_count():
 
 def _trim_runs():
     with _RUNS_LOCK:
-        while len(_RUN_ORDER) > MAX_STORED_RUNS:
-            old_id = _RUN_ORDER.pop(0)
-            run = _RUNS.get(old_id)
-            if run and run.get("status") in {"queued", "planning", "running", "stopping"}:
-                _RUN_ORDER.append(old_id)
+        while len(_RUNS) > MAX_STORED_RUNS:
+            # Evict the oldest *terminal* run. Active runs are skipped so they
+            # are never dropped mid-flight. (The previous logic broke out of
+            # the loop on the first active run, which left newer terminal runs
+            # untrimmed and let the store grow without bound.)
+            evict_index = None
+            for i, run_id in enumerate(_RUN_ORDER):
+                run = _RUNS.get(run_id)
+                if run and run.get("status") in {"queued", "planning", "running", "stopping"}:
+                    continue
+                evict_index = i
                 break
+            if evict_index is None:
+                # Every stored run is active — nothing safe to evict.
+                break
+            old_id = _RUN_ORDER.pop(evict_index)
             _RUNS.pop(old_id, None)
 
 
