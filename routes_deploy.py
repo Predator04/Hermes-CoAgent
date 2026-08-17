@@ -102,8 +102,10 @@ def _pip_install(python: str, packages: list[str]) -> bool:
 
     # First ensure pip itself
     try:
-        _run([python, "-m", "pip", "--version"], timeout=15)
+        pip_check = _run([python, "-m", "pip", "--version"], timeout=15)
     except Exception:
+        pip_check = None
+    if pip_check is None or pip_check.returncode != 0:
         _log("Installing pip...")
         _run([python, "-m", "ensurepip", "--default-pip"], timeout=60)
 
