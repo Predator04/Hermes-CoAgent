@@ -219,8 +219,14 @@ def route_deploy_install():
 def route_deploy_oneclick():
     """Full one-click pipeline: deps → token → launch."""
     payload = _json_payload()
-    port = int(payload.get("port", 9123))
-    tunnel = payload.get("tunnel", False)  # ngrok is OPT-IN, not default
+    try:
+        port = int(payload.get("port", 9123))
+    except (TypeError, ValueError):
+        return _error("port must be an integer", status=400)
+    if not (1 <= port <= 65535):
+        return _error("port must be between 1 and 65535", status=400)
+    _tunnel = payload.get("tunnel", False)
+    tunnel = _tunnel is True or str(_tunnel).strip().lower() in ("true", "1", "yes", "on")
 
     with _DEPLOY_LOCK:
         if _DEPLOY_STATE["phase"] not in ("idle", "done", "error"):
