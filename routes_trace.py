@@ -337,9 +337,14 @@ def _extract_status_and_body(result):
 
 def _summarize_response_body(body):
     try:
-        from flask import Response
         if hasattr(body, "get_json"):
-            return body.get_json(silent=True) or {}
+            data = body.get_json(silent=True)
+            if data is not None:
+                return data
+            try:
+                return body.get_data(as_text=True)[:MAX_RESULT_CHARS]
+            except Exception:
+                return None
         if isinstance(body, (dict, list)):
             return body
         if isinstance(body, bytes):
@@ -349,11 +354,6 @@ def _summarize_response_body(body):
                 return json.loads(body)
             except Exception:
                 return body[:MAX_RESULT_CHARS]
-        if isinstance(body, Response):
-            try:
-                return body.get_json(silent=True) or body.get_data(as_text=True)[:MAX_RESULT_CHARS]
-            except Exception:
-                return None
     except Exception:
         return None
     return None
