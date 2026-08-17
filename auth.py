@@ -336,12 +336,11 @@ def register_auth_routes(app):
         """Show current token status (never leaks full token)."""
         if not AUTH_ENABLED:
             return jsonify({"auth": False, "message": "Auth not enabled"})
-        pre = AUTH_TOKEN[:16]
-        suf = AUTH_TOKEN[-8:]
+        tp = _token_path()
         return jsonify({
             "auth": True,
-            "token_preview": f"{pre}...{suf}",
-            "saved": _token_path().exists() if _token_path() else False,
+            "token_preview": f"{AUTH_TOKEN[:4]}...{AUTH_TOKEN[-4:]}",
+            "saved": bool(tp and tp.exists()),
         })
 
 
@@ -381,11 +380,9 @@ def register_auth_routes(app):
             with _AUTH_LOCK:
                 AUTH_TOKEN = saved
                 AUTH_ENABLED = True
-            pre = saved[:16]
-            suf = saved[-8:]
             return jsonify({
                 'message': 'Token reset from saved file',
-                'token_preview': f'{pre}...{suf}',
+                'token_preview': f'{saved[:4]}...{saved[-4:]}',
             })
         return jsonify({'error': 'Token file is empty'}), 500
 
