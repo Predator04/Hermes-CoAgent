@@ -854,7 +854,14 @@ def route_recipe_toggle(recipe_id):
         recipe = _RECIPES.get(recipe_id)
         if not recipe:
             return jsonify({"error": "recipe not found", "recipe_id": recipe_id}), 404
-        enabled = bool(data.get("enabled")) if "enabled" in data else not bool(recipe.get("enabled"))
+        raw_enabled = data.get("enabled")
+        if "enabled" in data:
+            if isinstance(raw_enabled, bool):
+                enabled = raw_enabled
+            else:
+                enabled = str(raw_enabled).strip().lower() in ("true", "1", "yes", "on")
+        else:
+            enabled = not bool(recipe.get("enabled"))
         recipe["enabled"] = enabled
         recipe["updated_at"] = datetime.now().isoformat(timespec="seconds")
         _save_recipes()
