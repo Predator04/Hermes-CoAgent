@@ -104,6 +104,8 @@ def _window_region(window_hint: str):
         def _cb(hwnd, _lp):
             if not user32.IsWindowVisible(hwnd):
                 return True
+            if user32.IsIconic(hwnd):
+                return True  # skip minimized windows (bogus -32000 rect)
             buf = ctypes.create_unicode_buffer(512)
             user32.GetWindowTextW(hwnd, buf, 512)
             if hint in buf.value.lower():
