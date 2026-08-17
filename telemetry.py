@@ -125,8 +125,11 @@ def get_telemetry():
         return jsonify({"error": "Telemetry not initialized"}), 500
 
     try:
-        limit = min(int(request.args.get("limit", 50)), 500)
-        offset = int(request.args.get("offset", 0))
+        try:
+            limit = max(1, min(int(request.args.get("limit", 50)), 500))
+            offset = max(0, int(request.args.get("offset", 0)))
+        except (TypeError, ValueError):
+            return jsonify({"error": "limit and offset must be integers"}), 400
         tool_filter = request.args.get("tool")
         success_filter = request.args.get("success")
         since = request.args.get("since")
