@@ -330,7 +330,9 @@ def _ensure_png_bytes(data):
     if data.startswith(b"\x89PNG"):
         return data
     if not HAS_PIL:
-        return data
+        # Without PIL we can't coerce non-PNG bytes to PNG; return empty so
+        # callers don't label JPEG/BMP data as "png".
+        return b""
     try:
         img = Image.open(BytesIO(data))
         buf = BytesIO()
@@ -338,7 +340,7 @@ def _ensure_png_bytes(data):
         return buf.getvalue()
     except Exception as e:
         _debug_backend_failure("PNG coercion", e)
-        return data
+        return b""
 
 def _capture_raw(force=False, monitor_index=0):
     """Capture full screen as PNG bytes through the configured fallback chain.
