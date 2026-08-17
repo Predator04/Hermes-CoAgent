@@ -989,6 +989,8 @@ from routes_auto_ollama import register_routes as reg_auto_ollama
 from routes_auto_llama_cpp import register_routes as reg_auto_llama_cpp
 from routes_auto_aider import register_routes as reg_auto_aider
 from routes_auto_eza import register_routes as reg_auto_eza
+from routes_auto_sd import register_routes as reg_auto_sd
+from routes_auto_yq import register_routes as reg_auto_yq
 
 features = {}
 
@@ -1288,6 +1290,8 @@ reg_auto_ollama(app, state, require_auth)
 reg_auto_llama_cpp(app, state, require_auth)
 reg_auto_aider(app, state, require_auth)
 reg_auto_eza(app, state, require_auth)
+reg_auto_sd(app, state, require_auth)
+reg_auto_yq(app, state, require_auth)
 
 # v8.53 modules
 if reg_background_agent:
@@ -1454,6 +1458,8 @@ features["auto_ollama"] = True
 features["auto_llama_cpp"] = True
 features["auto_aider"] = True
 features["auto_eza"] = True
+features["auto_sd"] = True
+features["auto_yq"] = True
 state.backup_file = backup_file
 
 # -- Core routes (stay in main) ----------------------------------
