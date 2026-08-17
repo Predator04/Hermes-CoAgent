@@ -128,6 +128,9 @@ def register_routes(app, state, require_auth):
         except (ValueError, TypeError) as exc:
             return jsonify({"ok": False, "error": str(exc)}), 400
 
+        if not isinstance(params, dict):
+            return jsonify({"ok": False, "error": "'params' must be a JSON object"}), 400
+
         import json as _json
         try:
             result = _run_photoshop_mcp(
