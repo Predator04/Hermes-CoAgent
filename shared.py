@@ -604,7 +604,10 @@ def sse_broadcast(event_type, data):
 
 def sse_response():
     def gen():
-        q = queue.Queue()
+        # Bounded queue: a slow or disconnected client that stops draining
+        # will fill up and be evicted by sse_broadcast (put_nowait raises
+        # queue.Full), instead of growing an unbounded queue forever.
+        q = queue.Queue(maxsize=256)
         with _sse_lock:
             _sse_clients.append(q)
         try:
