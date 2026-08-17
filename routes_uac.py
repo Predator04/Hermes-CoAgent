@@ -98,6 +98,8 @@ def _run_elevated_via_task(command, arguments="", working_dir=None):
     action_part = f"$action=New-ScheduledTaskAction -Execute {_psq(command)}"
     if arguments:
         action_part += f" -Argument {_psq(arguments)}"
+    if working_dir:
+        action_part += f" -WorkingDirectory {_psq(working_dir)}"
 
     ps_cmd = (
         f"{action_part}; "
