@@ -273,7 +273,7 @@ def register_routes(app, state, require_auth):
         branch = str(data.get("branch", "main") or "main")
         # Validate to prevent git-argument injection
         _SAFE_REF = re.compile(r"^[A-Za-z0-9._/-]{1,200}$")
-        if not _SAFE_REF.match(remote) or remote.startswith("-") or ":" in branch:
+        if not _SAFE_REF.match(remote) or remote.startswith("-") or ":" in remote:
             return jsonify({"error": "invalid remote or branch name"}), 400
         if not _SAFE_REF.match(branch) or branch.startswith("-") or ":" in branch:
             return jsonify({"error": "invalid remote or branch name"}), 400
