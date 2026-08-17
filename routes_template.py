@@ -710,6 +710,17 @@ def register_routes(app, state, require_auth):
             threshold = max(0.1, min(0.99, float(body.get("threshold", 0.8))))
         except (TypeError, ValueError):
             return jsonify({"error": "threshold must be a number"}), 400
+        scales_raw = body.get("scales")
+        if scales_raw:
+            try:
+                scales = [float(s) for s in scales_raw]
+            except (TypeError, ValueError):
+                return jsonify({"error": "scales must be a list of numbers"}), 400
+            scales = [s for s in scales if 0.1 <= s <= 5.0]
+            if not scales:
+                return jsonify({"error": "scales values must be between 0.1 and 5.0"}), 400
+        else:
+            scales = None
         try:
             offset_x = int(body.get("offset_x", 0))
             offset_y = int(body.get("offset_y", 0))
@@ -725,7 +736,7 @@ def register_routes(app, state, require_auth):
             return jsonify({"error": f"Screenshot failed: {exc}"}), 500
 
         try:
-            matches = _match_template(tpl_arr, screen_arr, threshold, None, screen_offset)
+            matches = _match_template(tpl_arr, screen_arr, threshold, scales, screen_offset)
         except Exception as exc:
             _log(f"[TEMPLATE] smart-click error: {exc}")
             return jsonify({"error": str(exc)}), 500
