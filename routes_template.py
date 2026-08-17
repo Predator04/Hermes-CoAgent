@@ -291,8 +291,7 @@ def _resolve_region(body: dict):
         r = _window_region(window)
         if r:
             return r, (r[0], r[1]), window
-        _log(f"[TEMPLATE] window '{window}' not found — searching full screen")
-        return None, (0, 0), None
+        _log(f"[TEMPLATE] window '{window}' not found — falling back to region/full screen")
 
     if region_raw:
         try:
