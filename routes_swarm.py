@@ -1052,11 +1052,13 @@ def route_swarm_stop(run_id):
         if run.get("status") in {"queued", "planning", "running"}:
             run["status"] = "stopping"
         run["updated_at"] = _now()
+        # Snapshot under the same lock so a concurrent _trim_runs() eviction
+        # can't make the later _RUNS[run_id] access raise KeyError.
+        snapshot = _snapshot(run)
     _log(run_id, "warn", "Stop requested", "\U0001F7E1")
     _emit(run_id, "swarm_status", {"status": "stopping", "icon": STATUS_ICONS["stopping"]})
     _emit_timeline(run_id)
-    with _RUNS_LOCK:
-        return jsonify(_snapshot(_RUNS[run_id]))
+    return jsonify(snapshot)
 
 
 @swarm_bp.route("/swarm/list", methods=["GET"])
