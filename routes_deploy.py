@@ -196,7 +196,12 @@ def route_deploy_install():
     _log(f"Using Python: {python}")
 
     try:
-        _pip_install(python, [])
+        ok = _pip_install(python, [])
+        if not ok:
+            with _DEPLOY_LOCK:
+                _DEPLOY_STATE["phase"] = "error"
+                _DEPLOY_STATE["error"] = "pip install failed — check logs"
+            return _error("pip install failed", status=500)
         with _DEPLOY_LOCK:
             _DEPLOY_STATE["phase"] = "done"
             _DEPLOY_STATE["finished"] = time.strftime("%Y-%m-%dT%H:%M:%S")
