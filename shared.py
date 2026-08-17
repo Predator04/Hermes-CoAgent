@@ -156,9 +156,16 @@ def _is_private_ip(value):
         ip = ipaddress.ip_address(str(value))
     except ValueError:
         return True  # malformed IP → treat as private (safe default)
+    # IPv4-mapped IPv6 (e.g. ::ffff:127.0.0.1) — check the embedded IPv4 so
+    # it can't slip past the blocklists on Python builds where is_loopback/
+    # is_private return False for mapped addresses.
+    if ip.version == 6 and getattr(ip, "ipv4_mapped", None) is not None:
+        return _is_private_ip(ip.ipv4_mapped)
     if ip in _BLOCKED_IP_ADDRESSES:
         return True
     if ip.is_private or ip.is_loopback or ip.is_link_local:
+        return True
+    if ip.is_unspecified or ip.is_reserved or ip.is_multicast:
         return True
     return any(ip in network for network in _BLOCKED_IP_NETWORKS)
 
