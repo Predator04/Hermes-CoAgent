@@ -1225,14 +1225,18 @@ def _h_autohotkey_2():
         ok = result.returncode == 0 and os.path.exists(tmp_exe)
         exe_size = os.path.getsize(tmp_exe) if ok else 0
         _log(f'[autohotkey] compile exit={result.returncode} size={exe_size}')
+        if not ok and tmp_exe and os.path.exists(tmp_exe):
+            try:
+                os.unlink(tmp_exe)
+            except OSError:
+                pass
         return (jsonify({'ok': ok, 'exit_code': result.returncode, 'output': tmp_exe, 'size_bytes': exe_size, 'stderr': result.stderr}), 200 if ok else 502)
     finally:
-        for p in [tmp_ahk, tmp_exe]:
-            if p and os.path.exists(p):
-                try:
-                    os.unlink(p)
-                except OSError:
-                    pass
+        if tmp_ahk and os.path.exists(tmp_ahk):
+            try:
+                os.unlink(tmp_ahk)
+            except OSError:
+                pass
 
 def _h_bat_3():
     """Read a file with bat syntax highlighting (plain text output)."""
@@ -1261,7 +1265,7 @@ def _h_bat_3():
         cmd.extend(['--language', language])
     if theme and theme != 'ansi':
         cmd.extend(['--theme', theme])
-    cmd.append(filepath)
+    cmd.extend(['--', filepath])
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
         lines = r.stdout.split('\n')
@@ -1395,7 +1399,7 @@ def _h_bitsadmin_6():
 def _h_bitsadmin_7():
     """Get detailed info about a specific BITS job by name or GUID."""
     body = _json_body()
-    job_id = (body.get('job_id') or '').strip()
+    job_id = str(body.get('job_id') or '').strip()
     if not job_id:
         return _missing_field('job_id')
     if _bitsadmin__bad_handle(job_id):
@@ -1413,12 +1417,12 @@ def _h_bitsadmin_7():
 def _h_bitsadmin_8():
     """Create a new BITS transfer job."""
     body = _json_body()
-    name = (body.get('name') or '').strip()
+    name = str(body.get('name') or '').strip()
     if not name:
         return _missing_field('name')
     if _bitsadmin__bad_handle(name):
         return (jsonify({'ok': False, 'error': "invalid name (must not start with '/' or '-')"}), 400)
-    job_type = (body.get('type') or 'download').strip().lower()
+    job_type = str(body.get('type') or 'download').strip().lower()
     if job_type not in ('download', 'upload', 'upload_reply'):
         return (jsonify({'ok': False, 'error': f"Invalid type '{job_type}'. Must be 'download', 'upload', or 'upload_reply'"}), 400)
     type_flag = f"/{job_type.upper().replace('_', '-')}"
@@ -1431,19 +1435,21 @@ def _h_bitsadmin_8():
 def _h_bitsadmin_9():
     """Add a file to an existing BITS job."""
     body = _json_body()
-    job_id = (body.get('job_id') or '').strip()
+    job_id = str(body.get('job_id') or '').strip()
     if not job_id:
         return _missing_field('job_id')
     if _bitsadmin__bad_handle(job_id):
         return (jsonify({'ok': False, 'error': "invalid job_id (must not start with '/' or '-')"}), 400)
-    remote_url = (body.get('remote_url') or '').strip()
+    remote_url = str(body.get('remote_url') or '').strip()
     if not remote_url:
         return _missing_field('remote_url')
     if not (remote_url.lower().startswith('http://') or remote_url.lower().startswith('https://')):
         return (jsonify({'ok': False, 'error': 'remote_url must be http:// or https://'}), 400)
-    local_path = (body.get('local_path') or '').strip()
+    local_path = str(body.get('local_path') or '').strip()
     if not local_path:
         return _missing_field('local_path')
+    if _bitsadmin__bad_handle(local_path):
+        return (jsonify({'ok': False, 'error': "invalid local_path (must not start with '/' or '-')"}), 400)
     try:
         output = _bitsadmin__run_bitsadmin(['/ADDFILE', job_id, remote_url, local_path], timeout=15)
         return jsonify({'ok': True, 'job_id': job_id, 'remote_url': remote_url, 'local_path': local_path, 'output': output})
@@ -1453,7 +1459,7 @@ def _h_bitsadmin_9():
 def _h_bitsadmin_10():
     """Resume a suspended BITS job."""
     body = _json_body()
-    job_id = (body.get('job_id') or '').strip()
+    job_id = str(body.get('job_id') or '').strip()
     if not job_id:
         return _missing_field('job_id')
     if _bitsadmin__bad_handle(job_id):
@@ -1467,7 +1473,7 @@ def _h_bitsadmin_10():
 def _h_bitsadmin_11():
     """Suspend an active BITS job."""
     body = _json_body()
-    job_id = (body.get('job_id') or '').strip()
+    job_id = str(body.get('job_id') or '').strip()
     if not job_id:
         return _missing_field('job_id')
     if _bitsadmin__bad_handle(job_id):
@@ -1481,7 +1487,7 @@ def _h_bitsadmin_11():
 def _h_bitsadmin_12():
     """Cancel a BITS job."""
     body = _json_body()
-    job_id = (body.get('job_id') or '').strip()
+    job_id = str(body.get('job_id') or '').strip()
     if not job_id:
         return _missing_field('job_id')
     if _bitsadmin__bad_handle(job_id):
@@ -1495,7 +1501,7 @@ def _h_bitsadmin_12():
 def _h_bitsadmin_13():
     """Complete a transferred BITS job."""
     body = _json_body()
-    job_id = (body.get('job_id') or '').strip()
+    job_id = str(body.get('job_id') or '').strip()
     if not job_id:
         return _missing_field('job_id')
     if _bitsadmin__bad_handle(job_id):
@@ -1509,7 +1515,7 @@ def _h_bitsadmin_13():
 def _h_bitsadmin_14():
     """List files in a BITS job."""
     body = _json_body()
-    job_id = (body.get('job_id') or '').strip()
+    job_id = str(body.get('job_id') or '').strip()
     if not job_id:
         return _missing_field('job_id')
     if _bitsadmin__bad_handle(job_id):
@@ -1553,7 +1559,7 @@ def _h_bitsadmin_17():
 def _h_bitsadmin_18():
     """Delete items from BITS cache."""
     body = _json_body()
-    record_id = (body.get('record_id') or '').strip()
+    record_id = str(body.get('record_id') or '').strip()
     if record_id and (not record_id.replace('-', '').isalnum()):
         return (jsonify({'ok': False, 'error': 'invalid record_id (digits/hex only)'}), 400)
     try:
@@ -1628,8 +1634,8 @@ def _h_certutil_20():
         body = _json_body()
     except Exception:
         return (jsonify({'ok': False, 'error': 'invalid JSON body'}), 400)
-    filepath = (body.get('file') or '').strip()
-    algorithm = (body.get('algorithm') or 'SHA256').strip().upper()
+    filepath = str(body.get('file') or '').strip()
+    algorithm = str(body.get('algorithm') or 'SHA256').strip().upper()
     if not filepath:
         return _missing_field('file')
     if algorithm not in _certutil_HASH_ALGOS:
@@ -1661,7 +1667,7 @@ def _h_certutil_21():
         body = _json_body()
     except Exception:
         return (jsonify({'ok': False, 'error': 'invalid JSON body'}), 400)
-    filepath = (body.get('file') or '').strip()
+    filepath = str(body.get('file') or '').strip()
     if not filepath:
         return _missing_field('file')
     if filepath.startswith('/mnt/'):
@@ -1701,10 +1707,10 @@ def _h_certutil_22():
         body = _json_body()
     except Exception:
         return (jsonify({'ok': False, 'error': 'invalid JSON body'}), 400)
-    encoded_file = (body.get('encoded_file') or '').strip()
+    encoded_file = str(body.get('encoded_file') or '').strip()
     if not encoded_file:
         return _missing_field('encoded_file')
-    output_file = (body.get('output_file') or '').strip()
+    output_file = str(body.get('output_file') or '').strip()
     auto_generated = False
     if not output_file:
         import tempfile
@@ -1756,8 +1762,8 @@ def _h_certutil_24():
         body = _json_body()
     except Exception:
         return (jsonify({'ok': False, 'error': 'invalid JSON body'}), 400)
-    inf_file = (body.get('inf_file') or '').strip()
-    output_file = (body.get('output_file') or '').strip()
+    inf_file = str(body.get('inf_file') or '').strip()
+    output_file = str(body.get('output_file') or '').strip()
     if not inf_file:
         return _missing_field('inf_file')
     args = ['-newreq']
@@ -2177,7 +2183,7 @@ def _h_copyq_40():
     except (TypeError, ValueError) as exc:
         return (jsonify({'ok': False, 'error': str(exc)}), 400)
     try:
-        result = subprocess.run([exe, 'copy', text], capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=5)
+        result = subprocess.run([exe, 'copy', '--', text], capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=5)
     except OSError as exc:
         _log(f'[copyq] clipboard write failed: {exc}')
         return (jsonify({'ok': False, 'error': str(exc)}), 500)
@@ -2768,7 +2774,7 @@ def _h_diskpart_56():
 def _h_diskpart_57():
     """List partitions on a specific disk."""
     body = _json_body()
-    disk_num = (body.get('disk') or '0').strip()
+    disk_num = str(body.get('disk') or '0').strip()
     if not disk_num.isdigit():
         return (jsonify({'ok': False, 'error': 'disk must be a numeric index'}), 400)
     try:
@@ -2781,7 +2787,7 @@ def _h_diskpart_57():
 def _h_diskpart_58():
     """Get detailed info about a specific disk."""
     body = _json_body()
-    disk_num = (body.get('disk') or '0').strip()
+    disk_num = str(body.get('disk') or '0').strip()
     if not disk_num.isdigit():
         return (jsonify({'ok': False, 'error': 'disk must be a numeric index'}), 400)
     try:
@@ -2793,7 +2799,7 @@ def _h_diskpart_58():
 def _h_diskpart_59():
     """Remove all partitions from a disk (DESTRUCTIVE — requires confirmation)."""
     body = _json_body()
-    disk_num = (body.get('disk') or '').strip()
+    disk_num = str(body.get('disk') or '').strip()
     confirm = body.get('confirm', False)
     if not disk_num:
         return _missing_field('disk')
@@ -2810,7 +2816,7 @@ def _h_diskpart_59():
 def _h_diskpart_60():
     """Convert a disk from MBR to GPT (DESTRUCTIVE — requires confirmation)."""
     body = _json_body()
-    disk_num = (body.get('disk') or '').strip()
+    disk_num = str(body.get('disk') or '').strip()
     confirm = body.get('confirm', False)
     if not disk_num:
         return _missing_field('disk')
@@ -2827,9 +2833,9 @@ def _h_diskpart_60():
 def _h_diskpart_61():
     """Create a new partition on a disk. Specify size in MB (optional)."""
     body = _json_body()
-    disk_num = (body.get('disk') or '').strip()
+    disk_num = str(body.get('disk') or '').strip()
     size_mb = body.get('size_mb')
-    partition_type = body.get('type', 'primary').strip().lower()
+    partition_type = str(body.get('type', 'primary')).strip().lower()
     if not disk_num:
         return _missing_field('disk')
     if not disk_num.isdigit():
@@ -2858,9 +2864,9 @@ def _h_diskpart_61():
 def _h_diskpart_62():
     """Format a volume with specified filesystem (DESTRUCTIVE — requires confirmation)."""
     body = _json_body()
-    volume_num = (body.get('volume') or '').strip()
-    fs = (body.get('filesystem') or 'NTFS').strip().upper()
-    label = (body.get('label') or '').strip()
+    volume_num = str(body.get('volume') or '').strip()
+    fs = str(body.get('filesystem') or 'NTFS').strip().upper()
+    label = str(body.get('label') or '').strip()
     quick = body.get('quick', True)
     confirm = body.get('confirm', False)
     if not volume_num:
@@ -2889,8 +2895,8 @@ def _h_diskpart_62():
 def _h_diskpart_63():
     """Assign a drive letter to a volume."""
     body = _json_body()
-    volume_num = (body.get('volume') or '').strip()
-    letter = (body.get('letter') or '').strip().upper().replace(':', '')
+    volume_num = str(body.get('volume') or '').strip()
+    letter = str(body.get('letter') or '').strip().upper().replace(':', '')
     if not volume_num:
         return _missing_field('volume')
     if not volume_num.isdigit():
@@ -2906,8 +2912,8 @@ def _h_diskpart_63():
 def _h_diskpart_64():
     """Remove a drive letter from a volume (make it hidden)."""
     body = _json_body()
-    volume_num = (body.get('volume') or '').strip()
-    letter = (body.get('letter') or '').strip().upper().replace(':', '')
+    volume_num = str(body.get('volume') or '').strip()
+    letter = str(body.get('letter') or '').strip().upper().replace(':', '')
     if not volume_num:
         return _missing_field('volume')
     if not volume_num.isdigit():
@@ -2971,9 +2977,11 @@ def _h_dism_68():
 def _h_dism_69():
     """Enable a Windows feature by name."""
     body = _json_body()
-    name = (body.get('name') or '').strip()
+    name = str(body.get('name') or '').strip()
     if not name:
         return _missing_field('name')
+    if not re.fullmatch(r'[A-Za-z0-9._\-]+', name):
+        return (jsonify({'ok': False, 'error': 'invalid feature name (letters, digits, . _ - only)'}), 400)
     try:
         output = _dism__run_dism(['/online', '/Enable-Feature', f'/FeatureName:{name}', '/All'], timeout=180)
         return jsonify({'ok': True, 'feature': name, 'output': output})
@@ -2983,9 +2991,11 @@ def _h_dism_69():
 def _h_dism_70():
     """Disable a Windows feature by name."""
     body = _json_body()
-    name = (body.get('name') or '').strip()
+    name = str(body.get('name') or '').strip()
     if not name:
         return _missing_field('name')
+    if not re.fullmatch(r'[A-Za-z0-9._\-]+', name):
+        return (jsonify({'ok': False, 'error': 'invalid feature name (letters, digits, . _ - only)'}), 400)
     try:
         output = _dism__run_dism(['/online', '/Disable-Feature', f'/FeatureName:{name}'], timeout=180)
         return jsonify({'ok': True, 'feature': name, 'output': output})
@@ -2995,9 +3005,11 @@ def _h_dism_70():
 def _h_dism_71():
     """Get detailed state of a specific Windows feature."""
     body = _json_body()
-    name = (body.get('name') or '').strip()
+    name = str(body.get('name') or '').strip()
     if not name:
         return _missing_field('name')
+    if not re.fullmatch(r'[A-Za-z0-9._\-]+', name):
+        return (jsonify({'ok': False, 'error': 'invalid feature name (letters, digits, . _ - only)'}), 400)
     try:
         output = _dism__run_dism(['/online', '/Get-FeatureInfo', f'/FeatureName:{name}'], timeout=30)
         return jsonify({'ok': True, 'feature': name, 'output': output})
@@ -3369,7 +3381,7 @@ def _h_fsutil_79():
         body = _json_body()
     except Exception:
         return (jsonify({'ok': False, 'error': 'invalid JSON body'}), 400)
-    subcommand = body.get('subcommand', '').strip().lower()
+    subcommand = str(body.get('subcommand', '')).strip().lower()
     if not subcommand:
         return _missing_field('subcommand')
     if subcommand not in _fsutil_ALLOWED_SUBCOMMANDS['fsinfo']:
@@ -3415,8 +3427,8 @@ def _h_fsutil_81():
         body = _json_body()
     except Exception:
         return (jsonify({'ok': False, 'error': 'invalid JSON body'}), 400)
-    subcommand = body.get('subcommand', '').strip().lower()
-    file_path = body.get('path', '').strip()
+    subcommand = str(body.get('subcommand', '')).strip().lower()
+    file_path = str(body.get('path', '')).strip()
     if not subcommand:
         return _missing_field('subcommand')
     if subcommand not in _fsutil_ALLOWED_SUBCOMMANDS['file']:
@@ -3471,19 +3483,19 @@ def _h_fsutil_83():
         body = _json_body()
     except Exception:
         return (jsonify({'ok': False, 'error': 'invalid JSON body'}), 400)
-    subcommand = body.get('subcommand', '').strip().lower()
+    subcommand = str(body.get('subcommand', '')).strip().lower()
     if subcommand not in _fsutil_ALLOWED_SUBCOMMANDS['hardlink']:
         return (jsonify({'ok': False, 'error': f'invalid hardlink subcommand: {subcommand}'}), 400)
     if subcommand == 'create':
-        filename = body.get('filename', '').strip()
-        newpath = body.get('newpath', '').strip()
+        filename = str(body.get('filename', '')).strip()
+        newpath = str(body.get('newpath', '')).strip()
         if not filename:
             return _missing_field('filename')
         if not newpath:
             return _missing_field('newpath')
         args = ['hardlink', 'create', newpath, filename]
     else:
-        filename = body.get('filename', '').strip()
+        filename = str(body.get('filename', '')).strip()
         if not filename:
             return _missing_field('filename')
         args = ['hardlink', 'list', filename]
@@ -3503,10 +3515,10 @@ def _h_fsutil_84():
         body = _json_body()
     except Exception:
         return (jsonify({'ok': False, 'error': 'invalid JSON body'}), 400)
-    subcommand = body.get('subcommand', '').strip().lower()
+    subcommand = str(body.get('subcommand', '')).strip().lower()
     if subcommand not in _fsutil_ALLOWED_SUBCOMMANDS['quota']:
         return (jsonify({'ok': False, 'error': f'invalid quota subcommand: {subcommand}'}), 400)
-    drive = body.get('drive', 'c:').strip()
+    drive = str(body.get('drive', 'c:')).strip()
     if not drive.endswith(':'):
         drive = drive + ':'
     args = ['quota', subcommand, drive]
@@ -3630,7 +3642,7 @@ def _h_gsudo_87():
     body = _json_body()
     if not body:
         return (jsonify({'error': 'JSON body required'}), 400)
-    command = body.get('command', '').strip()
+    command = str(body.get('command', '')).strip()
     if not command:
         return _missing_field('command')
     try:
@@ -4828,12 +4840,12 @@ def _h_kopia_119():
           - hostname: optional hostname to use for snapshots
         """
     body = _json_body()
-    storage_type = (body.get('storage_type') or 'filesystem').strip().lower()
+    storage_type = str(body.get('storage_type') or 'filesystem').strip().lower()
     if storage_type not in _kopia__STORAGE_FLAGS:
         return (jsonify({'ok': False, 'error': f"Unsupported storage_type '{storage_type}'. Valid: {', '.join(sorted(_kopia__STORAGE_FLAGS))}"}), 400)
     location = (body.get('path_or_bucket') or body.get('location') or '').strip()
     password = body.get('password') or ''
-    hostname = (body.get('hostname') or '').strip()
+    hostname = str(body.get('hostname') or '').strip()
     if not location:
         return (jsonify({'ok': False, 'error': 'path_or_bucket (storage location) is required'}), 400)
     if location.startswith('-'):
@@ -4870,12 +4882,12 @@ def _h_kopia_120():
           - hostname: optional hostname
         """
     body = _json_body()
-    storage_type = (body.get('storage_type') or 'filesystem').strip().lower()
+    storage_type = str(body.get('storage_type') or 'filesystem').strip().lower()
     if storage_type not in _kopia__STORAGE_FLAGS:
         return (jsonify({'ok': False, 'error': f"Unsupported storage_type '{storage_type}'. Valid: {', '.join(sorted(_kopia__STORAGE_FLAGS))}"}), 400)
     location = (body.get('path_or_bucket') or body.get('location') or '').strip()
     password = body.get('password') or ''
-    hostname = (body.get('hostname') or '').strip()
+    hostname = str(body.get('hostname') or '').strip()
     max_revision = body.get('max_revision_size')
     if not location:
         return (jsonify({'ok': False, 'error': 'path_or_bucket (storage location) is required'}), 400)
@@ -5021,7 +5033,7 @@ def _h_llama_cpp_125():
     body = _json_body()
     prompt = body.get('prompt')
     if prompt is None:
-        return (jsonify({'error': _missing_field('prompt')}), 400)
+        return _missing_field('prompt')
     base = _llama_cpp__server_base(body)
     try:
         max_tokens = int(body.get('max_tokens', 256))
@@ -5045,7 +5057,7 @@ def _h_llama_cpp_126():
     body = _json_body()
     messages = body.get('messages')
     if not isinstance(messages, list) or not messages:
-        return (jsonify({'error': _missing_field('messages')}), 400)
+        return _missing_field('messages')
     base = _llama_cpp__server_base(body)
     try:
         max_tokens = int(body.get('max_tokens', 256))
@@ -5069,7 +5081,7 @@ def _h_llama_cpp_127():
     body = _json_body()
     text = body.get('input') or body.get('prompt')
     if text is None:
-        return (jsonify({'error': _missing_field('input')}), 400)
+        return _missing_field('input')
     base = _llama_cpp__server_base(body)
     payload = {'input': text}
     if body.get('model'):
@@ -5123,7 +5135,7 @@ def _h_mkcert_129():
           - trust_store: "system" (default), "nss" (Firefox), "java", or "all"
         """
     body = _json_body()
-    trust_store = (body.get('trust_store') or 'system').strip().lower()
+    trust_store = str(body.get('trust_store') or 'system').strip().lower()
     valid_stores = ('system', 'nss', 'java', 'all')
     if trust_store not in valid_stores:
         return (jsonify({'ok': False, 'error': f"Invalid trust_store. Valid: {', '.join(valid_stores)}"}), 400)
@@ -5173,7 +5185,7 @@ def _h_mkcert_130():
             return (jsonify({'ok': False, 'error': f"domain '{d}' must not start with '-'"}), 400)
         cleaned_domains.append(d)
     domains = cleaned_domains
-    output_dir = (body.get('output_dir') or '.').strip()
+    output_dir = str(body.get('output_dir') or '.').strip()
     try:
         cert_file = _mkcert__validate_output_name(body.get('cert_file') or 'cert.pem', 'cert_file')
         key_file = _mkcert__validate_output_name(body.get('key_file') or 'key.pem', 'key_file')
@@ -5413,8 +5425,8 @@ def _h_netsh_139():
         body = _json_body()
     except Exception:
         return (jsonify({'ok': False, 'error': 'invalid JSON body'}), 400)
-    context = body.get('context', '').strip()
-    command = body.get('command', '').strip()
+    context = str(body.get('context', '')).strip()
+    command = str(body.get('command', '')).strip()
     if not context:
         return (jsonify({'ok': False, 'error': 'Missing required field: context'}), 400)
     try:
@@ -5681,7 +5693,7 @@ def _h_ollama_146():
     body = _json_body()
     name = body.get('model') or body.get('name')
     if not name:
-        return (jsonify({'error': _missing_field('model')}), 400)
+        return _missing_field('model')
     name = str(name).strip()
     if not name or any((c in name for c in ('\n', '\r', ' '))):
         return (jsonify({'error': 'invalid model name'}), 400)
@@ -5708,9 +5720,9 @@ def _h_ollama_147():
     model = body.get('model')
     prompt = body.get('prompt')
     if not model:
-        return (jsonify({'error': _missing_field('model')}), 400)
+        return _missing_field('model')
     if prompt is None:
-        return (jsonify({'error': _missing_field('prompt')}), 400)
+        return _missing_field('prompt')
     payload = {'model': str(model), 'prompt': str(prompt), 'stream': False}
     if body.get('options') and isinstance(body['options'], dict):
         payload['options'] = body['options']
@@ -5732,9 +5744,9 @@ def _h_ollama_148():
     model = body.get('model')
     messages = body.get('messages')
     if not model:
-        return (jsonify({'error': _missing_field('model')}), 400)
+        return _missing_field('model')
     if not isinstance(messages, list) or not messages:
-        return (jsonify({'error': _missing_field('messages')}), 400)
+        return _missing_field('messages')
     payload = {'model': str(model), 'messages': messages, 'stream': False}
     if body.get('options') and isinstance(body['options'], dict):
         payload['options'] = body['options']
@@ -5751,9 +5763,9 @@ def _h_ollama_149():
     model = body.get('model')
     prompt = body.get('prompt')
     if not model:
-        return (jsonify({'error': _missing_field('model')}), 400)
+        return _missing_field('model')
     if prompt is None:
-        return (jsonify({'error': _missing_field('prompt')}), 400)
+        return _missing_field('prompt')
     payload = {'model': str(model), 'prompt': str(prompt)}
     if body.get('options') and isinstance(body['options'], dict):
         payload['options'] = body['options']
@@ -6377,12 +6389,12 @@ def _h_reg_164():
         body = _json_body()
     except Exception:
         return (jsonify({'ok': False, 'error': 'invalid JSON body'}), 400)
-    key = (body.get('key') or '').strip()
+    key = str(body.get('key') or '').strip()
     if not key:
         return _missing_field('key')
     if not _reg__validate_hive_path(key):
         return (jsonify({'ok': False, 'error': 'invalid registry path'}), 400)
-    value_name = body.get('value', '').strip()
+    value_name = str(body.get('value', '')).strip()
     recursive = body.get('recursive', False)
     try:
         args = ['query', key]
@@ -6408,14 +6420,14 @@ def _h_reg_165():
         body = _json_body()
     except Exception:
         return (jsonify({'ok': False, 'error': 'invalid JSON body'}), 400)
-    key = (body.get('key') or '').strip()
+    key = str(body.get('key') or '').strip()
     if not key:
         return _missing_field('key')
     if not _reg__validate_hive_path(key):
         return (jsonify({'ok': False, 'error': 'invalid registry path'}), 400)
     value_name = body.get('value')
     value_data = body.get('data')
-    value_type = body.get('type', 'REG_SZ').strip().upper()
+    value_type = str(body.get('type', 'REG_SZ')).strip().upper()
     force = body.get('force', False)
     if not value_type.startswith('REG_'):
         return (jsonify({'ok': False, 'error': 'invalid value type (must be REG_*)'}), 400)
@@ -6447,7 +6459,7 @@ def _h_reg_166():
         body = _json_body()
     except Exception:
         return (jsonify({'ok': False, 'error': 'invalid JSON body'}), 400)
-    key = (body.get('key') or '').strip()
+    key = str(body.get('key') or '').strip()
     if not key:
         return _missing_field('key')
     if not _reg__validate_hive_path(key):
@@ -6476,7 +6488,7 @@ def _h_reg_167():
         body = _json_body()
     except Exception:
         return (jsonify({'ok': False, 'error': 'invalid JSON body'}), 400)
-    key = (body.get('key') or '').strip()
+    key = str(body.get('key') or '').strip()
     if not key:
         return _missing_field('key')
     if not _reg__validate_hive_path(key):
@@ -6517,8 +6529,8 @@ def _h_reg_168():
         body = _json_body()
     except Exception:
         return (jsonify({'ok': False, 'error': 'invalid JSON body'}), 400)
-    key1 = (body.get('key1') or '').strip()
-    key2 = (body.get('key2') or '').strip()
+    key1 = str(body.get('key1') or '').strip()
+    key2 = str(body.get('key2') or '').strip()
     if not key1 or not key2:
         return _missing_field('key1 and key2')
     if not _reg__validate_hive_path(key1):
@@ -6594,9 +6606,10 @@ def _h_ripgrep_170():
         return _missing_field('pattern')
     search_path = body.get('path', '.')
     file_glob = body.get('file_glob', None)
-    cmd = [exe, '--count', '--no-heading', '--', pattern, search_path]
+    cmd = [exe, '--count', '--no-heading']
     if file_glob:
         cmd.extend(['--glob', file_glob])
+    cmd.extend(['--', pattern, search_path])
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=30, cwd=os.getcwd())
         results = {}
@@ -6626,9 +6639,10 @@ def _h_ripgrep_171():
         max_results = int(body.get('max_results', 500))
     except (TypeError, ValueError):
         return (jsonify({'error': 'max_results must be an integer'}), 400)
-    cmd = [exe, '--files', '--', search_path]
+    cmd = [exe, '--files']
     if file_glob:
         cmd.extend(['--glob', file_glob])
+    cmd.extend(['--', search_path])
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=15, cwd=os.getcwd())
         files = [f for f in r.stdout.strip().split('\n') if f]
@@ -7115,7 +7129,7 @@ def _h_schtasks_183():
         body = _json_body()
     except Exception:
         return (jsonify({'ok': False, 'error': 'invalid JSON body'}), 400)
-    task_name = body.get('task', '').strip()
+    task_name = str(body.get('task', '')).strip()
     if not task_name:
         return _missing_field('task')
     try:
@@ -7134,7 +7148,7 @@ def _h_schtasks_184():
         body = _json_body()
     except Exception:
         return (jsonify({'ok': False, 'error': 'invalid JSON body'}), 400)
-    task_name = body.get('task', '').strip()
+    task_name = str(body.get('task', '')).strip()
     if not task_name:
         return _missing_field('task')
     try:
@@ -7153,7 +7167,7 @@ def _h_schtasks_185():
         body = _json_body()
     except Exception:
         return (jsonify({'ok': False, 'error': 'invalid JSON body'}), 400)
-    task_name = body.get('task', '').strip()
+    task_name = str(body.get('task', '')).strip()
     force = body.get('force', False)
     if not task_name:
         return _missing_field('task')
@@ -7176,8 +7190,8 @@ def _h_schtasks_186():
         body = _json_body()
     except Exception:
         return (jsonify({'ok': False, 'error': 'invalid JSON body'}), 400)
-    task_name = body.get('task', '').strip()
-    program = body.get('program', '').strip()
+    task_name = str(body.get('task', '')).strip()
+    program = str(body.get('program', '')).strip()
     interval = body.get('interval', 1)
     if not task_name:
         return _missing_field('task')
@@ -7206,9 +7220,9 @@ def _h_schtasks_187():
         body = _json_body()
     except Exception:
         return (jsonify({'ok': False, 'error': 'invalid JSON body'}), 400)
-    task_name = body.get('task', '').strip()
-    program = body.get('program', '').strip()
-    start_time = body.get('time', '09:00').strip()
+    task_name = str(body.get('task', '')).strip()
+    program = str(body.get('program', '')).strip()
+    start_time = str(body.get('time', '09:00')).strip()
     interval_days = body.get('interval_days', 1)
     if not task_name:
         return _missing_field('task')
@@ -7237,9 +7251,9 @@ def _h_schtasks_188():
         body = _json_body()
     except Exception:
         return (jsonify({'ok': False, 'error': 'invalid JSON body'}), 400)
-    task_name = body.get('task', '').strip()
-    program = body.get('program', '').strip()
-    delay = body.get('delay', 'PT0M').strip()
+    task_name = str(body.get('task', '')).strip()
+    program = str(body.get('program', '')).strip()
+    delay = str(body.get('delay', 'PT0M')).strip()
     if not task_name:
         return _missing_field('task')
     if not program:
@@ -7487,7 +7501,7 @@ def _h_sfc_194():
 def _h_sfc_195():
     """Verify a specific file's integrity (must be a protected system file)."""
     body = _json_body()
-    filepath = (body.get('file') or '').strip()
+    filepath = str(body.get('file') or '').strip()
     if not filepath:
         return _missing_field('file')
     if len(filepath) > 260:
@@ -7581,7 +7595,10 @@ def _h_sharex_197():
                 sct_img = sct.grab(monitor)
                 mss.tools.to_png(sct_img.rgb, sct_img.size, output=output_path)
             elif isinstance(region, str) and region.startswith('monitor_'):
-                idx = int(region.split('_')[1])
+                try:
+                    idx = int(region.split('_')[1])
+                except (ValueError, IndexError):
+                    return (jsonify({'ok': False, 'error': 'invalid monitor region (expected monitor_N)'}), 400)
                 if 0 < idx < len(sct.monitors):
                     monitor = sct.monitors[idx]
                 else:
@@ -7590,7 +7607,10 @@ def _h_sharex_197():
                 sct_img = sct.grab(monitor)
                 mss.tools.to_png(sct_img.rgb, sct_img.size, output=output_path)
             elif isinstance(region, dict):
-                mon = {'top': int(region.get('top', 0)), 'left': int(region.get('left', 0)), 'width': int(region.get('width', 800)), 'height': int(region.get('height', 600))}
+                try:
+                    mon = {'top': int(region.get('top', 0)), 'left': int(region.get('left', 0)), 'width': int(region.get('width', 800)), 'height': int(region.get('height', 600))}
+                except (TypeError, ValueError):
+                    return (jsonify({'ok': False, 'error': 'invalid region coordinates (top/left/width/height must be integers)'}), 400)
                 output_path = os.path.join(output_dir, f'sharex_region_{timestamp}.png')
                 sct_img = sct.grab(mon)
                 mss.tools.to_png(sct_img.rgb, sct_img.size, output=output_path)
@@ -8374,7 +8394,7 @@ def _h_taskkill_219():
 def _h_taskkill_220():
     """Kill process(es) by image name (e.g., 'notepad.exe'). Optionally force and subtree."""
     body = _json_body()
-    name = (body.get('name') or '').strip()
+    name = str(body.get('name') or '').strip()
     force = bool(body.get('force', False))
     tree = bool(body.get('tree', False))
     if not name:
@@ -8433,7 +8453,7 @@ def _h_taskkill_221():
 def _h_taskkill_222():
     """Kill all processes by image name (wrapper for name endpoint with force+tree)."""
     body = _json_body()
-    name = (body.get('name') or '').strip()
+    name = str(body.get('name') or '').strip()
     if not name:
         return _missing_field('name')
     if len(name) > 256:
@@ -8937,15 +8957,15 @@ def _h_ventoy_234():
     try:
         body = _json_body()
         if body is None:
-            return (jsonify({'ok': False, 'error': _missing_field('request body')}), 400)
+            return _missing_field('request body')
     except Exception:
-        return (jsonify({'ok': False, 'error': _missing_field('request body')}), 400)
+        return _missing_field('request body')
     disk = body.get('disk', '')
     cmd = body.get('cmd', 'I')
     gpt = body.get('gpt', False)
     no_sb = body.get('no_secure_boot', False)
     if not disk:
-        return (jsonify({'ok': False, 'error': _missing_field('disk (e.g. /Drive:F: or /PhyDrive:1)')}), 400)
+        return _missing_field('disk (e.g. /Drive:F: or /PhyDrive:1)')
     if not isinstance(disk, str) or not re.match('^(/Drive:[A-Za-z]:|/PhyDrive:\\d{1,3})$', disk):
         return (jsonify({'ok': False, 'error': 'disk must be /Drive:X: or /PhyDrive:N'}), 400)
     if body.get('confirm') is not True:
@@ -9208,8 +9228,8 @@ def _h_vssadmin_236():
         return _missing_field('body')
     try:
         args = ['delete', 'shadows']
-        vol = (body.get('volume') or '').strip()
-        shadow_id = (body.get('shadow_id') or '').strip()
+        vol = str(body.get('volume') or '').strip()
+        shadow_id = str(body.get('shadow_id') or '').strip()
         if shadow_id:
             err = _vssadmin__validate_flag_value('shadow_id', shadow_id, _vssadmin_SHADOW_ID_PATTERN)
             if err:
@@ -9271,13 +9291,13 @@ def _h_vssadmin_241():
     body = _json_body()
     if not isinstance(body, dict):
         return _missing_field('body')
-    volume = (body.get('volume') or '').strip()
+    volume = str(body.get('volume') or '').strip()
     if not volume:
         return _missing_field('volume')
     err = _vssadmin__validate_flag_value('volume', volume)
     if err:
         return err
-    max_size = (body.get('max_size') or '').strip()
+    max_size = str(body.get('max_size') or '').strip()
     if not max_size:
         return _missing_field('max_size')
     err = _vssadmin__validate_flag_value('max_size', max_size, _vssadmin_MAX_SIZE_PATTERN)
@@ -9321,7 +9341,7 @@ def _h_wevtutil_242():
 def _h_wevtutil_243():
     """Get metadata for a specific event log (path, max size, retention, etc.)."""
     body = _json_body()
-    logname = (body.get('log') or '').strip()
+    logname = str(body.get('log') or '').strip()
     if not logname:
         return _missing_field('log')
     try:
@@ -9333,11 +9353,14 @@ def _h_wevtutil_243():
 def _h_wevtutil_244():
     """Query events from a log with optional filters."""
     body = _json_body()
-    logname = (body.get('log') or '').strip()
+    logname = str(body.get('log') or '').strip()
     if not logname:
         return _missing_field('log')
-    xpath = (body.get('xpath') or '').strip()
-    max_events = int(body.get('max_events', 50))
+    xpath = str(body.get('xpath') or '').strip()
+    try:
+        max_events = int(body.get('max_events', 50))
+    except (TypeError, ValueError):
+        return (jsonify({'ok': False, 'error': 'max_events must be an integer'}), 400)
     if max_events < 1:
         max_events = 50
     if max_events > 500:
@@ -9355,8 +9378,8 @@ def _h_wevtutil_244():
 def _h_wevtutil_245():
     """Export event log to an evtx file."""
     body = _json_body()
-    logname = (body.get('log') or '').strip()
-    export_path = (body.get('path') or '').strip()
+    logname = str(body.get('log') or '').strip()
+    export_path = str(body.get('path') or '').strip()
     if not logname:
         return _missing_field('log')
     if not export_path:
@@ -9372,10 +9395,10 @@ def _h_wevtutil_245():
 def _h_wevtutil_246():
     """Clear all events from a log (and optionally save backup)."""
     body = _json_body()
-    logname = (body.get('log') or '').strip()
+    logname = str(body.get('log') or '').strip()
     if not logname:
         return _missing_field('log')
-    backup_path = (body.get('backup') or '').strip()
+    backup_path = str(body.get('backup') or '').strip()
     try:
         args = ['cl', logname]
         if backup_path:
@@ -9406,8 +9429,8 @@ def _h_wevtutil_248():
 def _h_wevtutil_249():
     """Archive a log: export to evtx then optionally clear the original."""
     body = _json_body()
-    logname = (body.get('log') or '').strip()
-    archive_path = (body.get('path') or '').strip()
+    logname = str(body.get('log') or '').strip()
+    archive_path = str(body.get('path') or '').strip()
     clear_after = body.get('clear', False)
     if not logname:
         return _missing_field('log')
