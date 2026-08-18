@@ -7,6 +7,11 @@ from shared import _json_body, _log, _missing_field, COAGENT_DIR, MACROS_DIR, SC
 from routes_config import backup_file
 from routes_governance import get_governor
 
+try:
+    from routes_ngrok import ensure_ngrok as _ensure_ngrok
+except ImportError:
+    _ensure_ngrok = None
+
 # In-memory action history (shared with main)
 _action_history = []
 _MAX_HISTORY = 1000
@@ -929,6 +934,12 @@ $s.Speak($text)
 
         tools = _tunnel_tools()
         exe = tools.get(method)
+        if not exe and method == "ngrok" and _ensure_ngrok is not None:
+            _log("ngrok missing on tunnel start - attempting auto-install")
+            res = _ensure_ngrok(auth_token=d.get("ngrok_authtoken"))
+            if res.get("ok") and res.get("path"):
+                exe = res["path"]
+                tools = _tunnel_tools()
         if not exe:
             _log(f"Tunnel start failed: {method} not found in PATH")
             return jsonify({

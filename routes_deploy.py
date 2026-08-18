@@ -21,6 +21,11 @@ from flask import Blueprint, jsonify, Response
 
 from routes_bypass import _json_payload
 
+try:
+    from routes_ngrok import ensure_ngrok as _ensure_ngrok
+except ImportError:
+    _ensure_ngrok = None
+
 deploy_bp = Blueprint("deploy", __name__)
 
 _DEPLOY_LOCK = threading.Lock()
@@ -305,6 +310,15 @@ def route_deploy_oneclick():
         if tunnel:
             _DEPLOY_STATE["phase"] = "tunnelling"
             ngrok = shutil.which("ngrok") or shutil.which("ngrok.exe")
+            if not ngrok and _ensure_ngrok is not None:
+                _log("ngrok missing - auto-installing...")
+                res = _ensure_ngrok(auth_token=payload.get("ngrok_authtoken"))
+                if res.get("ok"):
+                    ngrok = res.get("path")
+                    if res.get("downloaded"):
+                        _log(f"ngrok installed at {ngrok}")
+                else:
+                    _log(f"ngrok auto-install failed: {res.get('error')}")
             if ngrok:
                 _log("Starting ngrok tunnel...")
                 ngrok_proc = subprocess.Popen(
@@ -403,6 +417,10 @@ def route_deploy_tunnel():
         return jsonify({"status": "stopped"})
 
     if action == "start":
+        if not ngrok and _ensure_ngrok is not None:
+            res = _ensure_ngrok(auth_token=payload.get("ngrok_authtoken"))
+            if res.get("ok"):
+                ngrok = res.get("path")
         if not ngrok:
             return _error(
                 "ngrok not installed. Download from https://ngrok.com/download",

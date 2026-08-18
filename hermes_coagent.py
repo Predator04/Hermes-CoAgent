@@ -1058,6 +1058,11 @@ try:
 except ImportError:
     reg_eventlog = None
     features["eventlog"] = False
+try:
+    from routes_ngrok import register_routes as reg_ngrok
+except ImportError:
+    reg_ngrok = None
+    features["ngrok_auto_install"] = False
 
 reg_background(app, state, require_auth)
 features["background_control"] = True
@@ -1275,6 +1280,9 @@ if reg_hw_monitor:
 if reg_eventlog:
     reg_eventlog(app, state, require_auth)
     features["eventlog"] = True
+if reg_ngrok:
+    reg_ngrok(app, state, require_auth)
+    features["ngrok_auto_install"] = True
 reg_diagnostics(app, state, require_auth); features["diagnostics"] = True
 reg_layout(app, state, require_auth); features["layout_profiles"] = True
 if CEF_AVAILABLE:
