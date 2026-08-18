@@ -27,6 +27,12 @@ _SNAPSHOTS = {}
 _LOCK = threading.Lock()
 _MAX_SNAPSHOTS = 16
 
+# Lazy uia_engine import is serialized so concurrent requests can't interleave
+# sys.path.insert(0, ...)/pop(0) and corrupt process-wide import resolution.
+_UE_IMPORT_LOCK = threading.Lock()
+_UE_ENGINE = None
+_UE_ERROR = None
+
 
 def _coord(rect, keys):
     """First key present with a non-None value in rect, else None.
@@ -40,16 +46,28 @@ def _coord(rect, keys):
     return None
 
 
+def _get_uia_engine():
+    """Import uia_engine once, thread-safely; return (module_or_None, error_or_None)."""
+    global _UE_ENGINE, _UE_ERROR
+    with _UE_IMPORT_LOCK:
+        if _UE_ENGINE is None and _UE_ERROR is None:
+            try:
+                sys.path.insert(0, str(COAGENT_DIR))
+                try:
+                    import uia_engine as ue
+                finally:
+                    sys.path.pop(0)
+                _UE_ENGINE = ue
+            except Exception as e:
+                _UE_ERROR = f"uia_engine unavailable: {e}"
+        return _UE_ENGINE, _UE_ERROR
+
+
 def _uia_flat():
     """Return a flat list of UIA elements with (bbox, name, control_type)."""
-    try:
-        sys.path.insert(0, str(COAGENT_DIR))
-        try:
-            import uia_engine as ue
-        finally:
-            sys.path.pop(0)
-    except Exception as e:
-        return None, f"uia_engine unavailable: {e}"
+    ue, err = _get_uia_engine()
+    if ue is None:
+        return None, err
     try:
         snap = ue.uia_snapshot(timeout=8) if hasattr(ue, "uia_snapshot") else {}
     except Exception as e:
