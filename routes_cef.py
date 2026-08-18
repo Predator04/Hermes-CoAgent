@@ -47,8 +47,8 @@ _CEF_HOST_NAMES = (
     "figma",
     "obsidian",
     "1password",
-    # VS Code — matched exactly to avoid catching "vscode-server" etc. from name suffix
-    "code.exe",
+    # VS Code — process name has no ".exe" suffix when read via Get-Process
+    "code",
 )
 
 # CEF / Chromium runtime DLLs.  Presence in a process' loaded modules is strong
@@ -323,6 +323,11 @@ def _connect_to_port(port: int, title_hint: str | None = None) -> tuple[_CDPSock
 
 
 def _get_session(port: int) -> dict:
+    if isinstance(port, str):
+        try:
+            port = int(port)
+        except ValueError:
+            pass
     with _sessions_lock:
         sess = _sessions.get(port)
     if not sess:
@@ -345,7 +350,7 @@ def _window_title_for_pid(pid: int) -> str:
         import ctypes
         titles: list = []
 
-        @ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_int))
+        @ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_ssize_t)
         def _enum(hwnd, _lParam):
             win_pid = ctypes.c_ulong(0)
             ctypes.windll.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(win_pid))
@@ -400,6 +405,7 @@ def _detect_cef_methods(proc, info: dict, check_dlls: bool = True) -> list[str]:
 
 def _scan_cef_processes() -> list[dict]:
     """Scan running processes for those advertising a CDP debug port."""
+    import subprocess
     results = []
     try:
         ps_out = subprocess.run(
@@ -409,7 +415,7 @@ def _scan_cef_processes() -> list[dict]:
             capture_output=True, text=True, timeout=8
         )
         if ps_out.returncode == 0 and ps_out.stdout:
-            procs = _json.loads(ps_out.stdout)
+            procs = json.loads(ps_out.stdout)
             if isinstance(procs, dict):
                 procs = [procs]
             for p in procs:
@@ -651,6 +657,11 @@ def register_routes(app, state, require_auth):
 
         if port is None:
             return jsonify({"error": "No port resolved — pass 'port', 'pid', or 'window'"}), 400
+
+        try:
+            port = int(port)
+        except (TypeError, ValueError):
+            return jsonify({"error": f"Invalid port: {port!r}"}), 400
 
         try:
             # Close any existing session on that port
@@ -1022,6 +1033,10 @@ def register_routes(app, state, require_auth):
         port = body.get("port")
         if not port:
             return jsonify({"error": "port required"}), 400
+        try:
+            port = int(port)
+        except (TypeError, ValueError):
+            return jsonify({"error": f"Invalid port: {port!r}"}), 400
         with _sessions_lock:
             sess = _sessions.pop(port, None)
         if sess:
