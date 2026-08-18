@@ -33,6 +33,7 @@ ALLOWED_PACKAGES = {
     "dxcam",
     "playwright",
     "google-api-python-client",
+    "google-auth",
     "google-auth-oauthlib",
     "google-auth-httplib2",
     "win11toast",
@@ -120,7 +121,8 @@ def _check_module(module_name, package=None):
     try:
         importlib.import_module(module_name)
         installed = True
-    except ImportError:
+    except Exception:
+        # Broken packages can raise SyntaxError/OSError/RuntimeError, not just ImportError
         installed = False
     version = None
     if installed:
