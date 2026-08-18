@@ -1013,6 +1013,11 @@ try:
 except ImportError:
     reg_everything = None
     features["everything_search"] = False
+try:
+    from routes_print import register_routes as reg_print
+except ImportError:
+    reg_print = None
+    features["print_queue"] = False
 
 reg_background(app, state, require_auth)
 features["background_control"] = True
@@ -1203,6 +1208,9 @@ if reg_agent_tools:
 if reg_everything:
     reg_everything(app, state, require_auth)
     features["everything_search"] = True
+if reg_print:
+    reg_print(app, state, require_auth)
+    features["print_queue"] = True
 reg_diagnostics(app, state, require_auth); features["diagnostics"] = True
 reg_layout(app, state, require_auth); features["layout_profiles"] = True
 if CEF_AVAILABLE:
