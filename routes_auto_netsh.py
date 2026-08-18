@@ -63,7 +63,7 @@ def _is_netsh_available():
     if not exe:
         return False
     try:
-        result = subprocess.run([exe, "?", "help"], capture_output=True, text=True, timeout=10)
+        result = subprocess.run([exe, "help"], capture_output=True, text=True, timeout=10)
         return result.returncode == 0
     except (subprocess.TimeoutExpired, OSError):
         return False
@@ -101,7 +101,8 @@ def _run_netsh(context, *args, timeout=15):
         raise RuntimeError("netsh not found")
     safe_args = _clean_netsh_command([context] + list(args))
     result = subprocess.run(
-        [exe] + safe_args, capture_output=True, text=True, timeout=timeout
+        [exe] + safe_args, capture_output=True, text=True, timeout=timeout,
+        errors="replace", stdin=subprocess.DEVNULL,
     )
     return result.stdout, result.stderr, result.returncode
 
@@ -323,7 +324,7 @@ def register_routes(app, state, require_auth):
         command = body.get("command", "").strip()
 
         if not context:
-            return jsonify({"ok": False, "error": _missing_field("context")}), 400
+            return jsonify({"ok": False, "error": "Missing required field: context"}), 400
 
         # Validate context
         try:
