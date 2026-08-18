@@ -277,6 +277,24 @@ TOOLS = {
     "stars": 44020,
     "url": "https://github.com/sharkdp/fd"
   },
+  "ffmpeg": {
+    "added": "2026-08-18",
+    "candidates": [
+      "C:\\ffmpeg\\bin\\ffmpeg.exe",
+      "C:\\Program Files\\ffmpeg\\bin\\ffmpeg.exe",
+      "C:\\Program Files (x86)\\ffmpeg\\bin\\ffmpeg.exe"
+    ],
+    "command": "ffmpeg -i <input> [options] <output>",
+    "desc": "FFmpeg is the universal media toolkit \u2014 decode/encode/transcode, mux/demux, stream, filter and play nearly any audio/video format. Powers media probing, transcoding, audio extraction, frame capture, and GIF creation for CoAgent's media/vision pipelines.",
+    "exe": "ffmpeg",
+    "install": {
+      "scoop": "scoop install ffmpeg",
+      "winget": "winget install Gyan.FFmpeg"
+    },
+    "repo": "FFmpeg/FFmpeg",
+    "stars": 63418,
+    "url": "https://github.com/FFmpeg/FFmpeg"
+  },
   "fsutil": {
     "added": "2026-07-17",
     "command": "fsutil <fsinfo|file|volume|behavior|dirty|quota|repair|sparse|usn|hardlink|reparsepoint>",
@@ -339,6 +357,20 @@ TOOLS = {
     "repo": "gerardog/gsudo",
     "stars": 6019,
     "url": "https://github.com/gerardog/gsudo"
+  },
+  "hexyl": {
+    "added": "2026-08-18",
+    "command": "hexyl [OPTIONS] <FILE>",
+    "desc": "hexyl is a colorful command-line hex viewer that renders binary files as a terminal-friendly hex dump with an optional character panel, byte-range slicing, and offset skipping \u2014 ideal for binary and reverse-engineering inspection.",
+    "exe": "hexyl",
+    "install": {
+      "choco": "choco install hexyl",
+      "scoop": "scoop install hexyl",
+      "winget": "winget install sharkdp.hexyl"
+    },
+    "repo": "sharkdp/hexyl",
+    "stars": 10259,
+    "url": "https://github.com/sharkdp/hexyl"
   },
   "icacls": {
     "added": "2026-07-15",
@@ -10467,6 +10499,361 @@ def _h_zoxide_274():
         return (jsonify({'error': str(e)}), 500)
 
 
+def _ffmpeg__probe(exe, input_path):
+    """Probe media via ffprobe (JSON); fall back to ffmpeg -i stderr parse."""
+    ffprobe = shutil.which('ffprobe')
+    if ffprobe:
+        try:
+            r = subprocess.run(
+                [ffprobe, '-v', 'error', '-print_format', 'json',
+                 '-show_format', '-show_streams', input_path],
+                capture_output=True, text=True, timeout=30)
+            if r.returncode == 0 and r.stdout.strip():
+                return json.loads(r.stdout)
+        except Exception:
+            pass
+    r = subprocess.run(
+        [exe, '-hide_banner', '-i', input_path],
+        capture_output=True, text=True, errors='replace', timeout=30)
+    return {'format': {}, 'streams': [], 'raw': r.stderr}
+
+
+def _ffmpeg__summary(data):
+    streams = data.get('streams', []) or []
+    fmt = data.get('format', {}) or {}
+    video = next((s for s in streams if s.get('codec_type') == 'video'), None)
+    audio = next((s for s in streams if s.get('codec_type') == 'audio'), None)
+    return {
+        'duration': fmt.get('duration'),
+        'size_bytes': fmt.get('size'),
+        'bit_rate': fmt.get('bit_rate'),
+        'format_name': fmt.get('format_name'),
+        'n_streams': len(streams),
+        'video': {
+            'codec': video.get('codec_name'),
+            'width': video.get('width'),
+            'height': video.get('height'),
+            'fps': video.get('avg_frame_rate'),
+            'pix_fmt': video.get('pix_fmt'),
+        } if video else None,
+        'audio': {
+            'codec': audio.get('codec_name'),
+            'sample_rate': audio.get('sample_rate'),
+            'channels': audio.get('channels'),
+            'bit_rate': audio.get('bit_rate'),
+        } if audio else None,
+    }
+
+
+def _h_ffmpeg_275():
+    """Probe media file metadata — duration, codecs, resolution, bitrate.
+
+        Body (JSON): {"path": "/abs/or/rel/media/file"}
+        """
+    body = _json_body()
+    path = str(body.get('path') or '').strip()
+    if not path:
+        return _missing_field(body, 'path')
+    exe = _find_tool('ffmpeg')
+    if not exe:
+        return (jsonify({'error': 'ffmpeg not installed', 'hint': 'winget install Gyan.FFmpeg'}), 503)
+    if not os.path.isfile(path):
+        return (jsonify({'error': f'File not found: {path}'}), 404)
+    try:
+        data = _ffmpeg__probe(exe, path)
+        return jsonify({'ok': True, 'path': path,
+                        'summary': _ffmpeg__summary(data),
+                        'streams': data.get('streams', []),
+                        'format': data.get('format', {})})
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': 'probe timed out'}), 504)
+    except Exception as e:
+        _log(f'[ffmpeg probe] {str(e)}')
+        return (jsonify({'error': str(e)}), 500)
+
+
+def _h_ffmpeg_276():
+    """Transcode a media file.
+
+        Body (JSON):
+            path (str, required): Source media file.
+            output (str, required): Destination file path.
+            vcodec (str, optional): Video codec, default "libx264". "copy" to stream-copy.
+            acodec (str, optional): Audio codec, default "aac". "copy" to stream-copy.
+            crf (str, optional): Constant rate factor, default "23".
+            preset (str, optional): x264 preset, default "medium".
+            resolution (str, optional): e.g. "1280:720" to scale.
+            audio_bitrate (str, optional): e.g. "128k".
+        """
+    body = _json_body()
+    path = str(body.get('path') or '').strip()
+    output = str(body.get('output') or '').strip()
+    if not path:
+        return _missing_field(body, 'path')
+    if not output:
+        return _missing_field(body, 'output')
+    exe = _find_tool('ffmpeg')
+    if not exe:
+        return (jsonify({'error': 'ffmpeg not installed', 'hint': 'winget install Gyan.FFmpeg'}), 503)
+    if not os.path.isfile(path):
+        return (jsonify({'error': f'File not found: {path}'}), 404)
+    vcodec = str(body.get('vcodec') or 'libx264').strip()
+    acodec = str(body.get('acodec') or 'aac').strip()
+    crf = str(body.get('crf') or '23').strip()
+    preset = str(body.get('preset') or 'medium').strip()
+    resolution = str(body.get('resolution') or '').strip()
+    audio_bitrate = str(body.get('audio_bitrate') or '').strip()
+    cmd = [exe, '-hide_banner', '-y', '-i', path]
+    if resolution:
+        cmd.extend(['-vf', f'scale={resolution}'])
+    if vcodec != 'copy':
+        cmd.extend(['-c:v', vcodec, '-crf', crf, '-preset', preset])
+    else:
+        cmd.extend(['-c:v', 'copy'])
+    if acodec != 'copy':
+        cmd.extend(['-c:a', acodec])
+        if audio_bitrate:
+            cmd.extend(['-b:a', audio_bitrate])
+    else:
+        cmd.extend(['-c:a', 'copy'])
+    cmd.append(output)
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, errors='replace', timeout=3600)
+        if r.returncode != 0:
+            _log(f'[ffmpeg transcode] rc={r.returncode}: {r.stderr[-300:]}')
+            return (jsonify({'error': (r.stderr.strip() or 'transcode failed')[-2000:]}), 500)
+        ok = os.path.isfile(output)
+        return jsonify({'ok': True, 'output': output, 'exists': ok,
+                        'size_bytes': os.path.getsize(output) if ok else None})
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': 'transcode timed out (3600s)'}), 504)
+    except Exception as e:
+        _log(f'[ffmpeg transcode] {str(e)}')
+        return (jsonify({'error': str(e)}), 500)
+
+
+def _h_ffmpeg_277():
+    """Extract the audio track from a media file.
+
+        Body (JSON):
+            path (str, required): Source media file.
+            output (str, optional): Destination audio file. Defaults to source stem + format.
+            format (str, optional): Output container ("mp3" or "m4a"), default "mp3".
+        """
+    body = _json_body()
+    path = str(body.get('path') or '').strip()
+    if not path:
+        return _missing_field(body, 'path')
+    fmt = str(body.get('format') or 'mp3').strip().lstrip('.')
+    if fmt not in ('mp3', 'm4a', 'aac', 'wav', 'ogg'):
+        return (jsonify({'error': f'Unsupported audio format: {fmt}'}), 400)
+    output = str(body.get('output') or '').strip()
+    if not output:
+        output = os.path.splitext(path)[0] + '.' + fmt
+    exe = _find_tool('ffmpeg')
+    if not exe:
+        return (jsonify({'error': 'ffmpeg not installed', 'hint': 'winget install Gyan.FFmpeg'}), 503)
+    if not os.path.isfile(path):
+        return (jsonify({'error': f'File not found: {path}'}), 404)
+    codec = {'mp3': 'libmp3lame', 'm4a': 'aac', 'aac': 'aac', 'wav': 'pcm_s16le', 'ogg': 'libvorbis'}[fmt]
+    cmd = [exe, '-hide_banner', '-y', '-i', path, '-vn', '-c:a', codec, output]
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, errors='replace', timeout=3600)
+        if r.returncode != 0:
+            _log(f'[ffmpeg extract_audio] rc={r.returncode}: {r.stderr[-300:]}')
+            return (jsonify({'error': (r.stderr.strip() or 'extract failed')[-2000:]}), 500)
+        ok = os.path.isfile(output)
+        return jsonify({'ok': True, 'output': output, 'exists': ok,
+                        'size_bytes': os.path.getsize(output) if ok else None})
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': 'audio extraction timed out'}), 504)
+    except Exception as e:
+        _log(f'[ffmpeg extract_audio] {str(e)}')
+        return (jsonify({'error': str(e)}), 500)
+
+
+def _h_ffmpeg_278():
+    """Extract frames from a video.
+
+        Body (JSON):
+            path (str, required): Source video file.
+            output_dir (str, required): Directory to write frames into.
+            timestamp (str, optional): Extract a single frame at this time (e.g. "00:00:05").
+            fps (str, optional): Extract frames at this rate (e.g. "1" = 1 per second).
+            width (str, optional): Scale frame width (keeps aspect ratio).
+        Exactly one of `timestamp` or `fps` is required.
+        """
+    body = _json_body()
+    path = str(body.get('path') or '').strip()
+    output_dir = str(body.get('output_dir') or '').strip()
+    if not path:
+        return _missing_field(body, 'path')
+    if not output_dir:
+        return _missing_field(body, 'output_dir')
+    exe = _find_tool('ffmpeg')
+    if not exe:
+        return (jsonify({'error': 'ffmpeg not installed', 'hint': 'winget install Gyan.FFmpeg'}), 503)
+    if not os.path.isfile(path):
+        return (jsonify({'error': f'File not found: {path}'}), 404)
+    os.makedirs(output_dir, exist_ok=True)
+    timestamp = str(body.get('timestamp') or '').strip()
+    fps = str(body.get('fps') or '').strip()
+    width = str(body.get('width') or '').strip()
+    if timestamp:
+        safe = timestamp.replace(':', '').replace('.', '')
+        out_pattern = os.path.join(output_dir, f'frame_at_{safe}.png')
+        cmd = [exe, '-hide_banner', '-y', '-ss', timestamp, '-i', path, '-frames:v', '1']
+        if width:
+            cmd.extend(['-vf', f'scale={width}:-1'])
+        cmd.append(out_pattern)
+    elif fps:
+        out_pattern = os.path.join(output_dir, 'frame_%05d.jpg')
+        cmd = [exe, '-hide_banner', '-y', '-i', path]
+        vf = f'fps={fps}'
+        if width:
+            vf += f',scale={width}:-1'
+        cmd.extend(['-vf', vf, out_pattern])
+    else:
+        return (jsonify({'error': "Either 'timestamp' or 'fps' is required"}), 400)
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, errors='replace', timeout=3600)
+        if r.returncode != 0:
+            _log(f'[ffmpeg frames] rc={r.returncode}: {r.stderr[-300:]}')
+            return (jsonify({'error': (r.stderr.strip() or 'frame extraction failed')[-2000:]}), 500)
+        files = sorted(os.path.basename(f) for f in glob.glob(os.path.join(output_dir, '*')) if os.path.isfile(f))
+        return jsonify({'ok': True, 'output_dir': output_dir, 'frames': files, 'count': len(files)})
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': 'frame extraction timed out'}), 504)
+    except Exception as e:
+        _log(f'[ffmpeg frames] {str(e)}')
+        return (jsonify({'error': str(e)}), 500)
+
+
+def _h_ffmpeg_279():
+    """Create an animated GIF from a video clip.
+
+        Body (JSON):
+            path (str, required): Source video file.
+            output (str, optional): Destination .gif. Defaults to source stem + ".gif".
+            start (str, optional): Start time (e.g. "00:00:02").
+            duration (str, optional): Clip length (e.g. "5").
+            fps (str, optional): GIF frame rate, default "10".
+            width (str, optional): GIF width in pixels, default "480".
+        """
+    body = _json_body()
+    path = str(body.get('path') or '').strip()
+    if not path:
+        return _missing_field(body, 'path')
+    output = str(body.get('output') or '').strip()
+    if not output:
+        output = os.path.splitext(path)[0] + '.gif'
+    exe = _find_tool('ffmpeg')
+    if not exe:
+        return (jsonify({'error': 'ffmpeg not installed', 'hint': 'winget install Gyan.FFmpeg'}), 503)
+    if not os.path.isfile(path):
+        return (jsonify({'error': f'File not found: {path}'}), 404)
+    start = str(body.get('start') or '').strip()
+    duration = str(body.get('duration') or '').strip()
+    fps = str(body.get('fps') or '10').strip()
+    width = str(body.get('width') or '480').strip()
+    filters = [f'fps={fps}', f'scale={width}:-1:flags=lanczos',
+               'split[s0][s1]', '[s0]palettegen[p]', '[s1][p]paletteuse']
+    cmd = [exe, '-hide_banner', '-y']
+    if start:
+        cmd.extend(['-ss', start])
+    cmd.extend(['-i', path])
+    if duration:
+        cmd.extend(['-t', duration])
+    cmd.extend(['-filter_complex', ';'.join(filters), output])
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, errors='replace', timeout=3600)
+        if r.returncode != 0:
+            _log(f'[ffmpeg gif] rc={r.returncode}: {r.stderr[-300:]}')
+            return (jsonify({'error': (r.stderr.strip() or 'gif creation failed')[-2000:]}), 500)
+        ok = os.path.isfile(output)
+        return jsonify({'ok': True, 'output': output, 'exists': ok,
+                        'size_bytes': os.path.getsize(output) if ok else None})
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': 'gif creation timed out'}), 504)
+    except Exception as e:
+        _log(f'[ffmpeg gif] {str(e)}')
+        return (jsonify({'error': str(e)}), 500)
+
+
+def _h_hexyl_280():
+    """Hex-dump a binary file.
+
+        Body (JSON):
+            path (str, required): File to dump.
+            bytes_per_line (str, optional): Bytes per line, default 16.
+            length (str, optional): Max bytes to read.
+            offset (str, optional): Bytes to skip from the start.
+            show_chars (bool, optional): Include the ASCII character panel. Default false.
+        """
+    body = _json_body()
+    path = str(body.get('path') or '').strip()
+    if not path:
+        return _missing_field(body, 'path')
+    exe = _find_tool('hexyl')
+    if not exe:
+        return (jsonify({'error': 'hexyl not installed', 'hint': 'winget install sharkdp.hexyl'}), 503)
+    if not os.path.isfile(path):
+        return (jsonify({'error': f'File not found: {path}'}), 404)
+    cmd = [exe, '--color', 'never']
+    if str(body.get('show_chars', 'false')).lower() not in ('1', 'true', 'yes'):
+        cmd.append('--plain')
+    for flag, key in (('--bytes', 'bytes_per_line'), ('--length', 'length'), ('--offset', 'offset')):
+        v = str(body.get(key) or '').strip()
+        if v:
+            cmd.extend([flag, v])
+    cmd.append(path)
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, errors='replace', timeout=60)
+        if r.returncode != 0:
+            _log(f'[hexyl view] rc={r.returncode}: {r.stderr[:300]}')
+            return (jsonify({'error': r.stderr.strip() or 'hexyl failed'}), 500)
+        return jsonify({'ok': True, 'path': path, 'dump': r.stdout})
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': 'hexyl timed out'}), 504)
+    except Exception as e:
+        _log(f'[hexyl view] {str(e)}')
+        return (jsonify({'error': str(e)}), 500)
+
+
+def _h_hexyl_281():
+    """Hex-dump arbitrary bytes passed as text.
+
+        Body (JSON):
+            data (str, required): Text/binary content to hex-dump (fed via stdin).
+            bytes_per_line (str, optional): Bytes per line, default 16.
+            show_chars (bool, optional): Include the ASCII character panel. Default false.
+        """
+    body = _json_body()
+    data = body.get('data')
+    if data is None:
+        return _missing_field(body, 'data')
+    exe = _find_tool('hexyl')
+    if not exe:
+        return (jsonify({'error': 'hexyl not installed', 'hint': 'winget install sharkdp.hexyl'}), 503)
+    cmd = [exe, '--color', 'never']
+    if str(body.get('show_chars', 'false')).lower() not in ('1', 'true', 'yes'):
+        cmd.append('--plain')
+    bpl = str(body.get('bytes_per_line') or '').strip()
+    if bpl:
+        cmd.extend(['--bytes', bpl])
+    try:
+        r = subprocess.run(cmd, input=str(data), capture_output=True, text=True, errors='replace', timeout=60)
+        if r.returncode != 0:
+            _log(f'[hexyl decode] rc={r.returncode}: {r.stderr[:300]}')
+            return (jsonify({'error': r.stderr.strip() or 'hexyl failed'}), 500)
+        return jsonify({'ok': True, 'dump': r.stdout})
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': 'hexyl timed out'}), 504)
+    except Exception as e:
+        _log(f'[hexyl decode] {str(e)}')
+        return (jsonify({'error': str(e)}), 500)
+
+
 def register_routes(app, state, require_auth):
     global _STATE
     _STATE = state
@@ -10748,6 +11135,13 @@ def register_routes(app, state, require_auth):
         ('/auto/zoxide/query', ['POST'], _h_zoxide_272),
         ('/auto/zoxide/list', ['GET'], _h_zoxide_273),
         ('/auto/zoxide/add', ['POST'], _h_zoxide_274),
+        ('/auto/ffmpeg/probe', ['POST'], _h_ffmpeg_275),
+        ('/auto/ffmpeg/transcode', ['POST'], _h_ffmpeg_276),
+        ('/auto/ffmpeg/extract_audio', ['POST'], _h_ffmpeg_277),
+        ('/auto/ffmpeg/frames', ['POST'], _h_ffmpeg_278),
+        ('/auto/ffmpeg/gif', ['POST'], _h_ffmpeg_279),
+        ('/auto/hexyl/view', ['POST'], _h_hexyl_280),
+        ('/auto/hexyl/decode', ['POST'], _h_hexyl_281),
     ]
     for _path, _methods, _fn in _ACTIONS:
         app.add_url_rule(_path, endpoint=_fn.__name__, view_func=require_auth(_fn), methods=_methods)
