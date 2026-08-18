@@ -286,8 +286,11 @@ def register_routes(app, state, require_auth):
             return jsonify({"ok": False, "error": "snapshot not found"}), 404
         text_q = (body.get("text_contains") or "").lower()
         type_q = (body.get("control_type") or "").lower()
-        min_conf = float(body.get("min_confidence", 0.0))
-        limit = max(1, min(500, int(body.get("limit", 100))))
+        try:
+            min_conf = float(body.get("min_confidence", 0.0))
+            limit = max(1, min(500, int(body.get("limit", 100))))
+        except (TypeError, ValueError):
+            return jsonify({"ok": False, "error": "min_confidence must be a number and limit an integer"}), 400
 
         out = []
         for e in snap["elements"]:
