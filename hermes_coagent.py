@@ -912,85 +912,8 @@ except ImportError:
     DIFF_CAPTURE_AVAILABLE = False
     _console("[WARN] diff_capture.py not found")
 
-from routes_auto_winchronicle import register_routes as reg_auto_winchronicle
-from routes_auto_gpt4all import register_routes as reg_auto_gpt4all
-from routes_auto_open_interpreter import register_routes as reg_auto_open_interpreter
-from routes_auto_windows_ai_toolkit import register_routes as reg_auto_windows_ai_toolkit
-from routes_auto_powertoys import register_routes as reg_auto_powertoys
-from routes_auto_obs_studio import register_routes as reg_auto_obs_studio
-from routes_auto_ghidra import register_routes as reg_auto_ghidra
-from routes_auto_playwright import register_routes as reg_auto_playwright
-from routes_auto_apktool import register_routes as reg_auto_apktool
-from routes_auto_devika import register_routes as reg_auto_devika
-from routes_auto_plandex import register_routes as reg_auto_plandex
-from routes_auto_tmuxp import register_routes as reg_auto_tmuxp
-from routes_auto_pywinauto import register_routes as reg_auto_pywinauto
-from routes_auto_rapidocr import register_routes as reg_auto_rapidocr
-from routes_auto_cognee import register_routes as reg_auto_cognee
-from routes_auto_sharpdxscreencapture import register_routes as reg_auto_sharpdxscreencapture
-from routes_auto_excel_mcp_server import register_routes as reg_auto_excel_mcp_server
-from routes_auto_photoshop_mcp import register_routes as reg_auto_photoshop_mcp
-from routes_auto_komorebi import register_routes as reg_auto_komorebi
-from routes_auto_copyq import register_routes as reg_auto_copyq
-from routes_auto_autohotkey import register_routes as reg_auto_autohotkey
-from routes_auto_windows_mcp import register_routes as reg_auto_windows_mcp
-from routes_auto_winget_cli import register_routes as reg_auto_winget_cli
-from routes_auto_powercfg import register_routes as reg_auto_powercfg
-from routes_auto_netsh import register_routes as reg_auto_netsh
-from routes_auto_dism import register_routes as reg_auto_dism
-from routes_auto_sfc import register_routes as reg_auto_sfc
-from routes_auto_reg import register_routes as reg_auto_reg
-from routes_auto_certutil import register_routes as reg_auto_certutil
-from routes_auto_yt_dlp import register_routes as reg_auto_yt_dlp
-from routes_auto_choco import register_routes as reg_auto_choco
-from routes_auto_imagemagick import register_routes as reg_auto_imagemagick
-from routes_auto_nmap import register_routes as reg_auto_nmap
-from routes_auto_tasklist import register_routes as reg_auto_tasklist
-from routes_auto_systeminfo import register_routes as reg_auto_systeminfo
-from routes_auto_sc import register_routes as reg_auto_sc
-from routes_auto_ipconfig import register_routes as reg_auto_ipconfig
-from routes_auto_icacls import register_routes as reg_auto_icacls
-from routes_auto_shutdown import register_routes as reg_auto_shutdown
-from routes_auto_wevtutil import register_routes as reg_auto_wevtutil
-from routes_auto_taskkill import register_routes as reg_auto_taskkill
-from routes_auto_fsutil import register_routes as reg_auto_fsutil
-from routes_auto_schtasks import register_routes as reg_auto_schtasks
-from routes_auto_vssadmin import register_routes as reg_auto_vssadmin
-from routes_auto_bitsadmin import register_routes as reg_auto_bitsadmin
-from routes_auto_chkdsk import register_routes as reg_auto_chkdsk
-from routes_auto_diskpart import register_routes as reg_auto_diskpart
-from routes_auto_mkcert import register_routes as reg_auto_mkcert
-from routes_auto_kopia import register_routes as reg_auto_kopia
-from routes_auto_takeown import register_routes as reg_auto_takeown
-from routes_auto_defrag import register_routes as reg_auto_defrag
-from routes_auto_driverquery import register_routes as reg_auto_driverquery
-from routes_auto_devtoys import register_routes as reg_auto_devtoys
-from routes_auto_win11debloat import register_routes as reg_auto_win11debloat
-from routes_auto_sharex import register_routes as reg_auto_sharex
-from routes_auto_ventoy import register_routes as reg_auto_ventoy
-from routes_auto_rufus import register_routes as reg_auto_rufus
-from routes_auto_gsudo import register_routes as reg_auto_gsudo
-from routes_auto_trippy import register_routes as reg_auto_trippy
-from routes_auto_ripgrep import register_routes as reg_auto_ripgrep
-from routes_auto_bat import register_routes as reg_auto_bat
-from routes_auto_fd import register_routes as reg_auto_fd
-from routes_auto_fzf import register_routes as reg_auto_fzf
-from routes_auto_zoxide import register_routes as reg_auto_zoxide
-from routes_auto_just import register_routes as reg_auto_just
-from routes_auto_delta import register_routes as reg_auto_delta
-from routes_auto_scrcpy import register_routes as reg_auto_scrcpy
-from routes_auto_procs import register_routes as reg_auto_procs
-from routes_auto_pe_sieve import register_routes as reg_auto_pe_sieve
-from routes_auto_detect_it_easy import register_routes as reg_auto_detect_it_easy
+from routes_auto import register_routes as reg_auto
 from routes_background import register_routes as reg_background
-from routes_auto_topgrade import register_routes as reg_auto_topgrade
-from routes_auto_xh import register_routes as reg_auto_xh
-from routes_auto_ollama import register_routes as reg_auto_ollama
-from routes_auto_llama_cpp import register_routes as reg_auto_llama_cpp
-from routes_auto_aider import register_routes as reg_auto_aider
-from routes_auto_eza import register_routes as reg_auto_eza
-from routes_auto_sd import register_routes as reg_auto_sd
-from routes_auto_yq import register_routes as reg_auto_yq
 
 features = {}
 
@@ -1214,84 +1137,8 @@ reg_deploy(app, state, require_auth)
 features["deploy"] = True
 reg_stealth_browser(app, state, require_auth)
 features["stealth_browser"] = True
-reg_auto_winchronicle(app, state, require_auth)
-reg_auto_gpt4all(app, state, require_auth)
-reg_auto_open_interpreter(app, state, require_auth)
-reg_auto_windows_ai_toolkit(app, state, require_auth)
-reg_auto_powertoys(app, state, require_auth)
-reg_auto_obs_studio(app, state, require_auth)
-reg_auto_ghidra(app, state, require_auth)
-reg_auto_playwright(app, state, require_auth)
-reg_auto_apktool(app, state, require_auth)
-reg_auto_devika(app, state, require_auth)
-reg_auto_plandex(app, state, require_auth)
-reg_auto_tmuxp(app, state, require_auth)
-reg_auto_pywinauto(app, state, require_auth)
-reg_auto_rapidocr(app, state, require_auth)
-reg_auto_cognee(app, state, require_auth)
-reg_auto_sharpdxscreencapture(app, state, require_auth)
-reg_auto_excel_mcp_server(app, state, require_auth)
-reg_auto_photoshop_mcp(app, state, require_auth)
-reg_auto_komorebi(app, state, require_auth)
-reg_auto_copyq(app, state, require_auth)
-reg_auto_autohotkey(app, state, require_auth)
-reg_auto_windows_mcp(app, state, require_auth)
-reg_auto_winget_cli(app, state, require_auth)
-reg_auto_powercfg(app, state, require_auth)
-reg_auto_netsh(app, state, require_auth)
-reg_auto_dism(app, state, require_auth)
-reg_auto_sfc(app, state, require_auth)
-reg_auto_reg(app, state, require_auth)
-reg_auto_certutil(app, state, require_auth)
-reg_auto_yt_dlp(app, state, require_auth)
-reg_auto_choco(app, state, require_auth)
-reg_auto_imagemagick(app, state, require_auth)
-reg_auto_nmap(app, state, require_auth)
-reg_auto_tasklist(app, state, require_auth)
-reg_auto_systeminfo(app, state, require_auth)
-reg_auto_sc(app, state, require_auth)
-reg_auto_ipconfig(app, state, require_auth)
-reg_auto_icacls(app, state, require_auth)
-reg_auto_shutdown(app, state, require_auth)
-reg_auto_wevtutil(app, state, require_auth)
-reg_auto_taskkill(app, state, require_auth)
-reg_auto_fsutil(app, state, require_auth)
-reg_auto_schtasks(app, state, require_auth)
-reg_auto_vssadmin(app, state, require_auth)
-reg_auto_bitsadmin(app, state, require_auth)
-reg_auto_chkdsk(app, state, require_auth)
-reg_auto_diskpart(app, state, require_auth)
-reg_auto_mkcert(app, state, require_auth)
-reg_auto_kopia(app, state, require_auth)
-reg_auto_takeown(app, state, require_auth)
-reg_auto_defrag(app, state, require_auth)
-reg_auto_driverquery(app, state, require_auth)
-reg_auto_devtoys(app, state, require_auth)
-reg_auto_win11debloat(app, state, require_auth)
-reg_auto_sharex(app, state, require_auth)
-reg_auto_ventoy(app, state, require_auth)
-reg_auto_rufus(app, state, require_auth)
-reg_auto_gsudo(app, state, require_auth)
-reg_auto_trippy(app, state, require_auth)
-reg_auto_ripgrep(app, state, require_auth)
-reg_auto_bat(app, state, require_auth)
-reg_auto_fd(app, state, require_auth)
-reg_auto_fzf(app, state, require_auth)
-reg_auto_zoxide(app, state, require_auth)
-reg_auto_just(app, state, require_auth)
-reg_auto_delta(app, state, require_auth)
-reg_auto_scrcpy(app, state, require_auth)
-reg_auto_procs(app, state, require_auth)
-reg_auto_pe_sieve(app, state, require_auth)
-reg_auto_detect_it_easy(app, state, require_auth)
-reg_auto_topgrade(app, state, require_auth)
-reg_auto_xh(app, state, require_auth)
-reg_auto_ollama(app, state, require_auth)
-reg_auto_llama_cpp(app, state, require_auth)
-reg_auto_aider(app, state, require_auth)
-reg_auto_eza(app, state, require_auth)
-reg_auto_sd(app, state, require_auth)
-reg_auto_yq(app, state, require_auth)
+reg_auto(app, state, require_auth)
+features["auto_router"] = True
 
 # v8.53 modules
 if reg_background_agent:
@@ -1382,84 +1229,6 @@ features["hybrid_detection"] = True
 features["recipe_verification"] = True
 features["reminders"] = True
 features["hud_overlay"] = True
-features["auto_winchronicle"] = True
-features["auto_gpt4all"] = True
-features["auto_open_interpreter"] = True
-features["auto_windows_ai_toolkit"] = True
-features["auto_powertoys"] = True
-features["auto_obs_studio"] = True
-features["auto_ghidra"] = True
-features["auto_playwright"] = True
-features["auto_apktool"] = True
-features["auto_devika"] = True
-features["auto_plandex"] = True
-features["auto_tmuxp"] = True
-features["auto_pywinauto"] = True
-features["auto_rapidocr"] = True
-features["auto_cognee"] = True
-features["auto_sharpdxscreencapture"] = True
-features["auto_excel_mcp_server"] = True
-features["auto_photoshop_mcp"] = True
-features["auto_komorebi"] = True
-features["auto_copyq"] = True
-features["auto_autohotkey"] = True
-features["auto_windows_mcp"] = True
-features["auto_winget_cli"] = True
-features["auto_powercfg"] = True
-features["auto_netsh"] = True
-features["auto_dism"] = True
-features["auto_sfc"] = True
-features["auto_reg"] = True
-features["auto_certutil"] = True
-features["auto_yt_dlp"] = True
-features["auto_choco"] = True
-features["auto_imagemagick"] = True
-features["auto_nmap"] = True
-features["auto_tasklist"] = True
-features["auto_systeminfo"] = True
-features["auto_sc"] = True
-features["auto_ipconfig"] = True
-features["auto_icacls"] = True
-features["auto_shutdown"] = True
-features["auto_wevtutil"] = True
-features["auto_taskkill"] = True
-features["auto_fsutil"] = True
-features["auto_schtasks"] = True
-features["auto_vssadmin"] = True
-features["auto_bitsadmin"] = True
-features["auto_chkdsk"] = True
-features["auto_diskpart"] = True
-features["auto_mkcert"] = True
-features["auto_kopia"] = True
-features["auto_takeown"] = True
-features["auto_defrag"] = True
-features["auto_driverquery"] = True
-features["auto_devtoys"] = True
-features["auto_win11debloat"] = True
-features["auto_sharex"] = True
-features["auto_ventoy"] = True
-features["auto_rufus"] = True
-features["auto_gsudo"] = True
-features["auto_trippy"] = True
-features["auto_ripgrep"] = True
-features["auto_bat"] = True
-features["auto_fd"] = True
-features["auto_fzf"] = True
-features["auto_zoxide"] = True
-features["auto_just"] = True
-features["auto_delta"] = True
-features["auto_scrcpy"] = True
-features["auto_procs"] = True
-features["auto_pe_sieve"] = True
-features["auto_detect_it_easy"] = True
-features["auto_topgrade"] = True
-features["auto_xh"] = True
-features["auto_ollama"] = True
-features["auto_llama_cpp"] = True
-features["auto_aider"] = True
-features["auto_eza"] = True
-features["auto_sd"] = True
-features["auto_yq"] = True
 state.backup_file = backup_file
 
 # -- Core routes (stay in main) ----------------------------------
@@ -1588,7 +1357,8 @@ def route_version():
                                  "mcp_mode", "dom_mode", "patchright", "multi_provider_ai",
                                  "speculative_batching", "hybrid_detection",
                                  "recipe_verification", "reminders", "hud_overlay",
-                                 "fullpage_capture", "loop_stall_detection", "voice_stt"],
+                                 "fullpage_capture", "loop_stall_detection", "voice_stt",
+                                 "auto_router"],
                     "modules": ["mouse", "ocr", "uia", "file", "media", "v63",
                                 "stream", "process", "voice", "cua", "copilot",
                                 "bypass", "toast", "deps", "config", "browser",

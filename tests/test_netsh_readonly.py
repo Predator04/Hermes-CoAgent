@@ -8,12 +8,12 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-import routes_auto_netsh
+import routes_auto
 
 
 def _client():
     app = Flask(__name__)
-    routes_auto_netsh.register_routes(app, state=None, require_auth=lambda f: f)
+    routes_auto.register_routes(app, state=None, require_auth=lambda f: f)
     return app.test_client()
 
 
