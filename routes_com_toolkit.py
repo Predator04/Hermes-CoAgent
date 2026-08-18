@@ -238,7 +238,10 @@ def _com_system():
         result = _ps_execute(script)
 
     elif action == "volume":
-        level = min(100, max(0, int(value or 50)))
+        try:
+            level = min(100, max(0, int(value or 50)))
+        except (TypeError, ValueError):
+            return jsonify({"ok": False, "error": "volume value must be a number 0-100"}), 400
         script = f"""
         $obj = New-Object -ComObject WScript.Shell
         for($i=0; $i -lt {level}; $i+=2){{$obj.SendKeys([char]175)}}
