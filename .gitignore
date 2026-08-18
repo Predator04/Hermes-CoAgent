@@ -33,3 +33,4 @@ CoAgent.spec
 *.exe
 traces/
 skills/
+recordings/
