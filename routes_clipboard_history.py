@@ -349,9 +349,9 @@ def register_routes(app, state, require_auth):
             "entries": entries,
         })
 
-    @app.route("/clipboard/get", methods=["GET", "POST"])
+    @app.route("/clipboard/history/get", methods=["GET", "POST"])
     @require_auth
-    def route_clipboard_get():
+    def route_clipboard_history_get():
         if not _backend_available():
             return _windows_only(_CLIPBOARD_IMPORT_ERROR)
 
@@ -378,9 +378,9 @@ def register_routes(app, state, require_auth):
             "entry": entry,
         })
 
-    @app.route("/clipboard/set", methods=["POST"])
+    @app.route("/clipboard/history/set", methods=["POST"])
     @require_auth
-    def route_clipboard_set():
+    def route_clipboard_history_set():
         if not _backend_available():
             return _windows_only(_CLIPBOARD_IMPORT_ERROR)
 
