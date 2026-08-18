@@ -1,5 +1,6 @@
 """Config backup and rollback routes."""
 
+import os
 import re
 import shutil
 import time
@@ -34,6 +35,16 @@ def _auth_blueprint(bp, require_auth):
 def _backup_name(path: Path, timestamp=None):
     stamp = timestamp or time.strftime("%Y%m%d-%H%M%S")
     return f"{path.name}.{stamp}.bak"
+
+
+def _original_name_from_backup(backup_name):
+    """Extract the original filename encoded in a backup filename.
+
+    Backup names follow ``{original}.{YYYYMMDD-HHMMSS}[.{suffix}].bak``.
+    Returns the ``original`` portion, or ``None`` if it can't be parsed.
+    """
+    m = re.search(r"\.\d{8}-\d{6}(?:\.\d+)?\.bak$", backup_name)
+    return backup_name[: m.start()] if m else None
 
 
 def _prune_backups_for(path: Path):
@@ -133,14 +144,27 @@ def route_config_rollback():
         safe_path = Path(_sanitize_path(file_path)).resolve()
     except ValueError as e:
         return _error(str(e), 403)
-    backup_path = (BACKUP_DIR / Path(backup_name).name).resolve()
-    if BACKUP_DIR.resolve() not in backup_path.parents:
+    backup_name = Path(backup_name).name
+    backup_path = BACKUP_DIR / backup_name
+    if backup_path.is_symlink():
+        return _error("Invalid backup path", 403)
+    if BACKUP_DIR.resolve() not in backup_path.resolve().parents:
         return _error("Invalid backup path", 403)
     if not backup_path.exists() or not backup_path.is_file():
         return _error("Backup not found", 404)
+    if _original_name_from_backup(backup_name) != safe_path.name:
+        return _error("Backup does not belong to the requested file", 403)
+    if not safe_path.parent.exists():
+        return _error("Target directory does not exist", 404)
     pre_rollback_backup = backup_file(safe_path)
-    safe_path.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(backup_path, safe_path)
+    # Write to a temp file in the same directory, then atomically replace the
+    # target so an interrupted rollback never leaves a truncated/corrupt file.
+    tmp_path = safe_path.with_name(safe_path.name + ".rollback.tmp")
+    try:
+        shutil.copy2(backup_path, tmp_path)
+        os.replace(tmp_path, safe_path)
+    except OSError as e:
+        return _error(f"Rollback failed: {e}", 500)
     return jsonify({
         "status": "rolled_back",
         "file": str(safe_path),
