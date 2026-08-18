@@ -9,10 +9,13 @@ the OS input stream and is delivered to whatever window currently has focus
 (NOT the target background window). Use UIA ValuePattern or PostMessage WM_CHAR.
 """
 
+import base64
 import ctypes
+import struct
 import threading
 import time
 from ctypes import wintypes
+from io import BytesIO
 
 from flask import Blueprint, jsonify
 
@@ -71,6 +74,15 @@ user32.AttachThreadInput.argtypes = [wintypes.DWORD, wintypes.DWORD, wintypes.BO
 user32.PostMessageW.restype = wintypes.BOOL
 user32.PostMessageW.argtypes = [wintypes.HWND, ctypes.c_uint, wintypes.WPARAM, wintypes.LPARAM]
 
+# -- PrintWindow: renders a window's contents into a device context,
+#    including minimized/occluded windows when PW_RENDERFULLCONTENT (0x2) is
+#    supplied (Windows 8.1+, DWM-composited apps).
+user32.PrintWindow.restype = wintypes.BOOL
+user32.PrintWindow.argtypes = [wintypes.HWND, wintypes.HDC, wintypes.UINT]
+
+user32.GetWindowPlacement.restype = wintypes.BOOL
+user32.GetWindowPlacement.argtypes = [wintypes.HWND, ctypes.c_void_p]
+
 # -- COM --
 ole32.CoInitializeEx.restype = ctypes.c_long  # HRESULT
 ole32.CoInitializeEx.argtypes = [ctypes.c_void_p, wintypes.DWORD]
@@ -93,6 +105,13 @@ WM_KEYDOWN = 0x0100
 WM_KEYUP = 0x0101
 WM_LBUTTONDOWN = 0x0201
 WM_LBUTTONUP = 0x0202
+
+# PrintWindow flags
+PW_CLIENTONLY = 0x00000001
+PW_RENDERFULLCONTENT = 0x00000002  # Windows 8.1+: works for DWM/UWP even off-screen
+
+# DWM window attributes
+DWMWA_EXTENDED_FRAME_BOUNDS = 9
 
 # ── Thread-safe background activity tracking ──────────────────────────────
 
@@ -704,6 +723,181 @@ def route_background_stop():
     """Stop any running background task."""
     _bg_done()
     return jsonify({"success": True, "message": "Background task stopped"})
+
+
+# ── Background window capture (issue #512) ────────────────────────────────
+#
+# Uses PrintWindow with PW_RENDERFULLCONTENT (0x2) so DWM-composited windows
+# can be captured while minimized or occluded by other windows. For minimized
+# windows we prefer the WINDOWPLACEMENT rcNormalPosition (the restored size)
+# because GetWindowRect returns off-screen coordinates like (-32000,-32000)
+# while iconic. Falls back to the DWM extended frame bounds, then the raw
+# window rect.
+
+def _window_capture_size(hwnd: int):
+    """Return (width, height) for capturing hwnd, tolerant of minimized state."""
+    # 1) WINDOWPLACEMENT.rcNormalPosition — the restored rect even when iconic.
+    try:
+        buf = ctypes.create_string_buffer(44)  # sizeof(WINDOWPLACEMENT)
+        struct.pack_into("<I", buf, 0, 44)
+        if user32.GetWindowPlacement(hwnd, buf):
+            left, top, right, bottom = struct.unpack_from("<iiii", buf, 28)
+            w, h = right - left, bottom - top
+            if w > 0 and h > 0:
+                return w, h
+    except Exception:
+        pass
+
+    # 2) DWM extended frame bounds.
+    try:
+        dwmapi = ctypes.windll.dwmapi
+        rect = wintypes.RECT()
+        hr = dwmapi.DwmGetWindowAttribute(
+            wintypes.HWND(hwnd),
+            wintypes.DWORD(DWMWA_EXTENDED_FRAME_BOUNDS),
+            ctypes.byref(rect),
+            ctypes.sizeof(rect),
+        )
+        if hr == 0:
+            w, h = rect.right - rect.left, rect.bottom - rect.top
+            if w > 0 and h > 0:
+                return w, h
+    except Exception:
+        pass
+
+    # 3) Plain GetWindowRect.
+    rect = wintypes.RECT()
+    user32.GetWindowRect(hwnd, ctypes.byref(rect))
+    return max(1, rect.right - rect.left), max(1, rect.bottom - rect.top)
+
+
+def _capture_window_bytes(hwnd: int, client_only: bool = False):
+    """Capture a window (even minimized/occluded) to PNG bytes.
+
+    Returns (png_bytes, method) or (None, error_string).
+    """
+    try:
+        import win32gui
+        import win32ui
+        from PIL import Image
+    except Exception as e:
+        return None, f"pywin32/PIL not available: {e}"
+
+    width, height = _window_capture_size(hwnd)
+
+    hwnd_dc = mfc_dc = save_dc = bitmap = None
+    try:
+        hwnd_dc = win32gui.GetWindowDC(hwnd)
+        mfc_dc = win32ui.CreateDCFromHandle(hwnd_dc)
+        save_dc = mfc_dc.CreateCompatibleDC()
+        bitmap = win32ui.CreateBitmap()
+        bitmap.CreateCompatibleBitmap(mfc_dc, width, height)
+        save_dc.SelectObject(bitmap)
+
+        flags = PW_RENDERFULLCONTENT | (PW_CLIENTONLY if client_only else 0)
+        # First try PW_RENDERFULLCONTENT — the flag needed for DWM/UWP apps.
+        result = user32.PrintWindow(hwnd, save_dc.GetSafeHdc(), flags)
+        method = "PrintWindow_PW_RENDERFULLCONTENT"
+        if not result:
+            # Older windows sometimes need flags=0.
+            result = user32.PrintWindow(hwnd, save_dc.GetSafeHdc(), 0)
+            method = "PrintWindow_default"
+        if not result:
+            return None, "PrintWindow returned 0"
+
+        bmp_info = bitmap.GetInfo()
+        bmp_bits = bitmap.GetBitmapBits(True)
+        img = Image.frombuffer(
+            "RGB",
+            (bmp_info["bmWidth"], bmp_info["bmHeight"]),
+            bmp_bits,
+            "raw",
+            "BGRX",
+            0,
+            1,
+        )
+        buf = BytesIO()
+        img.save(buf, format="PNG")
+        return buf.getvalue(), method
+    except Exception as e:
+        return None, f"{type(e).__name__}: {e}"
+    finally:
+        try:
+            if bitmap is not None:
+                win32gui.DeleteObject(bitmap.GetHandle())
+        except Exception:
+            pass
+        try:
+            if save_dc is not None:
+                save_dc.DeleteDC()
+        except Exception:
+            pass
+        try:
+            if mfc_dc is not None:
+                mfc_dc.DeleteDC()
+        except Exception:
+            pass
+        try:
+            if hwnd and hwnd_dc:
+                win32gui.ReleaseDC(hwnd, hwnd_dc)
+        except Exception:
+            pass
+
+
+@background_bp.route("/screen/capture-window", methods=["POST", "GET"])
+def route_screen_capture_window():
+    """Capture a specific window by hwnd or title, even minimized/occluded.
+
+    Payload / query params:
+      hwnd:         int window handle (preferred)
+      title:        substring to resolve via _find_window_by_title
+      client_only:  bool (default false) — capture client area only
+      format:       "base64" (default) or "png" (raw image/png response)
+
+    Returns JSON {ok, hwnd, title, width, height, method, data(base64)} by
+    default, or a raw image/png body when format=png.
+    """
+    from flask import Response, request
+
+    payload = _json_body() if request.method == "POST" else {}
+    hwnd = payload.get("hwnd") or request.args.get("hwnd", type=int)
+    title = payload.get("title") or request.args.get("title", "")
+    client_only = bool(payload.get("client_only") or request.args.get("client_only"))
+    fmt = (payload.get("format") or request.args.get("format") or "base64").lower()
+
+    if not hwnd and title:
+        hwnd = _find_window_by_title(title)
+    if not hwnd:
+        return jsonify({"ok": False, "error": "Provide hwnd or title"}), 400
+
+    hwnd = int(hwnd)
+    data, method = _capture_window_bytes(hwnd, client_only=client_only)
+    if not data:
+        return jsonify({"ok": False, "hwnd": hwnd, "error": method}), 500
+
+    buf = ctypes.create_unicode_buffer(256)
+    user32.GetWindowTextW(hwnd, buf, 255)
+    width, height = _window_capture_size(hwnd)
+
+    if fmt == "png":
+        return Response(data, mimetype="image/png", headers={
+            "X-Capture-Method": method,
+            "X-Window-Hwnd": str(hwnd),
+            "X-Window-Width": str(width),
+            "X-Window-Height": str(height),
+        })
+
+    return jsonify({
+        "ok": True,
+        "hwnd": hwnd,
+        "title": buf.value,
+        "width": width,
+        "height": height,
+        "minimized": bool(user32.IsIconic(hwnd)),
+        "method": method,
+        "format": "png",
+        "data": base64.b64encode(data).decode("ascii"),
+    })
 
 
 def register_routes(app, state, require_auth):
