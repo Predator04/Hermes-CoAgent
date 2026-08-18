@@ -398,7 +398,10 @@ OPENAPI_SPEC = {
                 "Stream agent execution",
                 "Stream Server-Sent Events for an agent execution log.",
                 parameters=[_param("log_id", description="Execution log id")],
-                responses={"200": _text_schema("SSE stream")},
+                responses={"200": {
+                    "description": "SSE stream",
+                    "content": {"text/event-stream": {"schema": {"type": "string"}}},
+                }},
             )
         },
         "/telegram/configure": {
