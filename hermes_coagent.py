@@ -1028,6 +1028,11 @@ try:
 except ImportError:
     reg_notifications = None
     features["notifications"] = False
+try:
+    from routes_clipboard_history import register_routes as reg_clipboard_history
+except ImportError:
+    reg_clipboard_history = None
+    features["clipboard_history"] = False
 
 reg_background(app, state, require_auth)
 features["background_control"] = True
@@ -1227,6 +1232,9 @@ if reg_conpty:
 if reg_notifications:
     reg_notifications(app, state, require_auth)
     features["notifications"] = True
+if reg_clipboard_history:
+    reg_clipboard_history(app, state, require_auth)
+    features["clipboard_history"] = True
 reg_diagnostics(app, state, require_auth); features["diagnostics"] = True
 reg_layout(app, state, require_auth); features["layout_profiles"] = True
 if CEF_AVAILABLE:
