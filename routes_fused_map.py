@@ -178,7 +178,7 @@ def _fuse(uia_els, ocr_words):
     ocr_used = set()
     for el in uia_els:
         entry = {
-            "id": uuid.uuid4().hex[:8],
+            "id": uuid.uuid4().hex,
             "source": "uia",
             "bbox": el["bbox"],
             "center": _center(el["bbox"]),
@@ -210,7 +210,7 @@ def _fuse(uia_els, ocr_words):
         if i in ocr_used:
             continue
         elements.append({
-            "id": uuid.uuid4().hex[:8],
+            "id": uuid.uuid4().hex,
             "source": "ocr",
             "bbox": w["bbox"],
             "center": _center(w["bbox"]),
