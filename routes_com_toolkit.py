@@ -6,6 +6,7 @@ reading registry, configuring Windows), this is 100x faster than clicking around
 """
 import json
 import logging
+import re
 import subprocess
 import threading
 
@@ -34,6 +35,10 @@ def _ps_escape(value):
 
 # Regex for values that must be identifiers/paths (no injection chars allowed at all)
 _SAFE_PATH_RE = r"^[A-Za-z0-9_\\:\\.\\- ]+$"
+
+# COM method names must be plain PowerShell identifiers — anything else could
+# be injected as arbitrary code via string interpolation.
+_METHOD_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 def _ps_validate(value, label="value"):
     """Validate a value is safe for PowerShell interpolation. Raises ValueError if unsafe."""
@@ -108,10 +113,17 @@ def _wmi_query(query, namespace="root/cimv2"):
 
 def _com_create_object(prog_id, method=None, args=None):
     """Create a COM object and optionally call a method."""
+    if method is not None and (not isinstance(method, str) or not _METHOD_RE.match(method)):
+        return {"ok": False, "error": "method must be a valid identifier"}
+    if not isinstance(prog_id, str) or not prog_id:
+        return {"ok": False, "error": "prog_id must be a non-empty string"}
     safe_prog_id = _ps_escape(prog_id)
-    # Escape each arg individually for safe concatenation
-    safe_args = [_ps_escape(str(a)) for a in (args or [])]
-    method_call = f".{_ps_escape(method)}({','.join(safe_args)})" if method else ""
+    # Escape each arg and wrap in double quotes so args are always passed as
+    # string literals — never evaluated as PowerShell expressions.
+    if not isinstance(args, (list, tuple)):
+        args = [] if args is None else [args]
+    safe_args = [f'"{_ps_escape(str(a))}"' for a in args]
+    method_call = f".{method}({','.join(safe_args)})" if method else ""
     script = f"""
     try {{
         $obj = New-Object -ComObject "{safe_prog_id}" -ErrorAction Stop
