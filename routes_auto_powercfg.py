@@ -55,7 +55,7 @@ def _is_powercfg_available():
     if not exe:
         return False
     try:
-        result = subprocess.run([exe, "/?"], capture_output=True, text=True, timeout=10)
+        result = subprocess.run([exe, "/?"], capture_output=True, text=True, timeout=10, errors="replace")
         return result.returncode in (0, 1)  # /? returns 1 on success
     except (subprocess.TimeoutExpired, OSError):
         return False
@@ -67,7 +67,7 @@ def _run_powercfg(args, timeout=15):
     if not exe:
         raise RuntimeError("powercfg not found")
     result = subprocess.run(
-        [exe] + args, capture_output=True, text=True, timeout=timeout
+        [exe] + args, capture_output=True, text=True, timeout=timeout, errors="replace"
     )
     return result.stdout, result.stderr, result.returncode
 
