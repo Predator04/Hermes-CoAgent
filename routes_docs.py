@@ -4,7 +4,14 @@ from copy import deepcopy
 
 from flask import Blueprint, Response, jsonify
 
-from shared import AGENT_NAME, COAGENT_DIR, SERVER_PORT, VERSION, get_host_ip
+from shared import (
+    AGENT_NAME,
+    COAGENT_DIR,
+    SERVER_PORT,
+    VERSION,
+    get_host_ip,
+    _wrap_registered_blueprint_routes,
+)
 
 
 docs_bp = Blueprint("docs", __name__)
@@ -587,3 +594,6 @@ def route_docs():
 
 def register_routes(app, state, require_auth):
     app.register_blueprint(docs_bp)
+    # /docs.json exposes the full endpoint inventory, the machine LAN IP and
+    # the COAGENT_DIR path — keep it behind the same bearer auth as the API.
+    _wrap_registered_blueprint_routes(app, docs_bp.name, require_auth)
