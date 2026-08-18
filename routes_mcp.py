@@ -589,7 +589,7 @@ def _mcp_events_response():
         q = queue.Queue(maxsize=100)
         with _SUBSCRIBERS_LOCK:
             if len(_SUBSCRIBERS) >= _MAX_SSE_SUBSCRIBERS:
-                yield f"event: error\\ndata: {json.dumps({'error': 'max subscribers reached'})}\\n\\n"
+                yield f"event: error\ndata: {json.dumps({'error': 'max subscribers reached'})}\n\n"
                 return
             _SUBSCRIBERS.append(q)
         try:
@@ -688,13 +688,12 @@ def register_routes(app, state, require_auth):
         if not lan_ip or lan_ip == "127.0.0.1":
             try:
                 import socket
-                s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                s.connect(("8.8.8.8", 80))
-                lan_ip = s.getsockname()[0]
-                s.close()
+                with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+                    s.connect(("8.8.8.8", 80))
+                    lan_ip = s.getsockname()[0]
             except Exception:
                 lan_ip = "127.0.0.1"
-        port = getattr(app.config, "SERVER_NAME", "").split(":")[-1] if getattr(app.config, "SERVER_NAME", "") else "9123"
+        port = (app.config.get("SERVER_NAME", "") or "").split(":")[-1] or "9123"
 
         return jsonify({
             "server": AGENT_NAME,
