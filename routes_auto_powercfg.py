@@ -200,7 +200,13 @@ def register_routes(app, state, require_auth):
         except Exception:
             return jsonify({"ok": False, "error": "invalid JSON body"}), 400
 
-        guid = body.get("guid", "").strip()
+        if not isinstance(body, dict):
+            return jsonify({"ok": False, "error": "JSON body must be an object"}), 400
+
+        guid = body.get("guid", "")
+        if not isinstance(guid, str):
+            return jsonify({"ok": False, "error": "guid must be a string"}), 400
+        guid = guid.strip()
         if not guid:
             return _missing_field("guid")
 
