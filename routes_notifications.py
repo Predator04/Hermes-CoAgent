@@ -32,10 +32,12 @@ from shared import _json_body, _log, _missing_field
 # Optional Windows-only imports (winsdk exposes the WinRT projections).
 # ---------------------------------------------------------------------------
 try:
-    from winsdk.windows.ui.notifications.management import UserNotificationListener  # type: ignore
+    from winsdk.windows.ui.notifications.management import (  # type: ignore
+        UserNotificationListener,
+        UserNotificationListenerAccessStatus,
+    )
     from winsdk.windows.ui.notifications import (  # type: ignore
         NotificationKinds,
-        UserNotificationListenerAccessStatus,
         KnownNotificationBindings,
     )
     _WINSDK_IMPORT_ERROR = None

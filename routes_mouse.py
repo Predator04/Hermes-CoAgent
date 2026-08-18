@@ -406,7 +406,7 @@ def register_routes(app, state, require_auth):
                         ctypes.windll.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
                         windows.append((hwnd, title, pid.value))
                 return True
-            WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.wintypes.HWND, ctypes.wintypes.LPARAM)
+            WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.wintypes.BOOL, ctypes.wintypes.HWND, ctypes.wintypes.LPARAM)
             cb = WNDENUMPROC(_enum_cb)
             ctypes.windll.user32.EnumWindows(cb, 0)
 
