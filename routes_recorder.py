@@ -633,6 +633,7 @@ def register_routes(app, state, require_auth):
             return jsonify({"error": str(e)}), 400
 
         # Take before screenshot
+        (RECORDINGS_DIR / name).mkdir(parents=True, exist_ok=True)
         try:
             before_data = _capture_raw(force=True)
             before_path = str(RECORDINGS_DIR / name / "verify_before.png")
