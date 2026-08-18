@@ -1038,6 +1038,11 @@ try:
 except ImportError:
     reg_virtual_desktop = None
     features["virtual_desktop"] = False
+try:
+    from routes_doc_intel import register_routes as reg_doc_intel
+except ImportError:
+    reg_doc_intel = None
+    features["doc_intel"] = False
 
 reg_background(app, state, require_auth)
 features["background_control"] = True
@@ -1243,6 +1248,9 @@ if reg_clipboard_history:
 if reg_virtual_desktop:
     reg_virtual_desktop(app, state, require_auth)
     features["virtual_desktop"] = True
+if reg_doc_intel:
+    reg_doc_intel(app, state, require_auth)
+    features["doc_intel"] = True
 reg_diagnostics(app, state, require_auth); features["diagnostics"] = True
 reg_layout(app, state, require_auth); features["layout_profiles"] = True
 if CEF_AVAILABLE:
