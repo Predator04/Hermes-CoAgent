@@ -269,7 +269,7 @@ try:
             t = threading.Thread(target=_run, daemon=True)
             t.start()
             t.join(timeout=timeout)
-            if not result.get("success"):
+            if not result.get("success") and result.get("error") != "timeout":
                 UIA_READY = False
             return result
         finally:
@@ -899,6 +899,7 @@ def send_input_background(keys: list, hold_ms: int = 30):
         
         INPUT_KEYBOARD = 1
         KEYEVENTF_KEYUP = 0x0002
+        KEYEVENTF_UNICODE = 0x0004
         
         def _make_input(vk, flags=0):
             inp = INPUT(INPUT_KEYBOARD)
@@ -908,25 +909,47 @@ def send_input_background(keys: list, hold_ms: int = 30):
         if isinstance(keys, str):
             keys = [keys]
         # Build input sequence. Multiple keys are a chord, not sequential taps.
-        vks = []
+        # Single printable characters use KEYEVENTF_UNICODE so case and symbols
+        # are preserved; named keys/modifiers use their virtual-key code.
+        vks = []  # list of (is_unicode, value)
         for key in keys:
-            k = str(key).lower()
+            k = str(key)
             if not k:
                 continue
-            vk = vk_map.get(k, ord(k[0].upper())) if len(k) == 1 else vk_map.get(k, 0)
-            if vk:
-                vks.append(vk)
-        inputs = []
-        for vk in vks:
-            inputs.append(_make_input(vk))
-        for vk in reversed(vks):
-            inputs.append(_make_input(vk, KEYEVENTF_KEYUP))
+            if len(k) == 1:
+                vks.append((True, ord(k)))
+            else:
+                vk = vk_map.get(k.lower(), 0)
+                if vk:
+                    vks.append((False, vk))
+        inputs_down = []
+        inputs_up = []
+        for is_uni, val in vks:
+            if is_uni:
+                inp = INPUT(INPUT_KEYBOARD)
+                inp.u.ki = KEYBDINPUT(0, val, KEYEVENTF_UNICODE, 0, 0)
+                inputs_down.append(inp)
+            else:
+                inputs_down.append(_make_input(val))
+        for is_uni, val in reversed(vks):
+            if is_uni:
+                inp = INPUT(INPUT_KEYBOARD)
+                inp.u.ki = KEYBDINPUT(0, val, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP, 0, 0)
+                inputs_up.append(inp)
+            else:
+                inputs_up.append(_make_input(val, KEYEVENTF_KEYUP))
         
-        if inputs:
+        if inputs_down:
             # Build proper ctypes array for SendInput
-            InputArray = INPUT * len(inputs)
-            input_array = InputArray(*inputs)
-            n = windll.user32.SendInput(len(inputs), input_array, ctypes.sizeof(INPUT))
+            InputArray = INPUT * len(inputs_down)
+            input_array = InputArray(*inputs_down)
+            n = windll.user32.SendInput(len(inputs_down), input_array, ctypes.sizeof(INPUT))
+            if hold_ms:
+                time.sleep(hold_ms / 1000.0)
+            if inputs_up:
+                UpArray = INPUT * len(inputs_up)
+                up_array = UpArray(*inputs_up)
+                n += windll.user32.SendInput(len(inputs_up), up_array, ctypes.sizeof(INPUT))
             return {"success": True, "sent": len(vks), "injected": n}
         return {"success": False, "error": "No valid keys"}
     except Exception as e:
@@ -1123,11 +1146,44 @@ def adaptive_find(target: str, screenshot_path: str = None) -> dict:
             try:
                 import subprocess
                 result = subprocess.run(
-                    ["tesseract", img, "stdout", "-l", "eng", "--psm", "6"],
+                    ["tesseract", img, "stdout", "-l", "eng", "--psm", "6", "tsv"],
                     capture_output=True, text=True, timeout=15
                 )
-                if target.lower() in result.stdout.lower():
-                    # Found via OCR — return approximate position from image center
+                tgt = target.lower()
+                if tgt in result.stdout.lower():
+                    # Parse the TSV to locate the actual word/line bounding box
+                    # (col 0=level, 6=left, 7=top, 8=width, 9=height, 11=text).
+                    word_rows = []
+                    line_rows = []
+                    for line in result.stdout.splitlines():
+                        parts = line.split("\t")
+                        if len(parts) < 12:
+                            continue
+                        word = (parts[11] or "").strip()
+                        if not word or tgt not in word.lower():
+                            continue
+                        try:
+                            left, top, width, height = (int(parts[6]), int(parts[7]),
+                                                        int(parts[8]), int(parts[9]))
+                        except ValueError:
+                            continue
+                        (word_rows if parts[0] == "5" else line_rows).append([left, top, width, height])
+                    matched = word_rows or line_rows
+                    if matched:
+                        # Union bbox of all matching words (handles multi-word targets)
+                        l = min(m[0] for m in matched)
+                        t = min(m[1] for m in matched)
+                        r = max(m[0] + m[2] for m in matched)
+                        b = max(m[1] + m[3] for m in matched)
+                        return {
+                            "found": True,
+                            "strategy": "ocr",
+                            "x": (l + r) // 2,
+                            "y": (t + b) // 2,
+                            "bounds": [l, t, r - l, b - t],
+                            "reason": f"text '{target}' found on screen via OCR",
+                        }
+                    # Text present but no box parsed — fall back to image center
                     from PIL import Image as PILImage
                     with PILImage.open(img) as im:
                         w, h = im.size
