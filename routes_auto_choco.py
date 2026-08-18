@@ -173,9 +173,12 @@ def register_routes(app, state, require_auth):
                     continue
                 parts = line.split()
                 if len(parts) >= 2:
+                    version = parts[1]
+                    if version.startswith("v"):
+                        version = version[1:]
                     packages.append({
                         "name": parts[0],
-                        "version": parts[1].lstrip("v"),
+                        "version": version,
                     })
                 elif parts:
                     packages.append({"name": parts[0], "version": ""})
