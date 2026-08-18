@@ -126,7 +126,9 @@ def _get_dominant_colors(img, num=3):
     try:
         small = img.convert("RGB").resize((32, 32))
         pixels = list(small.getdata())
-        sampled = pixels[:256]
+        # Even stride sampling — pixels[:256] only covered the top 8 rows
+        step = max(1, len(pixels) // 256)
+        sampled = pixels[::step][:256]
         # Rough color quantization
         buckets = {}
         for r, g, b in sampled:
