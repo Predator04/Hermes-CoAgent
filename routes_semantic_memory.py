@@ -6,6 +6,7 @@ Stored in COAGENT_DIR/semantic_memory.json.
 """
 import json
 import logging
+import os
 import threading
 from collections import defaultdict
 from datetime import datetime
@@ -39,13 +40,15 @@ def _set_coagent_dir(path):
 
 
 def _load():
-    global _MEMORY_CACHE
     if _MEMORY_FILE and _MEMORY_FILE.exists():
         try:
             data = json.loads(_MEMORY_FILE.read_text(encoding="utf-8"))
             if isinstance(data, dict):
-                _MEMORY_CACHE["events"] = data.get("events", [])[-_MAX_EVENTS:]
-                _MEMORY_CACHE["patterns"] = data.get("patterns", [])
+                events = data.get("events", [])
+                patterns = data.get("patterns", [])
+                with _MEMORY_LOCK:
+                    _MEMORY_CACHE["events"] = events[-_MAX_EVENTS:] if isinstance(events, list) else []
+                    _MEMORY_CACHE["patterns"] = patterns if isinstance(patterns, list) else []
         except Exception as exc:
             _debug_failure("load", exc)
 
@@ -54,10 +57,12 @@ def _save():
     if _MEMORY_FILE:
         try:
             _MEMORY_FILE.parent.mkdir(parents=True, exist_ok=True)
-            _MEMORY_FILE.write_text(
+            tmp = _MEMORY_FILE.with_suffix(_MEMORY_FILE.suffix + ".tmp")
+            tmp.write_text(
                 json.dumps(_MEMORY_CACHE, indent=2, default=str),
                 encoding="utf-8"
             )
+            os.replace(tmp, _MEMORY_FILE)
         except Exception as exc:
             _debug_failure("save", exc)
 
@@ -107,13 +112,26 @@ def _detect_patterns():
 @memory_bp.route("/memory/observe", methods=["POST"])
 def _memory_observe():
     body = request.get_json(force=True, silent=True) or {}
+    if not isinstance(body, dict):
+        body = {}
+
+    def _as_str(v):
+        return v if isinstance(v, str) else (str(v) if v is not None else "")
+
+    duration = body.get("duration_secs", 0)
+    if not isinstance(duration, (int, float)):
+        try:
+            duration = float(duration)
+        except (TypeError, ValueError):
+            duration = 0
+
     event = {
         "timestamp": datetime.now().isoformat(),
-        "type": body.get("type", "app_open"),
-        "app": body.get("app", ""),
-        "title": body.get("title", ""),
-        "window_class": body.get("window_class", ""),
-        "duration_secs": body.get("duration_secs", 0),
+        "type": _as_str(body.get("type", "app_open")),
+        "app": _as_str(body.get("app", "")),
+        "title": _as_str(body.get("title", "")),
+        "window_class": _as_str(body.get("window_class", "")),
+        "duration_secs": duration,
     }
     with _MEMORY_LOCK:
         _MEMORY_CACHE["events"].append(event)
