@@ -1048,6 +1048,11 @@ try:
 except ImportError:
     reg_dragdrop = None
     features["dragdrop"] = False
+try:
+    from routes_hw_monitor import register_routes as reg_hw_monitor
+except ImportError:
+    reg_hw_monitor = None
+    features["hw_monitor"] = False
 
 reg_background(app, state, require_auth)
 features["background_control"] = True
@@ -1259,6 +1264,9 @@ if reg_doc_intel:
 if reg_dragdrop:
     reg_dragdrop(app, state, require_auth)
     features["dragdrop"] = True
+if reg_hw_monitor:
+    reg_hw_monitor(app, state, require_auth)
+    features["hw_monitor"] = True
 reg_diagnostics(app, state, require_auth); features["diagnostics"] = True
 reg_layout(app, state, require_auth); features["layout_profiles"] = True
 if CEF_AVAILABLE:
