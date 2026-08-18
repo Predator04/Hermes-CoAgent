@@ -1053,6 +1053,11 @@ try:
 except ImportError:
     reg_hw_monitor = None
     features["hw_monitor"] = False
+try:
+    from routes_eventlog import register_routes as reg_eventlog
+except ImportError:
+    reg_eventlog = None
+    features["eventlog"] = False
 
 reg_background(app, state, require_auth)
 features["background_control"] = True
@@ -1267,6 +1272,9 @@ if reg_dragdrop:
 if reg_hw_monitor:
     reg_hw_monitor(app, state, require_auth)
     features["hw_monitor"] = True
+if reg_eventlog:
+    reg_eventlog(app, state, require_auth)
+    features["eventlog"] = True
 reg_diagnostics(app, state, require_auth); features["diagnostics"] = True
 reg_layout(app, state, require_auth); features["layout_profiles"] = True
 if CEF_AVAILABLE:
