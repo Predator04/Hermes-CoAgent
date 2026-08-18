@@ -78,9 +78,18 @@ def _route_path():
 def _memory_rss_bytes():
     try:
         import psutil
-        return int(psutil.Process(os.getpid()).memory_info().rss)
-    except (ImportError, OSError, RuntimeError) as exc:
-        _debug_failure("metrics psutil RSS lookup", exc)
+    except ImportError as exc:
+        _debug_failure("metrics psutil import", exc)
+        psutil = None
+
+    if psutil is not None:
+        try:
+            return int(psutil.Process(os.getpid()).memory_info().rss)
+        except Exception as exc:
+            # psutil.NoSuchProcess / AccessDenied / TimeoutExpired inherit from
+            # psutil.Error (not OSError), so a broad guard is required here to
+            # fall through to the procfs/Win32 backends.
+            _debug_failure("metrics psutil RSS lookup", exc)
 
     proc_status = "/proc/self/status"
     try:
