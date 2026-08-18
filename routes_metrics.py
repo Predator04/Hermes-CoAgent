@@ -61,7 +61,9 @@ def _route_path():
             return request.url_rule.rule
     except (AttributeError, RuntimeError) as exc:
         _debug_failure("metrics route path lookup", exc)
-    return request.path or "unknown"
+    # Unmatched paths (404s) are attacker-controlled; never use them as a
+    # label or every probe would grow the counters without bound.
+    return "<unmatched>"
 
 
 def _memory_rss_bytes():
