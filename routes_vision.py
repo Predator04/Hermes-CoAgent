@@ -150,17 +150,70 @@ def _dilate_pil(binary_img, radius=8):
 # ---------------------------------------------------------------------------
 
 def _find_blobs_numpy(binary_arr, subsample=4, max_blobs=150):
-    """DFS-based connected-component bounding boxes on a binary numpy array.
+    """Vectorized connected-component bounding boxes on a binary numpy array.
 
-    Subsampling keeps Python-loop cost manageable: a 1920×1080 image becomes
-    480×270 before traversal.  Each blob is capped at 5 000 pixels so a single
-    large flat region does not monopolise the loop.
+    Uses cv2.connectedComponentsWithStats or scipy.ndimage.label (both C
+    implementations) for ~100x speedup over pure-Python DFS.  Falls back to a
+    stack-based DFS only if neither library is installed.  Subsampling keeps
+    label counts manageable: a 1920x1080 image becomes 480x270 before labeling.
     """
     sub = binary_arr[::subsample, ::subsample]
+    mask = (sub > 0).astype(np.uint8)
+
+    # Fast path 1: OpenCV connectedComponentsWithStats returns bounding boxes
+    # directly in the stats array (LEFT, TOP, WIDTH, HEIGHT, AREA).
+    try:
+        import cv2
+        n_labels, _labels, stats, _cent = cv2.connectedComponentsWithStats(
+            mask, connectivity=4)
+        blobs = []
+        # Label 0 is background; skip it.
+        for lbl in range(1, n_labels):
+            sx = int(stats[lbl, cv2.CC_STAT_LEFT])
+            sy = int(stats[lbl, cv2.CC_STAT_TOP])
+            sw_ = int(stats[lbl, cv2.CC_STAT_WIDTH])
+            sh_ = int(stats[lbl, cv2.CC_STAT_HEIGHT])
+            bw = sw_ * subsample
+            bh = sh_ * subsample
+            if bw >= 15 and bh >= 8:
+                blobs.append({"x": sx * subsample, "y": sy * subsample,
+                              "w": bw, "h": bh})
+                if len(blobs) >= max_blobs:
+                    break
+        return blobs
+    except Exception:
+        pass
+
+    # Fast path 2: scipy.ndimage.label + find_objects (also C-implemented).
+    try:
+        from scipy import ndimage
+        labels, num_features = ndimage.label(mask)
+        if num_features <= 0:
+            return []
+        slices = ndimage.find_objects(labels)
+        blobs = []
+        for slc in slices:
+            if slc is None:
+                continue
+            ys_slc, xs_slc = slc
+            sw_ = xs_slc.stop - xs_slc.start
+            sh_ = ys_slc.stop - ys_slc.start
+            bw = sw_ * subsample
+            bh = sh_ * subsample
+            if bw >= 15 and bh >= 8:
+                blobs.append({"x": int(xs_slc.start) * subsample,
+                              "y": int(ys_slc.start) * subsample,
+                              "w": bw, "h": bh})
+                if len(blobs) >= max_blobs:
+                    break
+        return blobs
+    except Exception:
+        pass
+
+    # Fallback: original pure-Python DFS (kept for environments without cv2/scipy).
     sh, sw = sub.shape
     visited = np.zeros((sh, sw), dtype=bool)
     blobs = []
-
     ys, xs = np.where(sub > 0)
 
     for idx in range(len(ys)):
