@@ -4986,6 +4986,9 @@ def _llama_cpp__http(base, method, path, payload=None, timeout=120):
             return (e.code, None, raw)
     except urllib.error.URLError as e:
         return (0, None, str(e.reason))
+    except OSError as e:
+        # socket.timeout / connection reset raised during resp.read() on slow responses
+        return (0, None, str(e))
 
 def _llama_cpp__server_status(base):
     status, j, _ = _llama_cpp__http(base, 'GET', '/health', timeout=5)
@@ -5666,6 +5669,9 @@ def _ollama__http(method, path, payload=None, timeout=120):
             return (e.code, None, raw)
     except urllib.error.URLError as e:
         return (0, None, str(e.reason))
+    except OSError as e:
+        # socket.timeout / connection reset raised during resp.read() on slow responses
+        return (0, None, str(e))
 
 def _h_ollama_143():
     status, j, _ = _ollama__http('GET', '/api/tags', timeout=10)
@@ -5732,7 +5738,11 @@ def _h_ollama_147():
     if body.get('template'):
         payload['template'] = str(body['template'])
     if body.get('raw') is not None:
-        payload['raw'] = bool(body['raw'])
+        raw = body['raw']
+        if isinstance(raw, bool):
+            payload['raw'] = raw
+        else:
+            payload['raw'] = str(raw).strip().lower() in ('true', '1', 'yes', 'on')
     if body.get('keep_alive') is not None:
         payload['keep_alive'] = body['keep_alive']
     status, j, _ = _ollama__http('POST', '/api/generate', payload, timeout=600)
