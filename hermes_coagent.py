@@ -1018,6 +1018,11 @@ try:
 except ImportError:
     reg_print = None
     features["print_queue"] = False
+try:
+    from routes_conpty import register_routes as reg_conpty
+except ImportError:
+    reg_conpty = None
+    features["conpty"] = False
 
 reg_background(app, state, require_auth)
 features["background_control"] = True
@@ -1211,6 +1216,9 @@ if reg_everything:
 if reg_print:
     reg_print(app, state, require_auth)
     features["print_queue"] = True
+if reg_conpty:
+    reg_conpty(app, state, require_auth)
+    features["conpty"] = True
 reg_diagnostics(app, state, require_auth); features["diagnostics"] = True
 reg_layout(app, state, require_auth); features["layout_profiles"] = True
 if CEF_AVAILABLE:
