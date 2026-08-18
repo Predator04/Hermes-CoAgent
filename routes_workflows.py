@@ -68,6 +68,13 @@ def _safe_id(workflow_id):
     return wid
 
 
+def _coerce_int(value, default=0):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def _workflow_path(workflow_id):
     return WORKFLOWS_DIR / f"{_safe_id(workflow_id)}.json"
 
@@ -110,8 +117,8 @@ def _normalize_workflow(data, workflow_id=None):
             "type": node_type,
             "label": str(node.get("label") or "").strip(),
             "position": {
-                "x": int(position.get("x", 40) or 0),
-                "y": int(position.get("y", 40) or 0),
+                "x": _coerce_int(position.get("x", 40) or 0),
+                "y": _coerce_int(position.get("y", 40) or 0),
             },
             "params": params,
         })
