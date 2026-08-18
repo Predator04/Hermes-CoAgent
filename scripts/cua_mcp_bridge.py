@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import threading
@@ -110,6 +111,22 @@ def main() -> int:
     ]
     for thread in threads:
         thread.start()
+
+    proc_holder = {"proc": proc}
+
+    def _handle_sigterm(signum, frame):
+        try:
+            proc_holder["proc"].terminate()
+        except OSError:
+            pass
+
+    # Forward SIGTERM to the child so it doesn't become an orphan when the
+    # host (Hermes / MCP) shuts the bridge down.
+    try:
+        signal.signal(signal.SIGTERM, _handle_sigterm)
+    except (ValueError, OSError):
+        # Not the main thread (e.g. embedded) — signals can't be set here.
+        pass
 
     try:
         code = proc.wait()
