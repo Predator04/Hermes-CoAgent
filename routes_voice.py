@@ -138,7 +138,7 @@ def _api_call(path, method="POST", data=None, timeout=10):
     req = urllib.request.Request(url, data=body, headers=headers, method=method)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
-            raw = resp.read(4096)
+            raw = resp.read()
             status = getattr(resp, "status", 200)
             parsed = None
             if raw:
