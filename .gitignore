@@ -31,3 +31,4 @@ governance_audit.jsonl
 # Build artifacts
 CoAgent.spec
 *.exe
+traces/
