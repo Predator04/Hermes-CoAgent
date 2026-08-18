@@ -51,6 +51,15 @@ def _bucket_label(bucket):
     return f"{bucket:g}"
 
 
+def _le_sort_value(le):
+    if le == "+Inf":
+        return float("inf")
+    try:
+        return float(le)
+    except (TypeError, ValueError):
+        return float("inf")
+
+
 def _label(value):
     return str(value).replace("\\", "\\\\").replace("\n", "\\n").replace('"', '\\"')
 
@@ -192,7 +201,10 @@ def _render_metrics():
             "# TYPE coagent_request_duration_seconds histogram",
         ]
     )
-    for key, value in sorted(buckets_snapshot.items(), key=lambda item: item[0]):
+    for key, value in sorted(
+        buckets_snapshot.items(),
+        key=lambda item: (item[0][0], item[0][1], item[0][2], _le_sort_value(item[0][3])),
+    ):
         method, path, status, le = key
         labels = (
             f'method="{_label(method)}",'
