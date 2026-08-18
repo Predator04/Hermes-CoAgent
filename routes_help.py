@@ -4,8 +4,9 @@ import json
 
 from flask import Blueprint, jsonify, request
 
+from shared import VERSION
+
 help_bp = Blueprint("help", __name__)
-VERSION = "v7.12"
 
 
 @help_bp.route("/help", methods=["GET"])
