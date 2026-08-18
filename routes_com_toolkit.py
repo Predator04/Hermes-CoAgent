@@ -222,6 +222,8 @@ def _com_system():
     value = body.get("value")
 
     if action == "wallpaper":
+        if not value:
+            return jsonify({"ok": False, "error": "wallpaper requires 'value' (image path)"}), 400
         safe_value = _ps_escape(str(value))
         script = f"""
         Add-Type -TypeDefinition @"
