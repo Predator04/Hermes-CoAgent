@@ -386,7 +386,10 @@ def _speak_text(text, rate=None):
                 except (TypeError, ValueError):
                     pass
             flags = subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0
-            subprocess.run(args, timeout=60, creationflags=flags)
+            completed = subprocess.run(args, timeout=60, creationflags=flags, capture_output=True)
+            if completed.returncode != 0:
+                err = (completed.stderr or completed.stdout or b"").decode("utf-8", errors="replace").strip()
+                return {"ok": False, "error": f"PowerShell TTS failed (exit {completed.returncode}): {err[:300]}", "engine": "sapi"}
             return {"ok": True, "spoken": True, "engine": "sapi"}
         except Exception as e:
             return {"ok": False, "error": f"{type(e).__name__}: {e}", "engine": "sapi"}
