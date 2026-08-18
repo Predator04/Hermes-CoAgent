@@ -70,18 +70,27 @@ def _load_google_libs():
 def _save_oauth_token(creds):
     TOKEN_FILE.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = TOKEN_FILE.with_suffix(".tmp")
+    data = creds.to_json()
     try:
         fd = os.open(str(tmp_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write(creds.to_json())
+            f.write(data)
         os.replace(str(tmp_path), str(TOKEN_FILE))
     except OSError:
+        # Fallback: write directly, still with restrictive permissions (never world-readable).
+        try:
+            fd = os.open(str(TOKEN_FILE), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(data)
+        except OSError:
+            pass
+    finally:
+        # Always clean up the temp file (also covers non-OSError exceptions).
         if tmp_path.exists():
             try:
                 tmp_path.unlink()
             except OSError:
                 pass
-        TOKEN_FILE.write_text(creds.to_json(), encoding="utf-8")
     try:
         os.chmod(TOKEN_FILE, 0o600)
     except OSError:
