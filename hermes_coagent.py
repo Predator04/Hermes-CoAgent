@@ -1008,6 +1008,11 @@ try:
 except ImportError:
     reg_agent_tools = None
     features["agent_tools"] = False
+try:
+    from routes_everything import register_routes as reg_everything
+except ImportError:
+    reg_everything = None
+    features["everything_search"] = False
 
 reg_background(app, state, require_auth)
 features["background_control"] = True
@@ -1195,6 +1200,9 @@ if reg_som:
 if reg_agent_tools:
     reg_agent_tools(app, state, require_auth)
     features["agent_tools"] = True
+if reg_everything:
+    reg_everything(app, state, require_auth)
+    features["everything_search"] = True
 reg_diagnostics(app, state, require_auth); features["diagnostics"] = True
 reg_layout(app, state, require_auth); features["layout_profiles"] = True
 if CEF_AVAILABLE:
