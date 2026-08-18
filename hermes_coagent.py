@@ -1043,6 +1043,11 @@ try:
 except ImportError:
     reg_doc_intel = None
     features["doc_intel"] = False
+try:
+    from routes_dragdrop import register_routes as reg_dragdrop
+except ImportError:
+    reg_dragdrop = None
+    features["dragdrop"] = False
 
 reg_background(app, state, require_auth)
 features["background_control"] = True
@@ -1251,6 +1256,9 @@ if reg_virtual_desktop:
 if reg_doc_intel:
     reg_doc_intel(app, state, require_auth)
     features["doc_intel"] = True
+if reg_dragdrop:
+    reg_dragdrop(app, state, require_auth)
+    features["dragdrop"] = True
 reg_diagnostics(app, state, require_auth); features["diagnostics"] = True
 reg_layout(app, state, require_auth); features["layout_profiles"] = True
 if CEF_AVAILABLE:
