@@ -220,6 +220,7 @@ def _ensure_browser(new_page: bool = False, profile: str = None):
     global _BROWSER, _CONTEXT, _PAGE, _PROFILES_DIR
 
     pw = _load_playwright()
+    launched = False
 
     if _BROWSER is None or not _BROWSER.is_connected():
         # Also skip if we have a persistent context already alive
@@ -261,8 +262,9 @@ def _ensure_browser(new_page: bool = False, profile: str = None):
 
         # Inject all stealth scripts before any page loads
         _inject_stealth(_PAGE)
+        launched = True
 
-    if new_page and _PAGE:
+    if new_page and _PAGE and not launched:
         _PAGE = _CONTEXT.new_page()
         _inject_stealth(_PAGE)
 
@@ -591,11 +593,16 @@ def route_stealth_close():
 def route_stealth_health():
     """Check if the stealth browser is detectable using common fingerprint tests."""
     with _STEALTH_LOCK:
+        tmp_page = None
         try:
-            page = _ensure_browser(new_page=True)  # fresh tab, don't destroy user's session
-            page.goto("about:blank", timeout=5000)
+            _ensure_browser()  # ensure engine is up; don't disturb the active page
+            if _CONTEXT is None:
+                return jsonify({"error": "browser not available", "verdict": "UNKNOWN"})
+            tmp_page = _CONTEXT.new_page()
+            _inject_stealth(tmp_page)
+            tmp_page.goto("about:blank", timeout=5000)
 
-            checks = page.evaluate("""
+            checks = tmp_page.evaluate("""
                 (() => {
                     // Test 1: navigator.webdriver
                     const webdriver = navigator.webdriver;
@@ -664,6 +671,12 @@ def route_stealth_health():
 
         except Exception as e:
             return jsonify({"error": str(e), "verdict": "UNKNOWN"})
+        finally:
+            if tmp_page is not None:
+                try:
+                    tmp_page.close()
+                except Exception:
+                    pass
 
 
 @stealth_bp.route("/stealth/profile", methods=["POST"])
