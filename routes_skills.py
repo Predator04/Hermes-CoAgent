@@ -18,9 +18,10 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import threading
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional, Tuple
 
 from flask import jsonify, request
 
@@ -202,6 +203,158 @@ def _load_one(skill_md: Path) -> Optional[Dict[str, Any]]:
 
 
 # ---------------------------------------------------------------------------
+# Import: scan third-party tool skill folders and copy SKILL.md packages
+# into the CoAgent skills registry.
+# ---------------------------------------------------------------------------
+
+_IMPORT_MAX_DEPTH = 6
+_IMPORT_SAFE_NAME_RE = re.compile(r"[^A-Za-z0-9._\-]+")
+
+
+def _known_source_paths() -> List[Tuple[str, Path]]:
+    """Well-known SKILL.md source folders for Claude Code, Codex, Copilot,
+    Cursor. Returns (label, path) pairs regardless of existence — callers
+    filter with .is_dir() as needed."""
+    home = Path.home()
+    cwd = Path.cwd()
+    candidates: List[Tuple[str, Path]] = [
+        ("claude", home / ".claude" / "skills"),
+        ("claude", cwd / ".claude" / "skills"),
+        ("codex", home / ".codex" / "skills"),
+        ("codex", cwd / ".codex" / "skills"),
+        ("copilot", home / ".github" / "copilot" / "skills"),
+        ("copilot", cwd / ".github" / "copilot" / "skills"),
+        ("cursor", home / ".cursor" / "skills"),
+        ("cursor", cwd / ".cursor" / "skills"),
+    ]
+    # De-duplicate while preserving order.
+    seen: set = set()
+    out: List[Tuple[str, Path]] = []
+    for label, path in candidates:
+        key = os.path.normcase(str(path))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append((label, path))
+    return out
+
+
+def _iter_skill_md(root: Path, max_depth: int = _IMPORT_MAX_DEPTH) -> Iterator[Path]:
+    """Yield SKILL.md files under ``root`` up to ``max_depth`` levels deep.
+    Does not follow symlinks."""
+    if not root.is_dir():
+        return
+    try:
+        root_res = root.resolve()
+    except OSError:
+        return
+    for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+        try:
+            depth = len(Path(dirpath).resolve().relative_to(root_res).parts)
+        except (ValueError, OSError):
+            depth = 0
+        if depth > max_depth:
+            dirnames[:] = []
+            continue
+        if "SKILL.md" in filenames:
+            yield Path(dirpath) / "SKILL.md"
+
+
+def _sanitize_dir_name(name: str) -> str:
+    """Filesystem-safe directory name derived from a skill name."""
+    safe = _IMPORT_SAFE_NAME_RE.sub("_", (name or "").strip())
+    safe = safe.strip("._-")
+    return safe or "skill"
+
+
+def _copy_skill_package(src_dir: Path, dest_dir: Path) -> int:
+    """Copy SKILL.md and any bundled ``scripts/references/assets`` from
+    ``src_dir`` into ``dest_dir``. Returns the number of files written."""
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    count = 0
+    src_md = src_dir / "SKILL.md"
+    if src_md.is_file():
+        shutil.copy2(str(src_md), str(dest_dir / "SKILL.md"))
+        count += 1
+    for sub in _BUNDLE_DIRS:
+        src_sub = src_dir / sub
+        if not src_sub.is_dir() or src_sub.is_symlink():
+            continue
+        dest_sub = dest_dir / sub
+        for root, dirs, files in os.walk(src_sub, followlinks=False):
+            rel = Path(root).relative_to(src_sub)
+            target_root = dest_sub / rel
+            target_root.mkdir(parents=True, exist_ok=True)
+            for f in files:
+                shutil.copy2(str(Path(root) / f), str(target_root / f))
+                count += 1
+                if count > _MAX_BUNDLE_FILES:
+                    return count
+    return count
+
+
+def _import_one(
+    src_md: Path,
+    dest_root: Path,
+    *,
+    overwrite: bool,
+    dry_run: bool,
+) -> Dict[str, Any]:
+    """Parse a candidate SKILL.md and (unless ``dry_run``) copy it into the
+    CoAgent skills directory. Returns a per-skill status dict."""
+    src_str = str(src_md)
+    try:
+        raw = src_md.read_text(encoding="utf-8", errors="replace")
+    except OSError as e:
+        return {"src": src_str, "imported": False, "error": f"read failed: {e}"}
+    fm, _body = _parse_frontmatter(raw)
+    if not fm:
+        return {"src": src_str, "imported": False, "error": "no frontmatter"}
+    name = _derive_name(src_md, fm)
+    if not name:
+        return {"src": src_str, "imported": False, "error": "cannot determine name"}
+    safe = _sanitize_dir_name(name)
+    dest_dir = dest_root / safe
+    description = (fm.get("description") or "").strip()
+    if len(description) > _DESC_MAX:
+        description = description[:_DESC_MAX].rstrip() + "..."
+    result: Dict[str, Any] = {
+        "src": src_str,
+        "name": name,
+        "safe_name": safe,
+        "description": description,
+        "dest": str(dest_dir),
+    }
+    if dest_dir.exists() and not overwrite:
+        result["imported"] = False
+        result["skipped"] = True
+        result["reason"] = "exists"
+        return result
+    if dry_run:
+        result["imported"] = False
+        result["dry_run"] = True
+        return result
+    try:
+        # Confine the copy to the CoAgent skills root.
+        dest_root_r = dest_root.resolve()
+        dest_r = dest_dir.resolve()
+        dest_r.relative_to(dest_root_r)
+    except (ValueError, OSError):
+        result["imported"] = False
+        result["error"] = "destination escapes skills root"
+        return result
+    try:
+        files = _copy_skill_package(src_md.parent, dest_dir)
+    except OSError as e:
+        result["imported"] = False
+        result["error"] = f"copy failed: {e}"
+        return result
+    result["imported"] = True
+    result["files_copied"] = files
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Cache
 # ---------------------------------------------------------------------------
 
@@ -363,6 +516,86 @@ def register_routes(app, state, require_auth):
                 hits.append(_metadata(e, short_desc=True))
         hits.sort(key=lambda s: s["name"].lower())
         return jsonify({"ok": True, "count": len(hits), "query": q, "skills": hits})
+
+    @app.route("/skills/import", methods=["GET", "POST"])
+    @require_auth
+    def route_skills_import():
+        """Import SKILL.md skill packages from Claude Code, Codex, Copilot
+        and Cursor skill folders into the CoAgent skills registry.
+
+        JSON body (all optional):
+            sources:   list of directories to scan (defaults to well-known)
+            overwrite: bool; replace existing packages with the same name
+            dry_run:   bool; report what would be imported, do not copy
+        """
+        body: Dict[str, Any] = {}
+        raw_body = request.get_json(silent=True)
+        if isinstance(raw_body, dict):
+            body = raw_body
+        overwrite = bool(body.get("overwrite", False))
+        # GET requests are always a dry-run preview.
+        dry_run = bool(body.get("dry_run", False)) or request.method == "GET"
+
+        raw_sources = body.get("sources")
+        sources: List[Tuple[str, Path]] = []
+        if isinstance(raw_sources, list) and raw_sources:
+            for entry in raw_sources:
+                if not isinstance(entry, str) or not entry.strip():
+                    continue
+                try:
+                    p = Path(entry).expanduser()
+                except (TypeError, ValueError):
+                    continue
+                sources.append(("custom", p))
+        else:
+            sources = _known_source_paths()
+
+        dest_root = _skills_root()
+        try:
+            dest_root.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            return jsonify({"ok": False, "error": f"cannot create skills dir: {e}"}), 500
+
+        results: List[Dict[str, Any]] = []
+        scanned: List[Dict[str, Any]] = []
+        for label, path in sources:
+            info = {"label": label, "path": str(path), "exists": path.is_dir()}
+            scanned.append(info)
+            if not info["exists"]:
+                continue
+            found = 0
+            for skill_md in _iter_skill_md(path):
+                found += 1
+                entry = _import_one(
+                    skill_md,
+                    dest_root,
+                    overwrite=overwrite,
+                    dry_run=dry_run,
+                )
+                entry["source"] = label
+                results.append(entry)
+            info["skill_md_count"] = found
+
+        imported = sum(1 for r in results if r.get("imported"))
+        skipped = sum(1 for r in results if r.get("skipped"))
+        errors = sum(1 for r in results if r.get("error"))
+        if imported:
+            try:
+                cache.reload()
+            except Exception as e:  # noqa: BLE001
+                _log(f"skills.import: reload failed: {e}")
+
+        return jsonify({
+            "ok": True,
+            "dry_run": dry_run,
+            "overwrite": overwrite,
+            "sources": scanned,
+            "results": results,
+            "imported": imported,
+            "skipped": skipped,
+            "errors": errors,
+            "count": len(results),
+        })
 
     # ------------------------------------------------------------------
     # Progressive-disclosure prompt-injection helpers on ``state``.
