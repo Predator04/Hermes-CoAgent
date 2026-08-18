@@ -334,7 +334,7 @@ def register_routes(app, state, require_auth):
 
         try:
             result = subprocess.run(
-                [exe, "outdated"],
+                [exe, "outdated", "-r"],
                 capture_output=True,
                 text=True,
                 timeout=60,
