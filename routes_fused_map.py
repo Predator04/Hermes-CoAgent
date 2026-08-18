@@ -28,6 +28,18 @@ _LOCK = threading.Lock()
 _MAX_SNAPSHOTS = 16
 
 
+def _coord(rect, keys):
+    """First key present with a non-None value in rect, else None.
+
+    Uses explicit key presence (not truthiness) so a legitimate 0 coordinate
+    is honored rather than treated as missing.
+    """
+    for k in keys:
+        if k in rect and rect[k] is not None:
+            return rect[k]
+    return None
+
+
 def _uia_flat():
     """Return a flat list of UIA elements with (bbox, name, control_type)."""
     try:
@@ -49,11 +61,23 @@ def _uia_flat():
             return
         rect = node.get("rect") or node.get("bounding_rect")
         if isinstance(rect, dict):
-            x = int(rect.get("left") or rect.get("x") or 0)
-            y = int(rect.get("top") or rect.get("y") or 0)
-            r = int(rect.get("right") or (x + (rect.get("width") or 0)))
-            b = int(rect.get("bottom") or (y + (rect.get("height") or 0)))
-            w, h = max(0, r - x), max(0, b - y)
+            left = _coord(rect, ("left", "x"))
+            top = _coord(rect, ("top", "y"))
+            x = int(left) if left is not None else 0
+            y = int(top) if top is not None else 0
+            right = _coord(rect, ("right",))
+            if right is None:
+                width = _coord(rect, ("width",))
+                right = x + (int(width) if width is not None else 0)
+            else:
+                right = int(right)
+            bottom = _coord(rect, ("bottom",))
+            if bottom is None:
+                height = _coord(rect, ("height",))
+                bottom = y + (int(height) if height is not None else 0)
+            else:
+                bottom = int(bottom)
+            w, h = max(0, right - x), max(0, bottom - y)
             if w > 0 and h > 0:
                 flat.append({
                     "bbox": {"x": x, "y": y, "w": w, "h": h},
