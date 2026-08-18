@@ -229,7 +229,7 @@ namespace CoAgentAudio {
   public enum EDataFlow { eRender, eCapture, eAll }
   public enum ERole { eConsole, eMultimedia, eCommunications }
 
-  [Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")]
+  [ComImport, Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")]
   public class MMDeviceEnumerator { }
 
   [Guid("A95664D2-9614-4F35-A746-DE8DB63617E6"),

@@ -145,7 +145,10 @@ def _resolve_source(body):
             )
         return tmp_path, tmp_path, filename, None
 
-    return None, None, None, (_missing_field("path"),)
+    return None, None, None, (
+        jsonify({"error": "provide 'path', 'file', or 'data' (base64 with 'filename')"}),
+        400,
+    )
 
 
 def _classify(filename):
@@ -525,19 +528,27 @@ def register_routes(app, state, require_auth):
             ocr_mode = "auto"
 
         try:
-            kind = _classify(filename)
-            if kind == "pdf":
-                result, err = _pdf_extract(source_path, page_spec, want_tables=True, ocr_mode=ocr_mode)
-            elif kind == "docx":
-                result, err = _docx_extract(source_path, want_tables=True)
-            elif kind == "doc":
-                result, err = None, "legacy .doc not supported (convert to .docx)"
-            elif kind == "xlsx":
-                result, err = _xlsx_extract(source_path, want_tables=True)
-            elif kind == "image":
-                result, err = _image_extract(source_path)
-            else:
-                result, err = None, f"unsupported file type: {filename}"
+            try:
+                kind = _classify(filename)
+                if kind == "pdf":
+                    result, err = _pdf_extract(source_path, page_spec, want_tables=True, ocr_mode=ocr_mode)
+                elif kind == "docx":
+                    result, err = _docx_extract(source_path, want_tables=True)
+                elif kind == "doc":
+                    result, err = None, "legacy .doc not supported (convert to .docx)"
+                elif kind == "xlsx":
+                    result, err = _xlsx_extract(source_path, want_tables=True)
+                elif kind == "image":
+                    result, err = _image_extract(source_path)
+                else:
+                    result, err = None, f"unsupported file type: {filename}"
+            except Exception as exc:
+                _log(f"doc/extract exception for {filename}: {type(exc).__name__}: {exc}")
+                return jsonify({
+                    "ok": False,
+                    "error": f"extraction failed: {type(exc).__name__}: {exc}",
+                    "filename": filename,
+                }), 500
 
             if err:
                 _log(f"doc/extract failed for {filename}: {err}")

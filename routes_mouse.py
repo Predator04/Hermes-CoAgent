@@ -370,7 +370,7 @@ def register_routes(app, state, require_auth):
                             "rect": {"left": rect.left, "top": rect.top, "right": rect.right, "bottom": rect.bottom}
                         })
                 return True
-            WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.wintypes.HWND, ctypes.wintypes.LPARAM)
+            WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.wintypes.BOOL, ctypes.wintypes.HWND, ctypes.wintypes.LPARAM)
             cb = WNDENUMPROC(_enum_cb)
             ctypes.windll.user32.EnumWindows(cb, 0)
             return jsonify({"status": "ok", "count": len(windows), "windows": windows})

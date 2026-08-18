@@ -208,6 +208,7 @@ def _load_one(skill_md: Path) -> Optional[Dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 _IMPORT_MAX_DEPTH = 6
+_IMPORT_MAX_SKILL_MD = 500        # hard cap on SKILL.md files scanned per request
 _IMPORT_SAFE_NAME_RE = re.compile(r"[^A-Za-z0-9._\-]+")
 
 
@@ -239,25 +240,65 @@ def _known_source_paths() -> List[Tuple[str, Path]]:
     return out
 
 
-def _iter_skill_md(root: Path, max_depth: int = _IMPORT_MAX_DEPTH) -> Iterator[Path]:
+def _iter_skill_md(
+    root: Path,
+    max_depth: int = _IMPORT_MAX_DEPTH,
+    *,
+    exclude_realpaths: Optional[Iterable[str]] = None,
+    max_files: int = _IMPORT_MAX_SKILL_MD,
+) -> Iterator[Path]:
     """Yield SKILL.md files under ``root`` up to ``max_depth`` levels deep.
-    Does not follow symlinks."""
+
+    Does not follow symlinks. Tracks realpaths of visited directories so
+    filesystem cycles (e.g. bind-mount loops, junction points) cannot cause
+    an unbounded scan. Prunes any directory whose realpath appears in
+    ``exclude_realpaths`` (used to keep the walker out of the destination
+    skills root). Caps total yields at ``max_files``.
+    """
     if not root.is_dir():
         return
     try:
         root_res = root.resolve()
     except OSError:
         return
+    excluded = {os.path.normcase(str(p)) for p in (exclude_realpaths or [])}
+    visited: set = set()
+    yielded = 0
     for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
         try:
-            depth = len(Path(dirpath).resolve().relative_to(root_res).parts)
+            here_res = Path(dirpath).resolve()
+        except OSError:
+            dirnames[:] = []
+            continue
+        here_key = os.path.normcase(str(here_res))
+        if here_key in visited or here_key in excluded:
+            dirnames[:] = []
+            continue
+        visited.add(here_key)
+        try:
+            depth = len(here_res.relative_to(root_res).parts)
         except (ValueError, OSError):
             depth = 0
         if depth > max_depth:
             dirnames[:] = []
             continue
+        # Prune excluded and already-visited subdirs before descending.
+        pruned = []
+        for d in dirnames:
+            try:
+                child_res = (here_res / d).resolve()
+            except OSError:
+                continue
+            child_key = os.path.normcase(str(child_res))
+            if child_key in excluded or child_key in visited:
+                continue
+            pruned.append(d)
+        dirnames[:] = pruned
         if "SKILL.md" in filenames:
             yield Path(dirpath) / "SKILL.md"
+            yielded += 1
+            if yielded >= max_files:
+                return
 
 
 def _sanitize_dir_name(name: str) -> str:
@@ -528,74 +569,120 @@ def register_routes(app, state, require_auth):
             overwrite: bool; replace existing packages with the same name
             dry_run:   bool; report what would be imported, do not copy
         """
-        body: Dict[str, Any] = {}
-        raw_body = request.get_json(silent=True)
-        if isinstance(raw_body, dict):
-            body = raw_body
-        overwrite = bool(body.get("overwrite", False))
-        # GET requests are always a dry-run preview.
-        dry_run = bool(body.get("dry_run", False)) or request.method == "GET"
+        try:
+            body: Dict[str, Any] = {}
+            raw_body = request.get_json(silent=True)
+            if isinstance(raw_body, dict):
+                body = raw_body
+            overwrite = bool(body.get("overwrite", False))
+            # GET requests are always a dry-run preview.
+            dry_run = bool(body.get("dry_run", False)) or request.method == "GET"
 
-        raw_sources = body.get("sources")
-        sources: List[Tuple[str, Path]] = []
-        if isinstance(raw_sources, list) and raw_sources:
-            for entry in raw_sources:
-                if not isinstance(entry, str) or not entry.strip():
+            raw_sources = body.get("sources")
+            sources: List[Tuple[str, Path]] = []
+            if isinstance(raw_sources, list) and raw_sources:
+                for entry in raw_sources:
+                    if not isinstance(entry, str) or not entry.strip():
+                        continue
+                    try:
+                        p = Path(entry).expanduser()
+                    except (TypeError, ValueError):
+                        continue
+                    sources.append(("custom", p))
+            else:
+                sources = _known_source_paths()
+
+            dest_root = _skills_root()
+            try:
+                dest_root.mkdir(parents=True, exist_ok=True)
+            except OSError as e:
+                return jsonify({"ok": False, "error": f"cannot create skills dir: {e}"}), 500
+
+            # Resolve the destination once so we can (a) reject sources that
+            # are the destination or an ancestor of it (which would recurse
+            # into their own output) and (b) prune the destination subtree
+            # from any scan whose source happens to contain it.
+            try:
+                dest_root_res = dest_root.resolve()
+            except OSError as e:
+                return jsonify({"ok": False, "error": f"cannot resolve skills dir: {e}"}), 500
+            dest_key = os.path.normcase(str(dest_root_res))
+
+            results: List[Dict[str, Any]] = []
+            scanned: List[Dict[str, Any]] = []
+            for label, path in sources:
+                info: Dict[str, Any] = {
+                    "label": label,
+                    "path": str(path),
+                    "exists": path.is_dir(),
+                }
+                scanned.append(info)
+                if not info["exists"]:
+                    continue
+
+                # Guard: refuse to scan the destination itself or any
+                # ancestor of it. Copying from such a path would land the
+                # output inside the input, producing recursive copies and
+                # potentially an unbounded loop across requests.
+                try:
+                    src_res = path.resolve()
+                except OSError as exc:
+                    info["skipped"] = f"resolve failed: {exc}"
+                    continue
+                src_key = os.path.normcase(str(src_res))
+                if src_key == dest_key:
+                    info["skipped"] = "source is destination"
                     continue
                 try:
-                    p = Path(entry).expanduser()
-                except (TypeError, ValueError):
+                    # Raises ValueError when dest is NOT under src.
+                    dest_root_res.relative_to(src_res)
+                    info["skipped"] = "source is ancestor of destination"
                     continue
-                sources.append(("custom", p))
-        else:
-            sources = _known_source_paths()
+                except ValueError:
+                    pass
 
-        dest_root = _skills_root()
-        try:
-            dest_root.mkdir(parents=True, exist_ok=True)
-        except OSError as e:
-            return jsonify({"ok": False, "error": f"cannot create skills dir: {e}"}), 500
+                found = 0
+                for skill_md in _iter_skill_md(
+                    path,
+                    exclude_realpaths=[dest_root_res],
+                ):
+                    found += 1
+                    entry = _import_one(
+                        skill_md,
+                        dest_root,
+                        overwrite=overwrite,
+                        dry_run=dry_run,
+                    )
+                    entry["source"] = label
+                    results.append(entry)
+                info["skill_md_count"] = found
 
-        results: List[Dict[str, Any]] = []
-        scanned: List[Dict[str, Any]] = []
-        for label, path in sources:
-            info = {"label": label, "path": str(path), "exists": path.is_dir()}
-            scanned.append(info)
-            if not info["exists"]:
-                continue
-            found = 0
-            for skill_md in _iter_skill_md(path):
-                found += 1
-                entry = _import_one(
-                    skill_md,
-                    dest_root,
-                    overwrite=overwrite,
-                    dry_run=dry_run,
-                )
-                entry["source"] = label
-                results.append(entry)
-            info["skill_md_count"] = found
+            imported = sum(1 for r in results if r.get("imported"))
+            skipped = sum(1 for r in results if r.get("skipped"))
+            errors = sum(1 for r in results if r.get("error"))
+            if imported:
+                try:
+                    cache.reload()
+                except Exception as e:  # noqa: BLE001
+                    _log(f"skills.import: reload failed: {e}")
 
-        imported = sum(1 for r in results if r.get("imported"))
-        skipped = sum(1 for r in results if r.get("skipped"))
-        errors = sum(1 for r in results if r.get("error"))
-        if imported:
-            try:
-                cache.reload()
-            except Exception as e:  # noqa: BLE001
-                _log(f"skills.import: reload failed: {e}")
-
-        return jsonify({
-            "ok": True,
-            "dry_run": dry_run,
-            "overwrite": overwrite,
-            "sources": scanned,
-            "results": results,
-            "imported": imported,
-            "skipped": skipped,
-            "errors": errors,
-            "count": len(results),
-        })
+            return jsonify({
+                "ok": True,
+                "dry_run": dry_run,
+                "overwrite": overwrite,
+                "sources": scanned,
+                "results": results,
+                "imported": imported,
+                "skipped": skipped,
+                "errors": errors,
+                "count": len(results),
+            })
+        except Exception as exc:  # noqa: BLE001
+            _log(f"skills.import: unhandled exception: {type(exc).__name__}: {exc}")
+            return jsonify({
+                "ok": False,
+                "error": f"import failed: {type(exc).__name__}: {exc}",
+            }), 500
 
     # ------------------------------------------------------------------
     # Progressive-disclosure prompt-injection helpers on ``state``.

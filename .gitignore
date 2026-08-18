@@ -32,3 +32,4 @@ governance_audit.jsonl
 CoAgent.spec
 *.exe
 traces/
+skills/
