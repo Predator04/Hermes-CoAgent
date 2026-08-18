@@ -428,6 +428,10 @@ def route_workflows_delete(workflow_id):
 
 @workflows_bp.route("/workflows/<workflow_id>/compile", methods=["POST"])
 def route_workflows_compile(workflow_id):
+    try:
+        _safe_id(workflow_id)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
     with _WORKFLOWS_LOCK:
         workflow = _load_workflow(workflow_id)
     if not workflow:
@@ -448,6 +452,10 @@ def route_workflows_compile(workflow_id):
 
 @workflows_bp.route("/workflows/<workflow_id>/run", methods=["POST"])
 def route_workflows_run(workflow_id):
+    try:
+        _safe_id(workflow_id)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
     with _WORKFLOWS_LOCK:
         workflow = _load_workflow(workflow_id)
     if not workflow:
