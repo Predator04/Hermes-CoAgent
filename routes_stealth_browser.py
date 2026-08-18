@@ -560,7 +560,7 @@ def route_stealth_wait():
 @stealth_bp.route("/stealth/close", methods=["POST"])
 def route_stealth_close():
     """Close the stealth browser."""
-    global _BROWSER, _CONTEXT, _PAGE
+    global _BROWSER, _CONTEXT, _PAGE, _PW, _PW_NAME
 
     with _STEALTH_LOCK:
         try:
@@ -576,6 +576,13 @@ def route_stealth_close():
             _BROWSER = None
             _CONTEXT = None
             _PAGE = None
+            if _PW is not None:
+                try:
+                    _PW.stop()
+                except Exception:
+                    pass
+                _PW = None
+                _PW_NAME = None
 
     return jsonify({"status": "closed"})
 
