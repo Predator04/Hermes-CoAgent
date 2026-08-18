@@ -365,8 +365,7 @@ def route_stealth_navigate():
     if not url:
         return _error("Missing 'url'")
 
-    parsed = _is_private_url(url)
-    if parsed is False:
+    if _is_private_url(url):
         return _error(f"URL not allowed: {url}", status=403)
 
     wait_until = payload.get("wait_until", "domcontentloaded")
