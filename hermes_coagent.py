@@ -1033,6 +1033,11 @@ try:
 except ImportError:
     reg_clipboard_history = None
     features["clipboard_history"] = False
+try:
+    from routes_virtual_desktop import register_routes as reg_virtual_desktop
+except ImportError:
+    reg_virtual_desktop = None
+    features["virtual_desktop"] = False
 
 reg_background(app, state, require_auth)
 features["background_control"] = True
@@ -1235,6 +1240,9 @@ if reg_notifications:
 if reg_clipboard_history:
     reg_clipboard_history(app, state, require_auth)
     features["clipboard_history"] = True
+if reg_virtual_desktop:
+    reg_virtual_desktop(app, state, require_auth)
+    features["virtual_desktop"] = True
 reg_diagnostics(app, state, require_auth); features["diagnostics"] = True
 reg_layout(app, state, require_auth); features["layout_profiles"] = True
 if CEF_AVAILABLE:
