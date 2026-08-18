@@ -2248,18 +2248,19 @@ def _defrag__build_volume_args(body):
         raise ValueError('volumes is required')
     args = []
     if isinstance(volumes, list):
-        for v in volumes:
-            args.append(_defrag__sanitize_volume(v))
+        vols = [_defrag__sanitize_volume(v) for v in volumes]
     else:
-        v = _defrag__sanitize_volume(volumes)
-        args.append(v)
-        if v == '/E':
-            exceptions = body.get('except', [])
-            if not exceptions:
-                raise ValueError("/E requires an 'except' list of volumes to exclude")
-            exc_list = exceptions if isinstance(exceptions, list) else [exceptions]
-            for e in exc_list:
-                args.append(_defrag__sanitize_volume(e))
+        vols = [_defrag__sanitize_volume(volumes)]
+    # Handle /E (all volumes except listed) regardless of container shape
+    if '/E' in vols:
+        if len(vols) != 1:
+            raise ValueError('/E must be the only volume specifier')
+        exceptions = body.get('except', [])
+        if not exceptions:
+            raise ValueError("/E requires an 'except' list of volumes to exclude")
+        exc_list = exceptions if isinstance(exceptions, list) else [exceptions]
+        vols.extend(_defrag__sanitize_volume(e) for e in exc_list)
+    args.extend(vols)
     return args
 
 def _defrag__sanitize_volume(value):
@@ -2278,7 +2279,7 @@ def _defrag__run_defrag(args, timeout=120):
     exe = _find_tool('defrag')
     if not exe:
         raise RuntimeError('defrag not found')
-    result = subprocess.run([exe] + args, capture_output=True, text=True, timeout=timeout, errors='replace')
+    result = subprocess.run([exe] + args, capture_output=True, text=True, timeout=timeout, errors='replace', stdin=subprocess.DEVNULL)
     return (result.stdout, result.stderr, result.returncode)
 
 def _h_defrag_43():
