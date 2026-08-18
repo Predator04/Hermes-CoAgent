@@ -3,7 +3,9 @@
 # Source: https://github.com/pbatard/rufus
 # CLI: rufus.exe /create /iso:<path> /drive:<letter> /target:<label> /volume_label:<label> /no_2fa
 
+import ctypes
 import os
+import re
 import shutil
 import subprocess
 
@@ -58,8 +60,10 @@ def _list_usb_drives():
                 continue
             drive_type = 0
             try:
-                import ctypes
-                drive_type = ctypes.windll.kernel32.GetDriveTypeW(d)
+                kernel32 = ctypes.windll.kernel32
+                kernel32.GetDriveTypeW.argtypes = [ctypes.c_wchar_p]
+                kernel32.GetDriveTypeW.restype = ctypes.c_uint
+                drive_type = kernel32.GetDriveTypeW(d)
             except Exception:
                 pass
             # DRIVE_REMOVABLE = 2, DRIVE_FIXED = 3, DRIVE_CDROM = 5, DRIVE_RAMDISK = 6
@@ -179,10 +183,42 @@ def register_routes(app, state, require_auth):
         if not iso_path or not os.path.isfile(iso_path):
             return jsonify({"ok": False, "error": "iso_path must point to a valid ISO file"}), 400
         if not drive_letter:
-            return jsonify({"ok": False, "error": _missing_field("drive (e.g. 'F')")}), 400
+            return jsonify({"ok": False, "error": "Missing required field: drive (e.g. 'F')"}), 400
 
-        # Strip any trailing backslash or colon from drive letter
-        drive_letter = drive_letter.strip(":\\ ")
+        # Strip any trailing backslash or colon from drive letter, then require a
+        # single ASCII letter before passing anything to Rufus.
+        drive_letter = str(drive_letter).strip(":\\ ")
+        if not re.fullmatch(r"[A-Za-z]", drive_letter):
+            return jsonify({"ok": False, "error": "drive must be a single drive letter (e.g. 'F')"}), 400
+
+        # Refuse to format non-removable drives — prevents wiping a fixed/system disk.
+        try:
+            kernel32 = ctypes.windll.kernel32
+            kernel32.GetDriveTypeW.argtypes = [ctypes.c_wchar_p]
+            kernel32.GetDriveTypeW.restype = ctypes.c_uint
+            drive_type = kernel32.GetDriveTypeW(f"{drive_letter}:\\")
+        except Exception:
+            drive_type = 0
+        if drive_type != 2:  # DRIVE_REMOVABLE
+            return jsonify({
+                "ok": False,
+                "error": f"drive {drive_letter}: is not removable — refusing to format",
+            }), 400
+
+        # Harden against CLI argument injection: reject values that could be
+        # reinterpreted as additional Rufus switches or break out of quoting.
+        for field_name, value in (("iso_path", iso_path), ("volume_label", volume_label)):
+            if value is None:
+                continue
+            v = str(value)
+            if "\x00" in v or "\r" in v or "\n" in v or '"' in v:
+                return jsonify({"ok": False, "error": f"{field_name} contains invalid characters"}), 400
+            if v.lstrip().startswith(("/", "-")):
+                return jsonify({"ok": False, "error": f"{field_name} must not start with '/' or '-'"}), 400
+        if volume_label:
+            volume_label = str(volume_label).strip()
+            if len(volume_label) > 32:
+                return jsonify({"ok": False, "error": "volume_label too long (max 32 chars)"}), 400
 
         cmd_parts = [rufus_path, "/create", f"/iso:{iso_path}", f"/drive:{drive_letter}"]
         if volume_label:
@@ -197,7 +233,8 @@ def register_routes(app, state, require_auth):
             _log(f"[rufus] Running: {' '.join(cmd_parts)}")
             result = subprocess.run(
                 cmd_parts,
-                capture_output=True, text=True, timeout=300
+                capture_output=True, text=True, timeout=300,
+                errors="replace",
             )
             return jsonify({
                 "ok": result.returncode == 0,
