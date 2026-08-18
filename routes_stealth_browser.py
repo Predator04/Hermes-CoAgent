@@ -242,7 +242,6 @@ def _ensure_browser(new_page: bool = False, profile: str = None):
                 headless=False,
                 args=STEALTH_LAUNCH_ARGS,
                 viewport={"width": 1920, "height": 1080},
-                no_viewport=True,
             )
             _PAGE = _CONTEXT.pages[0] if _CONTEXT.pages else _CONTEXT.new_page()
         else:
