@@ -226,6 +226,20 @@ TOOLS = {
     "stars": 0,
     "url": "https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/dism-reference"
   },
+  "doggo": {
+    "added": "2026-08-19",
+    "command": "doggo [flags] [TYPE ...] <domain> [@resolver]",
+    "desc": "doggo is a modern, human-friendly command-line DNS client written in Go \u2014 a dig replacement with colorful tabular output and first-class JSON. Resolve A/AAAA/MX/TXT/CNAME/NS/SOA records, query a specific resolver with @server (UDP, TCP, or DoH/DoT/DoQ via https:// URLs), reverse lookups with --reverse, and machine-readable --json for scripting.",
+    "exe": "doggo",
+    "install": {
+      "scoop": "scoop install doggo",
+      "winget": "winget install doggo",
+      "go": "go install github.com/mr-karan/doggo/cmd/doggo@latest"
+    },
+    "repo": "mr-karan/doggo",
+    "stars": 4429,
+    "url": "https://github.com/mr-karan/doggo"
+  },
   "driverquery": {
     "added": "2026-07-21",
     "command": "driverquery [/FO TABLE|LIST|CSV] [/NH] [/SI] [/V] [/S system]",
@@ -897,6 +911,25 @@ TOOLS = {
     "repo": "ventoy/Ventoy",
     "stars": 78216,
     "url": "https://github.com/ventoy/Ventoy"
+  },
+  "volatility3": {
+    "added": "2026-08-19",
+    "candidates": [
+      "C:\\Python*\\Scripts\\vol.exe",
+      "C:\\Program Files\\Python*\\Scripts\\vol.exe",
+      "C:\\Users\\*\\AppData\\Local\\Programs\\Python\\Python*\\Scripts\\vol.exe",
+      "C:\\Users\\*\\AppData\\Roaming\\Python\\Python*\\Scripts\\vol.exe"
+    ],
+    "command": "vol.py -f <memory.dump> <plugin> [plugin-args]",
+    "desc": "Volatility 3 is the Volatility Foundation's open-source memory forensics framework. Analyze Windows/Linux/macOS memory dumps from the command line: enumerate processes, network connections, loaded modules, registry hives, command lines, and scan for injected code. Plugins are namespaced (windows.pslist, windows.netscan, windows.malfind, linux.pslist).",
+    "exe": "vol.py",
+    "install": {
+      "pip": "pip install volatility3",
+      "git": "git clone https://github.com/volatilityfoundation/volatility3"
+    },
+    "repo": "volatilityfoundation/volatility3",
+    "stars": 4336,
+    "url": "https://github.com/volatilityfoundation/volatility3"
   },
   "vssadmin": {
     "added": "2026-07-18",
@@ -10854,6 +10887,134 @@ def _h_hexyl_281():
         return (jsonify({'error': str(e)}), 500)
 
 
+def _h_doggo_282():
+    """Resolve DNS records with doggo.
+
+        Body (JSON):
+            name (str, required): Domain/hostname to resolve, e.g. 'example.com'.
+            types (str|list, optional): Record type(s): A, AAAA, MX, TXT, CNAME, NS, SOA, etc.
+                                        Comma-separated string or list. Default A.
+            resolver (str, optional): DNS server, e.g. '9.9.9.9' or 'https://cloudflare-dns.com/dns-query'.
+            json (bool, optional): Return machine-readable JSON. Default false.
+            short (bool, optional): Short output (answers only). Default false.
+            reverse (bool, optional): Reverse DNS lookup (name is treated as an IP). Default false.
+        """
+    body = _json_body() or {}
+    name = str(body.get('name') or '').strip()
+    if not name:
+        return _missing_field(body, 'name')
+    exe = _find_tool('doggo')
+    if not exe:
+        return (jsonify({'error': 'doggo not installed', 'hint': 'winget install doggo  (or scoop install doggo)'}), 503)
+    cmd = [exe]
+    if body.get('json'):
+        cmd.append('--json')
+    if body.get('short'):
+        cmd.append('--short')
+    if body.get('reverse'):
+        cmd.append('--reverse')
+    types = body.get('types')
+    if isinstance(types, str):
+        types = [t.strip().upper() for t in types.split(',') if t.strip()]
+    elif isinstance(types, list):
+        types = [str(t).strip().upper() for t in types if str(t).strip()]
+    else:
+        types = []
+    cmd.extend(types)
+    cmd.append(name)
+    resolver = str(body.get('resolver') or '').strip()
+    if resolver:
+        cmd.append('@' + resolver.lstrip('@'))
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, errors='replace', timeout=30)
+        if r.returncode != 0:
+            _log(f'[doggo query] rc={r.returncode}: {(r.stderr or "")[:300]}')
+            return (jsonify({'error': (r.stderr or '').strip() or 'doggo failed', 'name': name}), 502)
+        return jsonify({'ok': True, 'name': name, 'types': types or ['A'], 'stdout': r.stdout})
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': 'doggo timed out after 30s', 'name': name}), 504)
+    except Exception as e:
+        _log(f'[doggo query] {str(e)}')
+        return (jsonify({'error': str(e)}), 500)
+
+
+def _h_volatility3_283():
+    """List available Volatility 3 plugins.
+
+        Query params:
+            filter (str, optional): Substring filter on plugin name (e.g. 'windows' or 'pslist').
+        """
+    exe = _find_tool('volatility3')
+    if not exe:
+        return (jsonify({'error': 'volatility3 not installed', 'hint': 'pip install volatility3'}), 503)
+    try:
+        r = subprocess.run([exe, '-h'], capture_output=True, text=True, errors='replace', timeout=30)
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': 'volatility3 help timed out'}), 504)
+    except Exception as e:
+        return (jsonify({'error': str(e)}), 500)
+    out = r.stdout or r.stderr or ''
+    plugins = []
+    for line in out.splitlines():
+        m = re.match(r'^\s+([a-z][a-z0-9_]*\.[a-z][a-z0-9_.]*)\.[A-Z][A-Za-z0-9_]*\s', line)
+        if m:
+            plugins.append(m.group(1))
+    plugins = sorted(set(plugins))
+    filt = (request.args.get('filter') or '').strip().lower()
+    if filt:
+        plugins = [p for p in plugins if filt in p.lower()]
+    return jsonify({'ok': True, 'count': len(plugins), 'plugins': plugins})
+
+
+def _h_volatility3_284():
+    """Run a Volatility 3 plugin against a memory image.
+
+        Body (JSON):
+            image (str, required): Path to the memory dump (.raw/.mem/.vmem/.dmp).
+            plugin (str, required): Namespaced plugin, e.g. 'windows.info', 'windows.pslist',
+                                    'windows.netscan', 'windows.malfind', 'linux.pslist'.
+            args (list[str], optional): Extra plugin arguments (e.g. ['--pid', '1234']).
+            timeout (int, optional): Max seconds (default 300, max 1800).
+        """
+    body = _json_body() or {}
+    image = str(body.get('image') or '').strip()
+    plugin = str(body.get('plugin') or '').strip()
+    if not image:
+        return _missing_field(body, 'image')
+    if not plugin:
+        return _missing_field(body, 'plugin')
+    exe = _find_tool('volatility3')
+    if not exe:
+        return (jsonify({'error': 'volatility3 not installed', 'hint': 'pip install volatility3'}), 503)
+    if not os.path.isfile(image):
+        return (jsonify({'error': f'Memory image not found: {image}'}), 404)
+    if not re.match(r'^[a-z][a-z0-9_.]*$', plugin):
+        return (jsonify({'error': f'Invalid plugin name: {plugin}'}), 400)
+    args = body.get('args') or []
+    if isinstance(args, str):
+        args = shlex.split(args)
+    if not isinstance(args, list) or not all(isinstance(a, str) for a in args):
+        return (jsonify({'error': "'args' must be a list of strings"}), 400)
+    timeout = body.get('timeout', 300)
+    try:
+        timeout = max(10, min(int(timeout), 1800))
+    except (ValueError, TypeError):
+        timeout = 300
+    cmd = [exe, '-f', image, plugin] + args
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, errors='replace', timeout=timeout)
+        ok = r.returncode == 0
+        if not ok:
+            _log(f'[volatility3 analyze] rc={r.returncode}: {(r.stderr or "")[:300]}')
+        return jsonify({'ok': ok, 'returncode': r.returncode, 'image': image, 'plugin': plugin,
+                        'stdout': (r.stdout or '')[-4000:], 'stderr': (r.stderr or '')[-4000:]})
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': f'volatility3 timed out after {timeout}s', 'plugin': plugin}), 504)
+    except Exception as e:
+        _log(f'[volatility3 analyze] {str(e)}')
+        return (jsonify({'error': str(e)}), 500)
+
+
 def register_routes(app, state, require_auth):
     global _STATE
     _STATE = state
@@ -11142,6 +11303,9 @@ def register_routes(app, state, require_auth):
         ('/auto/ffmpeg/gif', ['POST'], _h_ffmpeg_279),
         ('/auto/hexyl/view', ['POST'], _h_hexyl_280),
         ('/auto/hexyl/decode', ['POST'], _h_hexyl_281),
+        ('/auto/doggo/query', ['POST'], _h_doggo_282),
+        ('/auto/volatility3/plugins', ['GET'], _h_volatility3_283),
+        ('/auto/volatility3/analyze', ['POST'], _h_volatility3_284),
     ]
     for _path, _methods, _fn in _ACTIONS:
         app.add_url_rule(_path, endpoint=_fn.__name__, view_func=require_auth(_fn), methods=_methods)
