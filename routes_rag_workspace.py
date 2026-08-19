@@ -114,7 +114,7 @@ def _index_directory(path):
             if len(text.strip()) < 20:
                 continue
             rel_path = str(filepath.relative_to(path)) if path != filepath else filepath.name
-            chunks = _chunk_text(text, rel_path)
+            chunks = _chunk_text(text, str(filepath))
             doc = {
                 "id": hashlib.md5(str(filepath).encode()).hexdigest()[:12],
                 "path": str(filepath),
@@ -316,6 +316,7 @@ def _rag_directories():
             _DOCS_DIRS.append(path)
             dirs = list(_DOCS_DIRS)
         return jsonify({"ok": True, "directories": dirs})
+    return jsonify({"ok": False, "error": "missing 'path'"}), 400
 
 
 @rag_bp.route("/rag/clear", methods=["DELETE"])
