@@ -2,6 +2,7 @@
 import ctypes
 import ctypes.wintypes
 import json
+import os
 import struct
 import threading
 import time
@@ -18,17 +19,24 @@ _LAYOUTS_LOCK = threading.Lock()
 # ---------------------------------------------------------------------------
 
 def _load_layouts():
+    if not LAYOUTS_FILE.exists():
+        return {}
     try:
-        if LAYOUTS_FILE.exists():
-            return json.loads(LAYOUTS_FILE.read_text(encoding="utf-8"))
+        data = json.loads(LAYOUTS_FILE.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
     except Exception:
-        pass
-    return {}
+        # A real read/decode error must not be followed by a save that would
+        # wipe every prior layout. Surface it instead of silently returning {}.
+        raise
+    return data if isinstance(data, dict) else {}
 
 
 def _save_layouts(layouts):
-    LAYOUTS_FILE.write_text(json.dumps(layouts, indent=2, ensure_ascii=False),
-                            encoding="utf-8")
+    tmp = LAYOUTS_FILE.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(layouts, indent=2, ensure_ascii=False),
+                   encoding="utf-8")
+    os.replace(tmp, LAYOUTS_FILE)
 
 
 # ---------------------------------------------------------------------------
@@ -61,7 +69,7 @@ def _enum_windows():
         placement_buf = ctypes.create_string_buffer(44)
         struct.pack_into("<I", placement_buf, 0, 44)  # cbSize
         ctypes.windll.user32.GetWindowPlacement(hwnd, placement_buf)
-        show_cmd = struct.unpack_from("<I", placement_buf, 4)[0]
+        show_cmd = struct.unpack_from("<I", placement_buf, 8)[0]
 
         windows.append({
             "hwnd": hwnd,
