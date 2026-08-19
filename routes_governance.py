@@ -79,6 +79,7 @@ _BUDGET_ACTIONS = (
 _POLICY_PATH = COAGENT_DIR / "governance.json"
 _AUDIT_PATH = COAGENT_DIR / "governance_audit.jsonl"
 _AUDIT_MAX_MEM = 1000
+_REDACT_MAX_CHARS = 1_000_000
 
 # Pre-compiled redaction patterns. Order matters: broad multi-line matches
 # (private keys, JWTs) run before narrower ones so we don't destroy the block
@@ -163,7 +164,12 @@ class _Governor:
                     raw = _POLICY_PATH.read_text(encoding="utf-8")
                     loaded = json.loads(raw) if raw.strip() else {}
                     if isinstance(loaded, dict):
-                        self._policy = _deep_merge(DEFAULT_POLICY, loaded)
+                        merged = _deep_merge(DEFAULT_POLICY, loaded)
+                        if self._validate(merged):
+                            _log("[governance] loaded policy failed validation, using defaults")
+                            self._policy = copy.deepcopy(DEFAULT_POLICY)
+                        else:
+                            self._policy = merged
                     else:
                         self._policy = copy.deepcopy(DEFAULT_POLICY)
                 else:
@@ -489,6 +495,9 @@ class _Governor:
                 redact_cfg = self._policy.get("redact") or {}
                 enabled = bool(redact_cfg.get("enabled", True))
             if not enabled:
+                return text
+            if len(text) > _REDACT_MAX_CHARS:
+                _log(f"[governance] redact input too large ({len(text)} chars), skipping")
                 return text
             out = text
             for pattern, repl in _REDACT_PATTERNS:
