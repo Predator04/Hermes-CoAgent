@@ -306,7 +306,10 @@ def _spawn_restart(reason):
 
     def worker():
         time.sleep(1.0)
-        args = [_python_executable(), str(COAGENT_DIR / "hermes_coagent.py"), "--secure"]
+        args = [_python_executable(), str(COAGENT_DIR / "hermes_coagent.py")]
+        for _arg in sys.argv[1:]:
+            if _arg in ("--secure", "--allow-external") or _arg.startswith("--token="):
+                args.append(_arg)
         kwargs = {
             "cwd": str(COAGENT_DIR),
             "stdin": subprocess.DEVNULL,
@@ -417,6 +420,8 @@ def _start_healer_thread():
 @healer_bp.route("/healer/configure", methods=["POST"])
 def route_healer_configure():
     data = _json_body()
+    if not isinstance(data, dict):
+        return jsonify({"error": "expected JSON object"}), 400
     with _CONFIG_LOCK:
         _HEALER_CONFIG.update(_sanitize_config({**_HEALER_CONFIG, **data}))
         _save_config()
@@ -455,6 +460,8 @@ def route_healer_check():
 @healer_bp.route("/healer/restart", methods=["POST"])
 def route_healer_restart():
     data = _json_body()
+    if not isinstance(data, dict):
+        data = {}
     reason = str(data.get("reason") or "manual_healer_restart")
     spawned = _spawn_restart(reason)
     return jsonify({"status": "restarting" if spawned else "restart_already_pending", "restarting": spawned})
