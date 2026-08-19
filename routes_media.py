@@ -303,22 +303,34 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_windows():
         try:
-            import pygetwindow as gw
-            wins = [{"title": w.title, "visible": w.visible} for w in gw.getAllWindows() if w.title]
-            return jsonify({"windows": wins, "count": len(wins)})
-        except ImportError:
+            import ctypes.wintypes as _wt
             wins = []
-            def enum_cb(hwnd, _):
-                if ctypes.windll.user32.IsWindowVisible(hwnd):
-                    length = ctypes.windll.user32.GetWindowTextLengthW(hwnd)
-                    if length:
-                        buf = ctypes.create_unicode_buffer(length + 1)
-                        ctypes.windll.user32.GetWindowTextW(hwnd, buf, length + 1)
-                        if buf.value:
-                            wins.append({"title": buf.value, "hwnd": hwnd})
+            def _enum_cb(hwnd, _lparam):
+                length = ctypes.windll.user32.GetWindowTextLengthW(hwnd)
+                if length > 0:
+                    buff = ctypes.create_unicode_buffer(length + 1)
+                    ctypes.windll.user32.GetWindowTextW(hwnd, buff, length + 1)
+                    title = buff.value
+                    if title.strip():
+                        pid = ctypes.c_ulong()
+                        ctypes.windll.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+                        rect = _wt.RECT()
+                        ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(rect))
+                        visible = ctypes.windll.user32.IsWindowVisible(hwnd)
+                        wins.append({
+                            "hwnd": hwnd,
+                            "pid": pid.value,
+                            "title": title[:200],
+                            "visible": bool(visible),
+                            "rect": {"left": rect.left, "top": rect.top, "right": rect.right, "bottom": rect.bottom},
+                        })
                 return True
-            ctypes.windll.user32.EnumWindows(ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)(enum_cb), 0)
+            WNDENUMPROC = ctypes.WINFUNCTYPE(_wt.BOOL, _wt.HWND, _wt.LPARAM)
+            cb = WNDENUMPROC(_enum_cb)
+            ctypes.windll.user32.EnumWindows(cb, 0)
             return jsonify({"windows": wins, "count": len(wins)})
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
 
     @app.route("/windows/activate", methods=["POST"])
     @require_auth
