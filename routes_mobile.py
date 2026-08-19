@@ -95,7 +95,19 @@ input{min-height:44px;border:1px solid var(--line);border-radius:8px;background:
   function toast(text){const el=$("toast"); el.textContent=text; el.classList.add("show"); clearTimeout(state.toastTimer); state.toastTimer=setTimeout(()=>el.classList.remove("show"),1500)}
   function needAuth(){if(!token){$("auth").classList.add("show"); return true} return false}
   async function api(path, body){if(needAuth()) throw new Error("token required"); const r=await fetch(path,{method:"POST",headers:headers(true),body:JSON.stringify(body||{})}); const data=await r.json().catch(()=>({})); if(!r.ok) throw new Error(data.error||("HTTP "+r.status)); return data}
-  function refresh(){screen.src="/mobile/view?ts="+Date.now(); status("refreshing","")}
+  async function refresh(){
+    if(!token){status("token required","bad"); return}
+    status("refreshing","");
+    try{
+      const r=await fetch("/mobile/view?ts="+Date.now(),{headers:headers(false)});
+      if(!r.ok) throw new Error("HTTP "+r.status);
+      const blob=await r.blob();
+      const url=URL.createObjectURL(blob);
+      const old=screen.src;
+      screen.src=url;
+      if(old&&old.startsWith("blob:")) URL.revokeObjectURL(old);
+    }catch(e){status("view error","bad")}
+  }
   screen.onload=()=>status("connected","ok");
   screen.onerror=()=>status("view error","bad");
   function displayedRect(){
@@ -185,8 +197,11 @@ def _coagent_post(path, data):
         try:
             payload = json.loads(raw or "{}")
         except json.JSONDecodeError:
-            payload = {"error": raw or str(exc)}
-        payload.setdefault("error", payload.get("error") or f"HTTP {exc.code}")
+            payload = None
+        if not isinstance(payload, dict):
+            payload = {"error": raw or f"HTTP {exc.code}"}
+        if not payload.get("error"):
+            payload["error"] = f"HTTP {exc.code}"
         payload["status_code"] = exc.code
         return payload
     except Exception as exc:
@@ -208,9 +223,12 @@ def _screen_bounds():
 
 
 def _percent_to_desktop(x, y):
+    try:
+        px = max(0.0, min(100.0, float(x)))
+        py = max(0.0, min(100.0, float(y)))
+    except (TypeError, ValueError):
+        return None
     bounds = _screen_bounds()
-    px = max(0.0, min(100.0, float(x)))
-    py = max(0.0, min(100.0, float(y)))
     return {
         "x": int(bounds["left"] + bounds["width"] * px / 100.0),
         "y": int(bounds["top"] + bounds["height"] * py / 100.0),
@@ -256,6 +274,8 @@ def route_mobile_view():
 def route_mobile_tap():
     data = _json_body()
     point = _percent_to_desktop(data.get("x", 0), data.get("y", 0))
+    if point is None:
+        return jsonify({"error": "x and y must be numeric"}), 400
     result = _coagent_post("/mouse/click", {"x": point["x"], "y": point["y"], "retry": False})
     return _result_or_error(result, {"status": "clicked", "desktop_x": point["x"], "desktop_y": point["y"]})
 
@@ -265,6 +285,8 @@ def route_mobile_swipe():
     data = _json_body()
     start = _percent_to_desktop(data.get("x1", 0), data.get("y1", 0))
     end = _percent_to_desktop(data.get("x2", 0), data.get("y2", 0))
+    if start is None or end is None:
+        return jsonify({"error": "x1/y1/x2/y2 must be numeric"}), 400
     result = _coagent_post(
         "/mouse/drag",
         {"x1": start["x"], "y1": start["y"], "x2": end["x"], "y2": end["y"], "background": False},
@@ -293,6 +315,8 @@ def route_mobile_key():
     if not key:
         return jsonify({"error": "key is required"}), 400
     keys = [part for part in key.replace("+", " ").split() if part]
+    if not keys:
+        return jsonify({"error": "no valid keys in request"}), 400
     result = _coagent_post("/key/press", {"keys": keys})
     return _result_or_error(result, {"status": "pressed", "key": key})
 
