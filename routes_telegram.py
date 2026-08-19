@@ -55,6 +55,15 @@ def _mask_token(token):
     return token[:4] + "..." + token[-4:]
 
 
+def _coerce_timeout(value, default=600, maximum=1800):
+    """Coerce a client-supplied timeout to a sane, bounded int (seconds)."""
+    try:
+        t = int(value)
+    except (TypeError, ValueError):
+        t = default
+    return max(1, min(t, maximum))
+
+
 def _send_telegram(bot_token, chat_id, text, parse_mode="Markdown"):
     """Send a message via Telegram Bot API. Returns (ok, response_or_error)."""
     if not text or not text.strip():
@@ -69,8 +78,9 @@ def _send_telegram(bot_token, chat_id, text, parse_mode="Markdown"):
     try:
         req = urllib.request.Request(url, data=payload,
             headers={"Content-Type": "application/json"})
-        resp = urllib.request.urlopen(req, timeout=15)
-        result = json.loads(resp.read())
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            raw = resp.read()
+        result = json.loads(raw.decode("utf-8", errors="replace") or "{}")
         if result.get("ok"):
             return True, result
         return False, result.get("description", "unknown error")
@@ -118,28 +128,26 @@ def route_telegram_configure():
     if not bot_token or not chat_id:
         return jsonify({"error": "bot_token and chat_id are required"}), 400
 
-    # Verify by sending a test message
+    # Verify by sending a test message BEFORE persisting anything, so a bad
+    # token/chat_id cannot overwrite an already-working config.
     test_ok, test_msg = _send_telegram(bot_token, chat_id,
         "✅ *CoAgent Telegram Relay configured!*\n\n"
         "Codex audit findings will be sent here.", parse_mode="Markdown")
+
+    if not test_ok:
+        return jsonify({"error": f"Could not verify Telegram config: {test_msg}"}), 400
 
     config = {
         "bot_token": bot_token,
         "chat_id": chat_id,
         "target_chat_id": chat_id,
         "last_send": None,
-        "last_error": None if test_ok else str(test_msg),
+        "last_error": None,
         "configured_at": time.time(),
     }
     _save_config(config)
 
-    if test_ok:
-        return jsonify({"status": "configured", "test_message": "sent", "chat_id": chat_id})
-    return jsonify({
-        "status": "configured_but_test_failed",
-        "error": str(test_msg),
-        "chat_id": chat_id,
-    }), 200
+    return jsonify({"status": "configured", "test_message": "sent", "chat_id": chat_id})
 
 
 @telegram_bp.route("/telegram/register-chat", methods=["POST"])
@@ -207,7 +215,7 @@ def route_agent_exec_and_send():
     if not prompt:
         return jsonify({"error": "prompt is required"}), 400
 
-    timeout = data.get("timeout", 600)
+    timeout = _coerce_timeout(data.get("timeout", 600))
 
     # Run agent (sync blocking call)
     try:
@@ -383,6 +391,8 @@ def route_agent_exec_to_telegram():
     if not prompt:
         return jsonify({"error": "prompt is required"}), 400
 
+    timeout = _coerce_timeout(data.get("timeout", 600))
+
     try:
         from routes_agent import _execute_agent
     except ImportError as exc:
@@ -393,7 +403,7 @@ def route_agent_exec_to_telegram():
             prompt=prompt,
             agent_name=data.get("agent"),
             model=data.get("model"),
-            timeout=data.get("timeout", 600),
+            timeout=timeout,
             workdir=data.get("workdir"),
             purpose="telegram-relay",
             read_only=False,
