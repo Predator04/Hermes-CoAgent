@@ -1,16 +1,22 @@
 """UIA accessibility tree, SOM overlay, and element-find routes."""
 import sys
+import threading
 from pathlib import Path
 from flask import jsonify, request
 from shared import _json_body, _log, _missing_field, COAGENT_DIR
 
 _uia_engine = None
+_uia_engine_lock = threading.Lock()
+
 def _get_uia_engine():
     global _uia_engine
     if _uia_engine is None:
-        sys.path.insert(0, str(COAGENT_DIR))
-        import uia_engine as ue
-        _uia_engine = ue
+        with _uia_engine_lock:
+            if _uia_engine is None:
+                if str(COAGENT_DIR) not in sys.path:
+                    sys.path.insert(0, str(COAGENT_DIR))
+                import uia_engine as ue
+                _uia_engine = ue
     return _uia_engine
 
 HAS_PIL = False
@@ -42,6 +48,20 @@ def _as_bool(value, default=True):
         if lowered in {"0", "false", "no", "off"}:
             return False
     return bool(value)
+
+
+def _safe_int(value):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _safe_float(value):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _levenshtein(a, b, max_distance=3):
@@ -698,7 +718,9 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_uia_element_click_index():
         d = _json_body()
-        index = int(d.get("index", 0))
+        index = _safe_int(d.get("index", 0))
+        if index is None:
+            return jsonify({"error": "index must be an integer"}), 400
         result = ue.find_on_screen(str(index))
         return jsonify({"index": index, "found": bool(result)})
 
@@ -753,8 +775,10 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_som_point():
         d = _json_body()
-        px = int(d.get("x", 0))
-        py = int(d.get("y", 0))
+        px = _safe_int(d.get("x", 0))
+        py = _safe_int(d.get("y", 0))
+        if px is None or py is None:
+            return jsonify({"error": "x and y must be integers"}), 400
         snap = ue.uia_snapshot()
         matches = []
         if snap.get("success"):
@@ -805,7 +829,9 @@ def register_routes(app, state, require_auth):
         icon_path = _safe_icon_path(d.get("icon_path", ""))
         if icon_path is None:
             return jsonify({"found": False, "error": "Invalid icon_path", "strategy": "template_match"}), 400
-        threshold = float(d.get("threshold", 0.8))
+        threshold = _safe_float(d.get("threshold", 0.8))
+        if threshold is None:
+            return jsonify({"found": False, "error": "threshold must be a number", "strategy": "template_match"}), 400
         result = ue.find_icon_by_template(icon_path, threshold)
         return jsonify(result)
 
@@ -816,7 +842,9 @@ def register_routes(app, state, require_auth):
         icon_path = _safe_icon_path(d.get("icon_path", ""))
         if icon_path is None:
             return jsonify({"found": False, "error": "Invalid icon_path", "strategy": "template_match"}), 400
-        threshold = float(d.get("threshold", 0.8))
+        threshold = _safe_float(d.get("threshold", 0.8))
+        if threshold is None:
+            return jsonify({"found": False, "error": "threshold must be a number", "strategy": "template_match"}), 400
         button = d.get("button", "left")
         result = ue.click_icon_by_template(icon_path, threshold, button)
         return jsonify(result)
