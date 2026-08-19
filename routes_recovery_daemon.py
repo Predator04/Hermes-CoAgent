@@ -3,9 +3,10 @@
 Background thread: periodically OCR the screen looking for unexpected modal dialogs
 (error popups, trial expired, update dialogs). Dismisses them automatically.
 """
+import copy
 import logging
 import threading
-from datetime import datetime
+from datetime import datetime, timezone
 
 from flask import Blueprint, jsonify, request
 from shared import _self_port, _wrap_registered_blueprint_routes
@@ -85,7 +86,7 @@ def _recovery_loop():
             if popups:
                 with _RECOVERY_LOCK:
                     _RECOVERY_STATE["triggers"] += 1
-                    _RECOVERY_STATE["last_seen_at"] = datetime.now().isoformat()
+                    _RECOVERY_STATE["last_seen_at"] = datetime.now(timezone.utc).isoformat()
                     _RECOVERY_STATE["last_popup"] = popups[0].get("keyword", "unknown")
                 for popup in popups:
                     for match in popup.get("matches", []):
@@ -93,7 +94,7 @@ def _recovery_loop():
                             with _RECOVERY_LOCK:
                                 _RECOVERY_STATE["dismissals"] += 1
                                 event = {
-                                    "time": datetime.now().isoformat(),
+                                    "time": datetime.now(timezone.utc).isoformat(),
                                     "keyword": popup["keyword"],
                                     "dismissed": True,
                                 }
@@ -115,12 +116,21 @@ def _recovery_start():
     with _RECOVERY_LOCK:
         if _RECOVERY_STATE["running"]:
             return jsonify({"ok": True, "already_running": True})
-        # Ensure any previous thread has fully exited before starting a new one,
-        # so a rapid stop→start can't leave two OCR/click loops running at once.
-        prev = _RECOVERY_THREAD
+    # Ensure any previous thread has fully exited before starting a new one,
+    # so a rapid stop→start can't leave two OCR/click loops running at once.
+    # Join OUTSIDE the lock so the old loop can acquire it and exit cleanly.
+    prev = _RECOVERY_THREAD
+    if prev is not None and prev.is_alive():
+        _RECOVERY_STOP.set()
+        prev.join(timeout=_RECOVERY_STATE.get("check_interval_secs", 5) + 1)
+    with _RECOVERY_LOCK:
+        if _RECOVERY_STATE["running"]:
+            return jsonify({"ok": True, "already_running": True})
         if prev is not None and prev.is_alive():
-            _RECOVERY_STOP.set()
-            prev.join(timeout=_RECOVERY_STATE.get("check_interval_secs", 5) + 1)
+            # Previous loop is still winding down; refuse to start a second
+            # concurrent OCR/click loop.
+            return jsonify({"ok": False, "started": False,
+                            "error": "previous daemon still shutting down, retry shortly"}), 409
         _RECOVERY_STOP.clear()
         _RECOVERY_THREAD = threading.Thread(target=_recovery_loop, daemon=True)
         _RECOVERY_THREAD.start()
@@ -139,7 +149,7 @@ def _recovery_stop():
 @recovery_bp.route("/recovery/status", methods=["GET"])
 def _recovery_status():
     with _RECOVERY_LOCK:
-        return jsonify({"ok": True, **_RECOVERY_STATE})
+        return jsonify({"ok": True, **copy.deepcopy(_RECOVERY_STATE)})
 
 
 @recovery_bp.route("/recovery/dismissals", methods=["GET"])
@@ -159,18 +169,22 @@ def _recovery_configure():
             return jsonify({"error": "check_interval_secs must be an integer"}), 400
         if new_interval <= 0:
             return jsonify({"error": "check_interval_secs must be positive"}), 400
+        if new_interval > 3600:
+            return jsonify({"error": "check_interval_secs must be <= 3600"}), 400
     for key in ("popup_keywords", "dismiss_keywords"):
         if key in body:
             val = body[key]
             if not isinstance(val, list) or not all(isinstance(k, str) and k.strip() for k in val):
                 return jsonify({"error": f"{key} must be a list of non-empty strings"}), 400
+            if len(val) > 64:
+                return jsonify({"error": f"{key} must have at most 64 entries"}), 400
     with _RECOVERY_LOCK:
         if new_interval is not None:
             _RECOVERY_STATE["check_interval_secs"] = new_interval
         for key in ("popup_keywords", "dismiss_keywords"):
             if key in body:
                 _RECOVERY_STATE[key] = body[key]
-    return jsonify({"ok": True, **_RECOVERY_STATE})
+    return jsonify({"ok": True, **copy.deepcopy(_RECOVERY_STATE)})
 
 
 def register_routes(app, state, require_auth):
