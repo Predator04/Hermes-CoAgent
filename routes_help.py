@@ -32,11 +32,10 @@ def route_help():
                 "key_type": {"method": "POST", "path": "/key/type", "body": {"text": "hello world"}, "desc": "Type text"},
                 "key_press": {"method": "POST", "path": "/key/press", "body": {"keys": ["ctrl", "c"]}, "desc": "Press key combination"},
                 "screen": {"method": "GET", "path": "/screen", "desc": "Take screenshot (JPEG)"},
-                "fresh_screenshot": {"method": "GET", "path": "/screenshot/fresh", "desc": "Fresh full screenshot"},
+                "fresh_screenshot": {"method": "GET", "path": "/screen/fresh", "desc": "Fresh full screenshot"},
             },
             "UIA Automation": {
                 "uia_tree": {"method": "GET", "path": "/uia/tree", "desc": "Get UIA accessibility tree (flat list)"},
-                "uia_tree_xml": {"method": "GET", "path": "/uia/tree/xml", "desc": "Get UIA tree as XML"},
                 "uia_window_tree": {"method": "GET", "path": "/uia/tree/window/<name>", "desc": "UIA tree for a specific window"},
                 "uia_click": {"method": "POST", "path": "/uia/click/<index>", "desc": "Click UIA element by index"},
                 "uia_click_by_name": {"method": "POST", "path": "/uia/click_by_name", "body": {"name": "OK", "control_type": "Button"}, "desc": "Click UIA element by name/automation_id"},
@@ -44,13 +43,13 @@ def route_help():
                 "uia_find": {"method": "POST", "path": "/uia/find", "body": {"name": "Notepad", "control_type": "Window"}, "desc": "Find UIA element"},
             },
             "SOM (Scene Object Model)": {
-                "som": {"method": "GET", "path": "/som", "desc": "Get SOM (interactive screenshot with element boxes)"},
-                "som_bridge": {"method": "POST", "path": "/som/bridge", "desc": "Bridge UIA element to clickable SOM"},
+                "som": {"method": "GET", "path": "/som/screenshot", "desc": "Get SOM (interactive screenshot with element boxes)"},
+                "som_bridge": {"method": "GET", "path": "/som/bridge", "desc": "Bridge UIA element to clickable SOM"},
                 "som_per_window": {"method": "GET", "path": "/som/per-window", "desc": "Per-window SOM snapshots"},
-                "som_point": {"method": "GET", "path": "/som/point/<x>/<y>", "desc": "Get UIA element at screen coordinates"},
+                "som_point": {"method": "POST", "path": "/som/point", "body": {"x": 100, "y": 200}, "desc": "Get UIA element at screen coordinates"},
             },
             "OCR": {
-                "ocr_screen": {"method": "GET", "path": "/ocr/screen", "desc": "OCR entire screen (text + boxes)"},
+                "ocr_screen": {"method": "POST", "path": "/uia/ocr", "desc": "OCR entire screen (text)"},
                 "ocr_find": {"method": "POST", "path": "/ocr/find", "body": {"text": "Search..."}, "desc": "Find text on screen"},
                 "ocr_click": {"method": "POST", "path": "/ocr/click", "body": {"text": "OK", "occurrence": 0}, "desc": "Find text and click it"},
             },
@@ -89,7 +88,8 @@ def route_help():
             },
             "Self-Healing": {
                 "healer_status": {"method": "GET", "path": "/healer/status", "desc": "Get healer status (memory, health, route probing)"},
-                "healer_health": {"method": "GET", "path": "/healer/health", "desc": "Quick health check"},
+                "healer_config": {"method": "GET", "path": "/healer/config", "desc": "Current healer configuration"},
+                "healer_check": {"method": "POST", "path": "/healer/check", "desc": "Run a healer check on demand"},
             },
             "Mobile Remote": {
                 "mobile_dashboard": {"method": "GET", "path": "/mobile", "desc": "Mobile-friendly remote desktop dashboard (HTML)"},
@@ -99,7 +99,8 @@ def route_help():
                 "dashboard": {"method": "GET", "path": "/dashboard", "desc": "Full web dashboard with live controls"},
             },
             "WebSocket & Streaming": {
-                "stream": {"method": "GET", "path": "/stream", "desc": "SSE event stream (newline-delimited JSON)"},
+                "stream": {"method": "GET", "path": "/screen/stream", "desc": "WebSocket/HTTP screen stream (JPEG frames)"},
+                "stream_mjpeg": {"method": "GET", "path": "/screen/stream/mjpeg", "desc": "MJPEG multipart screen stream"},
             },
             "System": {
                 "ping": {"method": "GET", "path": "/ping", "desc": "Health ping"},

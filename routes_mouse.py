@@ -636,10 +636,16 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_cursor():
         try:
-            x, y = pyautogui.position()
-            return jsonify({"x": x, "y": y})
+            from ctypes import wintypes
+            pt = wintypes.POINT()
+            ctypes.windll.user32.GetCursorPos(ctypes.byref(pt))
+            return jsonify({"x": int(pt.x), "y": int(pt.y)})
         except Exception:
-            return jsonify({"x": 0, "y": 0})
+            try:
+                x, y = pyautogui.position()
+                return jsonify({"x": int(x), "y": int(y)})
+            except Exception:
+                return jsonify({"x": 0, "y": 0})
 
     @app.route("/copilot/mode", methods=["GET"])
     @require_auth

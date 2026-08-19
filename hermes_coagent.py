@@ -1658,18 +1658,23 @@ def start_server():
     _console(f"  Agent Gateway: default={gateway.get('default_agent') or 'none'}")
     _console()
 
-    # Pre-warm UIA engine
-    _console("  [OK] Warming up UIA engine...")
-    try:
-        from routes_uia import _get_uia_engine
-        ue = _get_uia_engine()
-        if ue.UIA_READY:
-            _console("  [OK] UIA engine ready")
-    except Exception: pass
+    # Defer warm-ups to background so Waitress can start serving immediately.
+    def _background_warmups():
+        try:
+            from routes_uia import _get_uia_engine
+            ue = _get_uia_engine()
+            if ue.UIA_READY:
+                _console("  [OK] UIA engine ready (background)")
+        except Exception:
+            pass
+        try:
+            from routes_ocr import _capture_raw
+            _capture_raw(force=True)
+            _console("  [OK] Screenshot engine warmed (background)")
+        except Exception:
+            pass
 
-    from routes_ocr import _capture_raw
-    _capture_raw(force=True)
-    _console("  [OK] Screenshot engine warmed")
+    threading.Thread(target=_background_warmups, name="hermes-warmups", daemon=True).start()
 
     # Tray icon disabled — v7.13 doesn't need it, and schtasks /Run causes popup windows
     # _start_tray()

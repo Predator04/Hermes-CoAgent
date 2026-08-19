@@ -7,12 +7,30 @@ from routes_governance import get_governor
 try:
     import psutil
     HAS_PSUTIL = True
+    # Establish a baseline so proc.cpu_percent() returns real values on first call.
+    try:
+        psutil.cpu_percent(interval=None)
+        for _p in psutil.process_iter():
+            try:
+                _p.cpu_percent(interval=None)
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
+    except Exception:
+        pass
 except ImportError:
     psutil = None
     HAS_PSUTIL = False
 
 
+_WINDOW_TITLES_CACHE = {"ts": 0.0, "value": {}}
+_WINDOW_TITLES_TTL = 2.0
+
+
 def _window_titles_by_pid():
+    now = time.monotonic()
+    cached = _WINDOW_TITLES_CACHE.get("value") or {}
+    if cached and (now - _WINDOW_TITLES_CACHE["ts"]) < _WINDOW_TITLES_TTL:
+        return cached
     titles = {}
     try:
         import ctypes
@@ -42,20 +60,26 @@ def _window_titles_by_pid():
         user32.EnumWindows(enum_proc_type(callback), 0)
     except Exception:
         pass
+    _WINDOW_TITLES_CACHE["value"] = titles
+    _WINDOW_TITLES_CACHE["ts"] = now
     return titles
 
 
 def _process_list_psutil(limit=None):
     titles = _window_titles_by_pid()
     rows = []
-    for proc in psutil.process_iter(["pid", "name", "cpu_percent", "memory_info"]):
+    for proc in psutil.process_iter(["pid", "name", "memory_info"]):
         try:
             info = proc.info
             memory = info.get("memory_info")
+            try:
+                cpu = float(proc.cpu_percent(interval=None))
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                cpu = 0.0
             rows.append({
                 "name": info.get("name") or "",
                 "pid": int(info.get("pid") or proc.pid),
-                "cpu_percent": float(info.get("cpu_percent") or 0.0),
+                "cpu_percent": cpu,
                 "memory_mb": round((memory.rss if memory else 0) / (1024 * 1024), 2),
                 "window_title": titles.get(proc.pid, ""),
             })
@@ -84,7 +108,7 @@ def _process_list_wmic(limit=None):
                 rows.append({
                     "name": row.get("Name") or "",
                     "pid": int(row.get("ProcessId")),
-                    "cpu_percent": 0.0,
+                    "cpu_percent": None,
                     "memory_mb": memory_mb,
                     "window_title": "",
                 })
@@ -120,7 +144,7 @@ def _process_list_powershell(limit=None):
         rows.append({
             "name": (item.get("ProcessName") or "") + ".exe",
             "pid": int(item.get("Id") or 0),
-            "cpu_percent": 0.0,
+            "cpu_percent": None,
             "memory_mb": round(int(item.get("WorkingSet64") or 0) / (1024 * 1024), 2),
             "window_title": item.get("MainWindowTitle") or "",
         })
