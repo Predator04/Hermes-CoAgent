@@ -107,7 +107,7 @@ def _launch_via_scheduled_task():
     )
     result = subprocess.run(
         ["powershell", "-NoProfile", "-Command", ps_cmd],
-        capture_output=True, timeout=15,
+        capture_output=True, text=True, timeout=15,
     )
     if result.returncode != 0:
         print(f"Failed to launch scheduled task: {result.stderr or result.stdout}", file=sys.stderr)
@@ -126,7 +126,9 @@ def main():
         print("No running CoAgent found, launching fresh...")
 
     time.sleep(1)
-    _launch_via_scheduled_task()
+    if not _launch_via_scheduled_task():
+        print("Failed to launch CoAgent restart.", file=sys.stderr)
+        sys.exit(1)
     print("CoAgent restart initiated.")
 
 
