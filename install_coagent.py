@@ -72,12 +72,13 @@ def console(msg, color=None):
         print(msg)
 
 
-def run(cmd, timeout=120, check=True, capture=True):
+def run(cmd, timeout=120, check=True, capture=True, cwd=None):
     """Run a shell command."""
     try:
         r = subprocess.run(
             cmd if isinstance(cmd, list) else cmd,
-            capture_output=capture, text=True, timeout=timeout, shell=isinstance(cmd, str)
+            capture_output=capture, text=True, timeout=timeout, shell=isinstance(cmd, str),
+            cwd=cwd,
         )
         if check and r.returncode != 0:
             print(f"  ⚠  Command failed: {cmd[:120] if isinstance(cmd, str) else ' '.join(cmd)[:120]}")
@@ -665,7 +666,7 @@ def cmd_build_exe(args):
 
     console("Building CoAgent.exe (this takes 2-3 minutes)...")
     r = run(pyinstaller + [str(install_dir / "hermes_coagent.py")],
-            timeout=600, check=False)
+            timeout=600, check=False, cwd=str(install_dir))
 
     exe_path = install_dir / "dist" / "CoAgent.exe"
     if exe_path.exists():
