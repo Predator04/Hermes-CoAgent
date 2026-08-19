@@ -184,7 +184,10 @@ def _pii_configure():
                     else:
                         _PII_CONFIG["patterns"][name]["enabled"] = bool(cfg)
         if "mask_char" in body:
-            _PII_CONFIG["mask_char"] = body["mask_char"]
+            mask_char = body["mask_char"]
+            if not isinstance(mask_char, str) or len(mask_char) != 1:
+                return jsonify({"ok": False, "error": "mask_char must be a single character"}), 400
+            _PII_CONFIG["mask_char"] = mask_char
     return jsonify({"ok": True, "config": _PII_CONFIG})
 
 
