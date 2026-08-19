@@ -147,9 +147,16 @@ def _resolve_image(body):
     if img is None:
         raise ValueError("Screen capture failed and no 'image' provided")
 
-    buf = io.BytesIO()
-    img.save(buf, format="PNG")
-    return buf.getvalue(), img.size, offset
+    try:
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        size = img.size
+        return buf.getvalue(), size, offset
+    finally:
+        try:
+            img.close()
+        except Exception:
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -275,11 +282,14 @@ def _provider_aria(prompt, png_bytes, image_size, cfg):
 
     if isinstance(parsed, list):
         items = parsed
-    else:
+    elif isinstance(parsed, dict):
         items = (parsed.get("elements")
                  or parsed.get("result")
                  or parsed.get("boxes")
                  or [])
+    else:
+        raise ProviderError(
+            f"Aria-UI returned unexpected JSON type: {type(parsed).__name__}")
     if isinstance(items, dict):
         items = [items]
 
@@ -341,8 +351,13 @@ def _provider_local_http(prompt, png_bytes, image_size, cfg, provider_name):
     except (ValueError, UnicodeDecodeError) as exc:
         raise ProviderError(f"{provider_name} returned non-JSON: {exc}") from exc
 
-    items = parsed if isinstance(parsed, list) else (
-        parsed.get("elements") or parsed.get("result") or [])
+    if isinstance(parsed, list):
+        items = parsed
+    elif isinstance(parsed, dict):
+        items = parsed.get("elements") or parsed.get("result") or []
+    else:
+        raise ProviderError(
+            f"{provider_name} returned unexpected JSON type: {type(parsed).__name__}")
     out = []
     for entry in items:
         if not isinstance(entry, dict):
