@@ -85,7 +85,9 @@ def _get_idle_time_ms():
         lii = LASTINPUTINFO()
         lii.cbSize = ctypes.sizeof(LASTINPUTINFO)
         if ctypes.windll.user32.GetLastInputInfo(ctypes.byref(lii)):
-            tick_count = ctypes.windll.kernel32.GetTickCount()
+            get_tick = ctypes.windll.kernel32.GetTickCount64
+            get_tick.restype = ctypes.c_uint64
+            tick_count = get_tick()
             return max(0, int(tick_count) - int(lii.dwTime))
     except Exception:
         pass
@@ -287,6 +289,7 @@ def register_routes(app, state, require_auth):
         time.sleep(0.45)
         after_b64 = ""
         try:
+            from routes_ocr import _capture_jpeg  # re-import: may have failed in Step 1
             after_data = _capture_jpeg(force=True)
             if after_data:
                 after_b64 = base64.b64encode(after_data).decode()
