@@ -928,11 +928,7 @@ try:
 except ImportError:
     reg_macro_recorder = None
     features["macro_recorder"] = False
-try:
-    from routes_confirmations import register_routes as reg_confirmations
-except ImportError:
-    reg_confirmations = None
-    features["confirmations"] = False
+
 try:
     from routes_app_launcher import register_routes as reg_app_launcher
 except ImportError:
@@ -943,11 +939,7 @@ try:
 except ImportError:
     reg_uia_table = None
     features["uia_table"] = False
-try:
-    from routes_timeline import register_routes as reg_timeline
-except ImportError:
-    reg_timeline = None
-    features["timeline"] = False
+
 try:
     from routes_verify import register_routes as reg_verify
 except ImportError:
@@ -958,11 +950,7 @@ try:
 except ImportError:
     reg_triggers = None
     features["triggers"] = False
-try:
-    from routes_sandbox import register_routes as reg_sandbox
-except ImportError:
-    reg_sandbox = None
-    features["sandbox"] = False
+
 try:
     from routes_video import register_routes as reg_video
 except ImportError:
@@ -1202,27 +1190,21 @@ if reg_background_agent:
 if reg_macro_recorder:
     reg_macro_recorder(app, state, require_auth)
     features["macro_recorder"] = True
-if reg_confirmations:
-    reg_confirmations(app, state, require_auth)
-    features["confirmations"] = True
+
 if reg_app_launcher:
     reg_app_launcher(app, state, require_auth)
     features["app_launcher"] = True
 if reg_uia_table:
     reg_uia_table(app, state, require_auth)
     features["uia_table"] = True
-if reg_timeline:
-    reg_timeline(app, state, require_auth)
-    features["timeline"] = True
+
 if reg_verify:
     reg_verify(app, state, require_auth)
     features["self_verify"] = True
 if reg_triggers:
     reg_triggers(app, state, require_auth)
     features["triggers"] = True
-if reg_sandbox:
-    reg_sandbox(app, state, require_auth)
-    features["sandbox"] = True
+
 if reg_video:
     reg_video(app, state, require_auth)
     features["video_recording"] = True
