@@ -6,6 +6,7 @@ changed regions (diff frames) on subsequent calls to reduce token usage.
 
 import hashlib
 import logging
+import threading
 
 from flask import Blueprint, jsonify
 
@@ -24,6 +25,7 @@ _prev_frame = None
 _prev_hash = None
 _frame_count = 0
 _stats = {"key_frames": 0, "diff_frames": 0, "total_bytes_saved": 0}
+_state_lock = threading.Lock()
 
 
 def _capture_screen():
@@ -94,88 +96,93 @@ def capture():
         return {"error": "Screen capture failed"}
 
     curr_hash = _compute_hash(curr)
-    _frame_count += 1
 
-    if _prev_frame is None or _prev_hash is None:
-        # Key frame
-        _prev_frame = curr.copy()
-        _prev_hash = curr_hash
-        _stats["key_frames"] += 1
-        return {
-            "full": True,
+    with _state_lock:
+        _frame_count += 1
+
+        if _prev_frame is None or _prev_hash is None:
+            # Key frame
+            _prev_frame = curr.copy()
+            _prev_hash = curr_hash
+            _stats["key_frames"] += 1
+            return {
+                "full": True,
+                "frame": _frame_count,
+                "changed_regions": [],
+                "total_changed_pct": 0.0,
+                "width": curr.width,
+                "height": curr.height,
+            }
+
+        if curr_hash == _prev_hash:
+            # No change at all
+            return {
+                "full": False,
+                "frame": _frame_count,
+                "changed_regions": [],
+                "total_changed_pct": 0.0,
+                "no_change": True,
+                "width": curr.width,
+                "height": curr.height,
+            }
+
+        # Find changed regions
+        regions = _find_changed_regions(_prev_frame, curr)
+        total_pixels = curr.width * curr.height
+        changed_pixels = sum(rw * rh for (_, _, rw, rh) in regions)
+        changed_pct = round(changed_pixels / max(total_pixels, 1) * 100, 2)
+
+        # If less than 60% changed, keep as diff frame
+        is_full = changed_pct >= 60.0
+
+        if is_full:
+            _stats["key_frames"] += 1
+            result = {"full": True}
+        else:
+            _stats["diff_frames"] += 1
+            saved = total_pixels - changed_pixels
+            _stats["total_bytes_saved"] += saved
+            result = {"full": False}
+
+        # Update prev state
+        if is_full or _frame_count % 10 == 0:
+            # Periodically refresh the reference frame to prevent drift
+            _prev_frame = curr.copy()
+            _prev_hash = curr_hash
+
+        result.update({
             "frame": _frame_count,
-            "changed_regions": [],
-            "total_changed_pct": 0.0,
+            "changed_regions": regions,
+            "total_changed_pct": changed_pct,
+            "region_count": len(regions),
             "width": curr.width,
             "height": curr.height,
-        }
-
-    if curr_hash == _prev_hash:
-        # No change at all
-        return {
-            "full": False,
-            "frame": _frame_count,
-            "changed_regions": [],
-            "total_changed_pct": 0.0,
-            "no_change": True,
-            "width": curr.width,
-            "height": curr.height,
-        }
-
-    # Find changed regions
-    regions = _find_changed_regions(_prev_frame, curr)
-    total_pixels = curr.width * curr.height
-    changed_pixels = sum(w * h for (x, y, w, h) in regions)
-    changed_pct = round(changed_pixels / max(total_pixels, 1) * 100, 2)
-
-    # If less than 60% changed, keep as diff frame
-    is_full = changed_pct >= 60.0
-
-    if is_full:
-        _stats["key_frames"] += 1
-        result = {"full": True}
-    else:
-        _stats["diff_frames"] += 1
-        saved = total_pixels - changed_pixels
-        _stats["total_bytes_saved"] += saved
-        result = {"full": False}
-
-    # Update prev state
-    if is_full or _frame_count % 10 == 0:
-        # Periodically refresh the reference frame to prevent drift
-        _prev_frame = curr.copy()
-        _prev_hash = curr_hash
-
-    result.update({
-        "frame": _frame_count,
-        "changed_regions": regions,
-        "total_changed_pct": changed_pct,
-        "region_count": len(regions),
-        "width": curr.width,
-        "height": curr.height,
-    })
-    return result
+        })
+        return result
 
 
 def reset():
     """Force next capture to be a full key frame."""
     global _prev_frame, _prev_hash
-    _prev_frame = None
-    _prev_hash = None
+    with _state_lock:
+        _prev_frame = None
+        _prev_hash = None
     _LOGGER.info("Diff capture reset — next frame will be key frame")
 
 
 def get_stats():
     """Return compression statistics."""
-    total_frames = _stats["key_frames"] + _stats["diff_frames"]
-    ratio = round(_stats["total_bytes_saved"] / max(1, total_frames), 0)
+    with _state_lock:
+        stats = dict(_stats)
+    total_frames = stats["key_frames"] + stats["diff_frames"]
+    ratio = round(stats["total_bytes_saved"] / max(1, total_frames), 0)
     return {
-        "key_frames": _stats["key_frames"],
-        "diff_frames": _stats["diff_frames"],
+        "key_frames": stats["key_frames"],
+        "diff_frames": stats["diff_frames"],
         "total_frames": total_frames,
         "avg_bytes_saved_per_frame": int(ratio),
         "compression_ratio": round(
-            _stats["total_bytes_saved"] / max(1, _stats["key_frames"] * 1920 * 1080 * 3), 4
+            stats["total_bytes_saved"] / max(1, stats["key_frames"] * 1920 * 1080 * 3), 4
         ),
     }
 
