@@ -684,6 +684,9 @@ from routes_uia import register_routes as reg_uia
 from routes_file import register_routes as reg_file
 from routes_media import register_routes as reg_media
 from routes_system import register_routes as reg_system
+from routes_keepawake import register_routes as reg_keepawake
+from routes_windowsupdate import register_routes as reg_windowsupdate
+from routes_screen_translate import register_routes as reg_screen_translate
 from routes_diagnostics import register_routes as reg_diagnostics
 from routes_layout import register_routes as reg_layout
 from routes_webcam import register_routes as reg_webcam
@@ -1061,6 +1064,9 @@ reg_uia(app, state, require_auth)
 reg_file(app, state, require_auth)
 reg_media(app, state, require_auth)
 reg_system(app, state, require_auth)
+reg_keepawake(app, state, require_auth)
+reg_windowsupdate(app, state, require_auth)
+reg_screen_translate(app, state, require_auth)
 reg_webcam(app, jsonify, request, COAGENT_DIR, _log, _json_body, require_auth)
 reg_v63(app, state, require_auth)
 reg_stream(app, state, require_auth)
