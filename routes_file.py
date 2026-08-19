@@ -1,5 +1,5 @@
 """File, app launch, and power management routes."""
-import os, subprocess, ctypes
+import os, subprocess, ctypes, sys
 from pathlib import Path
 from flask import jsonify
 from shared import _json_body, _log, _missing_field, COAGENT_DIR, _sanitize_path, _sanitize_cmd
@@ -183,29 +183,61 @@ def register_routes(app, state, require_auth):
     @app.route("/power/sleep", methods=["POST"])
     @require_auth
     def route_power_sleep():
-        subprocess.run(["rundll32.exe", "powrprof.dll,SetSuspendState", "0", "1", "0"], timeout=5)
+        try:
+            r = subprocess.run(["rundll32.exe", "powrprof.dll,SetSuspendState", "0", "1", "0"], timeout=5)
+        except FileNotFoundError:
+            return jsonify({"status": "error", "error": "rundll32.exe not found"}), 500
+        except subprocess.TimeoutExpired:
+            return jsonify({"status": "error", "error": "Command timed out"}), 500
+        if r.returncode != 0:
+            return jsonify({"status": "error", "error": f"rundll32 exited {r.returncode}"}), 500
         return jsonify({"status": "sleeping"})
 
     @app.route("/power/shutdown", methods=["POST"])
     @require_auth
     def route_power_shutdown():
-        subprocess.run(["shutdown", "/s", "/t", "10"], timeout=5)
+        try:
+            r = subprocess.run(["shutdown", "/s", "/t", "10"], timeout=5)
+        except FileNotFoundError:
+            return jsonify({"status": "error", "error": "shutdown.exe not found"}), 500
+        except subprocess.TimeoutExpired:
+            return jsonify({"status": "error", "error": "Command timed out"}), 500
+        if r.returncode != 0:
+            return jsonify({"status": "error", "error": f"shutdown exited {r.returncode}"}), 500
         return jsonify({"status": "shutdown", "timeout": 10})
 
     @app.route("/power/restart", methods=["POST"])
     @require_auth
     def route_power_restart():
-        subprocess.run(["shutdown", "/r", "/t", "10"], timeout=5)
+        try:
+            r = subprocess.run(["shutdown", "/r", "/t", "10"], timeout=5)
+        except FileNotFoundError:
+            return jsonify({"status": "error", "error": "shutdown.exe not found"}), 500
+        except subprocess.TimeoutExpired:
+            return jsonify({"status": "error", "error": "Command timed out"}), 500
+        if r.returncode != 0:
+            return jsonify({"status": "error", "error": f"shutdown exited {r.returncode}"}), 500
         return jsonify({"status": "restart", "timeout": 10})
 
     @app.route("/power/lock", methods=["POST"])
     @require_auth
     def route_power_lock():
-        ctypes.windll.user32.LockWorkStation()
+        if sys.platform != "win32" or not hasattr(ctypes, "windll"):
+            return jsonify({"status": "error", "error": "LockWorkStation requires Windows"}), 500
+        ok = ctypes.windll.user32.LockWorkStation()
+        if not ok:
+            return jsonify({"status": "error", "error": "LockWorkStation failed"}), 500
         return jsonify({"status": "locked"})
 
     @app.route("/power/cancel", methods=["POST"])
     @require_auth
     def route_power_cancel():
-        subprocess.run(["shutdown", "/a"], timeout=5)
+        try:
+            r = subprocess.run(["shutdown", "/a"], timeout=5)
+        except FileNotFoundError:
+            return jsonify({"status": "error", "error": "shutdown.exe not found"}), 500
+        except subprocess.TimeoutExpired:
+            return jsonify({"status": "error", "error": "Command timed out"}), 500
+        if r.returncode != 0:
+            return jsonify({"status": "error", "error": f"shutdown exited {r.returncode}"}), 500
         return jsonify({"status": "cancelled"})
