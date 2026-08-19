@@ -75,7 +75,7 @@ def _register_touch_windows():
             if ok:
                 registered.append({"label": label, "hwnd": int(hwnd)})
             else:
-                errors.append({"label": label, "hwnd": int(hwnd), "last_error": ctypes.GetLastError()})
+                errors.append({"label": label, "hwnd": int(hwnd), "last_error": ctypes.windll.kernel32.GetLastError()})
         except Exception as e:
             errors.append({"label": label, "error": f"{type(e).__name__}: {e}"})
     with _LOCK:
