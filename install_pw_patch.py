@@ -8,6 +8,7 @@ Usage: python install_pw_patch.py
 """
 import shutil
 import os
+import re
 import sys
 import site
 
@@ -44,31 +45,30 @@ def apply_patch(filepath):
         shutil.copy2(filepath, backup)
         print(f"  Backup: {backup}")
 
-    with open(filepath, "r") as f:
+    with open(filepath, "r", encoding="utf-8") as f:
         content = f.read()
 
     if "Patched by CoAgent" in content:
         print("  Already patched.")
         return
 
-    if PATCH_OLD not in content:
+    if PATCH_OLD in content:
+        content = content.replace(PATCH_OLD, PATCH_NEW)
+    else:
         print("  WARNING: Expected code not found. Playwright may have changed.")
         print("  Trying alternative pattern...")
-        # Try a simpler match using a triple-quoted string with real newlines
-        alt_old = """        if self._loop.is_running():
-            raise Error("""
-        if alt_old in content:
-            print("  Found alternative pattern, attempting replacement...")
-            alt_new = """        if self._loop.is_running():
-            pass  # Patched by CoAgent"""
-            content = content.replace(alt_old, alt_new)
+        # Match the WHOLE `raise Error(...)` statement (whatever the message)
+        # and replace it with `pass`, so we never leave a dangling string literal
+        # or closing paren behind (which previously produced a SyntaxError).
+        alt_re = re.compile(r"raise Error\(.*?\)", re.DOTALL)
+        if alt_re.search(content):
+            content = alt_re.sub("pass  # Patched by CoAgent", content)
         else:
             print("  Could not patch. Please manually edit:")
             print(f"  {filepath}")
             return
 
-    content = content.replace(PATCH_OLD, PATCH_NEW)
-    with open(filepath, "w") as f:
+    with open(filepath, "w", encoding="utf-8") as f:
         f.write(content)
     print("  Patched successfully.")
 
