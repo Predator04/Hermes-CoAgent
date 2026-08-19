@@ -76,10 +76,16 @@ def _json_result(result, status_ok=200):
     return jsonify(safe), status
 
 
+# Shell metacharacters rejected in adb text input. Single quote, glob chars, and
+# control whitespace are unsafe because adb shell re-joins args and re-parses
+# them through the on-device sh.
+_FORBIDDEN_TEXT_CHARS = set(';&|`$<>(){}\'*?~[]#\t!\n\r')
+
+
 def _input_text(text):
     value = str(text)
     # Reject shell metacharacters that could cause command injection via adb shell
-    if re.search(r'[;&|`$<>(){}\!\n\r]', value):
+    if any(ch in value for ch in _FORBIDDEN_TEXT_CHARS):
         return None  # caller should reject the request
     return value.replace("%", "%25").replace(" ", "%s").replace("\\", "\\\\").replace('"', '\\"')
 
@@ -203,6 +209,8 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_phone_status():
         data = _json_body()
+        if request.method == "GET":
+            data = {**request.args.to_dict(), **data}
         battery = _run_adb(data, ["shell", "dumpsys", "battery"], timeout=10)
         signal = _run_adb(data, ["shell", "dumpsys", "telephony.registry"], timeout=10)
         wifi = _run_adb(data, ["shell", "dumpsys", "wifi"], timeout=10)
