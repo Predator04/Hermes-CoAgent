@@ -6,7 +6,9 @@ import re
 import sqlite3
 import threading
 import time
+import urllib.error
 import urllib.request
+from contextlib import closing
 from datetime import datetime, timedelta
 
 from flask import Blueprint, jsonify
@@ -31,7 +33,10 @@ def _now():
 def _db():
     conn = sqlite3.connect(str(DB_FILE), timeout=30)
     conn.row_factory = sqlite3.Row
-    return conn
+    # sqlite3.Connection's context manager only commits/rolls back; it does NOT
+    # close. Wrap in closing() so every `with _db() as conn:` block releases
+    # the underlying connection instead of leaking it until GC.
+    return closing(conn)
 
 
 def _init_db():
@@ -179,6 +184,21 @@ def _send_toast(title, message):
         return False, f"{type(exc).__name__}: {exc}"
 
 
+class _ValidatingRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Follow HTTP redirects only to non-private destinations (SSRF guard).
+
+    urllib follows redirects by default, which would let an attacker-controlled
+    webhook 302 to a loopback/link-local/metadata address and bypass the single
+    upfront _is_private_url() check. Re-validate every redirect target.
+    """
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if _is_private_url(newurl):
+            raise urllib.error.URLError(
+                f"redirect to blocked private/internal address: {newurl}")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
 def _send_webhook(delivered_to, title, message, reminder):
     url = delivered_to.split(":", 1)[1] if ":" in delivered_to else ""
     if not url:
@@ -192,9 +212,10 @@ def _send_webhook(delivered_to, title, message, reminder):
         "trigger_at": reminder.get("trigger_at"),
         "repeat": reminder.get("repeat_interval"),
     }).encode("utf-8")
+    opener = urllib.request.build_opener(_ValidatingRedirectHandler())
     try:
         req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
-        with urllib.request.urlopen(req, timeout=15) as response:
+        with opener.open(req, timeout=15) as response:
             body = response.read(4096).decode("utf-8", errors="replace")
         return True, {"status_code": getattr(response, "status", 200), "body": body}
     except Exception as exc:
