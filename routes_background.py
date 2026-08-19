@@ -308,6 +308,15 @@ def type_into_window_post(hwnd: int, text: str, delay_ms: int = 10) -> dict:
     if not hwnd:
         return {"success": False, "error": "Invalid window handle"}
 
+    text = str(text)
+    if len(text) > 10000:
+        return {"success": False, "error": "text too long (max 10000 chars)"}
+    try:
+        delay_ms = int(delay_ms)
+    except (TypeError, ValueError):
+        delay_ms = 0
+    delay_ms = max(0, min(delay_ms, 1000))
+
     typed = 0
     for ch in text:
         if not user32.PostMessageW(hwnd, WM_CHAR, ord(ch), 0):
@@ -319,12 +328,6 @@ def type_into_window_post(hwnd: int, text: str, delay_ms: int = 10) -> dict:
         typed += 1
         if delay_ms:
             time.sleep(delay_ms / 1000.0)
-
-        # Also send WM_KEYDOWN/WM_KEYUP for apps that need raw key events
-        vk = ctypes.windll.user32.VkKeyScanW(ord(ch))
-        if vk != -1:
-            user32.PostMessageW(hwnd, WM_KEYDOWN, vk & 0xFF, 0)
-            user32.PostMessageW(hwnd, WM_KEYUP, vk & 0xFF, 0)
 
     return {"success": True, "typed": typed, "method": "PostMessage_WM_CHAR"}
 
