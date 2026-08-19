@@ -171,10 +171,18 @@ def downscale_screenshot(img_bytes, budget=DEFAULT_BUDGET, max_dim=1280, quality
         return img_bytes, {"downscaled": False, "reason": "empty"}
     try:
         from PIL import Image
+        # Guard against decompression bombs: cap the decoded pixel count well
+        # below Pillow's default (~89M) so a malicious image can't force huge
+        # RAM allocation during im.load().
+        Image.MAX_IMAGE_PIXELS = 50_000_000
     except ImportError:
         return img_bytes, {"downscaled": False, "reason": "pillow_missing"}
     try:
         im = Image.open(io.BytesIO(img_bytes))
+        w, h = im.size
+        if w <= 0 or h <= 0 or w * h > 50_000_000:
+            im.close()
+            return img_bytes, {"downscaled": False, "reason": "image_too_large"}
         im.load()
     except Exception as e:
         return img_bytes, {
@@ -542,6 +550,11 @@ def register_routes(app, state, require_auth):
 
         image_b64 = body.get("image_base64")
         if image_b64:
+            if not isinstance(image_b64, str) or len(image_b64) > 30_000_000:
+                return jsonify({
+                    "ok": False,
+                    "error": "image_base64 too large (max ~22MB decoded)",
+                }), 400
             try:
                 raw = base64.b64decode(image_b64)
             except Exception as e:
