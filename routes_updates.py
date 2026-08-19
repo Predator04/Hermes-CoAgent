@@ -22,7 +22,7 @@ from pathlib import Path
 
 from flask import Blueprint, jsonify
 
-from shared import COAGENT_DIR, VERSION
+from shared import COAGENT_DIR, VERSION, _self_port
 
 
 LOG = logging.getLogger("coagent.updates")
@@ -41,6 +41,16 @@ _LOCK_FD: int | None = None
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
+def _close_lock_fd() -> None:
+    global _LOCK_FD
+    if _LOCK_FD is not None:
+        try:
+            os.close(_LOCK_FD)
+        except Exception:
+            pass
+        _LOCK_FD = None
+
+
 def _acquire_fs_lock() -> bool:
     """Exclusive filesystem lock — survives process restarts."""
     global _LOCK_FD
@@ -51,8 +61,9 @@ def _acquire_fs_lock() -> bool:
                 import msvcrt
                 msvcrt.locking(_LOCK_FD, msvcrt.LK_NBLCK, 1)
             else:
-                os.lockf(_LOCK_FD, os.F_LOCK | os.F_TLOCK, 0)
+                os.lockf(_LOCK_FD, os.F_TLOCK, 0)
         except OSError as exc:
+            _close_lock_fd()
             if os.name == "nt":
                 return False
             if exc.errno in (errno.EACCES, errno.EAGAIN):
@@ -61,6 +72,7 @@ def _acquire_fs_lock() -> bool:
         os.write(_LOCK_FD, json.dumps({"pid": os.getpid(), "ts": time.time()}).encode())
         return True
     except Exception:
+        _close_lock_fd()
         return False
 
 
@@ -328,7 +340,10 @@ def _pythonw_executable():
 def _launch_replacement():
     env = dict(os.environ)  # Start with full environment to ensure pythonw starts correctly
     creationflags = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS | subprocess.CREATE_NO_WINDOW
-    args = [_pythonw_executable(), str(COAGENT_DIR / "hermes_coagent.py"), "--secure"]
+    args = [_pythonw_executable(), str(COAGENT_DIR / "hermes_coagent.py")]
+    for _arg in sys.argv[1:]:
+        if _arg in ("--secure", "--allow-external") or _arg.startswith("--token="):
+            args.append(_arg)
     subprocess.Popen(
         args,
         cwd=str(COAGENT_DIR),
@@ -361,15 +376,16 @@ def _restart_after_delay(delay=1.0):
         try:
             _launch_replacement()
             # Wait for new process to come alive
-            alive = _health_check("http://127.0.0.1:9123/ping", timeout=15)
+            alive = _health_check(f"http://127.0.0.1:{_self_port()}/ping", timeout=15)
             if alive:
                 LOG.info("update: replacement healthy, exiting")
+                os._exit(0)
             else:
-                LOG.error("update: replacement did not become healthy")
+                LOG.error("update: replacement did not become healthy; staying alive")
+                _release_fs_lock()
         except Exception as exc:
             LOG.error("update: replacement launch failed: %s", exc)
-        finally:
-            os._exit(0)
+            _release_fs_lock()
 
     threading.Thread(target=_worker, name="coagent-restart", daemon=True).start()
 
