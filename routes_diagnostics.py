@@ -209,7 +209,7 @@ def _check_python():
     pkg_list = [
         "flask", "waitress", "requests", "anthropic",
         "mss", "dxcam", "playwright", "pytesseract",
-        "psutil", "pyautogui", "comtypes", "pywin32",
+        "psutil", "pyautogui", "comtypes", "win32api",
         "pywinauto", "pygetwindow", "pynput", "keyboard",
     ]
     packages = {}
@@ -305,12 +305,16 @@ def register_routes(app, state, require_auth):
         for t in threads:
             t.join(timeout=12)
 
+        # Snapshot under lock so late-completing threads can't race our iteration
+        with lock:
+            snapshot = dict(results)
+
         # Backfill any checks that timed out
         for lbl, _ in _CHECKS:
-            if lbl not in results:
-                results[lbl] = {"status": "error", "detail": "Check timed out after 12 s"}
+            if lbl not in snapshot:
+                snapshot[lbl] = {"status": "error", "detail": "Check timed out after 12 s"}
 
-        statuses = {v.get("status", "unknown") for v in results.values()}
+        statuses = {v.get("status", "unknown") for v in snapshot.values()}
         overall = (
             "error" if "error" in statuses
             else "warning" if "warning" in statuses
@@ -321,5 +325,5 @@ def register_routes(app, state, require_auth):
         return jsonify({
             "status": overall,
             "elapsed_ms": round((time.time() - t0) * 1000, 1),
-            "checks": results,
+            "checks": snapshot,
         })
