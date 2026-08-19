@@ -81,7 +81,7 @@ def _find_powershell():
 
 _PS_PREAMBLE = (
     "$ErrorActionPreference = 'Stop';"
-    "try { Import-Module VirtualDesktop -ErrorAction Stop } catch {"
+    "try { Import-Module VirtualDesktop -ErrorAction Stop -DisableNameChecking -WarningAction SilentlyContinue } catch {"
     " Write-Output ('{\"error\":\"VirtualDesktop module not installed. Run:"
     " Install-Module VirtualDesktop -Scope CurrentUser\"}'); exit 2 };"
 )
