@@ -96,6 +96,8 @@ def _undo_type(params):
     typed_text = str(params.get("text", ""))
     if not typed_text:
         return {"error": "cannot undo type action without text or previous_text"}, 400
+    if len(typed_text) > 4096:
+        return {"error": "typed text too long to undo safely (max 4096 chars)"}, 400
     try:
         pyautogui.press("backspace", presses=len(typed_text), interval=0.01)
     except AttributeError:
