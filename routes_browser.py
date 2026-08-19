@@ -144,10 +144,21 @@ _STEALTH_SCRIPT = r"""
     // 3. window.chrome
     window.chrome = {runtime: {id: undefined, onConnect: {addListener: () => {}}, onMessage: {addListener: () => {}}}, loadTimes: () => {}, csi: () => {}, app: {}};
     
-    // 4. Permissions
-    const origQuery = navigator.permissions.query.bind(navigator.permissions);
-    navigator.permissions.query = (params) => 
-        params.name === 'notifications' ? Promise.resolve({state: 'prompt', onchange: null}) : origQuery(params);
+    // 4. Permissions -- guard navigator.permissions and Notification, both of
+    // which are undefined in some embedders/headless contexts and would throw
+    // a ReferenceError/TypeError and abort the entire stealth init script.
+    try {
+        if (typeof navigator !== 'undefined' && navigator.permissions && typeof navigator.permissions.query === 'function') {
+            const origQuery = navigator.permissions.query.bind(navigator.permissions);
+            navigator.permissions.query = (params) => {
+                if (params && params.name === 'notifications') {
+                    const state = (typeof Notification !== 'undefined' && Notification.permission) ? Notification.permission : 'prompt';
+                    return Promise.resolve({state: state, onchange: null});
+                }
+                return origQuery(params);
+            };
+        }
+    } catch(e) {}
     
     // 5. Canvas fingerprint randomization
     const origToDataURL = HTMLCanvasElement.prototype.toDataURL;

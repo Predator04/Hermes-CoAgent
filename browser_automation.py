@@ -55,22 +55,37 @@ _LANGUAGES = [
 
 
 def _load_browser_api():
-    try:
-        from patchright.sync_api import Error as BrowserError
-        from patchright.sync_api import sync_playwright
-
-        return sync_playwright, BrowserError, "patchright", None
-    except ImportError:
+    # Try patchright first (preferred: better stealth), then playwright.
+    # BrowserError must be the engine's real Error class; if it isn't a proper
+    # exception subclass we treat the engine as unavailable rather than
+    # aliasing to a broad Exception, which would make downstream
+    # `except BrowserError` catch every error and mislabel it as a browser
+    # failure.
+    for engine_name in ("patchright", "playwright"):
         try:
-            from playwright.sync_api import Error as BrowserError
-            from playwright.sync_api import sync_playwright
-
-            return sync_playwright, BrowserError, "playwright", None
-        except ImportError:
-            return None, Exception, None, (
-                "patchright or playwright not installed. Install with: "
-                "pip install patchright-python playwright && python -m playwright install chromium"
+            module = __import__(
+                f"{engine_name}.sync_api",
+                fromlist=["sync_playwright", "Error"],
             )
+        except ImportError:
+            continue
+        sync_playwright = getattr(module, "sync_playwright", None)
+        browser_error = getattr(module, "Error", None)
+        if (
+            sync_playwright is None
+            or not isinstance(browser_error, type)
+            or not issubclass(browser_error, BaseException)
+            or browser_error is Exception
+            or browser_error is BaseException
+        ):
+            continue
+        return sync_playwright, browser_error, engine_name, None
+    # Explicit last resort: no engine available. Exception is returned only
+    # alongside the "missing" message so callers short-circuit on it.
+    return None, Exception, None, (
+        "patchright or playwright not installed. Install with: "
+        "pip install patchright-python playwright && python -m playwright install chromium"
+    )
 
 
 def _validate_url(url):
@@ -79,13 +94,21 @@ def _validate_url(url):
         return None
     import ipaddress
     import socket
+    import unicodedata
     from urllib.parse import urlparse
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https"):
         return f"Unsupported URL scheme: {parsed.scheme or 'none'}"
-    hostname = (parsed.hostname or "").lower()
-    if not hostname:
+    raw_hostname = parsed.hostname or ""
+    if not raw_hostname:
         return "URL must include a hostname"
+    # Normalize Unicode (fold fullwidth/compat forms) then IDNA-encode so
+    # homoglyph/lookalike hostnames cannot bypass the blocklist below.
+    try:
+        normalized = unicodedata.normalize("NFKC", raw_hostname)
+        hostname = normalized.encode("idna").decode("ascii").lower()
+    except (UnicodeError, UnicodeDecodeError):
+        return f"Invalid hostname: {raw_hostname!r}"
     blocked = {
         "localhost", "127.0.0.1", "0.0.0.0",
         "169.254.169.254",  # AWS metadata
@@ -93,6 +116,10 @@ def _validate_url(url):
     }
     if hostname in blocked:
         return f"Access to {hostname} is blocked"
+    # Also block any subdomain of a blocked internal-metadata host.
+    for suffix in ("metadata.google.internal", "localhost"):
+        if hostname == suffix or hostname.endswith("." + suffix):
+            return f"Access to {hostname} is blocked"
 
     def _is_private_ip(addr):
         try:
@@ -101,7 +128,14 @@ def _validate_url(url):
             return False
         if ip.version == 6 and getattr(ip, "ipv4_mapped", None) is not None:
             ip = ip.ipv4_mapped
-        return ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast
+        return (
+            ip.is_private
+            or ip.is_loopback
+            or ip.is_link_local
+            or ip.is_multicast
+            or ip.is_reserved
+            or ip.is_unspecified
+        )
 
     # Literal IP?
     try:
@@ -114,10 +148,13 @@ def _validate_url(url):
 
     # Resolve the hostname and block if ANY resolved address is private
     # (prevents DNS-rebinding SSRF: a domain that resolves to 127.0.0.1).
+    # Fail-closed: a DNS failure blocks the URL rather than allowing it.
     try:
         infos = socket.getaddrinfo(hostname, None)
-    except socket.gaierror:
-        return None  # Unresolvable; let the browser surface the error naturally.
+    except (socket.gaierror, socket.herror, UnicodeError, OSError) as exc:
+        return f"Could not resolve {hostname}: {exc}"
+    if not infos:
+        return f"Could not resolve {hostname}"
     for info in infos:
         addr = info[4][0]
         if _is_private_ip(addr):
