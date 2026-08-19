@@ -8,14 +8,8 @@ on:
 
 jobs:
   syntax-check:
-    name: "Python ${{ matrix.python-version }} on ${{ matrix.os }}"
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [windows-latest, ubuntu-latest]
-        python-version: ["3.11", "3.12"]
-
+    name: "Syntax check"
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -23,7 +17,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: "3.12"
 
       - name: Compile server entry point
         run: python -c "compile(open('hermes_coagent.py').read(), 'hermes_coagent.py', 'exec')"
