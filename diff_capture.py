@@ -69,10 +69,14 @@ def _find_changed_regions(prev, curr, grid_size=8, threshold=30):
 
             diff = ImageChops.difference(prev_cell, curr_cell)
             hist = diff.histogram()
-            # Sum across ALL 768 bins (256 per RGB channel), not just 256
+            # Sum across ALL 768 bins (256 per RGB channel), not just 256.
+            # Compare the mean per-pixel channel difference on the 0-255 scale
+            # (previously divided by 255*3*pixels, normalizing to [0,1] while
+            # still comparing against threshold=30, so nothing ever matched).
             total_bins = len(hist)
-            diff_sum = sum(hist[i] * (i % 256) for i in range(total_bins)) / max(255 * 3 * cell_w * cell_h, 1)
-            if diff_sum > threshold:
+            cell_pixels = (right - left) * (bottom - top)
+            mean_diff = sum(hist[i] * (i % 256) for i in range(total_bins)) / max(3 * cell_pixels, 1)
+            if mean_diff > threshold:
                 changed.append((left, top, right - left, bottom - top))
 
     return changed
