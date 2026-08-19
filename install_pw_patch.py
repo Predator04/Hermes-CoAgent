@@ -20,7 +20,7 @@ def find_context_manager():
             return path
     # Fallback: check common locations
     import playwright
-    base = os.path.dirname(os.path.dirname(playwright.__file__))
+    base = os.path.dirname(playwright.__file__)
     path = os.path.join(base, "sync_api", "_context_manager.py")
     if os.path.exists(path):
         return path
