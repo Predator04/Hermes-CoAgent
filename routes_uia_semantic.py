@@ -48,6 +48,8 @@ def rank_candidates(tree, role=None, name=None, limit=5):
     """Return elements ranked by match score (descending), best first."""
     scored = []
     for el in tree or []:
+        if not isinstance(el, dict):
+            continue
         sc = score_element(el, role, name)
         if sc > 0:
             scored.append({"score": sc, "element": el})
@@ -73,7 +75,7 @@ def register_routes(app, state, require_auth):
         name = body.get("name")
         if not role and not name:
             return jsonify({"ok": False, "error": "Missing required field: role or name"}), 400
-        action = (body.get("action") or "click").lower()
+        action = str(body.get("action") or "click").lower()
         tree = body.get("tree")  # test/dry-run injection
         live = tree is None
         if live:
