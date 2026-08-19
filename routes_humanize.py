@@ -117,8 +117,13 @@ def register_routes(app, state, require_auth):
             tx, ty = int(body["x"]), int(body["y"])
         except (TypeError, ValueError):
             return jsonify({"ok": False, "error": "x and y must be integers"}), 400
-        steps = int(body.get("steps", 40))
-        duration_ms = float(body.get("duration_ms", 600))
+        try:
+            steps = int(body.get("steps", 40))
+            duration_ms = float(body.get("duration_ms", 600))
+        except (TypeError, ValueError):
+            return jsonify({"ok": False, "error": "steps and duration_ms must be numeric"}), 400
+        steps = max(2, min(steps, 500))
+        duration_ms = max(0.0, min(duration_ms, 10000.0))
         seed = body.get("seed")
         # Coerce seed to valid type to avoid TypeError in random.Random()
         if seed is not None and not isinstance(seed, (int, str, type(None))):
