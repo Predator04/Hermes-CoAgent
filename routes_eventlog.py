@@ -77,7 +77,7 @@ def _run_ps(script, timeout=25):
         r = subprocess.run(
             [ps, "-NoProfile", "-NonInteractive", "-Command", script],
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             timeout=timeout,
             creationflags=_CREATE_NO_WINDOW,
         )
@@ -94,7 +94,8 @@ def _parse_json_output(text):
         return []
     try:
         data = _json.loads(text)
-    except ValueError:
+    except ValueError as exc:
+        _log(f"eventlog: JSON parse failed: {exc}; raw={text[:200]!r}")
         return []
     if isinstance(data, list):
         return data
@@ -205,7 +206,7 @@ def _dispatch_webhooks(subscribers, events):
 def _poll_loop(key, log_name, level, interval, stop_evt):
     _log(f"eventlog poller start {key} interval={interval}")
     last_ts = time.time()
-    seen_ids = set()
+    seen_ids = {}
     consecutive_errors = 0
     while not stop_evt.is_set():
         try:
@@ -222,17 +223,17 @@ def _poll_loop(key, log_name, level, interval, stop_evt):
                     rid = ev.get("RecordId")
                     if rid is None or rid in seen_ids:
                         continue
-                    seen_ids.add(rid)
+                    seen_ids[rid] = True
                     new_events.append(ev)
-                if len(seen_ids) > _MAX_SEEN_IDS:
-                    seen_ids = set(list(seen_ids)[-_MAX_SEEN_IDS:])
+                while len(seen_ids) > _MAX_SEEN_IDS:
+                    seen_ids.pop(next(iter(seen_ids)))
                 if new_events:
                     with _SUB_LOCK:
                         subs = [s for s in _SUBSCRIBERS.values()
                                 if s.get("poll_key") == key]
                     if subs:
                         _dispatch_webhooks(subs, new_events)
-                    last_ts = time.time()
+                last_ts = time.time()
         except Exception as exc:  # noqa: BLE001
             consecutive_errors += 1
             _log(f"eventlog poll fatal {key}: {exc}")
@@ -301,7 +302,7 @@ def register_routes(app, state, require_auth):
             }
             yield f"event: status\ndata: {_json.dumps(status)}\n\n"
             last_ts = time.time()
-            seen_ids = set()
+            seen_ids = {}
             consecutive_errors = 0
             try:
                 while True:
@@ -323,17 +324,16 @@ def register_routes(app, state, require_auth):
                             rid = ev.get("RecordId")
                             if rid is None or rid in seen_ids:
                                 continue
-                            seen_ids.add(rid)
+                            seen_ids[rid] = True
                             emitted = True
                             yield (
                                 "event: eventlog\n"
                                 f"data: {_json.dumps(ev)}\n\n"
                             )
-                        if len(seen_ids) > _MAX_SEEN_IDS:
-                            seen_ids = set(list(seen_ids)[-_MAX_SEEN_IDS:])
-                        if emitted:
-                            last_ts = time.time()
-                        else:
+                        while len(seen_ids) > _MAX_SEEN_IDS:
+                            seen_ids.pop(next(iter(seen_ids)))
+                        last_ts = time.time()
+                        if not emitted:
                             yield ": keepalive\n\n"
                     time.sleep(interval)
             except GeneratorExit:
