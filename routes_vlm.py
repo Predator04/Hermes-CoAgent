@@ -103,7 +103,11 @@ def _provider_config(body):
         or os.environ.get("OPENAI_BASE_URL") \
         or _DEFAULT_BASE_URL
     base_url = base_url.rstrip("/")
-    timeout = int(body.get("timeout") or 45)
+    try:
+        timeout = int(body.get("timeout") or 45)
+    except (TypeError, ValueError):
+        timeout = 45
+    timeout = max(1, min(timeout, 300))
     return {"model": model, "api_key": api_key, "base_url": base_url, "timeout": timeout}
 
 
@@ -183,8 +187,8 @@ def _coerce_bbox_to_pixels(parsed, img_w, img_h):
         return None
     keys = {k.lower(): parsed[k] for k in parsed if isinstance(k, str)}
     try:
-        x = float(keys.get("x", keys.get("left", 0)))
-        y = float(keys.get("y", keys.get("top", 0)))
+        x = float(keys.get("x", keys.get("left", keys.get("x1", 0))))
+        y = float(keys.get("y", keys.get("top", keys.get("y1", 0))))
         w = float(keys.get("w", keys.get("width", 0)))
         h = float(keys.get("h", keys.get("height", 0)))
     except (TypeError, ValueError):
@@ -387,6 +391,11 @@ def register_routes(app, state, require_auth):
         local_y = int(round(bbox_sent["y"] * scale_y))
         local_w = max(1, int(round(bbox_sent["w"] * scale_x)))
         local_h = max(1, int(round(bbox_sent["h"] * scale_y)))
+        # Re-clamp against the full image after the downscale round-trip.
+        local_x = max(0, min(full_w - 1, local_x))
+        local_y = max(0, min(full_h - 1, local_y))
+        local_w = max(1, min(full_w - local_x, local_w))
+        local_h = max(1, min(full_h - local_y, local_h))
         abs_x = local_x + int(offset[0])
         abs_y = local_y + int(offset[1])
         cx = abs_x + local_w // 2
