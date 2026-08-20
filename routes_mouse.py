@@ -2,6 +2,7 @@
 import threading
 import time
 import ctypes
+import ctypes.wintypes
 import hashlib
 import math
 import random
@@ -74,7 +75,7 @@ def _result_payload(result):
     if hasattr(response, "get_json"):
         payload = response.get_json(silent=True)
     elif hasattr(response, "json"):
-        payload = response.json
+        payload = response.json() if callable(response.json) else response.json
     else:
         payload = response
     if isinstance(payload, (dict, list, str, int, float, bool)) or payload is None:
@@ -152,13 +153,21 @@ def _background_sendinput(action, x, y, button="left"):
         MOUSEEVENTF_MOVE = 0x0001
         btn_down = MOUSEEVENTF_LEFTDOWN if button == "left" else MOUSEEVENTF_RIGHTDOWN
         btn_up = MOUSEEVENTF_LEFTUP if button == "left" else MOUSEEVENTF_RIGHTUP
-        # Normalize coordinates for absolute positioning
-        screen_w = ctypes.windll.user32.GetSystemMetrics(0)
-        screen_h = ctypes.windll.user32.GetSystemMetrics(1)
-        nx = int((x * 65535) / screen_w) if screen_w else 0
-        ny = int((y * 65535) / screen_h) if screen_h else 0
+        # Normalize coordinates for absolute positioning across the full virtual desktop
+        # (GetSystemMetrics(0/1) only covers the primary monitor).
+        MOUSEEVENTF_VIRTUALDESK = 0x4000
+        SM_XVIRTUALSCREEN = 76
+        SM_YVIRTUALSCREEN = 77
+        SM_CXVIRTUALSCREEN = 78
+        SM_CYVIRTUALSCREEN = 79
+        screen_x = ctypes.windll.user32.GetSystemMetrics(SM_XVIRTUALSCREEN)
+        screen_y = ctypes.windll.user32.GetSystemMetrics(SM_YVIRTUALSCREEN)
+        screen_w = ctypes.windll.user32.GetSystemMetrics(SM_CXVIRTUALSCREEN)
+        screen_h = ctypes.windll.user32.GetSystemMetrics(SM_CYVIRTUALSCREEN)
+        nx = int(((x - screen_x) * 65535) / screen_w) if screen_w else 0
+        ny = int(((y - screen_y) * 65535) / screen_h) if screen_h else 0
         # Move cursor to absolute position first
-        ctypes.windll.user32.mouse_event(MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_MOVE, nx, ny, 0, 0)
+        ctypes.windll.user32.mouse_event(MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK | MOUSEEVENTF_MOVE, nx, ny, 0, 0)
         time.sleep(0.01)
         if action == "doubleclick":
             ctypes.windll.user32.mouse_event(btn_down, 0, 0, 0, 0)
@@ -206,7 +215,7 @@ def _mouse_action(action, x, y, button="left", background=True, state=None):
             # Normalize action names: routes use lowercase, pyautogui uses camelCase
             _action_map = {"click": "click", "doubleclick": "doubleClick", "rightclick": "rightClick"}
             _pa_action = _action_map.get(action, "click")
-            getattr(pyautogui, _pa_action)(x, y) if _pa_action in ("click", "doubleClick", "rightClick") else pyautogui.click(x, y, button=button)
+            getattr(pyautogui, _pa_action)(x, y, button=button)
         if state: state.last_action_time = time.time()
     _log(f"Mouse {action} ({x},{y}) button={button} bg={background}")
     payload = {"status": "ok", "action": action, "x": x, "y": y}
@@ -569,6 +578,7 @@ def register_routes(app, state, require_auth):
                     time.sleep(0.02)
                     ctypes.windll.user32.mouse_event(btn_up, 0, 0, 0, 0)
                 else:
+                    pyautogui.moveTo(x1, y1)
                     pyautogui.drag(x2 - x1, y2 - y1, button=btn,
                                    duration=duration_ms / 1000.0)
 

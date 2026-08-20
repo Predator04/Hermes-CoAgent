@@ -157,8 +157,13 @@ def _click_button_ctypes(button_hwnd):
     try:
         import ctypes
         BM_CLICK = 0x00F5
-        ctypes.windll.user32.SendMessageW(button_hwnd, BM_CLICK, 0, 0)
-        return True
+        SMTO_ABORTIFHUNG = 0x0002
+        SMTO_NORMAL = 0x0000
+        result = ctypes.c_ulong()
+        ret = ctypes.windll.user32.SendMessageTimeoutW(
+            button_hwnd, BM_CLICK, 0, 0,
+            SMTO_ABORTIFHUNG | SMTO_NORMAL, 2000, ctypes.byref(result))
+        return bool(ret)
     except Exception as exc:
         _log(f"[resilient] BM_CLICK failed: {exc}")
         return False
@@ -168,8 +173,7 @@ def _post_wm_close(hwnd):
     try:
         import ctypes
         WM_CLOSE = 0x0010
-        ctypes.windll.user32.PostMessageW(hwnd, WM_CLOSE, 0, 0)
-        return True
+        return bool(ctypes.windll.user32.PostMessageW(hwnd, WM_CLOSE, 0, 0))
     except Exception as exc:
         _log(f"[resilient] WM_CLOSE failed: {exc}")
         return False
@@ -184,11 +188,11 @@ def _pick_safe_button(buttons, mode):
             t = text.lower().replace("&", "")
             if t == want or t.startswith(want + " ") or t == want + "...":
                 return bh, text
-    # Amp-strip loose contains match
+    # Amp-strip loose contains match (word-boundary to avoid "no" matching "not now")
     for want in labels:
         for bh, _cls, text in normalized:
             t = text.lower().replace("&", "")
-            if want in t:
+            if re.search(rf"\b{re.escape(want)}\b", t):
                 return bh, text
     return None, None
 
@@ -268,10 +272,11 @@ def guard_run(extra_patterns=None, mode="safe", dismiss=True,
     Public helper other routes can import and call before/after actions.
     Returns a dict {swept, dismissed, remaining, iterations}.
     """
-    settle_ms = max(0, int(settle_ms))
-    max_iterations = max(1, int(max_iterations))
+    settle_ms = min(5000, max(0, int(settle_ms)))
+    max_iterations = min(20, max(1, int(max_iterations)))
     swept = []
     dismissed = []
+    completed = 0
     for i in range(max_iterations):
         popups = _scan(extra_patterns=extra_patterns)
         if not popups:
@@ -279,11 +284,12 @@ def guard_run(extra_patterns=None, mode="safe", dismiss=True,
                 "swept": swept, "dismissed": dismissed,
                 "remaining": [], "iterations": i,
             }
+        completed = i + 1
         swept.extend(popups)
         if not dismiss:
             return {
                 "swept": swept, "dismissed": dismissed,
-                "remaining": popups, "iterations": i + 1,
+                "remaining": popups, "iterations": completed,
             }
         progressed = False
         for p in popups:
@@ -299,7 +305,7 @@ def guard_run(extra_patterns=None, mode="safe", dismiss=True,
     remaining = _scan(extra_patterns=extra_patterns)
     return {
         "swept": swept, "dismissed": dismissed,
-        "remaining": remaining, "iterations": max_iterations,
+        "remaining": remaining, "iterations": completed,
     }
 
 
@@ -358,6 +364,19 @@ def register_routes(app, state, require_auth):
                 hwnd = int(hwnd)
             except (TypeError, ValueError):
                 return jsonify({"error": "hwnd must be an integer"}), 400
+            # Validate the target before acting: the client-supplied hwnd must still
+            # reference a window that classifies as a dialog/popup (defense against
+            # dismissing arbitrary windows by handle).
+            target_valid = False
+            for w_hwnd, w_title, w_cls, _pid in _enum_top_windows_ctypes():
+                if w_hwnd == hwnd and _classify(w_title, w_cls, extra) is not None:
+                    target_valid = True
+                    break
+            if not target_valid:
+                return jsonify({
+                    "error": "hwnd does not reference a recognized dialog",
+                    "hwnd": hwnd,
+                }), 400
             results.append({
                 "hwnd": hwnd,
                 **_dismiss_hwnd(hwnd, mode=mode, prefer_pywinauto=prefer_pywinauto),
@@ -395,11 +414,16 @@ def register_routes(app, state, require_auth):
         mode = (d.get("mode") or "safe").strip().lower()
         if mode not in ("safe", "negative"):
             return jsonify({"error": "mode must be 'safe' or 'negative'"}), 400
+        try:
+            settle_ms = int(d.get("settle_ms", 250))
+            max_iterations = int(d.get("max_iterations", 5))
+        except (TypeError, ValueError):
+            return jsonify({"error": "settle_ms and max_iterations must be integers"}), 400
         report = guard_run(
             extra_patterns=d.get("extra_patterns") or [],
             mode=mode,
             dismiss=bool(d.get("dismiss", True)),
-            settle_ms=int(d.get("settle_ms", 250)),
-            max_iterations=int(d.get("max_iterations", 5)),
+            settle_ms=settle_ms,
+            max_iterations=max_iterations,
         )
         return jsonify({"status": "ok", **report})
