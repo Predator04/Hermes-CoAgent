@@ -594,10 +594,10 @@ Remove-Item "$imgPath" -Force -ErrorAction SilentlyContinue
                 except OSError:
                     pass
 
-def ocr_find_text(text, pil_img=None):
+def ocr_find_text(text, pil_img=None, fresh=False):
     """Find text on screen, return matches with positions."""
     if pil_img is None:
-        pil_img = _screen_img(force=True)
+        pil_img = _screen_img(force=fresh)
     if pil_img is None:
         return []
     try:
@@ -859,7 +859,8 @@ def register_routes(app, state, require_auth):
         text = d.get("text", "")
         if not text:
             return _missing_field("text")
-        matches = ocr_find_text(text)
+        fresh = bool(d.get("fresh", False))
+        matches = ocr_find_text(text, fresh=fresh)
         return jsonify({"query": text, "count": len(matches), "matches": matches})
 
     @app.route("/visual/find", methods=["POST"])
@@ -869,14 +870,15 @@ def register_routes(app, state, require_auth):
         text = d.get("text", "")
         if not text:
             return _missing_field("text")
-        matches = ocr_find_text(text)
+        fresh = bool(d.get("fresh", False))
+        matches = ocr_find_text(text, fresh=fresh)
         return jsonify({"query": text, "count": len(matches), "matches": matches})
 
     @app.route("/crop", methods=["POST"])
     @require_auth
     def route_crop():
         d = _json_body()
-        img = _screen_img(force=True)
+        img = _screen_img(force=bool(d.get("fresh", False)))
         if img is None:
             return jsonify({
                 "ok": False,
