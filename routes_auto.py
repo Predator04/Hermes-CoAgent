@@ -249,6 +249,20 @@ TOOLS = {
     "stars": 0,
     "url": "https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/driverquery"
   },
+  "duf": {
+    "added": "2026-08-20",
+    "command": "duf --json [--all] [--only-fs <fs>] [--hide-fs <fs>] [--sort <col>]",
+    "desc": "duf is a cross-platform 'df' alternative with a clean, colorized table and a machine-readable --json mode. It lists every mounted filesystem with device, mount point, filesystem type, total/used/free bytes and inode counts in one call \u2014 ideal for disk-space monitoring and low-space alerting from CoAgent.",
+    "exe": "duf",
+    "install": {
+      "choco": "choco install duf",
+      "scoop": "scoop install duf",
+      "winget": "winget install muesli.duf"
+    },
+    "repo": "muesli/duf",
+    "stars": 15264,
+    "url": "https://github.com/muesli/duf"
+  },
   "excel_mcp_server": {
     "added": "2026-07-04",
     "candidates": [
@@ -385,6 +399,20 @@ TOOLS = {
     "repo": "sharkdp/hexyl",
     "stars": 10259,
     "url": "https://github.com/sharkdp/hexyl"
+  },
+  "hyperfine": {
+    "added": "2026-08-20",
+    "command": "hyperfine -N -w 3 -r 10 --export-json out.json 'cmd1' 'cmd2'",
+    "desc": "hyperfine is a command-line benchmarking tool that measures and compares the runtime of shell commands with statistical rigor (warmup runs, multiple samples, mean/min/max, relative speedup) and exports results as JSON/CSV/Markdown \u2014 ideal for measuring CoAgent endpoint latency and detecting performance regressions.",
+    "exe": "hyperfine",
+    "install": {
+      "choco": "choco install hyperfine",
+      "scoop": "scoop install hyperfine",
+      "winget": "winget install sharkdp.hyperfine"
+    },
+    "repo": "sharkdp/hyperfine",
+    "stars": 28681,
+    "url": "https://github.com/sharkdp/hyperfine"
   },
   "icacls": {
     "added": "2026-07-15",
@@ -11015,6 +11043,143 @@ def _h_volatility3_284():
         return (jsonify({'error': str(e)}), 500)
 
 
+def _h_hyperfine_285():
+    """Benchmark one or more commands with hyperfine, returning JSON results.
+
+        Body (JSON):
+            commands (list[str], required): Command lines to benchmark (e.g.
+                'python -V', 'curl -s http://localhost:9123/ping'). Each entry is a
+                full command string.
+            runs (int, optional): Number of runs per command. Default 10, max 100.
+            warmup (int, optional): Warmup runs before timing. Default 3.
+            shell (bool, optional): Run each command through the shell. Default False
+                (uses --shell=none, which is more reliable on Windows for simple commands).
+            time_limit (str, optional): Per-command time limit, e.g. '30s'. Optional.
+            show_output (bool, optional): Capture command stdout. Default False.
+            timeout (int, optional): Max seconds for the whole benchmark. Default 600, max 1800.
+        """
+    body = _json_body() or {}
+    commands = body.get('commands')
+    if not isinstance(commands, list) or not commands or not all(isinstance(c, str) and c.strip() for c in commands):
+        return (jsonify({'error': "'commands' must be a non-empty list of command strings"}), 400)
+    exe = _find_tool('hyperfine')
+    if not exe:
+        return (jsonify({'error': 'hyperfine is not installed',
+                         'hint': 'Install with: winget install sharkdp.hyperfine'}), 503)
+    try:
+        runs = max(1, min(int(body.get('runs', 10)), 100))
+    except (ValueError, TypeError):
+        runs = 10
+    try:
+        warmup = max(0, min(int(body.get('warmup', 3)), 100))
+    except (ValueError, TypeError):
+        warmup = 3
+    try:
+        timeout = max(10, min(int(body.get('timeout', 600)), 1800))
+    except (ValueError, TypeError):
+        timeout = 600
+    use_shell = str(body.get('shell', 'false')).lower() in ('1', 'true', 'yes')
+    time_limit = str(body.get('time_limit') or '').strip()
+    show_output = str(body.get('show_output', 'false')).lower() in ('1', 'true', 'yes')
+    tmp = tempfile.NamedTemporaryFile(suffix='.json', prefix='hyperfine_', delete=False)
+    tmp.close()
+    cmd = [exe, '--export-json', tmp.name, '-w', str(warmup), '-r', str(runs)]
+    if not use_shell:
+        cmd.append('-N')
+    if time_limit:
+        cmd.extend(['--time-limit', time_limit])
+    if show_output:
+        cmd.append('--show-output')
+    cmd.extend(commands)
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, errors='replace', timeout=timeout)
+        results = None
+        if os.path.isfile(tmp.name):
+            try:
+                with open(tmp.name, 'r', encoding='utf-8') as fh:
+                    results = json_lib.load(fh)
+            except Exception:
+                results = None
+        return jsonify({'ok': r.returncode == 0, 'returncode': r.returncode,
+                        'commands': commands, 'results': results,
+                        'summary': (r.stdout or '').strip(), 'stderr': (r.stderr or '').strip()})
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': f'hyperfine timed out after {timeout}s'}), 504)
+    except Exception as e:
+        _log(f'[auto_hyperfine_bench] {e}')
+        return (jsonify({'error': str(e)}), 500)
+    finally:
+        try:
+            if os.path.isfile(tmp.name):
+                os.remove(tmp.name)
+        except OSError:
+            pass
+
+
+def _h_duf_286():
+    """Report disk usage across filesystems via duf (JSON).
+
+        GET params or JSON body:
+            all (bool, optional): Include pseudo/duplicate/inaccessible filesystems. Default False.
+            only_fs (str, optional): Comma-separated filesystem types to include (e.g. 'ntfs,ext4').
+            hide_fs (str, optional): Comma-separated filesystem types to hide.
+            sort (str, optional): Sort column: mountpoint|size|used|avail|usage|inodes|
+                inodes_used|inodes_avail|inodes_usage|type|filesystem. Default 'size'.
+            threshold (int, optional): Only return mounts with usage% >= threshold (0-100). Default 0.
+        """
+    exe = _find_tool('duf')
+    if not exe:
+        return (jsonify({'error': 'duf is not installed',
+                         'hint': 'Install with: winget install muesli.duf'}), 503)
+    if request.method == 'POST':
+        data = _json_body() or {}
+    else:
+        data = {k: v for k, v in request.args.items()}
+    cmd = [exe, '--json']
+    if str(data.get('all', 'false')).lower() in ('1', 'true', 'yes'):
+        cmd.append('--all')
+    only_fs = str(data.get('only_fs') or '').strip()
+    if only_fs:
+        cmd.extend(['--only-fs', only_fs])
+    hide_fs = str(data.get('hide_fs') or '').strip()
+    if hide_fs:
+        cmd.extend(['--hide-fs', hide_fs])
+    sort_col = str(data.get('sort') or 'size').strip().lower()
+    valid_cols = {'mountpoint', 'size', 'used', 'avail', 'usage', 'inodes',
+                  'inodes_used', 'inodes_avail', 'inodes_usage', 'type', 'filesystem'}
+    if sort_col in valid_cols:
+        cmd.extend(['--sort', sort_col])
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, errors='replace', timeout=30)
+        if r.returncode != 0:
+            _log(f"[auto_duf_usage] rc={r.returncode}: {(r.stderr or '')[:300]}")
+            return (jsonify({'error': (r.stderr or '').strip() or 'duf failed'}), 500)
+        try:
+            mounts = json_lib.loads(r.stdout)
+        except Exception:
+            mounts = []
+        try:
+            threshold = int(data.get('threshold', 0) or 0)
+        except (ValueError, TypeError):
+            threshold = 0
+        # duf JSON exposes total/used bytes, not a usage% field — compute it here.
+        for m in mounts:
+            try:
+                total = int(m.get('total') or 0)
+                used = int(m.get('used') or 0)
+                m['usage_pct'] = round(100.0 * used / total, 1) if total > 0 else None
+            except (ValueError, TypeError):
+                m['usage_pct'] = None
+        if threshold > 0:
+            mounts = [m for m in mounts if (m.get('usage_pct') or 0) >= threshold]
+        return jsonify({'ok': True, 'count': len(mounts), 'mounts': mounts})
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': 'duf timed out after 30s'}), 504)
+    except Exception as e:
+        _log(f'[auto_duf_usage] {e}')
+        return (jsonify({'error': str(e)}), 500)
+
+
 def register_routes(app, state, require_auth):
     global _STATE
     _STATE = state
@@ -11306,6 +11471,8 @@ def register_routes(app, state, require_auth):
         ('/auto/doggo/query', ['POST'], _h_doggo_282),
         ('/auto/volatility3/plugins', ['GET'], _h_volatility3_283),
         ('/auto/volatility3/analyze', ['POST'], _h_volatility3_284),
+        ('/auto/hyperfine/bench', ['POST'], _h_hyperfine_285),
+        ('/auto/duf/usage', ['GET', 'POST'], _h_duf_286),
     ]
     for _path, _methods, _fn in _ACTIONS:
         app.add_url_rule(_path, endpoint=_fn.__name__, view_func=require_auth(_fn), methods=_methods)
