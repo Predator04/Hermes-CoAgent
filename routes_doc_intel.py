@@ -172,10 +172,10 @@ def _parse_page_range(spec, total):
     Returns None on invalid input, or an empty list if nothing matches.
     total is used to clamp the upper bound.
     """
-    if spec is None or spec == "":
+    if spec is None or not str(spec).strip():
         return list(range(1, min(total, _MAX_PAGES) + 1))
     if isinstance(spec, int):
-        return [spec] if 1 <= spec <= total else []
+        return [spec] if 1 <= spec <= min(total, _MAX_PAGES) else []
     if not isinstance(spec, str):
         return None
     pages = set()
@@ -349,10 +349,17 @@ def _pdf_ocr_pages(path, page_numbers):
             for pno in page_numbers:
                 try:
                     page = pdf.pages[pno - 1]
-                    pil = page.to_image(resolution=200).original
-                    res = _windows_ocr(pil)
-                    if isinstance(res, dict) and res.get("success"):
-                        out[pno] = (res.get("text") or "").strip()
+                    page_image = page.to_image(resolution=200)
+                    pil = page_image.original
+                    try:
+                        res = _windows_ocr(pil)
+                        if isinstance(res, dict) and res.get("success"):
+                            out[pno] = (res.get("text") or "").strip()
+                    finally:
+                        try:
+                            pil.close()
+                        except Exception:
+                            pass
                 except Exception as exc:
                     _log(f"doc/extract OCR page {pno} failed: {type(exc).__name__}: {exc}")
     except Exception as exc:
@@ -490,7 +497,13 @@ def _image_extract(path):
     except Exception as exc:
         return None, f"image open failed: {type(exc).__name__}: {exc}"
 
-    res = _windows_ocr(pil)
+    try:
+        res = _windows_ocr(pil)
+    finally:
+        try:
+            pil.close()
+        except Exception:
+            pass
     if not isinstance(res, dict) or not res.get("success"):
         detail = (res or {}).get("error") if isinstance(res, dict) else "unknown"
         return None, f"OCR failed: {detail}"
