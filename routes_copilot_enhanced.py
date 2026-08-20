@@ -379,6 +379,10 @@ def _timeline_from_goal(goal):
         "log": list(goal.get("log") or []),
         "steers": list(goal.get("steering_history") or []),
         "steer_pending": len(goal.get("steering_queue") or []),
+        "awaiting_instruction": (
+            bool(goal.get("steering_queue"))
+            and str(goal.get("status") or "").lower() not in _TERMINAL_GOAL_STATUSES
+        ),
         "error": goal.get("error"),
         "created_at": goal.get("created_at"),
         "started_at": goal.get("started_at"),

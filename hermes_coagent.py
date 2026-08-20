@@ -1064,6 +1064,11 @@ try:
 except ImportError:
     reg_benchmark = None
     features["benchmark_harness"] = False
+try:
+    from routes_midrun_steering import reg_midrun_steering
+except ImportError:
+    reg_midrun_steering = None
+    features["midrun_steering"] = False
 
 reg_background(app, state, require_auth)
 features["background_control"] = True
@@ -1287,6 +1292,9 @@ if reg_capture:
 if reg_benchmark:
     reg_benchmark(app, state, require_auth)
     features["benchmark_harness"] = True
+if reg_midrun_steering:
+    reg_midrun_steering(app, state, require_auth)
+    features["midrun_steering"] = True
 reg_diagnostics(app, state, require_auth); features["diagnostics"] = True
 reg_layout(app, state, require_auth); features["layout_profiles"] = True
 if CEF_AVAILABLE:
@@ -1450,7 +1458,8 @@ def route_version():
                                  "speculative_batching", "hybrid_detection",
                                  "recipe_verification", "reminders", "hud_overlay",
                                  "fullpage_capture", "loop_stall_detection", "voice_stt",
-                                 "auto_router", "semantic_capture", "benchmark_harness"],
+                                 "auto_router", "semantic_capture", "benchmark_harness",
+                                 "midrun_steering"],
                     "modules": ["mouse", "ocr", "uia", "file", "media", "v63",
                                 "stream", "process", "voice", "cua", "copilot",
                                 "bypass", "toast", "deps", "config", "browser",
