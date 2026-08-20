@@ -151,7 +151,9 @@ def _windows_search_fallback(query, limit, timeout):
     """Query the Windows Search index via ADODB / Search.CollatorDSO.
 
     Returns (results, error_or_none). LIKE pattern escaping uses standard
-    SQL escaping for %, _ and single quotes. All PowerShell literals ASCII.
+    SQL escaping for %, _ and single quotes. The untrusted query is passed
+    to PowerShell through an environment variable (never interpolated into
+    the script), so metacharacters such as $(...) cannot be evaluated.
     """
     ps = _find_powershell()
     if not ps or not os.path.isfile(ps):
@@ -168,11 +170,15 @@ def _windows_search_fallback(query, limit, timeout):
         "FROM SYSTEMINDEX "
         "WHERE System.FileName LIKE '%" + escaped + "%'"
     )
+    # Pass the SQL through an environment variable and read it back with
+    # $env:HERMES_ES_SQL. The untrusted query never appears in the script
+    # text, so PowerShell cannot evaluate $(...) subexpressions or other
+    # metacharacters within it.
     script = (
         "$ErrorActionPreference = 'Stop'; "
         "$conn = New-Object -ComObject ADODB.Connection; "
         "$conn.Open(\"Provider=Search.CollatorDSO;Extended Properties='Application=Windows';\"); "
-        "$rs = $conn.Execute(\"" + sql.replace("\"", "\\\"") + "\"); "
+        "$rs = $conn.Execute($env:HERMES_ES_SQL); "
         "$out = @(); "
         "while (-not $rs.EOF) { "
         "  $out += [pscustomobject]@{"
@@ -185,6 +191,8 @@ def _windows_search_fallback(query, limit, timeout):
         "$rs.Close(); $conn.Close(); "
         "$out | ConvertTo-Json -Depth 3 -Compress"
     )
+    env = dict(os.environ)
+    env["HERMES_ES_SQL"] = sql
     try:
         r = subprocess.run(
             [ps, "-NoProfile", "-NonInteractive", "-Command", script],
@@ -192,6 +200,7 @@ def _windows_search_fallback(query, limit, timeout):
             text=True,
             timeout=timeout,
             creationflags=_CREATE_NO_WINDOW,
+            env=env,
         )
     except subprocess.TimeoutExpired:
         return [], "windows search timed out"
@@ -254,6 +263,8 @@ def register_routes(app, state, require_auth):
             return jsonify({"error": "query too long (max 1024 chars)"}), 400
         if _BAD_QUERY_RE.search(query):
             return jsonify({"error": "query contains control characters"}), 400
+        if query.startswith("-"):
+            return jsonify({"error": "query cannot start with '-'"}), 400
 
         limit = _clamp_limit(body.get("limit") or request.args.get("limit"))
         try:
@@ -267,20 +278,16 @@ def register_routes(app, state, require_auth):
 
         if current_es:
             results, err, rc = _run_es(current_es, query, limit, timeout)
-            payload = {
-                "query": query,
-                "backend": "everything",
-                "es_path": current_es,
-                "count": len(results),
-                "results": results,
-            }
-            if err:
-                payload["error"] = err
-                payload["returncode"] = rc
-                _log(f"search/everything es.exe failed: {err}")
-                return jsonify(payload), 500
-            _log(f"search/everything es.exe q={query!r} n={len(results)}")
-            return jsonify(payload)
+            if not err:
+                _log(f"search/everything es.exe q={query!r} n={len(results)}")
+                return jsonify({
+                    "query": query,
+                    "backend": "everything",
+                    "es_path": current_es,
+                    "count": len(results),
+                    "results": results,
+                })
+            _log(f"search/everything es.exe failed: {err} — falling back to Windows Search")
 
         # Fallback: Windows Search index.
         results, err = _windows_search_fallback(query, limit, timeout)
