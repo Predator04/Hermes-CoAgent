@@ -1,6 +1,7 @@
 """Thread-owned Patchright/Playwright browser automation routes."""
 
 import json
+import logging
 import os
 import queue
 import re
@@ -475,6 +476,7 @@ def _browser_worker(browser_id, options, ready_queue):
             if info:
                 info["status"] = "closed"
                 info["closed_at"] = time.time()
+            _BROWSERS.pop(browser_id, None)
 
 
 @browser_v2_bp.route("/browser/dom", methods=["POST"])
@@ -646,7 +648,7 @@ def route_browser_extract(browser_id):
 @browser_v2_bp.route("/browser/evaluate/<browser_id>", methods=["POST"])
 def route_browser_evaluate(browser_id):
     config = _json_body()
-    if not os.environ.get("COAGENT_ENABLE_JS_EVAL"):
+    if not _as_bool(os.environ.get("COAGENT_ENABLE_JS_EVAL"), False):
         return _error("Browser JavaScript evaluation is disabled", 403, browser_id=browser_id)
     try:
         return jsonify(_command(browser_id, "evaluate", config, timeout=60))
