@@ -62,6 +62,7 @@ def _run(cmd, timeout=15):
             cmd,
             capture_output=True,
             text=True,
+            errors="replace",
             timeout=timeout,
             creationflags=_CREATE_NO_WINDOW,
         )
@@ -269,12 +270,22 @@ def register_routes(app, state, require_auth):
 
         stop_result = _service_control("stop", name)
         # Poll the state until it reaches STOPPED or the deadline expires.
-        deadline = time.time() + wait_seconds
-        while time.time() < deadline:
+        deadline = time.monotonic() + wait_seconds
+        reached_stopped = False
+        while time.monotonic() < deadline:
             svc, _err, rc = _sc_query_one(sc_exe, name)
             if rc == 0 and svc and svc.get("state", "").upper() == "STOPPED":
+                reached_stopped = True
                 break
             time.sleep(0.5)
+        if stop_result["returncode"] != 0 and not reached_stopped:
+            _log(f"services/restart {name} stop failed rc={stop_result['returncode']}; not restarting")
+            return jsonify({
+                "status": "error",
+                "name": name,
+                "stop": stop_result,
+                "error": "stop failed; service was not restarted",
+            }), 500
         start_result = _service_control("start", name)
         _log(f"services/restart {name} stop_rc={stop_result['returncode']} start_rc={start_result['returncode']}")
         overall_ok = start_result["returncode"] == 0
