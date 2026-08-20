@@ -57,6 +57,8 @@ _ID_COUNTER = 0
 
 _ANSI_RE = re.compile(r"\x1B\[[0-?]*[ -/]*[@-~]")
 
+_MAX_STDERR_LINES = 200
+
 
 def _windows_only():
     return jsonify({"error": "Windows-only endpoint"}), 501
@@ -195,8 +197,13 @@ def _build_ffmpeg_argv(ffmpeg, out_path, fps, region, video_codec, preset,
 
 
 def _spawn_ffmpeg(argv):
-    """Launch ffmpeg detached from any console; return the Popen object."""
-    return subprocess.Popen(
+    """Launch ffmpeg detached from any console.
+
+    Returns (proc, stderr_buffer, drain_thread). A background daemon thread
+    continuously drains ffmpeg's stderr pipe into ``stderr_buffer`` so the OS
+    pipe never fills (~64KB) and deadlocks the recording.
+    """
+    proc = subprocess.Popen(
         argv,
         stdin=subprocess.PIPE,
         stdout=subprocess.DEVNULL,
@@ -204,6 +211,22 @@ def _spawn_ffmpeg(argv):
         creationflags=_CREATE_NO_WINDOW,
         close_fds=True,
     )
+    stderr_buffer = []
+
+    def _drain():
+        try:
+            for line in proc.stderr:
+                stderr_buffer.append(line.decode("utf-8", "replace"))
+                if len(stderr_buffer) > _MAX_STDERR_LINES:
+                    del stderr_buffer[:-_MAX_STDERR_LINES]
+        except Exception:
+            pass
+
+    drain_thread = threading.Thread(
+        target=_drain, name="ffmpeg-stderr-drain", daemon=True,
+    )
+    drain_thread.start()
+    return proc, stderr_buffer, drain_thread
 
 
 def _proc_status(entry):
@@ -255,19 +278,13 @@ def _snapshot_entry(rec_id, entry):
 
 
 def _drain_stderr(entry):
-    """Read remaining stderr from a stopped ffmpeg into entry['stderr']."""
-    proc = entry.get("proc")
-    if proc is None or proc.stderr is None:
-        return
-    try:
-        data = proc.stderr.read()
-    except Exception:
-        data = b""
-    if data:
-        try:
-            entry["stderr"] = data.decode("utf-8", "replace")
-        except Exception:
-            entry["stderr"] = ""
+    """Join the background-drained stderr buffer into entry['stderr']."""
+    drain_thread = entry.get("drain_thread")
+    if drain_thread is not None and drain_thread.is_alive():
+        drain_thread.join(timeout=2.0)
+    buf = entry.get("stderr_buffer") or []
+    if buf:
+        entry["stderr"] = "".join(buf)
 
 
 def _stop_recording(rec_id, timeout=8.0):
@@ -295,6 +312,7 @@ def _stop_recording(rec_id, timeout=8.0):
             except Exception:
                 try:
                     proc.kill()
+                    proc.wait(timeout=3.0)
                 except Exception:
                     pass
     _drain_stderr(entry)
@@ -472,7 +490,7 @@ def register_routes(app, state, require_auth):
             )
 
             try:
-                proc = _spawn_ffmpeg(argv)
+                proc, stderr_buffer, drain_thread = _spawn_ffmpeg(argv)
             except OSError as exc:
                 return jsonify({"error": f"spawn failed: {exc}"}), 500
 
@@ -480,14 +498,30 @@ def register_routes(app, state, require_auth):
             # then surface stderr rather than reporting a phantom recording.
             time.sleep(0.4)
             if proc.poll() is not None:
+                err = ""
                 try:
-                    err = (proc.stderr.read() if proc.stderr else b"")
-                except Exception:
-                    err = b""
+                    try:
+                        proc.wait(timeout=2.0)
+                    except subprocess.TimeoutExpired:
+                        pass
+                    if drain_thread is not None and drain_thread.is_alive():
+                        drain_thread.join(timeout=1.0)
+                    err = "".join(stderr_buffer)
+                finally:
+                    try:
+                        if proc.stdin:
+                            proc.stdin.close()
+                    except Exception:
+                        pass
+                    try:
+                        if proc.stderr:
+                            proc.stderr.close()
+                    except Exception:
+                        pass
                 return jsonify({
                     "error": "ffmpeg exited immediately",
                     "returncode": proc.returncode,
-                    "stderr": _clean_stderr(err.decode("utf-8", "replace")),
+                    "stderr": _clean_stderr(err),
                     "argv": argv,
                 }), 500
 
@@ -500,6 +534,8 @@ def register_routes(app, state, require_auth):
                 "stopped_at": None,
                 "returncode": None,
                 "stderr": "",
+                "stderr_buffer": stderr_buffer,
+                "drain_thread": drain_thread,
                 "argv": argv,
                 "fps": fps,
                 "region": list(region) if region else None,
