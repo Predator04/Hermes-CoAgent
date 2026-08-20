@@ -134,14 +134,15 @@ def _dispatch(trigger_id, record, event_type, data):
             current["last_response"] = info
 
 
-def _fire_async(trigger_id, event_type, data):
+def _fire_async(trigger_id, event_type, data, bypass_filter=False):
     with _LOCK:
         record = _TRIGGERS.get(trigger_id)
         if not record:
             return
-        events = set(record.get("events") or [])
-        if events and event_type not in events:
-            return
+        if not bypass_filter:
+            events = set(record.get("events") or [])
+            if events and event_type not in events:
+                return
         # snapshot for thread safety
         snapshot = dict(record)
 
@@ -701,5 +702,5 @@ def register_routes(app, state, require_auth):
         body = _json_body() or {}
         event = str(body.get("event") or "test").strip() or "test"
         data = body.get("data") if isinstance(body.get("data"), (dict, list)) else {"manual": True}
-        _fire_async(trigger_id, event, data)
+        _fire_async(trigger_id, event, data, bypass_filter=True)
         return jsonify({"status": "queued", "id": trigger_id, "event": event})
