@@ -314,8 +314,8 @@ def _copy_skill_package(src_dir: Path, dest_dir: Path) -> int:
     dest_dir.mkdir(parents=True, exist_ok=True)
     count = 0
     src_md = src_dir / "SKILL.md"
-    if src_md.is_file():
-        shutil.copy2(str(src_md), str(dest_dir / "SKILL.md"))
+    if src_md.is_file() and not src_md.is_symlink():
+        shutil.copy2(str(src_md), str(dest_dir / "SKILL.md"), follow_symlinks=False)
         count += 1
     for sub in _BUNDLE_DIRS:
         src_sub = src_dir / sub
@@ -327,7 +327,10 @@ def _copy_skill_package(src_dir: Path, dest_dir: Path) -> int:
             target_root = dest_sub / rel
             target_root.mkdir(parents=True, exist_ok=True)
             for f in files:
-                shutil.copy2(str(Path(root) / f), str(target_root / f))
+                src_file = Path(root) / f
+                if src_file.is_symlink():
+                    continue
+                shutil.copy2(str(src_file), str(target_root / f), follow_symlinks=False)
                 count += 1
                 if count > _MAX_BUNDLE_FILES:
                     return count
