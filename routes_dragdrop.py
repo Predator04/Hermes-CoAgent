@@ -63,6 +63,32 @@ _VK_V = 0x56
 _CF_HDROP = 15
 _GMEM_MOVEABLE = 0x0002
 
+# Set ctypes prototypes so 64-bit handles/pointers are not truncated to
+# 32-bit. ctypes otherwise defaults function returns to c_int, which silently
+# corrupts HGLOBAL handles and lock pointers on 64-bit Python.
+if _HAS_CTYPES and wintypes is not None:
+    _kernel32 = ctypes.windll.kernel32
+    _user32 = ctypes.windll.user32
+    try:
+        _kernel32.GlobalAlloc.restype = wintypes.HGLOBAL
+        _kernel32.GlobalAlloc.argtypes = [wintypes.UINT, ctypes.c_size_t]
+        _kernel32.GlobalLock.restype = wintypes.LPVOID
+        _kernel32.GlobalLock.argtypes = [wintypes.HGLOBAL]
+        _kernel32.GlobalUnlock.restype = wintypes.BOOL
+        _kernel32.GlobalUnlock.argtypes = [wintypes.HGLOBAL]
+        _kernel32.GlobalFree.restype = wintypes.HGLOBAL
+        _kernel32.GlobalFree.argtypes = [wintypes.HGLOBAL]
+        _user32.OpenClipboard.restype = wintypes.BOOL
+        _user32.OpenClipboard.argtypes = [wintypes.HWND]
+        _user32.EmptyClipboard.restype = wintypes.BOOL
+        _user32.EmptyClipboard.argtypes = []
+        _user32.SetClipboardData.restype = wintypes.HANDLE
+        _user32.SetClipboardData.argtypes = [wintypes.UINT, wintypes.HANDLE]
+        _user32.CloseClipboard.restype = wintypes.BOOL
+        _user32.CloseClipboard.argtypes = []
+    except Exception:
+        pass
+
 
 def _windows_only():
     return jsonify({"error": "Windows-only endpoint"}), 501
@@ -108,6 +134,7 @@ def _set_files_on_clipboard(paths):
     h_mem = kernel32.GlobalAlloc(_GMEM_MOVEABLE, total)
     if not h_mem:
         return False, "GlobalAlloc failed"
+    handed_off = False
     try:
         ptr = kernel32.GlobalLock(h_mem)
         if not ptr:
@@ -133,13 +160,16 @@ def _set_files_on_clipboard(paths):
                 # Ownership stays with us on failure; free explicitly.
                 kernel32.GlobalFree(h_mem)
                 return False, "SetClipboardData failed"
+            # On success the OS owns the handle; never free it again.
+            handed_off = True
         finally:
             user32.CloseClipboard()
     except Exception as exc:
-        try:
-            kernel32.GlobalFree(h_mem)
-        except Exception:
-            pass
+        if not handed_off:
+            try:
+                kernel32.GlobalFree(h_mem)
+            except Exception:
+                pass
         return False, f"{type(exc).__name__}: {exc}"
 
     return True, None
