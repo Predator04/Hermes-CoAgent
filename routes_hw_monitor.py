@@ -196,7 +196,7 @@ def _classify_ohm_sensors(raw):
 
 def _collect_status(sources=None):
     """Aggregate hardware status. sources is a set of str filters or None."""
-    wanted = sources if sources else None
+    wanted = None if sources is None else set(sources)
     result = {
         "sources": [],
         "cpu": {},
@@ -357,14 +357,15 @@ def register_routes(app, state, require_auth):
             if isinstance(requested, list):
                 filtered = {str(s).lower() for s in requested if isinstance(s, str)}
                 filtered &= _VALID_SOURCES
-                if filtered:
-                    sources = filtered
+                if not filtered:
+                    return jsonify({"error": "no valid sources requested"}), 400
+                sources = filtered
 
         try:
             status = _collect_status(sources)
         except Exception as exc:  # never let a WMI hiccup 500 the whole call
-            _log(f"hw/status failed: {exc}")
-            return jsonify({"error": str(exc)}), 500
+            _log(f"hw/status failed: {type(exc).__name__}: {exc}")
+            return jsonify({"error": "hw status unavailable"}), 500
 
         return jsonify({
             "status": "ok",
