@@ -147,6 +147,20 @@ def _read_clipboard_text_ctypes():
     user32 = ctypes.windll.user32
     kernel32 = ctypes.windll.kernel32
 
+    # ctypes defaults restype to 32-bit c_int; on 64-bit Python this silently
+    # truncates HANDLE/LPVOID returns. Set explicit prototypes.
+    user32.OpenClipboard.restype = wintypes.BOOL
+    user32.OpenClipboard.argtypes = [wintypes.HWND]
+    user32.CloseClipboard.restype = wintypes.BOOL
+    user32.IsClipboardFormatAvailable.restype = wintypes.BOOL
+    user32.IsClipboardFormatAvailable.argtypes = [wintypes.UINT]
+    user32.GetClipboardData.restype = wintypes.HANDLE
+    user32.GetClipboardData.argtypes = [wintypes.UINT]
+    kernel32.GlobalLock.restype = wintypes.LPVOID
+    kernel32.GlobalLock.argtypes = [wintypes.HGLOBAL]
+    kernel32.GlobalUnlock.restype = wintypes.BOOL
+    kernel32.GlobalUnlock.argtypes = [wintypes.HGLOBAL]
+
     if not user32.OpenClipboard(0):
         return None
     try:
@@ -175,6 +189,23 @@ def _write_clipboard_text_ctypes(text):
     CF_UNICODETEXT = 13
     user32 = ctypes.windll.user32
     kernel32 = ctypes.windll.kernel32
+
+    # ctypes defaults restype to 32-bit c_int; on 64-bit Python this silently
+    # truncates HANDLE/HGLOBAL/LPVOID returns. Set explicit prototypes.
+    user32.OpenClipboard.restype = wintypes.BOOL
+    user32.OpenClipboard.argtypes = [wintypes.HWND]
+    user32.CloseClipboard.restype = wintypes.BOOL
+    user32.EmptyClipboard.restype = wintypes.BOOL
+    user32.SetClipboardData.restype = wintypes.HANDLE
+    user32.SetClipboardData.argtypes = [wintypes.UINT, wintypes.HANDLE]
+    kernel32.GlobalAlloc.restype = wintypes.HGLOBAL
+    kernel32.GlobalAlloc.argtypes = [wintypes.UINT, ctypes.c_size_t]
+    kernel32.GlobalFree.restype = wintypes.HGLOBAL
+    kernel32.GlobalFree.argtypes = [wintypes.HGLOBAL]
+    kernel32.GlobalLock.restype = wintypes.LPVOID
+    kernel32.GlobalLock.argtypes = [wintypes.HGLOBAL]
+    kernel32.GlobalUnlock.restype = wintypes.BOOL
+    kernel32.GlobalUnlock.argtypes = [wintypes.HGLOBAL]
 
     if not isinstance(text, str):
         text = str(text or "")
@@ -216,8 +247,9 @@ def _record_text(text, source="poll"):
     global _LAST_HASH
     if not isinstance(text, str) or not text:
         return None, False
-    if len(text.encode("utf-8", errors="replace")) > _MAX_TEXT_BYTES:
-        text = text[:_MAX_TEXT_BYTES]
+    encoded = text.encode("utf-8", errors="replace")
+    if len(encoded) > _MAX_TEXT_BYTES:
+        text = encoded[:_MAX_TEXT_BYTES].decode("utf-8", errors="ignore")
 
     eid = _entry_id(text)
     now = time.time()
