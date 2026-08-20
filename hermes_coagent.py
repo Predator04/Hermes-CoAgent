@@ -1069,6 +1069,21 @@ try:
 except ImportError:
     reg_midrun_steering = None
     features["midrun_steering"] = False
+try:
+    from routes_fleet import register_routes as reg_fleet
+except ImportError:
+    reg_fleet = None
+    features["fleet_mode"] = False
+try:
+    from routes_guard import register_routes as reg_guard
+except ImportError:
+    reg_guard = None
+    features["prompt_guard"] = False
+try:
+    from routes_checkpoint import register_routes as reg_checkpoint
+except ImportError:
+    reg_checkpoint = None
+    features["safety_checkpoint"] = False
 
 reg_background(app, state, require_auth)
 features["background_control"] = True
@@ -1295,6 +1310,15 @@ if reg_benchmark:
 if reg_midrun_steering:
     reg_midrun_steering(app, state, require_auth)
     features["midrun_steering"] = True
+if reg_fleet:
+    reg_fleet(app, state, require_auth)
+    features["fleet_mode"] = True
+if reg_guard:
+    reg_guard(app, state, require_auth)
+    features["prompt_guard"] = True
+if reg_checkpoint:
+    reg_checkpoint(app, state, require_auth)
+    features["safety_checkpoint"] = True
 reg_diagnostics(app, state, require_auth); features["diagnostics"] = True
 reg_layout(app, state, require_auth); features["layout_profiles"] = True
 if CEF_AVAILABLE:
@@ -1459,7 +1483,8 @@ def route_version():
                                  "recipe_verification", "reminders", "hud_overlay",
                                  "fullpage_capture", "loop_stall_detection", "voice_stt",
                                  "auto_router", "semantic_capture", "benchmark_harness",
-                                 "midrun_steering"],
+                                 "midrun_steering", "fleet_mode", "prompt_guard",
+                                 "safety_checkpoint"],
                     "modules": ["mouse", "ocr", "uia", "file", "media", "v63",
                                 "stream", "process", "voice", "cua", "copilot",
                                 "bypass", "toast", "deps", "config", "browser",
