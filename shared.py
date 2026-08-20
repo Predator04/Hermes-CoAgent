@@ -86,7 +86,7 @@ def _load_version() -> str:
     return "0.0.0"
 
 VERSION = _load_version()
-BUILD = "2026-08-13"
+BUILD = "2026-08-20"
 AGENT_NAME = "Hermes CoAgent"
 MACROS_DIR = COAGENT_DIR / "macros"
 SCREENSHOTS_DIR = COAGENT_DIR / "screenshots"
