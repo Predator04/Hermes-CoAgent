@@ -16,6 +16,7 @@ All PowerShell/subprocess strings kept pure ASCII per project rules.
 
 import io
 import os
+import re
 import shutil
 import subprocess
 import threading
@@ -65,15 +66,21 @@ def _extract_ngrok(zip_bytes: bytes, dest_dir: Path) -> Path:
     with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
         exe_name = None
         for name in zf.namelist():
-            if name.lower().endswith("ngrok.exe"):
+            # Only accept a member whose basename is exactly ngrok.exe, so a
+            # path-traversal entry like ../../Windows/System32/ngrok.exe is
+            # rejected rather than trusted as the payload.
+            base = name.replace("\\", "/").rstrip("/").split("/")[-1]
+            if base.lower() == "ngrok.exe":
                 exe_name = name
                 break
         if not exe_name:
             raise RuntimeError("ngrok.exe not found inside downloaded zip")
         with zf.open(exe_name) as src:
             target = dest_dir / "ngrok.exe"
-            with open(target, "wb") as dst:
+            tmp = dest_dir / "ngrok.exe.tmp"
+            with open(tmp, "wb") as dst:
                 shutil.copyfileobj(src, dst)
+            os.replace(tmp, target)
     return target
 
 
@@ -152,7 +159,7 @@ def ensure_ngrok(auth_token: str | None = None) -> dict:
 
         version = _ngrok_version(path)
         return {
-            "ok": True,
+            "ok": error is None,
             "path": path,
             "installed": True,
             "downloaded": downloaded,
@@ -162,16 +169,25 @@ def ensure_ngrok(auth_token: str | None = None) -> dict:
         }
 
 
+_AUTHTOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{8,256}$")
+
+
 def register_routes(app, state, require_auth):
-    @app.route("/tunnel/ensure", methods=["POST", "GET"])
+    @app.route("/tunnel/ensure", methods=["POST"])
     @require_auth
     def route_tunnel_ensure():
         body = _json_body()
         if not isinstance(body, dict):
             body = {}
         auth_token = body.get("authtoken") or body.get("auth_token") or None
-        if auth_token is not None and not isinstance(auth_token, str):
-            return jsonify({"error": "authtoken must be a string"}), 400
+        if auth_token is not None:
+            if not isinstance(auth_token, str):
+                return jsonify({"error": "authtoken must be a string"}), 400
+            auth_token = auth_token.strip()
+            if not _AUTHTOKEN_RE.match(auth_token):
+                return jsonify({
+                    "error": "authtoken must be 8-256 chars of letters, digits, '_' or '-'"
+                }), 400
 
         result = ensure_ngrok(auth_token=auth_token)
         status = 200 if result.get("ok") else 500
