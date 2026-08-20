@@ -482,6 +482,10 @@ def _eventsource_authorized():
         import auth as auth_module
     except Exception:
         auth_module = None
+    if auth_module is None:
+        # Auth module failed to import — fail closed rather than allowing
+        # unauthenticated access on a transient import error.
+        return False
     auth_enabled = bool(getattr(auth_module, "AUTH_ENABLED", False))
     auth_token = getattr(auth_module, "AUTH_TOKEN", "") if auth_module else ""
     if not auth_enabled:
