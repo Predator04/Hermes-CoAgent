@@ -1,12 +1,15 @@
 """Windows toast notification routes."""
 
 from flask import Blueprint, jsonify
+from urllib.parse import urlsplit
 
 from routes_bypass import _json_payload
 from shared import _wrap_registered_blueprint_routes
 
 
 toast_bp = Blueprint("toast", __name__)
+
+_BUTTON_SCHEMES = {"http", "https", "mailto"}
 
 try:
     from win11toast import toast as _win11_toast
@@ -68,6 +71,15 @@ def _normalize_buttons(buttons):
             return None, _error("button text is required")
         if not isinstance(action, str):
             return None, _error("button action must be a string")
+        if action:
+            try:
+                scheme = urlsplit(action).scheme.lower()
+            except ValueError:
+                scheme = ""
+            if scheme not in _BUTTON_SCHEMES:
+                return None, _error(
+                    f"button action must use one of: {', '.join(sorted(_BUTTON_SCHEMES))}"
+                )
         normalized.append({
             "activationType": "protocol",
             "arguments": action or text,
@@ -83,6 +95,11 @@ def _toast_kwargs(data):
         if value is not None:
             if not isinstance(value, str):
                 return None, _error(f"{key} must be a string path")
+            value = value.strip()
+            if not value:
+                return None, _error(f"{key} must not be empty")
+            if value.startswith(("\\\\", "//")) or "://" in value:
+                return None, _error(f"{key} must be a local path, not a URL or UNC path")
             kwargs[key] = value
     buttons, error = _normalize_buttons(data.get("buttons"))
     if error:
