@@ -255,7 +255,7 @@ def _run_action(action):
     method = (action.get("method") or "POST").upper()
     payload = action.get("payload") if isinstance(action.get("payload"), (dict, list)) else None
     return _coagent_request(path, payload=payload, method=method,
-                            timeout=int(action.get("timeout", 20)))
+                            timeout=_clamp(action.get("timeout", 20), 1, 120, 20))
 
 
 def _clamp(value, lo, hi, default):
@@ -420,7 +420,7 @@ def register_routes(app, state, require_auth):
             _LAST_ACTION["path"] = path
             _LAST_ACTION["method"] = (body.get("method") or "POST").upper()
             _LAST_ACTION["payload"] = body.get("payload") if isinstance(body.get("payload"), (dict, list)) else None
-            _LAST_ACTION["timeout"] = int(body.get("timeout", 20))
+            _LAST_ACTION["timeout"] = _clamp(body.get("timeout", 20), 1, 120, 20)
             _LAST_ACTION["ts"] = int(time.time())
             snapshot = dict(_LAST_ACTION)
         return jsonify({"ok": True, "last_action": snapshot})
@@ -436,8 +436,12 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_verify_clear():
         with _LOCK:
-            _LAST_ACTION.update({"path": None, "payload": None, "method": "POST", "ts": 0})
+            _LAST_ACTION.update({"path": None, "payload": None, "method": "POST", "timeout": 20, "ts": 0})
             _STATE.update({
+                "total_checks": 0,
+                "total_pass": 0,
+                "total_fail": 0,
+                "total_retries": 0,
                 "last_verdict": None,
                 "last_reason": None,
                 "last_expected": None,
