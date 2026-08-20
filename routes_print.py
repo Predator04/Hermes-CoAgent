@@ -30,7 +30,7 @@ _CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 # Printer share names on Windows allow letters, digits, spaces, and a handful
 # of punctuation. Disallow quotes and shell metacharacters so the value can be
 # interpolated into an ASCII PowerShell script safely.
-_PRINTER_NAME_RE = re.compile(r"^[A-Za-z0-9 _.\-()\[\]#+&]{1,128}$")
+_PRINTER_NAME_RE = re.compile(r"^[A-Za-z0-9 _.\-()#+&]{1,128}$")
 # Job IDs from the spooler are non-negative 32-bit integers.
 _JOB_ID_RE = re.compile(r"^\d{1,10}$")
 
