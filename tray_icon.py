@@ -13,6 +13,7 @@ import ctypes
 import getpass
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -642,7 +643,8 @@ $ErrorActionPreference = 'SilentlyContinue'
 $root = '{escaped_dir}'
 $targets = Get-CimInstance Win32_Process | Where-Object {{
     ($_.Name -eq 'python.exe' -or $_.Name -eq 'pythonw.exe') -and
-    ($_.CommandLine -match 'hermes_coagent\\.py')
+    ($_.CommandLine -match 'hermes_coagent\\.py') -and
+    ($_.CommandLine -like "*$root*")
 }}
 foreach ($proc in $targets) {{
     Stop-Process -Id $proc.ProcessId -Force -ErrorAction SilentlyContinue
@@ -1073,6 +1075,20 @@ def _fetch_latest_version(state: TrayState) -> Optional[str]:
         return None
 
 
+def _version_key(v: str):
+    """Parse a version string into a tuple of ints for numeric comparison."""
+    nums = []
+    for part in re.split(r"[^0-9]+", (v or "").strip()):
+        if part:
+            nums.append(int(part))
+    return tuple(nums)
+
+
+def _is_newer_version(a: str, b: str) -> bool:
+    """Return True if version ``a`` is strictly newer than ``b``."""
+    return _version_key(a) > _version_key(b)
+
+
 def _check_and_auto_update(state: TrayState, icon=None) -> None:
     """Check GitHub for newer version. If found, auto git pull + restart."""
     latest = _fetch_latest_version(state)
@@ -1080,8 +1096,8 @@ def _check_and_auto_update(state: TrayState, icon=None) -> None:
         return
 
     current = _load_version()
-    if latest == current:
-        return  # Already up to date
+    if not _is_newer_version(latest, current):
+        return  # Already up to date (or remote is older/equal)
 
     state.log(f"auto-update: v{current} → v{latest} available")
 
