@@ -437,7 +437,10 @@ def _ps_apply(pids, volume, mute):
             applied.append({"pid": pid, "error": err.strip() or f"rc={rc}"})
             continue
         entry = {"pid": pid}
-        data = _json.loads(out.strip()) if out.strip() else {}
+        try:
+            data = _json.loads(out.strip()) if out.strip() else {}
+        except ValueError:
+            data = {}
         if isinstance(data, dict) and "applied" in data:
             entry["session_count"] = int(data["applied"])
         if set_vol:
