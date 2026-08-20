@@ -5,6 +5,7 @@ import time
 import uuid
 from collections import deque
 from datetime import datetime
+from pathlib import Path
 
 from flask import Blueprint, jsonify, request, send_file
 
@@ -156,7 +157,13 @@ def register_routes(app, state, require_auth):
         with _LOCK:
             _SNAPSHOTS.append(snapshot)
             if len(_SNAPSHOTS) > MAX_SNAPSHOTS:
+                evicted = _SNAPSHOTS[:len(_SNAPSHOTS) - MAX_SNAPSHOTS]
                 del _SNAPSHOTS[:len(_SNAPSHOTS) - MAX_SNAPSHOTS]
+                for old in evicted:
+                    try:
+                        Path(old.get("path", "")).unlink(missing_ok=True)
+                    except Exception:
+                        pass
         return jsonify(snapshot)
 
     @bp.route("/diff/compare", methods=["POST"])
@@ -170,7 +177,8 @@ def register_routes(app, state, require_auth):
         try:
             from PIL import Image, ImageChops
 
-            baseline_image = Image.open(baseline["path"]).convert("RGB")
+            with Image.open(baseline["path"]) as _baseline_handle:
+                baseline_image = _baseline_handle.convert("RGB")
             current_image = _capture_image()
             baseline_image, current_image = _same_size(baseline_image, current_image)
             diff = ImageChops.difference(baseline_image, current_image)
@@ -206,7 +214,13 @@ def register_routes(app, state, require_auth):
         with _LOCK:
             _RESULTS.append(result)
             if len(_RESULTS) > MAX_RESULTS:
+                evicted = _RESULTS[:len(_RESULTS) - MAX_RESULTS]
                 del _RESULTS[:len(_RESULTS) - MAX_RESULTS]
+                for old in evicted:
+                    try:
+                        Path(old.get("diff_image_path", "")).unlink(missing_ok=True)
+                    except Exception:
+                        pass
         return jsonify(result)
 
     @bp.route("/diff/results", methods=["GET"])
