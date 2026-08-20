@@ -1,0 +1,228 @@
+{
+  "name": "starter",
+  "description": "Built-in reliability regression suite: ~10 non-destructive tasks that exercise clipboard, screenshot, OCR, window enumeration, HTTP endpoints, and screen-diff plumbing. Every task uses only endpoints CoAgent already ships with. Safe to re-run any time \u2014 no files touched, no state changed.",
+  "tasks": [
+    {
+      "name": "clipboard_roundtrip",
+      "goal": "Copy a marker string to the clipboard and read it back",
+      "setup": [
+        {
+          "path": "/clipboard/set",
+          "method": "POST",
+          "payload": {
+            "text": "HERMES_BENCH_MARKER_42"
+          },
+          "delay_ms": 150
+        }
+      ],
+      "assertions": [
+        {
+          "type": "http",
+          "path": "/clipboard/get",
+          "method": "GET",
+          "expect_key": "text",
+          "expect_value": "HERMES_BENCH_MARKER_42",
+          "label": "clipboard contains marker"
+        }
+      ]
+    },
+    {
+      "name": "screenshot_capture",
+      "goal": "Capture the desktop as a JPEG",
+      "assertions": [
+        {
+          "type": "screenshot",
+          "save_as": "desktop.jpg",
+          "min_bytes": 2048,
+          "label": "screen capture produced a non-trivial JPEG"
+        }
+      ]
+    },
+    {
+      "name": "windows_enumerable",
+      "goal": "Enumerate the top-level windows on the desktop",
+      "assertions": [
+        {
+          "type": "http",
+          "path": "/windows",
+          "method": "GET",
+          "label": "GET /windows returns 2xx"
+        }
+      ]
+    },
+    {
+      "name": "notepad_launch",
+      "goal": "Launch Notepad and confirm its window appears",
+      "setup": [
+        {
+          "path": "/process/exec",
+          "method": "POST",
+          "payload": {
+            "cmd": "notepad.exe"
+          },
+          "delay_ms": 1500
+        }
+      ],
+      "assertions": [
+        {
+          "type": "window-exists",
+          "title": "notepad",
+          "visible": true,
+          "label": "a Notepad window is visible"
+        }
+      ],
+      "teardown": [
+        {
+          "path": "/process/kill_name",
+          "method": "POST",
+          "payload": {
+            "name": "notepad.exe"
+          }
+        }
+      ]
+    },
+    {
+      "name": "calculator_launch",
+      "goal": "Launch the Windows Calculator and confirm the window",
+      "setup": [
+        {
+          "path": "/process/exec",
+          "method": "POST",
+          "payload": {
+            "cmd": "calc.exe"
+          },
+          "delay_ms": 2000
+        }
+      ],
+      "assertions": [
+        {
+          "type": "window-exists",
+          "title": "calculator",
+          "visible": true,
+          "label": "Calculator window is visible"
+        }
+      ],
+      "teardown": [
+        {
+          "path": "/process/kill_name",
+          "method": "POST",
+          "payload": {
+            "name": "CalculatorApp.exe"
+          }
+        },
+        {
+          "path": "/process/kill_name",
+          "method": "POST",
+          "payload": {
+            "name": "Calculator.exe"
+          }
+        }
+      ]
+    },
+    {
+      "name": "notepad_type_text",
+      "goal": "Open Notepad, type a marker string, verify it appears via OCR",
+      "setup": [
+        {
+          "path": "/process/exec",
+          "method": "POST",
+          "payload": {
+            "cmd": "notepad.exe"
+          },
+          "delay_ms": 1500
+        },
+        {
+          "path": "/windows/activate",
+          "method": "POST",
+          "payload": {
+            "title": "Notepad"
+          },
+          "delay_ms": 400
+        },
+        {
+          "path": "/key/type",
+          "method": "POST",
+          "payload": {
+            "text": "HermesBenchmarkVisibleMarker"
+          },
+          "delay_ms": 700
+        }
+      ],
+      "assertions": [
+        {
+          "type": "ocr",
+          "text": "HermesBenchmark",
+          "fresh": true,
+          "min_count": 1,
+          "label": "OCR sees the typed marker"
+        }
+      ],
+      "teardown": [
+        {
+          "path": "/process/kill_name",
+          "method": "POST",
+          "payload": {
+            "name": "notepad.exe"
+          }
+        }
+      ]
+    },
+    {
+      "name": "screen_diff_no_baseline",
+      "goal": "Confirm the diff pipeline can capture a baseline and compare it to now",
+      "assertions": [
+        {
+          "type": "diff",
+          "min_percent_changed": 0.0,
+          "max_percent_changed": 100.0,
+          "label": "diff pipeline produced a comparison"
+        }
+      ]
+    },
+    {
+      "name": "version_endpoint",
+      "goal": "Confirm the /version endpoint reports the CoAgent build",
+      "assertions": [
+        {
+          "type": "http",
+          "path": "/version",
+          "method": "GET",
+          "expect_key": "agent",
+          "expect_contains": "Hermes",
+          "label": "/version says 'Hermes ...'"
+        }
+      ]
+    },
+    {
+      "name": "health_endpoint",
+      "goal": "Confirm the /health endpoint is green",
+      "assertions": [
+        {
+          "type": "http",
+          "path": "/health",
+          "method": "GET",
+          "expect_key": "status",
+          "expect_value": "ok",
+          "label": "/health returns status=ok"
+        }
+      ]
+    },
+    {
+      "name": "verify_check_smoke",
+      "goal": "Confirm the /verify/check plumbing accepts a request and returns a verdict",
+      "assertions": [
+        {
+          "type": "http",
+          "path": "/verify/check",
+          "method": "POST",
+          "payload": {
+            "expected": "any"
+          },
+          "expect_key": "ok",
+          "expect_value": true,
+          "label": "/verify/check accepts a request"
+        }
+      ]
+    }
+  ]
+}

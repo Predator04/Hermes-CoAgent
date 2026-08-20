@@ -1059,6 +1059,11 @@ try:
 except ImportError:
     reg_capture = None
     features["semantic_capture"] = False
+try:
+    from routes_benchmark import register_routes as reg_benchmark
+except ImportError:
+    reg_benchmark = None
+    features["benchmark_harness"] = False
 
 reg_background(app, state, require_auth)
 features["background_control"] = True
@@ -1279,6 +1284,9 @@ if reg_ngrok:
 if reg_capture:
     reg_capture(app, state, require_auth)
     features["semantic_capture"] = True
+if reg_benchmark:
+    reg_benchmark(app, state, require_auth)
+    features["benchmark_harness"] = True
 reg_diagnostics(app, state, require_auth); features["diagnostics"] = True
 reg_layout(app, state, require_auth); features["layout_profiles"] = True
 if CEF_AVAILABLE:
@@ -1442,7 +1450,7 @@ def route_version():
                                  "speculative_batching", "hybrid_detection",
                                  "recipe_verification", "reminders", "hud_overlay",
                                  "fullpage_capture", "loop_stall_detection", "voice_stt",
-                                 "auto_router", "semantic_capture"],
+                                 "auto_router", "semantic_capture", "benchmark_harness"],
                     "modules": ["mouse", "ocr", "uia", "file", "media", "v63",
                                 "stream", "process", "voice", "cua", "copilot",
                                 "bypass", "toast", "deps", "config", "browser",
