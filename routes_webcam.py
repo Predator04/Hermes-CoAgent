@@ -6,6 +6,7 @@ Provides a clean /webcam/capture endpoint using multiple fallback methods.
 import base64
 import json
 import subprocess
+import uuid
 from datetime import datetime
 from pathlib import Path
 
@@ -22,7 +23,7 @@ def register_routes(app, jsonify, request, COAGENT_DIR, _log, _json_body, requir
         
         shots_dir = Path(COAGENT_DIR) / "camera_shots"
         shots_dir.mkdir(exist_ok=True)
-        fname = f"snapshot_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
+        fname = f"snapshot_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}.jpg"
         path = shots_dir / fname
         
         # Try methods in order of reliability
