@@ -15,13 +15,17 @@ Windows-only imports are wrapped in try/except so the Linux syntax-check CI
 stays green. All URL / subprocess strings are pure ASCII.
 """
 
+import ipaddress
 import json as _json
 import os
+import socket
 import threading
 import time
 import urllib.error
 import urllib.request
 import uuid
+from collections import deque
+from urllib.parse import urlsplit
 
 from flask import jsonify
 
@@ -59,6 +63,8 @@ _WEBHOOK_TIMEOUT = 5.0
 _STATE_LOCK = threading.Lock()
 _HISTORY = []                 # list[dict]  most recent last
 _SEEN_IDS = set()             # notification ids already emitted
+_SEEN_IDS_ORDER = deque()     # FIFO used to bound _SEEN_IDS growth
+_SEEN_IDS_MAX = 2000
 _SUBSCRIBERS = {}             # sub_id -> {"url": str, "created": float}
 _ACCESS_STATUS = None         # cached access-request result string
 _POLLER_STARTED = False
@@ -113,7 +119,8 @@ def _request_access():
         _ACCESS_STATUS = name.lower()
     except Exception as exc:  # noqa: BLE001
         _log(f"notify: request_access failed: {exc}")
-        _ACCESS_STATUS = f"error: {exc}"
+        # Transient failure — do not cache so the next poll retries.
+        return f"error: {exc}"
     return _ACCESS_STATUS
 
 
@@ -213,6 +220,9 @@ def _record_and_dispatch(entries):
             if nid is None or nid in _SEEN_IDS:
                 continue
             _SEEN_IDS.add(nid)
+            _SEEN_IDS_ORDER.append(nid)
+            while len(_SEEN_IDS_ORDER) > _SEEN_IDS_MAX:
+                _SEEN_IDS.discard(_SEEN_IDS_ORDER.popleft())
             _HISTORY.append(entry)
             new_entries.append(entry)
         # Bound history size
@@ -270,9 +280,44 @@ def _ensure_poller():
 
 
 def _valid_webhook_url(url):
+    """Reject non-http(s) URLs and SSRF targets (loopback/link-local/private)."""
     if not isinstance(url, str) or not url:
         return False
-    return url.startswith("http://") or url.startswith("https://")
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return False
+    if parts.scheme not in ("http", "https"):
+        return False
+    if parts.username is not None or parts.password is not None:
+        return False
+    host = parts.hostname
+    if not host:
+        return False
+    return _host_is_public(host)
+
+
+def _host_is_public(host):
+    """True only if host resolves to public unicast address(es)."""
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        try:
+            infos = socket.getaddrinfo(host, None, proto=socket.IPPROTO_TCP)
+        except OSError:
+            return False
+        addrs = {info[4][0] for info in infos}
+        if not addrs:
+            return False
+        for addr in addrs:
+            try:
+                a = ipaddress.ip_address(addr)
+            except ValueError:
+                return False
+            if not a.is_global:
+                return False
+        return True
+    return ip.is_global
 
 
 def register_routes(app, state, require_auth):
