@@ -14,6 +14,8 @@ Endpoints:
 """
 
 import re
+import secrets
+import unicodedata
 
 from flask import jsonify
 
@@ -32,7 +34,7 @@ RULES = [
     ("destructive", "critical", re.compile(r"\b(format|wipe)\s+[a-z]:\\", re.I)),
     ("destructive", "critical", re.compile(r"\b(drop|truncate)\s+(table|database)\b", re.I)),
     ("destructive", "high", re.compile(r"\b(shutdown|reboot|power\s*off)\b", re.I)),
-    ("destructive", "high", re.compile(r"\bdel(ete)?\s+(/f|/q)?\s+.*(all|everything)", re.I)),
+    ("destructive", "high", re.compile(r"\bdel(ete)?\s+((/f|/q)\s+)?.*(all|everything)", re.I)),
     ("goal_change", "high", re.compile(r"(your\s+(new\s+)?goal|your\s+task)\s+is\s+now", re.I)),
     ("goal_change", "high", re.compile(r"forget\s+(everything\s+)?(about\s+)?(the\s+)?(previous|prior|original|above)", re.I)),
     ("bypass_consent", "high", re.compile(r"without\s+(asking|permission|confirmation|telling)", re.I)),
@@ -43,20 +45,31 @@ RULES = [
 
 SEVERITY_WEIGHT = {"low": 1, "medium": 2, "high": 3, "critical": 5}
 
+_MAX_INPUT = 65536
+_MAX_MATCHES = 500
+
 
 def _scan(text):
     """Return (matches, score, risk)."""
     if not isinstance(text, str) or not text:
         return [], 0, "none"
+    if len(text) > _MAX_INPUT:
+        text = text[:_MAX_INPUT]
+    normalized = unicodedata.normalize("NFKC", text)
+    normalized = re.sub(r"[\u200b-\u200d\u2060\ufeff\u00ad]", "", normalized)
     matches = []
     for name, severity, regex in RULES:
-        for m in regex.finditer(text):
+        for m in regex.finditer(normalized):
+            if len(matches) >= _MAX_MATCHES:
+                break
             matches.append({
                 "rule": name,
                 "severity": severity,
                 "match": m.group(0)[:200],
                 "start": m.start(),
             })
+        if len(matches) >= _MAX_MATCHES:
+            break
     score = sum(SEVERITY_WEIGHT.get(m["severity"], 1) for m in matches)
     if score >= 5:
         risk = "critical"
@@ -81,8 +94,10 @@ def sanitize(text):
     matches, score, risk = _scan(text)
     if risk == "none":
         return {"risk": "none", "score": 0, "flagged": False, "text": text, "matches": []}
-    marker = "[UNTRUSTED CONTENT — risk:%s — verify before acting]" % risk
-    neutralized = "%s\n%s\n[END UNTRUSTED CONTENT]" % (marker, text)
+    nonce = secrets.token_hex(8)
+    open_marker = "[UNTRUSTED CONTENT %s — risk:%s — verify before acting]" % (nonce, risk)
+    close_marker = "[END UNTRUSTED CONTENT %s]" % nonce
+    neutralized = "%s\n%s\n%s" % (open_marker, text, close_marker)
     return {"risk": risk, "score": score, "flagged": True, "text": neutralized, "matches": matches}
 
 
