@@ -12,6 +12,7 @@ Endpoints:
 """
 
 import json
+import re
 import subprocess
 
 from flask import jsonify
@@ -33,7 +34,10 @@ def _ps(script, timeout=120):
 
 
 def _create_restore_point(description):
-    desc = (description or "CoAgent pre-run checkpoint").replace("'", "''")
+    desc = description or "CoAgent pre-run checkpoint"
+    if len(desc) > 256:
+        desc = desc[:256]
+    desc = desc.replace("'", "''")
     script = "Checkpoint-Computer -Description '%s' -RestorePointType 'APPLICATION_INSTALL'" % desc
     out, err, code = _ps(script, timeout=180)
     if code != 0:
@@ -42,6 +46,8 @@ def _create_restore_point(description):
 
 
 def _create_shadow(volume="C:"):
+    if not re.fullmatch(r"[A-Za-z]:", volume or ""):
+        return False, "invalid volume (expected a single drive letter, e.g. 'C:')"
     script = "vssadmin create shadow /for=%s" % volume
     out, err, code = _ps(script, timeout=120)
     if code != 0:
@@ -58,7 +64,13 @@ def _list_restore_points():
 
 
 def _rollback(sequence):
-    script = "Restore-Computer -RestorePoint %s -Confirm:$false" % sequence
+    try:
+        seq = int(sequence)
+    except (TypeError, ValueError):
+        return False, "invalid sequence number"
+    if seq <= 0:
+        return False, "sequence number must be positive"
+    script = "Restore-Computer -RestorePoint %d -Confirm:$false" % seq
     out, err, code = _ps(script, timeout=60)
     if code != 0:
         return False, (err or out or "exit code %d" % code)
@@ -105,6 +117,12 @@ def register_routes(app, state, require_auth):
             return jsonify({"error": "rollback requires confirm:true (system restart + irreversible)"}), 400
         if sequence is None:
             return jsonify({"error": "sequence number is required"}), 400
+        try:
+            sequence = int(sequence)
+        except (TypeError, ValueError):
+            return jsonify({"error": "sequence number must be an integer"}), 400
+        if sequence <= 0:
+            return jsonify({"error": "sequence number must be positive"}), 400
         ok, msg = _rollback(sequence)
         _log("checkpoint: rollback sequence=%s -> ok=%s" % (sequence, ok))
-        return jsonify({"ok": ok, "detail": msg, "note": "System Restore will reboot the machine if it succeeds."})
+        return jsonify({"ok": ok, "detail": msg, "note": "System Restore will reboot the machine if it succeeds."}), (200 if ok else 500)
