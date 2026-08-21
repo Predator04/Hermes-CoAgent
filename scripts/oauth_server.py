@@ -2,6 +2,7 @@ import http.server
 import urllib.parse
 import json
 import os
+import tempfile
 
 class OAuthHandler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
@@ -22,18 +23,24 @@ class OAuthHandler(http.server.BaseHTTPRequestHandler):
         params = urllib.parse.parse_qs(parsed.query)
         print(f"\n=== OAUTH CALLBACK ===", flush=True)
         print(f"Path: {self.path}", flush=True)
-        print(f"Params: {json.dumps({k: v[0][:80] if isinstance(v, list) and v else str(v)[:80] for k, v in params.items()}, indent=2)}", flush=True)
+        print(f"Params: {json.dumps({k: ('<redacted>' if k in ('code', 'state', 'error_description') else (v[0][:80] if isinstance(v, list) and v else str(v)[:80])) for k, v in params.items()}, indent=2)}", flush=True)
         
         # Save the code if present
         code_received = False
         if 'code' in params and params['code']:
             code = params['code'][0]
-            fd = os.open('oauth_code.txt', os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            target = 'oauth_code.txt'
+            fd, tmp_path = tempfile.mkstemp(prefix='.oauth_code_', suffix='.tmp',
+                                            dir=os.path.dirname(os.path.abspath(target)) or '.')
             try:
                 with os.fdopen(fd, 'w') as f:
                     f.write(code)
+                os.replace(tmp_path, target)
             except Exception:
-                os.close(fd)
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
                 raise
             code_received = True
             print("Code received and saved.", flush=True)
