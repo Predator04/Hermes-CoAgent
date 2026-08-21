@@ -34,7 +34,8 @@ _TABLE_CONTROL_TYPES = {
 
 
 def _get_uia_engine():
-    sys.path.insert(0, str(COAGENT_DIR))
+    if str(COAGENT_DIR) not in sys.path:
+        sys.path.insert(0, str(COAGENT_DIR))
     import uia_engine as ue  # noqa: F401 — Windows-only side effects
     return ue
 
@@ -318,7 +319,7 @@ def _extract_via_descendants(element, max_rows, max_cols):
         "method": "descendants",
         "row_count": len(rows),
         "column_count": col_count,
-        "truncated": False,
+        "truncated": len(rows) >= max_rows,
         "headers": headers,
         "rows": rows,
     }, None
