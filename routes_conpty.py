@@ -107,10 +107,19 @@ class _Session:
                     self.read_error = str(exc)
                     break
                 if not chunk:
-                    if not self.pty.isalive():
+                    if self.pty.isalive():
+                        time.sleep(0.02)
+                        continue
+                    # Child has exited. Drain any final bytes still buffered in
+                    # the ConPTY so trailing output (e.g. the exit message) is
+                    # not dropped.
+                    try:
+                        chunk = self.pty.read(4096)
+                    except Exception:
                         break
-                    time.sleep(0.02)
-                    continue
+                    if not chunk:
+                        break
+                    # fall through to append the tail below
                 if isinstance(chunk, str):
                     data = chunk.encode("utf-8", errors="replace")
                 else:
@@ -202,6 +211,9 @@ def register_routes(app, state, require_auth):
             body = {}
 
         with _SESSIONS_LOCK:
+            # Evict sessions that already ended so they don't leak capacity.
+            for sid in [sid for sid, s in _SESSIONS.items() if s is not None and s.closed]:
+                _SESSIONS.pop(sid, None)
             if len(_SESSIONS) >= _MAX_SESSIONS:
                 return jsonify({
                     "error": "session limit reached",
@@ -250,9 +262,22 @@ def register_routes(app, state, require_auth):
                     env[k] = str(v)
 
         session_id = uuid.uuid4().hex
+        with _SESSIONS_LOCK:
+            # Reserve the slot now; re-check capacity under the same lock to
+            # close the check-then-insert TOCTOU gap that could let concurrent
+            # /term/start requests exceed _MAX_SESSIONS.
+            if len(_SESSIONS) >= _MAX_SESSIONS:
+                return jsonify({
+                    "error": "session limit reached",
+                    "max_sessions": _MAX_SESSIONS,
+                }), 429
+            _SESSIONS[session_id] = None
+
         try:
             session = _Session(session_id, command, cols, rows, cwd=cwd, env=env)
         except Exception as exc:
+            with _SESSIONS_LOCK:
+                _SESSIONS.pop(session_id, None)
             _log(f"term/start spawn failed: {exc}")
             return jsonify({"error": f"spawn failed: {exc}"}), 500
 
