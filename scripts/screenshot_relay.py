@@ -195,6 +195,13 @@ def main() -> int:
     parser.add_argument("--host", default=HOST)
     parser.add_argument("--port", type=int, default=PORT)
     args = parser.parse_args()
+    host = (args.host or "").strip().lower()
+    if host not in {"127.0.0.1", "::1", "localhost"}:
+        _log(f"refusing to bind to non-loopback host: {args.host!r}")
+        raise SystemExit(
+            "refusing to bind to non-loopback host; the relay serves desktop "
+            "screenshots and must remain local"
+        )
     server = ThreadingHTTPServer((args.host, args.port), RelayHandler)
     _log(f"relay started host={args.host} port={args.port}")
     try:
