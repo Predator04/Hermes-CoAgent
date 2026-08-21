@@ -6,14 +6,14 @@ import time
 from flask import Response, request, stream_with_context
 
 
-CSP = "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'"
+CSP = "default-src 'self'; img-src 'self' data: blob:; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'"
 
 REMOTE_HTML = r"""<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: blob:; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'">
 <title>Hermes Remote</title>
 <style>
 body{margin:0;background:#101216;color:#eef2f6;font:14px system-ui,Segoe UI,Arial,sans-serif}header{height:48px;display:flex;align-items:center;justify-content:space-between;padding:0 14px;background:#171b23;border-bottom:1px solid #303744}.wrap{height:calc(100vh - 48px);display:grid;place-items:center;padding:10px}img{max-width:100%;max-height:100%;background:#050608;border:1px solid #303744;border-radius:6px;cursor:crosshair}.muted{color:#9aa5b1}button{background:#2f7df6;color:white;border:0;border-radius:5px;padding:7px 10px}
