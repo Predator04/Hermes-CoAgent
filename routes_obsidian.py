@@ -62,13 +62,21 @@ def _resolve_note(name, must_exist=False):
     if not must_exist:
         return direct
     # Fallback: case-insensitive search within vault
-    wanted = Path(note).name.lower()
+    note_path = Path(note)
+    wanted_name = note_path.name.lower()
+    has_dir = len(note_path.parts) > 1
+    wanted_rel = note.lower().replace("\\", "/")
     for path in vault.rglob("*.md"):
-        if path.name.lower() == wanted or path.stem.lower() == Path(note).stem.lower():
-            resolved = path.resolve()
-            if not _inside_vault(resolved):
-                continue  # skip symlinks escaping vault
-            return resolved
+        if path.name.lower() != wanted_name:
+            continue
+        resolved = path.resolve()
+        if not _inside_vault(resolved):
+            continue  # skip symlinks escaping vault
+        if has_dir:
+            rel = resolved.relative_to(vault).as_posix().lower()
+            if rel != wanted_rel:
+                continue
+        return resolved
     raise FileNotFoundError(note)
 
 
@@ -96,6 +104,14 @@ def _rest_request(method, path, body=None, timeout=3):
         return {"ok": False, "status": None, "error": f"{type(e).__name__}: {e}"}
 
 
+def _coerce_int(value, default, lo, hi):
+    try:
+        n = int(value or default)
+    except (TypeError, ValueError):
+        n = default
+    return max(lo, min(n, hi))
+
+
 def _note_record(path):
     stat = path.stat()
     return {
@@ -115,7 +131,7 @@ def register_routes(app, state, require_auth):
         vault = _vault()
         if not vault.exists():
             return _error("vault not found", 404, vault=str(vault))
-        limit = max(1, min(int(data.get("limit", 1000) or 1000), 10000))
+        limit = _coerce_int(data.get("limit", 1000), 1000, 1, 10000)
         notes = [_note_record(path) for path in sorted(vault.rglob("*.md"))[:limit]]
         return jsonify({"vault": str(vault), "notes": notes, "count": len(notes)})
 
@@ -127,14 +143,14 @@ def register_routes(app, state, require_auth):
         if not isinstance(query, str) or not query.strip():
             return _error("query is required")
         if data.get("rest"):
-            rest = _rest_request("POST", "/search/simple/", {"query": query, "contextLength": int(data.get("context", 120) or 120)})
+            rest = _rest_request("POST", "/search/simple/", {"query": query, "contextLength": _coerce_int(data.get("context", 120), 120, 1, 100000)})
             if rest.get("ok"):
                 return jsonify({"source": "rest", "rest": rest})
         vault = _vault()
         if not vault.exists():
             return _error("vault not found", 404, vault=str(vault))
         needle = query.lower()
-        limit = max(1, min(int(data.get("limit", 100) or 100), 1000))
+        limit = _coerce_int(data.get("limit", 100), 100, 1, 1000)
         matches = []
         for path in sorted(vault.rglob("*.md")):
             try:
@@ -178,7 +194,9 @@ def register_routes(app, state, require_auth):
         except ValueError as e:
             return _error(str(e))
         path.parent.mkdir(parents=True, exist_ok=True)
-        mode = data.get("mode", "overwrite")
+        mode = str(data.get("mode", "overwrite") or "overwrite").strip().lower()
+        if mode not in ("append", "overwrite"):
+            return _error("mode must be 'append' or 'overwrite'")
         if mode == "append" and path.exists():
             with path.open("a", encoding="utf-8") as f:
                 f.write(content)
