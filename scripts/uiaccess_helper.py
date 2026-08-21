@@ -58,7 +58,7 @@ def _find_uac_window():
             if not win32gui.IsWindowVisible(hwnd):
                 return True
             title = win32gui.GetWindowText(hwnd)
-            if any(t in title for t in UAC_TITLES):
+            if title in UAC_TITLES:
                 found[0] = (hwnd, title)
                 return False
             return True
@@ -153,7 +153,13 @@ def main():
     parser.add_argument("--click", metavar="yes|no", type=str.lower, choices=["yes", "no"],
                         help="Click Yes or No on UAC dialog")
     parser.add_argument("--list", action="store_true", help="List UAC windows")
-    parser.add_argument("--timeout", type=float, default=5.0, help="Wait timeout (seconds)")
+    def _positive_timeout(value):
+        f = float(value)
+        if f <= 0:
+            raise argparse.ArgumentTypeError("--timeout must be greater than 0")
+        return f
+
+    parser.add_argument("--timeout", type=_positive_timeout, default=5.0, help="Wait timeout (seconds)")
     args = parser.parse_args()
 
     if args.list:
