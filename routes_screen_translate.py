@@ -23,6 +23,39 @@ from flask import jsonify
 from shared import _json_body, _log
 
 
+def _declare_dpi_aware():
+    """Declare this process DPI-aware (Per-Monitor V2) so Win32 input and screen
+    APIs agree on coordinate space. Must run before any UI is created; the call
+    is idempotent and a silent no-op on non-Windows hosts."""
+    try:
+        if not hasattr(ctypes, "windll"):
+            return False
+        user32 = ctypes.windll.user32
+        # DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 == -4 (Win10 1703+)
+        try:
+            user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))
+            return True
+        except Exception:
+            pass
+        # Fallback: SetProcessDpiAwareness(PROCESS_PER_MONITOR_DPI_AWARE == 2)
+        try:
+            ctypes.windll.shcore.SetProcessDpiAwareness(2)
+            return True
+        except Exception:
+            pass
+        # Last resort: SetProcessDPIAware() (system DPI aware)
+        try:
+            user32.SetProcessDPIAware()
+            return True
+        except Exception:
+            return False
+    except Exception:
+        return False
+
+
+_declare_dpi_aware()
+
+
 def _parse_bool(value, default=False):
     if isinstance(value, bool):
         return value
