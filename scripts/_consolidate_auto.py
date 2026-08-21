@@ -197,7 +197,8 @@ def collect_import_lines(files):
     """Union of module-level import statements across all source files (deduped)."""
     lines = set()
     for f in files:
-        src = open(f, encoding="utf-8").read()
+        with open(f, encoding="utf-8") as fh:
+            src = fh.read()
         for line in src.split("\n"):
             if line.startswith("import ") or line.startswith("from "):
                 lines.add(line.strip())
