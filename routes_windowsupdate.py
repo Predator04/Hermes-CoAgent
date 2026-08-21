@@ -51,8 +51,8 @@ $r = [ordered]@{ reboot_required = $false; reasons = @() }
 $k = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired'
 if (Test-Path $k) { $r.reboot_required = $true; $r.reasons += 'WindowsUpdate RebootRequired key present' }
 $cbs = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending'
-if ((Get-ItemProperty -Path $cbs -Name RebootPending -ErrorAction SilentlyContinue).RebootPending -eq 1) {
-  $r.reboot_required = $true; $r.reasons += 'CBS RebootPending = 1'
+if (Test-Path $cbs) {
+  $r.reboot_required = $true; $r.reasons += 'CBS RebootPending key present'
 }
 $cbs2 = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootRequired'
 if (Test-Path $cbs2) { $r.reboot_required = $true; $r.reasons += 'CBS RebootRequired key present' }
@@ -75,7 +75,16 @@ $r.last_check = if ($detect.LastSuccessTime) { $detect.LastSuccessTime } else { 
 $r.last_install = if ($install.LastSuccessTime) { $install.LastSuccessTime } else { $null }
 $ux = 'HKLM:\SOFTWARE\Microsoft\WindowsUpdate\UX\Settings'
 $r.pause_expiry = (Get-ItemProperty -Path $ux -Name PauseUpdatesExpiryTime -ErrorAction SilentlyContinue).PauseUpdatesExpiryTime
-$r.paused = [bool]$r.pause_expiry
+if ($r.pause_expiry) {
+  try {
+    $expiry = [DateTimeOffset]::Parse([string]$r.pause_expiry)
+    $r.paused = ($expiry -gt [DateTimeOffset]::UtcNow)
+  } catch {
+    $r.paused = $true
+  }
+} else {
+  $r.paused = $false
+}
 $r | ConvertTo-Json -Compress
 """
 
@@ -131,7 +140,11 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_wu_status():
         status, stderr, code = _ps_json(_STATUS_SCRIPT, timeout=30)
-        reboot, _, _ = _ps_json(_PENDING_REBOOT_SCRIPT, timeout=30)
+        if code != 0 and "raw" in status:
+            return jsonify({"error": stderr or status["raw"]}), 500
+        reboot, reboot_stderr, reboot_code = _ps_json(_PENDING_REBOOT_SCRIPT, timeout=30)
+        if reboot_code != 0 and "raw" in reboot:
+            return jsonify({"error": reboot_stderr or reboot["raw"]}), 500
         status["reboot_required"] = reboot.get("reboot_required", False)
         status["reboot_reasons"] = reboot.get("reasons", [])
         return jsonify(status)
@@ -153,6 +166,8 @@ def register_routes(app, state, require_auth):
         except (TypeError, ValueError):
             return jsonify({"error": "days must be an integer"}), 400
         result, stderr, code = _ps_json(_pause_script(days), timeout=30)
+        if code != 0 and "raw" in result:
+            return jsonify({"error": stderr or result["raw"]}), 500
         _log(f"windowsupdate: pause {days}d -> {result}")
         return jsonify(result)
 
@@ -160,6 +175,8 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_wu_resume():
         result, stderr, code = _ps_json(_RESUME_SCRIPT, timeout=30)
+        if code != 0 and "raw" in result:
+            return jsonify({"error": stderr or result["raw"]}), 500
         _log(f"windowsupdate: resume -> {result}")
         return jsonify(result)
 
