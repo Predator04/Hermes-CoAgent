@@ -202,7 +202,7 @@ def _capture_to_recipe(capture, name=None):
             recipe_target["type"] = recipe_target["control_type"]
         recipe_target["fallback_to_ocr"] = True
         typed = entry.get("typed_text")
-        if action == "type" and typed is not None:
+        if action in {"type", "type_text"} and typed is not None:
             params.setdefault("text", typed)
         step = {"action": action, "params": params}
         if recipe_target:
@@ -237,7 +237,7 @@ def _capture_to_script(capture, name=None):
         "import os\n"
         "import urllib.request\n"
         "\n"
-        f"CAPTURE = {steps_json}\n"
+        f"CAPTURE = json.loads({json.dumps(steps_json)})\n"
         "\n"
         "def _post(path, body):\n"
         "    url = os.environ.get('COAGENT_URL', 'http://127.0.0.1:8765').rstrip('/') + path\n"
@@ -337,12 +337,15 @@ def _replay_step(step):
             typed = step.get("typed_text")
             if typed is None:
                 typed = params.get("text", "")
-            if target and target.get("text") or target.get("automation_id") or target.get("name"):
+            if target and (target.get("text") or target.get("automation_id") or target.get("name")):
                 resolved = _resolve_step_target(target)
                 record["resolve"] = resolved
                 if resolved.get("ok"):
                     _click_at(resolved["x"], resolved["y"])
                     time.sleep(0.15)
+                else:
+                    record["error"] = "target not found; refusing to type into unfocused window"
+                    return record
             ok, err = _type_text_now(typed)
             record["ok"] = ok
             if err:
