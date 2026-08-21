@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 from datetime import datetime
@@ -22,12 +23,17 @@ def register_routes(app, state, require_auth):
     EMBER_STATE = {
         "enabled": False,
         "pid": None,
+        "proc": None,
         "started_at": None,
         "last_error": None,
         "smart_mode": True,
         "size": "medium",
         "speed": "normal",
     }
+    # Re-entrant: buddy_toggle calls buddy_stop()/buddy_start() which each
+    # acquire this lock, and the running-check + spawn must be atomic to avoid
+    # a TOCTOU double-spawn.
+    _ember_lock = threading.RLock()
 
     def _find_ember_py() -> Path | None:
         """Find ember.py — check Ember/ dir next to CoAgent, then Desktop."""
@@ -41,23 +47,13 @@ def register_routes(app, state, require_auth):
         return None
 
     def _is_running() -> bool:
-        pid = EMBER_STATE.get("pid")
-        if pid is None:
+        # Track the live Popen object instead of querying tasklist by PID:
+        # a PID can be reused by the OS after Ember dies, which would make
+        # tasklist/taskkill target an unrelated process.
+        proc = EMBER_STATE.get("proc")
+        if proc is None:
             return False
-        try:
-            r = subprocess.run(
-                ["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],
-                capture_output=True, text=True, timeout=5,
-                creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0,
-            )
-            # Parse CSV output: "name.exe","PID","Session","Session#","Mem Usage"
-            for line in r.stdout.strip().splitlines():
-                parts = [p.strip().strip('"') for p in line.replace('","', '","').split('","')]
-                if len(parts) >= 2 and parts[1] == str(pid):
-                    return True
-            return False
-        except Exception:
-            return False
+        return proc.poll() is None
 
     @app.route("/buddy/status", methods=["GET"])
     @require_auth
@@ -79,59 +75,70 @@ def register_routes(app, state, require_auth):
     @app.route("/buddy/start", methods=["POST"])
     @require_auth
     def buddy_start():
-        if _is_running():
-            return jsonify({"status": "already_running", "pid": EMBER_STATE["pid"]})
+        with _ember_lock:
+            if _is_running():
+                return jsonify({"status": "already_running", "pid": EMBER_STATE.get("pid")})
 
-        ember_py = _find_ember_py()
-        if not ember_py:
-            EMBER_STATE["last_error"] = "ember.py not found"
-            return jsonify({"error": "ember.py not found in Ember/ directory"}), 404
+            ember_py = _find_ember_py()
+            if not ember_py:
+                EMBER_STATE["last_error"] = "ember.py not found"
+                return jsonify({"error": "ember.py not found in Ember/ directory"}), 404
 
-        try:
-            create_flags = subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0
-            proc = subprocess.Popen(
-                [sys.executable, str(ember_py)],
-                cwd=str(ember_py.parent),
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                creationflags=create_flags,
-            )
-            EMBER_STATE["enabled"] = True
-            EMBER_STATE["pid"] = proc.pid
-            EMBER_STATE["started_at"] = datetime.now().isoformat(timespec="seconds")
-            EMBER_STATE["last_error"] = None
-            # Wait a moment to catch immediate crash
-            time.sleep(0.5)
-            if proc.poll() is not None:
-                EMBER_STATE["enabled"] = False
-                EMBER_STATE["pid"] = None
-                EMBER_STATE["last_error"] = f"Ember exited immediately (code {proc.returncode})"
-                return jsonify({
-                    "error": "Ember exited immediately",
-                    "returncode": proc.returncode,
-                }), 500
-            return jsonify({"status": "started", "pid": proc.pid})
-        except Exception as e:
-            EMBER_STATE["last_error"] = f"{type(e).__name__}: {e}"
-            return jsonify({"error": str(e)}), 500
+            try:
+                create_flags = subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0
+                proc = subprocess.Popen(
+                    [sys.executable, str(ember_py)],
+                    cwd=str(ember_py.parent),
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    creationflags=create_flags,
+                )
+                EMBER_STATE["enabled"] = True
+                EMBER_STATE["pid"] = proc.pid
+                EMBER_STATE["proc"] = proc
+                EMBER_STATE["started_at"] = datetime.now().isoformat(timespec="seconds")
+                EMBER_STATE["last_error"] = None
+                # Wait a moment to catch immediate crash
+                time.sleep(0.5)
+                if proc.poll() is not None:
+                    EMBER_STATE["enabled"] = False
+                    EMBER_STATE["pid"] = None
+                    EMBER_STATE["proc"] = None
+                    EMBER_STATE["last_error"] = f"Ember exited immediately (code {proc.returncode})"
+                    return jsonify({
+                        "error": "Ember exited immediately",
+                        "returncode": proc.returncode,
+                    }), 500
+                return jsonify({"status": "started", "pid": proc.pid})
+            except Exception as e:
+                EMBER_STATE["last_error"] = f"{type(e).__name__}: {e}"
+                return jsonify({"error": str(e)}), 500
 
     @app.route("/buddy/stop", methods=["POST"])
     @require_auth
     def buddy_stop():
-        pid = EMBER_STATE.get("pid")
-        if not pid:
-            return jsonify({"status": "not_running"})
-        try:
-            subprocess.run(
-                ["taskkill", "/PID", str(pid), "/F"],
-                capture_output=True, timeout=5,
-                creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0,
-            )
+        with _ember_lock:
+            proc = EMBER_STATE.get("proc")
+            pid = EMBER_STATE.get("pid")
+            if proc is None:
+                return jsonify({"status": "not_running"})
+            # Only clear state after the process is confirmed dead — don't
+            # report "stopped" when termination actually failed.
+            if proc.poll() is None:
+                try:
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                        proc.wait(timeout=5)
+                except Exception as e:
+                    EMBER_STATE["last_error"] = f"{type(e).__name__}: {e}"
+                    return jsonify({"error": str(e)}), 500
             EMBER_STATE["enabled"] = False
             EMBER_STATE["pid"] = None
+            EMBER_STATE["proc"] = None
             return jsonify({"status": "stopped", "pid": pid})
-        except Exception as e:
-            return jsonify({"error": str(e)}), 500
 
     @app.route("/buddy/toggle", methods=["POST"])
     @require_auth
@@ -146,22 +153,23 @@ def register_routes(app, state, require_auth):
     def buddy_set():
         from flask import request
         data = request.get_json(silent=True) or {}
-        smart_mode = data.get("smart_mode")
-        size = data.get("size")
-        speed = data.get("speed")
+        with _ember_lock:
+            smart_mode = data.get("smart_mode")
+            size = data.get("size")
+            speed = data.get("speed")
 
-        if smart_mode is not None:
-            EMBER_STATE["smart_mode"] = bool(smart_mode)
-        if size in ("small", "medium", "large"):
-            EMBER_STATE["size"] = size
-        if speed in ("calm", "normal", "hyper"):
-            EMBER_STATE["speed"] = speed
+            if smart_mode is not None:
+                EMBER_STATE["smart_mode"] = bool(smart_mode)
+            if size in ("small", "medium", "large"):
+                EMBER_STATE["size"] = size
+            if speed in ("calm", "normal", "hyper"):
+                EMBER_STATE["speed"] = speed
 
-        return jsonify({
-            "status": "updated",
-            "smart_mode": EMBER_STATE["smart_mode"],
-            "size": EMBER_STATE["size"],
-            "speed": EMBER_STATE["speed"],
-        })
+            return jsonify({
+                "status": "updated",
+                "smart_mode": EMBER_STATE["smart_mode"],
+                "size": EMBER_STATE["size"],
+                "speed": EMBER_STATE["speed"],
+            })
 
     return EMBER_STATE
