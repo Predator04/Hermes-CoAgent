@@ -16,6 +16,7 @@ CONFIG_DIR = COAGENT_DIR / "config"
 MACHINES_FILE = CONFIG_DIR / "wol_machines.json"
 _MACHINES_LOCK = threading.Lock()
 _MAC_RE = re.compile(r"^[0-9A-Fa-f]{2}([:-]?[0-9A-Fa-f]{2}){5}$")
+_CORRUPT = object()
 
 
 def _error(message, status=400, **extra):
@@ -58,10 +59,17 @@ def _load_machines():
         return {}
     try:
         data = json.loads(MACHINES_FILE.read_text(encoding="utf-8"))
-        return data if isinstance(data, dict) else {}
+        if not isinstance(data, dict):
+            raise ValueError("machines file is not a JSON object")
+        return data
     except Exception as exc:
         _console(f"[wol] failed to load machines file: {type(exc).__name__}: {exc}")
-        return {}
+        return _CORRUPT
+
+
+def _machines_or_empty():
+    machines = _load_machines()
+    return {} if machines is _CORRUPT else machines
 
 
 def _save_machines(machines):
@@ -87,7 +95,7 @@ def register_routes(app, state, require_auth):
         if not _MACHINES_LOCK.acquire(blocking=False):
             return _machines_busy()
         try:
-            machines = _load_machines()
+            machines = _machines_or_empty()
         finally:
             _MACHINES_LOCK.release()
         return jsonify({"machines": machines, "count": len(machines), "file": str(MACHINES_FILE)})
@@ -117,6 +125,8 @@ def register_routes(app, state, require_auth):
             return _machines_busy()
         try:
             machines = _load_machines()
+            if machines is _CORRUPT:
+                return _error("machines file is corrupt; refusing to overwrite", 500)
             machines[name.strip()] = {"name": name.strip(), "mac": mac, "broadcast": broadcast, "port": port}
             _save_machines(machines)
             return jsonify({"status": "saved", "machine": machines[name.strip()], "file": str(MACHINES_FILE)})
@@ -134,6 +144,8 @@ def register_routes(app, state, require_auth):
             return _machines_busy()
         try:
             machines = _load_machines()
+            if machines is _CORRUPT:
+                return _error("machines file is corrupt; refusing to overwrite", 500)
             key = name.strip()
             machine = machines.pop(key, None)
             if machine is None:
@@ -150,7 +162,7 @@ def register_routes(app, state, require_auth):
         if not _MACHINES_LOCK.acquire(blocking=False):
             return _machines_busy()
         try:
-            machines = _load_machines()
+            machines = _machines_or_empty()
         finally:
             _MACHINES_LOCK.release()
         machine = None
