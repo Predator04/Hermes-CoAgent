@@ -177,6 +177,26 @@ TOOLS = {
     "stars": 11337,
     "url": "https://github.com/horsicq/Detect-It-Easy"
   },
+  "difftastic": {
+    "added": "2026-08-21",
+    "command": "difft [--display {inline|side-by-side|json}] [--language <lang>] [--exit-code] <file1> <file2>",
+    "desc": "Difftastic (difft) is a structural diff tool that understands syntax - it compares files by their parsed AST rather than raw lines, so renamed/reordered code blocks align correctly and output highlights whole syntactic units (strings, comments, function calls) instead of noisy line diffs. Emits ANSI-color output or machine-readable JSON (--display json) - ideal for code-review and self-improvement pipelines.",
+    "endpoints": {
+      "/auto/difftastic/diff": "POST - structural diff of two files or two inline strings (inline/side-by-side/json)",
+      "/auto/difftastic/languages": "GET - list supported languages with their file extensions",
+      "/auto/difftastic/info": "Feature metadata, install status, version",
+      "/auto/difftastic/ping": "Health check"
+    },
+    "exe": "difft",
+    "install": {
+      "choco": "choco install difftastic",
+      "scoop": "scoop install difftastic",
+      "winget": "winget install Wilfred.difftastic"
+    },
+    "repo": "Wilfred/difftastic",
+    "stars": 25805,
+    "url": "https://github.com/Wilfred/difftastic"
+  },
   "devika": {
     "added": "2026-06-30",
     "desc": "Agentic AI software engineer \u2014 understands human instructions, researches, codes, and builds software projects",
@@ -448,6 +468,26 @@ TOOLS = {
     "repo": "microsoft/windows",
     "stars": 0,
     "url": "https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/ipconfig"
+  },
+  "jq": {
+    "added": "2026-08-21",
+    "command": "jq [--raw-output] [--compact-output] [--slurp] '<filter>' [file.json]",
+    "desc": "jq is a lightweight and flexible command-line JSON processor - the de-facto standard for filtering, transforming, and extracting data from JSON. Pipe any JSON API response, config file, or log through a jq filter to reshape it, select fields, compute aggregates, and emit compact or raw output. Machine-readable and subprocess-friendly, it slots directly into CoAgent automation pipelines.",
+    "endpoints": {
+      "/auto/jq/query": "POST - run a jq filter against JSON input (inline string or file path)",
+      "/auto/jq/validate": "POST - validate that input is well-formed JSON",
+      "/auto/jq/info": "Feature metadata, install status, version",
+      "/auto/jq/ping": "Health check"
+    },
+    "exe": "jq",
+    "install": {
+      "choco": "choco install jq",
+      "scoop": "scoop install jq",
+      "winget": "winget install jqlang.jq"
+    },
+    "repo": "jqlang/jq",
+    "stars": 35476,
+    "url": "https://github.com/jqlang/jq"
   },
   "just": {
     "added": "2026-08-11",
@@ -11180,6 +11220,210 @@ def _h_duf_286():
         return (jsonify({'error': str(e)}), 500)
 
 
+def _h_jq_287():
+    """Run a jq filter against JSON input.
+
+        Body (JSON):
+            filter (str, required): The jq filter expression, e.g. '.items[] | {id, name}'.
+            input (str|object, optional): JSON to process (a string is treated as raw JSON text;
+                any other object is re-serialized). Provide this or 'path'.
+            path (str, optional): Path to a JSON file to process. Ignored if 'input' is provided.
+            raw_output (bool, optional): Emit raw strings without JSON quoting. Default False.
+            compact_output (bool, optional): Emit compact JSON (no pretty-printing). Default False.
+            slurp (bool, optional): Read the entire input as a single array. Default False.
+            timeout (int, optional): Max seconds. Default 30, max 120.
+        """
+    body = _json_body() or {}
+    filter_ = str(body.get('filter') or '').strip()
+    if not filter_:
+        return _missing_field(body, 'filter')
+    exe = _find_tool('jq')
+    if not exe:
+        return (jsonify({'error': 'jq is not installed',
+                         'hint': 'Install with: winget install jqlang.jq'}), 503)
+    raw_input = body.get('input')
+    path = str(body.get('path') or '').strip()
+    if raw_input is None and not path:
+        return (jsonify({'error': "Provide either 'input' (JSON string) or 'path' (file)"}), 400)
+    if path and not os.path.isfile(path):
+        return (jsonify({'error': f'File not found: {path}'}), 404)
+    try:
+        timeout = max(5, min(int(body.get('timeout', 30)), 120))
+    except (ValueError, TypeError):
+        timeout = 30
+    cmd = [exe]
+    if str(body.get('raw_output', 'false')).lower() in ('1', 'true', 'yes'):
+        cmd.append('-r')
+    if str(body.get('compact_output', 'false')).lower() in ('1', 'true', 'yes'):
+        cmd.append('-c')
+    if str(body.get('slurp', 'false')).lower() in ('1', 'true', 'yes'):
+        cmd.append('-s')
+    cmd.append(filter_)
+    if path:
+        cmd.append(path)
+    stdin_data = None
+    if not path:
+        stdin_data = raw_input if isinstance(raw_input, str) else json_lib.dumps(raw_input)
+    try:
+        r = subprocess.run(cmd, input=stdin_data, capture_output=True, text=True,
+                           errors='replace', timeout=timeout)
+        if r.returncode != 0:
+            _log(f"[auto_jq_query] rc={r.returncode}: {(r.stderr or '')[:300]}")
+            return (jsonify({'error': (r.stderr or 'jq failed').strip()}), 400)
+        return jsonify({'ok': True, 'filter': filter_, 'result': r.stdout})
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': f'jq timed out after {timeout}s'}), 504)
+    except Exception as e:
+        _log(f'[auto_jq_query] {e}')
+        return (jsonify({'error': str(e)}), 500)
+
+
+def _h_jq_288():
+    """Validate that input is well-formed JSON using jq.
+
+        Body (JSON):
+            input (str|object, optional): JSON to validate. Provide this or 'path'.
+            path (str, optional): Path to a JSON file to validate.
+        """
+    body = _json_body() or {}
+    raw_input = body.get('input')
+    path = str(body.get('path') or '').strip()
+    if raw_input is None and not path:
+        return (jsonify({'error': "Provide either 'input' (JSON string) or 'path' (file)"}), 400)
+    if path and not os.path.isfile(path):
+        return (jsonify({'error': f'File not found: {path}'}), 404)
+    exe = _find_tool('jq')
+    if not exe:
+        return (jsonify({'error': 'jq is not installed',
+                         'hint': 'Install with: winget install jqlang.jq'}), 503)
+    cmd = [exe, '.']
+    if path:
+        cmd.append(path)
+    stdin_data = None if path else (raw_input if isinstance(raw_input, str) else json_lib.dumps(raw_input))
+    try:
+        r = subprocess.run(cmd, input=stdin_data, capture_output=True, text=True,
+                           errors='replace', timeout=30)
+        valid = r.returncode == 0
+        return jsonify({'valid': valid,
+                        'error': (r.stderr or '').strip() if not valid else None,
+                        'parsed': r.stdout if valid else None})
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': 'jq validate timed out after 30s'}), 504)
+    except Exception as e:
+        _log(f'[auto_jq_validate] {e}')
+        return (jsonify({'error': str(e)}), 500)
+
+
+def _h_difftastic_289():
+    """Structural diff of two files or two inline strings.
+
+        Body (JSON):
+            left (str, required): Left-side content, or a file path when files=true.
+            right (str, required): Right-side content, or a file path when files=true.
+            files (bool, optional): Treat left/right as file paths. Default False.
+            left_path (str, optional): Display name/path for the left side (used to infer language).
+            right_path (str, optional): Display name/path for the right side.
+            display (str, optional): 'inline' (default), 'side-by-side', or 'json'.
+            language (str, optional): Force a language, e.g. 'python', 'javascript', 'rust'.
+            timeout (int, optional): Max seconds. Default 30, max 120.
+        """
+    body = _json_body() or {}
+    left = body.get('left')
+    right = body.get('right')
+    if left is None:
+        return (jsonify({'error': "Missing required field: left"}), 400)
+    if right is None:
+        return (jsonify({'error': "Missing required field: right"}), 400)
+    exe = _find_tool('difftastic')
+    if not exe:
+        return (jsonify({'error': 'difftastic is not installed',
+                         'hint': 'Install with: winget install Wilfred.difftastic'}), 503)
+    display = str(body.get('display') or 'inline').strip().lower()
+    if display not in ('inline', 'side-by-side', 'side-by-side-show-both', 'json'):
+        display = 'inline'
+    language = str(body.get('language') or '').strip()
+    use_files = str(body.get('files', 'false')).lower() in ('1', 'true', 'yes')
+    left_path = str(body.get('left_path') or '').strip()
+    right_path = str(body.get('right_path') or '').strip()
+    try:
+        timeout = max(5, min(int(body.get('timeout', 30)), 120))
+    except (ValueError, TypeError):
+        timeout = 30
+    tmp = []
+    try:
+        if use_files:
+            left_arg, right_arg = str(left), str(right)
+            for p in (left_arg, right_arg):
+                if not os.path.isfile(p):
+                    return (jsonify({'error': f'File not found: {p}'}), 404)
+        else:
+            def _suffix(name):
+                ext = os.path.splitext(name or '')[1]
+                return ext if ext else '.txt'
+            lf = tempfile.NamedTemporaryFile(mode='w', suffix=_suffix(left_path), delete=False, encoding='utf-8')
+            lf.write(str(left))
+            lf.close()
+            tmp.append(lf.name)
+            rf = tempfile.NamedTemporaryFile(mode='w', suffix=_suffix(right_path), delete=False, encoding='utf-8')
+            rf.write(str(right))
+            rf.close()
+            tmp.append(rf.name)
+            left_arg, right_arg = lf.name, rf.name
+        cmd = [exe, '--display', display, '--exit-code']
+        if display != 'json':
+            cmd.extend(['--color', 'never'])
+        if language:
+            cmd.extend(['--language', language])
+        cmd.extend([left_arg, right_arg])
+        r = subprocess.run(cmd, capture_output=True, text=True, errors='replace', timeout=timeout)
+        if r.returncode not in (0, 1):
+            _log(f"[auto_difftastic_diff] rc={r.returncode}: {(r.stderr or '')[:300]}")
+            return (jsonify({'error': (r.stderr or 'difftastic failed').strip()}), 500)
+        if display == 'json':
+            parsed = None
+            if (r.stdout or '').strip():
+                try:
+                    parsed = json_lib.loads(r.stdout)
+                except Exception:
+                    parsed = None
+            return jsonify({'ok': True, 'changed': r.returncode == 1, 'display': display,
+                            'result': parsed, 'raw': r.stdout if parsed is None else None})
+        return jsonify({'ok': True, 'changed': r.returncode == 1, 'display': display, 'diff': r.stdout})
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': f'difftastic timed out after {timeout}s'}), 504)
+    except Exception as e:
+        _log(f'[auto_difftastic_diff] {e}')
+        return (jsonify({'error': str(e)}), 500)
+    finally:
+        for p in tmp:
+            try:
+                os.unlink(p)
+            except OSError:
+                pass
+
+
+def _h_difftastic_290():
+    """List the languages supported by difftastic, along with their file extensions.
+
+        Body (JSON):
+            none - no body required.
+        """
+    exe = _find_tool('difftastic')
+    if not exe:
+        return (jsonify({'error': 'difftastic is not installed',
+                         'hint': 'Install with: winget install Wilfred.difftastic'}), 503)
+    try:
+        r = subprocess.run([exe, '--list-languages'], capture_output=True, text=True,
+                           errors='replace', timeout=30)
+        lines = [ln for ln in (r.stdout or '').splitlines() if ln.strip()]
+        return jsonify({'ok': r.returncode == 0, 'count': len(lines), 'languages': lines})
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': 'difftastic --list-languages timed out'}), 504)
+    except Exception as e:
+        _log(f'[auto_difftastic_languages] {e}')
+        return (jsonify({'error': str(e)}), 500)
+
+
 def register_routes(app, state, require_auth):
     global _STATE
     _STATE = state
@@ -11473,6 +11717,10 @@ def register_routes(app, state, require_auth):
         ('/auto/volatility3/analyze', ['POST'], _h_volatility3_284),
         ('/auto/hyperfine/bench', ['POST'], _h_hyperfine_285),
         ('/auto/duf/usage', ['GET', 'POST'], _h_duf_286),
+        ('/auto/jq/query', ['POST'], _h_jq_287),
+        ('/auto/jq/validate', ['POST'], _h_jq_288),
+        ('/auto/difftastic/diff', ['POST'], _h_difftastic_289),
+        ('/auto/difftastic/languages', ['GET'], _h_difftastic_290),
     ]
     for _path, _methods, _fn in _ACTIONS:
         app.add_url_rule(_path, endpoint=_fn.__name__, view_func=require_auth(_fn), methods=_methods)
