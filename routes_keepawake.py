@@ -27,7 +27,12 @@ ES_DISPLAY_REQUIRED = 0x00000002
 
 _hold = {"active": False, "display_off": False, "since": None}
 _hold_lock = threading.Lock()
-_stop_event = threading.Event()
+# Per-hold stop signal + holder thread. A fresh Event per hold (instead of a
+# single reused Event) guarantees a new hold can never unstick an old holder
+# thread that is still mid-wait, and lets _stop_hold join the old thread so the
+# Win32 execution-state flag is actually cleared before we report success.
+_hold_event = None
+_holder_thread = None
 
 try:
     import ctypes
@@ -64,27 +69,52 @@ def _ps(script, timeout=10):
         return "", "powershell.exe not found (not on Windows?)", -1
 
 
-def _holder_loop(flags):
+def _holder_loop(event, flags):
     """Run on a dedicated thread; holds the ES flag until stop is signaled."""
     _set_es(ES_CONTINUOUS | flags)
-    while not _stop_event.wait(30.0):
+    while not event.wait(30.0):
         # Re-assert periodically (defensive — the flag is continuous).
         _set_es(ES_CONTINUOUS | flags)
     # Clear the flag on exit.
     _set_es(ES_CONTINUOUS)
 
 
+def _stop_hold_locked():
+    """Release the current hold. Caller must hold _hold_lock."""
+    global _hold, _hold_event, _holder_thread
+    was_active = _hold["active"]
+    event = _hold_event
+    t = _holder_thread
+    _hold_event = None
+    _holder_thread = None
+    if event is not None:
+        event.set()
+    if t is not None and t is not threading.current_thread():
+        # Bounded join: wait for the holder to observe the signal and clear its
+        # execution-state flag so we don't report "stopped" prematurely.
+        t.join(timeout=2.0)
+    _hold["active"] = False
+    _hold["display_off"] = False
+    _hold["since"] = None
+    return was_active
+
+
 def _start_hold(display_off=False):
-    global _hold
+    global _hold, _hold_event, _holder_thread
     with _hold_lock:
         if _hold["active"]:
-            _hold["display_off"] = display_off
-            return {"status": "already_active", "since": _hold["since"], "display_off": display_off}
+            if _hold["display_off"] == display_off:
+                return {"status": "already_active", "since": _hold["since"], "display_off": display_off}
+            # display_off changed while active: stop the old holder and start a
+            # fresh one so the reported state matches the actual ES flags.
+            _stop_hold_locked()
         flags = ES_SYSTEM_REQUIRED | (0 if display_off else ES_DISPLAY_REQUIRED)
-        _stop_event.clear()
+        event = threading.Event()
+        _hold_event = event
         t = threading.Thread(
-            target=_holder_loop, args=(flags,), name="coagent-keepawake", daemon=True
+            target=_holder_loop, args=(event, flags), name="coagent-keepawake", daemon=True
         )
+        _holder_thread = t
         t.start()
         _hold["active"] = True
         _hold["display_off"] = display_off
@@ -93,14 +123,9 @@ def _start_hold(display_off=False):
 
 
 def _stop_hold():
-    global _hold
     with _hold_lock:
-        was_active = _hold["active"]
-        _stop_event.set()
-        _hold["active"] = False
-        _hold["display_off"] = False
-        _hold["since"] = None
-        return {"status": "stopped" if was_active else "was_not_active"}
+        was_active = _stop_hold_locked()
+    return {"status": "stopped" if was_active else "was_not_active"}
 
 
 def _powercfg_timeouts():
