@@ -57,6 +57,7 @@ def _run_ps(script, timeout=20):
             [ps, "-NoProfile", "-NonInteractive", "-Command", script],
             capture_output=True,
             text=True,
+            errors="replace",
             timeout=timeout,
             creationflags=_CREATE_NO_WINDOW,
         )
@@ -167,6 +168,31 @@ def _eject_drive_ps(drive):
     )
 
 
+def _drive_removable(drive):
+    """Return (removable: bool, error: str|None) for a 'X:' drive letter.
+
+    `drive` is already validated to a single 'X:' letter. DriveType 2 ==
+    removable; anything else (fixed disk, network, CD-ROM, the system drive)
+    is rejected so /usb/eject cannot target non-removable volumes.
+    """
+    script = (
+        "$ErrorActionPreference = 'SilentlyContinue'; "
+        f"$d = Get-CimInstance -ClassName Win32_LogicalDisk -Filter \"DeviceID='{drive}'\" | Select-Object -First 1; "
+        "if ($null -eq $d) { Write-Output 'NOT_FOUND'; exit 2 } "
+        "if ($d.DriveType -ne 2) { Write-Output 'NOT_REMOVABLE'; exit 3 } "
+        "Write-Output 'REMOVABLE'"
+    )
+    out, err, rc = _run_ps(script, timeout=15)
+    result = (out or "").strip().upper()
+    if rc == 0 and result == "REMOVABLE":
+        return True, None
+    if result == "NOT_FOUND":
+        return False, "drive not found"
+    if result == "NOT_REMOVABLE":
+        return False, "drive is not removable"
+    return False, (err or "drive check failed").strip() or f"drive check failed (rc={rc})"
+
+
 def register_routes(app, state, require_auth):
     ps_exe = _find_powershell()
     ps_available = bool(ps_exe and os.path.isfile(ps_exe))
@@ -224,6 +250,11 @@ def register_routes(app, state, require_auth):
         drive = _normalize_drive_letter(raw)
         if not drive:
             return jsonify({"error": "invalid drive letter"}), 400
+
+        removable, check_err = _drive_removable(drive)
+        if not removable:
+            _log(f"usb/eject {drive} rejected: {check_err}")
+            return jsonify({"error": check_err or "drive is not removable", "drive": drive}), 400
 
         script = _eject_drive_ps(drive)
         out, err, rc = _run_ps(script, timeout=20)
