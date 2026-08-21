@@ -1,6 +1,7 @@
 """Transparent desktop HUD overlay routes."""
 
 import json
+import os
 import threading
 import time
 
@@ -50,7 +51,9 @@ def _write_status(**updates):
         _HUD_STATE["updated_at"] = _now_text()
         payload = dict(_HUD_STATE)
     try:
-        tmp = HUD_STATUS_FILE.with_suffix(".tmp")
+        tmp = HUD_STATUS_FILE.with_name(
+            f"{HUD_STATUS_FILE.name}.tmp.{os.getpid()}.{threading.get_ident()}"
+        )
         tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         tmp.replace(HUD_STATUS_FILE)
     except Exception as exc:
@@ -317,10 +320,12 @@ def _run_native_hud(config, stop_event, token, ready_event):
 
     screen_dc = user32.GetDC(None)
     if not screen_dc:
+        user32.DestroyWindow(hwnd)
         raise OSError("GetDC failed — cannot get screen device context")
     mem_dc = gdi32.CreateCompatibleDC(screen_dc)
     if not mem_dc:
         user32.ReleaseDC(None, screen_dc)
+        user32.DestroyWindow(hwnd)
         raise OSError("CreateCompatibleDC failed")
     bitmap = None
     old_bitmap = None
