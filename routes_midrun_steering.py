@@ -62,12 +62,12 @@ def _awaiting_instruction(goal):
 
 def _remaining_index(goal):
     steps = goal.get("steps") or []
-    for step in steps:
+    for i, step in enumerate(steps):
         if step.get("status") in {"pending", "running"}:
             try:
-                return int(step.get("index", 0))
+                return int(step.get("index", i))
             except (TypeError, ValueError):
-                return 0
+                return i
     return len(steps)
 
 
@@ -117,15 +117,15 @@ def _preview_revise(ce, run_id, instruction):
 
 
 def _approval_gate(action_label, detail):
-    """If routes_approvals is enabled, block on human approval. Never crashes."""
+    """If routes_approvals is enabled, block on human approval. Fails closed."""
     try:
         from routes_approvals import require_approval
     except Exception:
-        return True, {"status": "unavailable"}
+        return False, {"status": "unavailable"}
     try:
         return require_approval(action_label, detail=detail, timeout=30.0)
     except Exception as exc:
-        return True, {"status": "error", "error": f"{type(exc).__name__}: {exc}"}
+        return False, {"status": "error", "error": f"{type(exc).__name__}: {exc}"}
 
 
 def reg_midrun_steering(app, state, require_auth):
