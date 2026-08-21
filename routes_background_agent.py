@@ -65,7 +65,7 @@ except Exception:
         raise FileNotFoundError("CUA bridge unavailable")
 
 
-_STATE_LOCK = threading.Lock()
+_STATE_LOCK = threading.RLock()
 _STOP_EVENT = threading.Event()
 _WORKER = {"thread": None}
 
@@ -190,12 +190,19 @@ def _run_step(step, context):
         text = step.get("text", "")
         if not text:
             return {**entry, "success": False, "error": "missing text"}
+        target_requested = bool(
+            step.get("hwnd") or step.get("window") or step.get("title")
+            or context.get("hwnd") or context.get("window")
+        )
         hwnd = _resolve_hwnd(step, context)
         if hwnd and _HAS_BG_PRIMS:
             res = type_via_uia(hwnd, text)
             if not res.get("success"):
                 res = type_into_window_post(hwnd, text, int(step.get("delay_ms", 10)))
             return {**entry, **res, "hwnd": hwnd}
+        if target_requested:
+            return {**entry, "success": False,
+                    "error": f"target window not found: {step.get('window') or step.get('title') or step.get('hwnd')}"}
         if _HAS_CUA and cua_available():
             try:
                 res = cua_call("type_text", {"text": text})
@@ -304,17 +311,15 @@ def register_routes(app, state, require_auth):
         except (TypeError, ValueError):
             return jsonify({"error": "loop_delay and step_delay must be numeric"}), 400
 
-        with _STATE_LOCK:
-            already = _STATE["active"]
-        if already:
-            return jsonify({
-                "error": "a background agent task is already running",
-                "run_id": _STATE["run_id"],
-            }), 409
-
         run_id = uuid.uuid4().hex[:12]
         _STOP_EVENT.clear()
-        _reset_state(run_id, task, len(steps))
+        with _STATE_LOCK:
+            if _STATE["active"]:
+                return jsonify({
+                    "error": "a background agent task is already running",
+                    "run_id": _STATE["run_id"],
+                }), 409
+            _reset_state(run_id, task, len(steps))
 
         worker = threading.Thread(
             target=_worker_loop,
