@@ -279,7 +279,9 @@ def _assert_ocr(assertion):
 
 def _assert_screenshot(assertion, evidence_dir):
     filename = assertion.get("save_as") or "screenshot.jpg"
-    if not re.match(r"^[A-Za-z0-9_\-.]{1,64}$", filename):
+    if (not re.match(r"^[A-Za-z0-9_\-.]{1,64}$", filename)
+            or filename in (".", "..")
+            or filename.startswith(".")):
         filename = "screenshot.jpg"
     url = f"http://127.0.0.1:{_self_port()}/screen"
     headers = {}
@@ -462,7 +464,9 @@ def _persist_run_index(entry):
         # Keep last 200
         if len(existing) > 200:
             existing = existing[-200:]
-        _RUN_INDEX_PATH.write_text(json.dumps(existing, indent=2), encoding="utf-8")
+        tmp = _RUN_INDEX_PATH.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(existing, indent=2), encoding="utf-8")
+        tmp.replace(_RUN_INDEX_PATH)
 
 
 # ---------------------------------------------------------------------------
