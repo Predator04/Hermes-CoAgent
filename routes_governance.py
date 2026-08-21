@@ -27,6 +27,14 @@ from shared import COAGENT_DIR, _log
 
 DEFAULT_POLICY = {
     "enabled": False,
+    # "normal" | "observe" — observe mode blocks mutating endpoints (file
+    # writes/deletes, process start/kill, registry/macro/clipboard writes,
+    # power, installs) while keeping every read endpoint live: an autonomous
+    # run can *see* the desktop without being able to *touch* the filesystem.
+    "mode": "normal",
+    # Per-path write allowlist. Empty list = unrestricted (backward compatible).
+    # When non-empty, /file/write is refused for any target outside these roots.
+    "write_roots": [],
     "apps": {
         "mode": "allow",
         "allowlist": [],
@@ -80,6 +88,37 @@ _POLICY_PATH = COAGENT_DIR / "governance.json"
 _AUDIT_PATH = COAGENT_DIR / "governance_audit.jsonl"
 _AUDIT_MAX_MEM = 1000
 _REDACT_MAX_CHARS = 1_000_000
+
+# Endpoints blocked while observe mode is active. Prefixed precisely so read
+# endpoints (/file/read, /file/list, /macro/list, /process/list, ...) stay live.
+_OBSERVE_BLOCKED_PREFIXES = (
+    "/file/write",
+    "/file/delete",
+    "/file/move",
+    "/file/copy",
+    "/file/rename",
+    "/process/start",
+    "/process/kill",
+    "/process/priority",
+    "/clipboard/set",
+    "/clipboard/history/set",
+    "/clipboard/clear",
+    "/power/sleep",
+    "/power/shutdown",
+    "/power/restart",
+    "/power/lock",
+    "/registry",
+    "/macro/build",
+    "/macro/rec/start",
+    "/macro/rec/stop",
+    "/macro/delete",
+    "/macro/replay",
+    "/macro/save",
+    "/macro/run",
+    "/macro/record",
+    "/install",
+    "/uninstall",
+)
 
 # Pre-compiled redaction patterns. Order matters: broad multi-line matches
 # (private keys, JWTs) run before narrower ones so we don't destroy the block
@@ -220,6 +259,19 @@ class _Governor:
                 if key in sec and not isinstance(sec[key], list):
                     errors.append(f"{section}.{key} must be a list")
 
+        mode = policy.get("mode")
+        if mode is not None and mode not in ("normal", "observe"):
+            errors.append(f"mode must be 'normal' or 'observe', got {mode!r}")
+
+        write_roots = policy.get("write_roots")
+        if write_roots is not None:
+            if not isinstance(write_roots, list):
+                errors.append("write_roots must be a list")
+            else:
+                for root in write_roots:
+                    if not isinstance(root, str) or not root.strip():
+                        errors.append("write_roots entries must be non-empty strings")
+
         budgets = policy.get("budgets")
         if budgets is not None:
             if not isinstance(budgets, dict):
@@ -321,6 +373,36 @@ class _Governor:
                     return (True, "")
                 return (False, f"domain denied by policy: {host}")
             return (True, "")
+
+    def is_observe(self):
+        with self._lock:
+            return str(self._policy.get("mode", "normal")) == "observe"
+
+    def write_allowed(self, path):
+        """Enforce the per-path write allowlist.
+
+        Empty ``write_roots`` => unrestricted (backward compatible). Otherwise
+        the resolved target must be equal to, or inside, one of the listed roots.
+        Returns ``(allowed: bool, reason: str)``.
+        """
+        with self._lock:
+            roots = list(self._policy.get("write_roots") or [])
+        if not roots:
+            return True, ""
+        if not path:
+            return False, "empty path"
+        try:
+            resolved = os.path.normcase(os.path.realpath(str(path)))
+        except Exception as e:
+            return False, f"invalid path: {e}"
+        for root in roots:
+            try:
+                root_n = os.path.normcase(os.path.realpath(str(root)))
+                if resolved == root_n or os.path.commonpath([resolved, root_n]) == root_n:
+                    return True, ""
+            except (ValueError, OSError):
+                continue
+        return False, f"path outside write allowlist ({len(roots)} root(s))"
 
     @staticmethod
     def _extract_host(url):
@@ -514,6 +596,18 @@ class _Governor:
 _GOVERNOR = _Governor()
 
 
+def enable_observe():
+    """Enable observe mode (used by the --observe CLI flag)."""
+    policy, errors = _GOVERNOR.update_policy({"mode": "observe"})
+    _log(f"[governance] observe mode enabled (errors={errors})")
+    return policy
+
+
+def check_write_path(path):
+    """Enforce the per-path write allowlist. Returns (allowed, reason)."""
+    return _GOVERNOR.write_allowed(path)
+
+
 def get_governor():
     """Return the module-level governor singleton."""
     return _GOVERNOR
@@ -521,6 +615,21 @@ def get_governor():
 
 def register_routes(app, state, require_auth):
     """Register /governance/* HTTP endpoints and expose helpers on state."""
+
+    @app.before_request
+    def _observe_guard():
+        if not _GOVERNOR.is_observe():
+            return None
+        path = (request.path or "").rstrip("/") or "/"
+        for prefix in _OBSERVE_BLOCKED_PREFIXES:
+            if path.startswith(prefix):
+                _log(f"[governance] observe mode blocked {request.method} {path}")
+                return jsonify({
+                    "ok": False,
+                    "error": "observe mode: mutating endpoint blocked",
+                    "path": request.path,
+                }), 403
+        return None
 
     @app.route("/governance/policy", methods=["GET"])
     @require_auth
@@ -569,6 +678,8 @@ def register_routes(app, state, require_auth):
         return jsonify({
             "ok": True,
             "enabled": bool(policy.get("enabled")),
+            "observe": _GOVERNOR.is_observe(),
+            "write_roots": policy.get("write_roots") or [],
             "mode": {
                 "apps": apps_cfg.get("mode", "allow"),
                 "domains": domains_cfg.get("mode", "allow"),

@@ -704,7 +704,7 @@ from routes_config import register_routes as reg_config, backup_file
 from routes_browser import register_routes as reg_browser
 from browser_automation import register_routes as reg_browser_automation
 from routes_companion import register_routes as reg_companion
-from routes_governance import register_routes as reg_governance
+from routes_governance import register_routes as reg_governance, enable_observe
 from routes_deploy import register_routes as reg_deploy
 from routes_stealth_browser import register_routes as reg_stealth_browser
 from routes_google import register_routes as reg_google
@@ -1696,6 +1696,10 @@ def start_server():
         _console("  CORS: restricted to local origins")
     else:
         _console("  Auth: disabled")
+
+    if "--observe" in sys.argv:
+        enable_observe()
+        _console("  Observe mode: ENABLED (mutating endpoints blocked, reads live)")
 
     if mcp_stdio:
         _console("  MCP stdio: enabled")

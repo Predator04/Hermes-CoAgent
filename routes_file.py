@@ -4,6 +4,7 @@ from pathlib import Path
 from flask import jsonify
 from shared import _json_body, _log, _missing_field, COAGENT_DIR, _sanitize_path, _sanitize_cmd
 from routes_config import backup_file
+from routes_governance import check_write_path
 
 _ALLOWED_DELETE_ROOTS = {Path(_sanitize_path(str(COAGENT_DIR))).resolve()}
 _HOME_DIR = Path.home().resolve()
@@ -101,6 +102,9 @@ def register_routes(app, state, require_auth):
             return jsonify({"error": str(e)}), 403
         content = d.get("content", "")
         try:
+            allowed, reason = check_write_path(path)
+            if not allowed:
+                return jsonify({"error": reason, "path": path}), 403
             parent = os.path.dirname(path)
             if parent:
                 os.makedirs(parent, exist_ok=True)
