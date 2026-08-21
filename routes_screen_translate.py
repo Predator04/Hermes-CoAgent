@@ -23,6 +23,14 @@ from flask import jsonify
 from shared import _json_body, _log
 
 
+def _parse_bool(value, default=False):
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in ("true", "1", "yes", "on")
+    return bool(value)
+
+
 def _monitor_enum():
     """Enumerate monitors with physical bounds + per-monitor DPI. Returns a list
     of dicts ordered by EnumDisplayMonitors callback order."""
@@ -177,7 +185,7 @@ def register_routes(app, state, require_auth):
         if from_space not in ("physical", "logical") or to_space not in ("physical", "logical"):
             return jsonify({"error": "from/to must be 'physical' or 'logical'"}), 400
         monitor_id = data.get("monitor_id")
-        absolute = bool(data.get("absolute", False))
+        absolute = _parse_bool(data.get("absolute", False))
         try:
             monitors = _monitor_enum()
         except Exception as exc:
