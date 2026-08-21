@@ -111,7 +111,7 @@ def _route_overlaps_prefix(route, prefixes):
         if not prefix:
             continue
         prefix_base = prefix.rstrip("/")
-        if route == prefix_base or route.startswith(prefix) or prefix.startswith(route_base + "/"):
+        if route == prefix_base or route.startswith(prefix_base + "/") or prefix.startswith(route_base + "/"):
             return prefix
     return None
 
@@ -221,7 +221,8 @@ def _unload_plugin(app, name):
     module, loaded_at = loaded
     endpoints = PLUGIN_ENDPOINTS.pop(safe, [])
     _remove_endpoints(app, endpoints)
-    sys.modules.pop(getattr(module, "__name__", safe), None)
+    sys.modules.pop(f"hermes_plugin_{safe}", None)
+    sys.modules.pop(getattr(module, "__name__", ""), None)
     info = {
         "name": safe,
         "module_name": getattr(module, "__name__", safe),
