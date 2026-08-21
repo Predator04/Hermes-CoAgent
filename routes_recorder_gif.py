@@ -66,6 +66,7 @@ def _cleanup_old_recordings():
 
 
 def _capture_loop(recording_id, fps, max_seconds, bbox):
+    global _LAST_RECORDING
     frame_interval = 1.0 / max(1, fps)
     start = time.perf_counter()
     next_capture = start
@@ -103,6 +104,26 @@ def _capture_loop(recording_id, fps, max_seconds, bbox):
             if _ACTIVE and _ACTIVE.get("recording_id") == recording_id:
                 _ACTIVE["is_recording"] = False
                 _ACTIVE["stopped_at"] = time.time()
+                frames = list(_FRAMES)
+                natural_stop = not _STOP_EVENT.is_set()
+            else:
+                frames = []
+                natural_stop = False
+        if natural_stop and frames:
+            try:
+                path = _save_gif(recording_id, frames, fps)
+                gif_size = path.stat().st_size
+                with _LOCK:
+                    _LAST_RECORDING = {
+                        "recording_id": recording_id,
+                        "status": "stopped",
+                        "frames": len(frames),
+                        "gif_path": str(path),
+                        "gif_size_bytes": gif_size,
+                    }
+                _console(f"[recorder_gif] auto-saved recording_id={recording_id} frames={len(frames)} path={path}")
+            except Exception as exc:
+                _console(f"[recorder_gif] auto-save failed: {type(exc).__name__}: {exc}")
 
 
 def _save_gif(recording_id, frames, fps):
@@ -232,6 +253,7 @@ def register_routes(app, state, require_auth):
 
         gif_path = ""
         gif_size = 0
+        save_error = None
         if frames:
             try:
                 path = _save_gif(recording_id, frames, fps)
@@ -239,7 +261,7 @@ def register_routes(app, state, require_auth):
                 gif_size = path.stat().st_size
             except Exception as exc:
                 _console(f"[recorder_gif] GIF save failed: {type(exc).__name__}: {exc}")
-                return jsonify({"error": f"failed to save GIF: {exc}", "recording_id": recording_id}), 500
+                save_error = f"failed to save GIF: {exc}"
 
         payload = {
             "recording_id": recording_id,
@@ -254,6 +276,8 @@ def register_routes(app, state, require_auth):
             _THREAD = None
             _FRAMES.clear()
         _console(f"[recorder_gif] stopped recording_id={recording_id} frames={len(frames)} path={gif_path}")
+        if save_error:
+            return jsonify({"error": save_error, "recording_id": recording_id}), 500
         return jsonify(payload)
 
     @bp.route("/recorder/gif/status", methods=["GET"])
