@@ -71,7 +71,7 @@ def _call_llm(provider_key, prompt, model, timeout=60):
 def _brainstem_route():
     body = request.get_json(force=True, silent=True) or {}
     task = body.get("task", "")
-    if not task:
+    if not isinstance(task, str) or not task.strip():
         return jsonify({"ok": False, "error": "missing task"}), 400
 
     force_neocortex = body.get("force_neocortex", False)
@@ -126,7 +126,7 @@ def _brainstem_query():
     body = request.get_json(force=True, silent=True) or {}
     prompt = body.get("prompt", "")
     force_neocortex = body.get("force_neocortex", False)
-    if not prompt:
+    if not isinstance(prompt, str) or not prompt.strip():
         return jsonify({"ok": False, "error": "missing prompt"}), 400
     # Map prompt→task and inline routing instead of calling _brainstem_route()
     # which re-reads `task` from the (already-consumed) request body.
@@ -135,7 +135,7 @@ def _brainstem_query():
     if force_neocortex or complexity >= _ROUTER_STATE["complexity_threshold"]:
         model = _ROUTER_STATE["neocortex_model"]
         provider = model.split(":")[0]
-        response = _call_llm(provider, prompt, model.split(":")[1] if ":" in model else None)
+        response = _call_llm(provider, prompt, model.split(":", 1)[1] if ":" in model else None)
         latency = time.time() - start
         with _ROUTER_LOCK:
             _ROUTER_STATE["neocortex_calls"] += 1
@@ -154,7 +154,7 @@ def _brainstem_query():
     else:
         model = _ROUTER_STATE["brainstem_model"]
         provider = model.split(":")[0]
-        response = _call_llm(provider, prompt, model.split(":")[1] if ":" in model else None)
+        response = _call_llm(provider, prompt, model.split(":", 1)[1] if ":" in model else None)
         latency = time.time() - start
         with _ROUTER_LOCK:
             _ROUTER_STATE["brainstem_calls"] += 1
@@ -196,10 +196,25 @@ def _brainstem_status():
 @brainstem_bp.route("/brainstem/configure", methods=["POST"])
 def _brainstem_configure():
     body = request.get_json(force=True, silent=True) or {}
+    errors = []
     with _ROUTER_LOCK:
-        for key in ("brainstem_model", "neocortex_model", "complexity_threshold"):
+        if "complexity_threshold" in body:
+            try:
+                thresh = float(body["complexity_threshold"])
+                if not 0.0 <= thresh <= 1.0:
+                    raise ValueError("out of range")
+                _ROUTER_STATE["complexity_threshold"] = thresh
+            except (TypeError, ValueError):
+                errors.append("complexity_threshold must be a number in [0,1]")
+        for key in ("brainstem_model", "neocortex_model"):
             if key in body:
-                _ROUTER_STATE[key] = body[key]
+                val = body[key]
+                if not isinstance(val, str) or ":" not in val or not val.split(":", 1)[1].strip():
+                    errors.append(f"{key} must be a 'provider:model' string")
+                else:
+                    _ROUTER_STATE[key] = val
+    if errors:
+        return jsonify({"ok": False, "error": "; ".join(errors)}), 400
     return jsonify({"ok": True, "config": {
         "brainstem_model": _ROUTER_STATE["brainstem_model"],
         "neocortex_model": _ROUTER_STATE["neocortex_model"],
