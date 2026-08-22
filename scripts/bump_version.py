@@ -7,6 +7,7 @@ Usage:
   python bump_version.py               # show current version
 """
 
+import re
 import sys
 from pathlib import Path
 
@@ -50,7 +51,11 @@ def bump_version(current: str, part: str) -> str:
     elif part == "patch":
         parts[2] += 1
     else:
-        return part  # exact version string
+        # exact version string — validate before writing to avoid corrupting VERSION
+        if not re.fullmatch(r"\d+(\.\d+){0,3}", part):
+            print(f"ERROR: invalid version '{part}' (expected e.g. 8.55.52)", file=sys.stderr)
+            raise SystemExit(1)
+        return part
     return ".".join(str(p) for p in parts)
 
 
