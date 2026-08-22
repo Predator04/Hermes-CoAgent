@@ -36,8 +36,10 @@ def test_discover_manifest_groups_and_availability():
         assert set(["group", "available", "endpoints", "requirements"]) <= set(g)
 
 
-def test_discover_marks_missing_tools_unavailable():
-    # tunnel requires ngrok/cloudflared which aren't installed in CI
+def test_discover_marks_missing_tools_unavailable(monkeypatch):
+    # tunnel requires ngrok/cloudflared; force the tool probe to report them
+    # missing so the assertion is deterministic regardless of host tooling.
+    monkeypatch.setattr(routes_discover, "_tool_present", lambda _name: False)
     # inject a fake tunnel rule via a throwaway app
     app = Flask(__name__)
     app.add_url_rule("/tunnel/start", "t", lambda: "", methods=["POST"])
