@@ -955,6 +955,12 @@ except ImportError:
     features["triggers"] = False
 
 try:
+    from routes_perception import register_routes as reg_perception
+except ImportError:
+    reg_perception = None
+    features["perception"] = False
+
+try:
     from routes_video import register_routes as reg_video
 except ImportError:
     reg_video = None
@@ -1241,6 +1247,10 @@ if reg_triggers:
     reg_triggers(app, state, require_auth)
     features["triggers"] = True
 
+if reg_perception:
+    reg_perception(app, state, require_auth)
+    features["perception"] = True
+
 if reg_video:
     reg_video(app, state, require_auth)
     features["video_recording"] = True
@@ -1484,7 +1494,7 @@ def route_version():
                                  "fullpage_capture", "loop_stall_detection", "voice_stt",
                                  "auto_router", "semantic_capture", "benchmark_harness",
                                  "midrun_steering", "fleet_mode", "prompt_guard",
-                                 "safety_checkpoint"],
+                                 "safety_checkpoint", "perception_snapshot"],
                     "modules": ["mouse", "ocr", "uia", "file", "media", "v63",
                                 "stream", "process", "voice", "cua", "copilot",
                                 "bypass", "toast", "deps", "config", "browser",
@@ -1496,7 +1506,7 @@ def route_version():
                                 "copilot_enhanced", "recipes", "healer",
                                 "goal_timeline_sse",
                                 "browser_v2", "mobile", "memory", "batching", "speculative_batching",
-                                "reminders", "hud"],
+                                "reminders", "hud", "perception"],
                     "memory": memory_stats(),
                     "security": ["auth_token", "rate_limit", "input_sanitization",
                                  "cors_restricted", "security_headers"]})
