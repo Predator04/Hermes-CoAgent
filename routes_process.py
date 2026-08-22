@@ -246,17 +246,20 @@ def _kill_fallback(data):
 def _set_priority_psutil(pid, priority):
     priority_key = str(priority).lower().replace(" ", "_").replace("-", "_")
     mapping = {
-        "idle": psutil.IDLE_PRIORITY_CLASS,
-        "below_normal": psutil.BELOW_NORMAL_PRIORITY_CLASS,
-        "normal": psutil.NORMAL_PRIORITY_CLASS,
-        "above_normal": psutil.ABOVE_NORMAL_PRIORITY_CLASS,
-        "high": psutil.HIGH_PRIORITY_CLASS,
-        "realtime": psutil.REALTIME_PRIORITY_CLASS,
+        "idle": "IDLE_PRIORITY_CLASS",
+        "below_normal": "BELOW_NORMAL_PRIORITY_CLASS",
+        "normal": "NORMAL_PRIORITY_CLASS",
+        "above_normal": "ABOVE_NORMAL_PRIORITY_CLASS",
+        "high": "HIGH_PRIORITY_CLASS",
+        "realtime": "REALTIME_PRIORITY_CLASS",
     }
     if priority_key not in mapping:
         raise ValueError("Invalid priority")
+    priority_class = getattr(psutil, mapping[priority_key], None)
+    if priority_class is None:
+        raise ValueError("Process priority classes are only supported on Windows")
     proc = psutil.Process(int(pid))
-    proc.nice(mapping[priority_key])
+    proc.nice(priority_class)
     return priority_key
 
 
