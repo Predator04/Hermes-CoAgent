@@ -102,13 +102,19 @@ def _validate_url(url):
     raw_hostname = parsed.hostname or ""
     if not raw_hostname:
         return "URL must include a hostname"
-    # Normalize Unicode (fold fullwidth/compat forms) then IDNA-encode so
-    # homoglyph/lookalike hostnames cannot bypass the blocklist below.
+    # IP literals (IPv4/IPv6) are not IDNA-encodable; detect them first so
+    # IPv6 literals reach the private/loopback checks below.
     try:
-        normalized = unicodedata.normalize("NFKC", raw_hostname)
-        hostname = normalized.encode("idna").decode("ascii").lower()
-    except (UnicodeError, UnicodeDecodeError):
-        return f"Invalid hostname: {raw_hostname!r}"
+        ipaddress.ip_address(raw_hostname.strip("[]"))
+        hostname = raw_hostname.strip("[]").lower()
+    except ValueError:
+        # Normalize Unicode (fold fullwidth/compat forms) then IDNA-encode so
+        # homoglyph/lookalike hostnames cannot bypass the blocklist below.
+        try:
+            normalized = unicodedata.normalize("NFKC", raw_hostname)
+            hostname = normalized.encode("idna").decode("ascii").lower()
+        except (UnicodeError, UnicodeDecodeError):
+            return f"Invalid hostname: {raw_hostname!r}"
     blocked = {
         "localhost", "127.0.0.1", "0.0.0.0",
         "169.254.169.254",  # AWS metadata
