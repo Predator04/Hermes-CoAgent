@@ -48,13 +48,39 @@ _TRIGGERS = {}   # id -> record
 _WATCHERS = {}   # id -> watcher handle (thread / observer)
 _STOP_FLAGS = {} # id -> threading.Event
 
-_ALLOWED_KINDS = ("fs", "window", "process", "idle", "lock", "unlock")
+_ALLOWED_KINDS = ("fs", "window", "process", "idle", "lock", "unlock", "hotkey")
 _FS_EVENTS = ("created", "modified", "deleted", "moved")
 _WIN_EVENTS = ("opened", "closed", "renamed")
 _PROC_EVENTS = ("started", "stopped")
 _IDLE_EVENTS = ("idle", "active")
 _LOCK_EVENTS = ("locked",)
 _UNLOCK_EVENTS = ("unlocked",)
+_HOTKEY_EVENTS = ("pressed",)
+
+# RegisterHotKey modifier bits (winuser.h)
+_MODIFIER_BITS = {
+    "alt": 0x0001, "ctrl": 0x0002, "control": 0x0002,
+    "shift": 0x0004, "win": 0x0008, "super": 0x0008, "windows": 0x0008,
+}
+
+# Common named virtual-key codes (winuser.h)
+_NAMED_KEYS = {
+    "backspace": 0x08, "tab": 0x09, "enter": 0x0D, "return": 0x0D,
+    "esc": 0x1B, "escape": 0x1B, "space": 0x20, "pageup": 0x21,
+    "pagedown": 0x22, "pgup": 0x21, "pgdn": 0x22, "end": 0x23,
+    "home": 0x24, "left": 0x25, "up": 0x26, "right": 0x27, "down": 0x28,
+    "printscreen": 0x2C, "prtsc": 0x2C, "insert": 0x2D, "ins": 0x2D,
+    "delete": 0x2E, "del": 0x2E,
+    "0": 0x30, "1": 0x31, "2": 0x32, "3": 0x33, "4": 0x34, "5": 0x35,
+    "6": 0x36, "7": 0x37, "8": 0x38, "9": 0x39,
+    "a": 0x41, "b": 0x42, "c": 0x43, "d": 0x44, "e": 0x45, "f": 0x46,
+    "g": 0x47, "h": 0x48, "i": 0x49, "j": 0x4A, "k": 0x4B, "l": 0x4C,
+    "m": 0x4D, "n": 0x4E, "o": 0x4F, "p": 0x50, "q": 0x51, "r": 0x52,
+    "s": 0x53, "t": 0x54, "u": 0x55, "v": 0x56, "w": 0x57, "x": 0x58,
+    "y": 0x59, "z": 0x5A,
+}
+
+_HOTKEY_ID_COUNTER = 0
 
 
 def _now():
@@ -67,6 +93,7 @@ def _public(trigger_id, record):
         "kind": record.get("kind"),
         "config": record.get("config"),
         "webhook_url": record.get("webhook_url"),
+        "target": record.get("target"),
         "events": list(record.get("events") or []),
         "created_at": record.get("created_at"),
         "last_fired": record.get("last_fired"),
@@ -87,47 +114,54 @@ def _valid_url(url):
 # ---------------------------------------------------------------------------
 
 def _dispatch(trigger_id, record, event_type, data):
-    """POST the trigger event to the trigger's webhook URL."""
-    url = record.get("webhook_url")
-    if not url:
-        return
+    """POST the trigger event to its webhook and/or execute a local target."""
     timestamp = _now()
-    body = json.dumps(
-        {
-            "trigger_id": trigger_id,
-            "kind": record.get("kind"),
-            "event": event_type,
-            "data": data,
-            "timestamp": timestamp,
-        },
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode("utf-8")
-    secret = str(record.get("secret") or "")
-    signature = hmac.new(secret.encode("utf-8"), body, hashlib.sha256).hexdigest()
-    headers = {
-        "Content-Type": "application/json",
-        "User-Agent": "Hermes-CoAgent-Trigger/1.0",
-        "X-Trigger-Signature": signature,
-    }
+    target = record.get("target")
+    target_info = None
+    if isinstance(target, dict) and target.get("type"):
+        target_info = _run_target(trigger_id, target)
+
+    url = record.get("webhook_url")
     info = {"ok": False, "status": None, "error": None}
-    try:
-        if _is_private_url(url):
-            raise ValueError("webhook URL resolves to a blocked private address")
+    if url:
+        body = json.dumps(
+            {
+                "trigger_id": trigger_id,
+                "kind": record.get("kind"),
+                "event": event_type,
+                "data": data,
+                "timestamp": timestamp,
+            },
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+        secret = str(record.get("secret") or "")
+        signature = hmac.new(secret.encode("utf-8"), body, hashlib.sha256).hexdigest()
+        headers = {
+            "Content-Type": "application/json",
+            "User-Agent": "Hermes-CoAgent-Trigger/1.0",
+            "X-Trigger-Signature": signature,
+        }
+        try:
+            if _is_private_url(url):
+                raise ValueError("webhook URL resolves to a blocked private address")
 
-        class NoRedirect(urllib.request.HTTPRedirectHandler):
-            def redirect_request(self, req, fp, code, msg, headers, newurl):
-                return None
+            class NoRedirect(urllib.request.HTTPRedirectHandler):
+                def redirect_request(self, req, fp, code, msg, headers, newurl):
+                    return None
 
-        opener = urllib.request.build_opener(NoRedirect)
-        req = urllib.request.Request(url, data=body, headers=headers, method="POST")
-        with opener.open(req, timeout=15) as resp:
-            info.update({"ok": 200 <= resp.status < 300, "status": int(resp.status)})
-    except urllib.error.HTTPError as exc:
-        info.update({"status": int(getattr(exc, "code", 0) or 0),
-                     "error": f"HTTPError: {exc}"})
-    except Exception as exc:
-        info["error"] = f"{type(exc).__name__}: {exc}"
+            opener = urllib.request.build_opener(NoRedirect)
+            req = urllib.request.Request(url, data=body, headers=headers, method="POST")
+            with opener.open(req, timeout=15) as resp:
+                info.update({"ok": 200 <= resp.status < 300, "status": int(resp.status)})
+        except urllib.error.HTTPError as exc:
+            info.update({"status": int(getattr(exc, "code", 0) or 0),
+                         "error": f"HTTPError: {exc}"})
+        except Exception as exc:
+            info["error"] = f"{type(exc).__name__}: {exc}"
+    else:
+        info = target_info or {"ok": False, "status": None,
+                               "error": "no webhook_url or target configured"}
 
     with _LOCK:
         current = _TRIGGERS.get(trigger_id)
@@ -135,6 +169,69 @@ def _dispatch(trigger_id, record, event_type, data):
             current["last_fired"] = timestamp
             current["fire_count"] = int(current.get("fire_count", 0)) + 1
             current["last_response"] = info
+            if target_info:
+                current["last_target_response"] = target_info
+
+
+def _run_target(trigger_id, target):
+    """Execute a local CoAgent target (recipe/workflow/agent command).
+
+    Returns an info dict describing the outcome; never raises.
+    """
+    ttype = str(target.get("type") or "").strip().lower()
+    if ttype not in ("recipe", "workflow", "command"):
+        return {"ok": False, "status": None, "error": f"unsupported target type: {ttype}"}
+
+    try:
+        from shared import _self_port, COAGENT_DIR
+    except Exception:
+        return {"ok": False, "status": None, "error": "shared import failed"}
+
+    token = ""
+    try:
+        token_file = COAGENT_DIR / ".token"
+        if token_file.exists():
+            token = token_file.read_text(encoding="utf-8").strip()
+    except Exception:
+        token = ""
+
+    headers = {"Content-Type": "application/json", "Accept": "application/json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    port = _self_port()
+
+    if ttype == "recipe":
+        rid = str(target.get("id") or "").strip()
+        if not rid:
+            return {"ok": False, "status": None, "error": "recipe target requires 'id'"}
+        path, payload = "/recipes/run", {"recipe_id": rid}
+    elif ttype == "workflow":
+        wid = str(target.get("id") or "").strip()
+        if not wid:
+            return {"ok": False, "status": None, "error": "workflow target requires 'id'"}
+        path, payload = f"/workflows/{urllib.parse.quote(wid)}/run", {}
+    else:  # command
+        prompt = str(target.get("prompt") or target.get("command") or "").strip()
+        if not prompt:
+            return {"ok": False, "status": None, "error": "command target requires 'prompt'"}
+        path, payload = "/agent/exec", {"prompt": prompt}
+
+    info = {"ok": False, "status": None, "error": None}
+    try:
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{port}{path}",
+            data=json.dumps(payload).encode("utf-8"),
+            headers=headers,
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            info.update({"ok": 200 <= resp.status < 300, "status": int(resp.status)})
+    except urllib.error.HTTPError as exc:
+        info.update({"status": int(getattr(exc, "code", 0) or 0),
+                     "error": f"HTTPError: {exc}"})
+    except Exception as exc:
+        info["error"] = f"{type(exc).__name__}: {exc}"
+    return info
 
 
 def _fire_async(trigger_id, event_type, data, bypass_filter=False):
@@ -661,6 +758,105 @@ def _start_unlock_watcher(trigger_id, config, stop_event):
 
 
 # ---------------------------------------------------------------------------
+# Hotkey watcher (system-wide keyboard shortcut)
+# ---------------------------------------------------------------------------
+
+def _next_hotkey_id():
+    global _HOTKEY_ID_COUNTER
+    with _LOCK:
+        _HOTKEY_ID_COUNTER = (_HOTKEY_ID_COUNTER + 1) % 0xBFFF
+        if _HOTKEY_ID_COUNTER == 0:
+            _HOTKEY_ID_COUNTER = 1
+        return _HOTKEY_ID_COUNTER
+
+
+def _parse_hotkey(config):
+    """Return (vk, modifier_mask) for a hotkey config, or raise ValueError."""
+    key = str(config.get("key") or "").strip().lower()
+    if not key:
+        raise ValueError("hotkey trigger requires config.key")
+
+    mods = config.get("modifiers") or []
+    if isinstance(mods, str):
+        mods = [mods]
+    modifier_mask = 0
+    for m in mods:
+        m = str(m).strip().lower()
+        if m not in _MODIFIER_BITS:
+            raise ValueError(f"unknown modifier: {m}")
+        modifier_mask |= _MODIFIER_BITS[m]
+
+    if len(key) == 1 and key.isalnum():
+        vk = ord(key.upper()) if key.isalpha() else ord(key)
+    elif key.startswith("f") and key[1:].isdigit():
+        n = int(key[1:])
+        if not 1 <= n <= 24:
+            raise ValueError(f"function key out of range: {key}")
+        vk = 0x70 + n - 1
+    else:
+        vk = _NAMED_KEYS.get(key)
+    if vk is None:
+        raise ValueError(f"unsupported key: {key}")
+    return vk, modifier_mask
+
+
+def _start_hotkey_watcher(trigger_id, config, stop_event):
+    try:
+        vk, mods = _parse_hotkey(config)
+    except ValueError as exc:
+        with _LOCK:
+            rec = _TRIGGERS.get(trigger_id)
+            if rec:
+                rec["status"] = "error"
+                rec["error"] = str(exc)
+        return None
+
+    hotkey_id = _next_hotkey_id()
+
+    def _pump():
+        import ctypes
+        from ctypes import wintypes
+        user32 = ctypes.windll.user32
+        WM_HOTKEY = 0x0312
+        registered = bool(user32.RegisterHotKey(None, hotkey_id, mods, vk))
+        with _LOCK:
+            rec = _TRIGGERS.get(trigger_id)
+            if rec is not None:
+                if registered:
+                    rec["status"] = "active"
+                    rec["backend"] = "registerhotkey"
+                    rec["hotkey_id"] = hotkey_id
+                else:
+                    rec["status"] = "error"
+                    rec["error"] = "RegisterHotKey failed — combo may already be in use"
+
+        if not registered:
+            return
+
+        msg = wintypes.MSG()
+        PM_REMOVE = 0x0001
+        try:
+            while not stop_event.is_set():
+                while user32.PeekMessageW(ctypes.byref(msg), None, 0, 0, PM_REMOVE):
+                    if msg.message == WM_HOTKEY and int(msg.wParam) == hotkey_id:
+                        _fire_async(trigger_id, "pressed",
+                                    {"key": config.get("key"),
+                                     "modifiers": config.get("modifiers")})
+                    user32.TranslateMessage(ctypes.byref(msg))
+                    user32.DispatchMessageW(ctypes.byref(msg))
+                time.sleep(0.05)
+        finally:
+            try:
+                user32.UnregisterHotKey(None, hotkey_id)
+            except Exception:
+                pass
+
+    t = threading.Thread(target=_pump, name=f"hotkey-{trigger_id}", daemon=True)
+    t.start()
+    return t
+
+
+# ---------------------------------------------------------------------------
 # Register / stop
 # ---------------------------------------------------------------------------
 
@@ -681,6 +877,8 @@ def _start_watcher(trigger_id, record):
         handle = _start_lock_watcher(trigger_id, config, stop)
     elif kind == "unlock":
         handle = _start_unlock_watcher(trigger_id, config, stop)
+    elif kind == "hotkey":
+        handle = _start_hotkey_watcher(trigger_id, config, stop)
     else:
         stop.set()
         return
@@ -715,8 +913,9 @@ def register_routes(app, state, require_auth):
 
         Body:
           kind         "fs" | "window" | "process" | "idle" | "lock" | "unlock"
-                       (required)
-          webhook_url  http(s) URL to POST on fire    (required)
+                       | "hotkey"   (required)
+          webhook_url  http(s) URL to POST on fire (required unless hotkey target)
+          target       {type: recipe|workflow|command, ...} — hotkey only, optional
           events       list of event names to filter (optional; kind-defaults)
           config: kind-specific
             fs:      {path (required), recursive=true, poll_interval=2.0}
@@ -726,19 +925,23 @@ def register_routes(app, state, require_auth):
                       fire_on_active=false}
             lock:    {poll_interval=1.0}
             unlock:  {poll_interval=1.0}
+            hotkey:  {key="r", modifiers=["ctrl","alt"]}  (key: a-z, 0-9,
+                      f1-f24, or named key; modifiers: alt/ctrl/shift/win)
         """
         body = _json_body() or {}
         kind = (body.get("kind") or "").strip().lower()
         if kind not in _ALLOWED_KINDS:
             return jsonify({"error": f"kind must be one of {list(_ALLOWED_KINDS)}"}), 400
 
+        target = body.get("target") if isinstance(body.get("target"), dict) else None
         url = str(body.get("webhook_url") or "").strip()
-        if not url:
-            return jsonify({"error": "webhook_url is required"}), 400
-        if not _valid_url(url):
-            return jsonify({"error": "webhook_url must be an http(s) URL"}), 400
-        if _is_private_url(url):
-            return jsonify({"error": "webhook_url resolves to a blocked private address"}), 400
+        if not url and not (kind == "hotkey" and target):
+            return jsonify({"error": "webhook_url is required (or target for hotkey)"}), 400
+        if url:
+            if not _valid_url(url):
+                return jsonify({"error": "webhook_url must be an http(s) URL"}), 400
+            if _is_private_url(url):
+                return jsonify({"error": "webhook_url resolves to a blocked private address"}), 400
 
         config = body.get("config") if isinstance(body.get("config"), dict) else {}
         events = body.get("events") if isinstance(body.get("events"), list) else []
@@ -748,10 +951,16 @@ def register_routes(app, state, require_auth):
             return jsonify({"error": "fs trigger requires config.path"}), 400
         if kind == "process" and not (config.get("name") or config.get("pattern")):
             return jsonify({"error": "process trigger requires config.name"}), 400
+        if kind == "hotkey":
+            try:
+                _parse_hotkey(config)
+            except ValueError as exc:
+                return jsonify({"error": str(exc)}), 400
 
         default_events = {
             "fs": _FS_EVENTS, "window": _WIN_EVENTS, "process": _PROC_EVENTS,
             "idle": _IDLE_EVENTS, "lock": _LOCK_EVENTS, "unlock": _UNLOCK_EVENTS,
+            "hotkey": _HOTKEY_EVENTS,
         }[kind]
         if not events:
             events = list(default_events)
@@ -767,6 +976,7 @@ def register_routes(app, state, require_auth):
             "kind": kind,
             "config": config,
             "webhook_url": url,
+            "target": target,
             "events": events,
             "secret": secrets.token_urlsafe(32),
             "created_at": _now(),
