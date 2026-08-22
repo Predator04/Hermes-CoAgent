@@ -48,10 +48,13 @@ _TRIGGERS = {}   # id -> record
 _WATCHERS = {}   # id -> watcher handle (thread / observer)
 _STOP_FLAGS = {} # id -> threading.Event
 
-_ALLOWED_KINDS = ("fs", "window", "process")
+_ALLOWED_KINDS = ("fs", "window", "process", "idle", "lock", "unlock")
 _FS_EVENTS = ("created", "modified", "deleted", "moved")
 _WIN_EVENTS = ("opened", "closed", "renamed")
 _PROC_EVENTS = ("started", "stopped")
+_IDLE_EVENTS = ("idle", "active")
+_LOCK_EVENTS = ("locked",)
+_UNLOCK_EVENTS = ("unlocked",)
 
 
 def _now():
@@ -545,6 +548,119 @@ def _start_process_watcher(trigger_id, config, stop_event):
 
 
 # ---------------------------------------------------------------------------
+# Presence watchers (idle / lock / unlock)
+# ---------------------------------------------------------------------------
+
+def _get_idle_ms():
+    """System idle time in milliseconds via GetLastInputInfo (Windows)."""
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class LASTINPUTINFO(ctypes.Structure):
+            _fields_ = [("cbSize", wintypes.UINT), ("dwTime", wintypes.DWORD)]
+
+        lii = LASTINPUTINFO()
+        lii.cbSize = ctypes.sizeof(LASTINPUTINFO)
+        if ctypes.windll.user32.GetLastInputInfo(ctypes.byref(lii)):
+            tick = ctypes.windll.kernel32.GetTickCount()
+            return max(0, int(tick - lii.dwTime))
+    except Exception:
+        pass
+    return 0
+
+
+def _is_workstation_locked():
+    """True when the interactive desktop is locked (OpenInputDesktop fails)."""
+    try:
+        import ctypes
+        user32 = ctypes.windll.user32
+        # DESKTOP_SWITCHDESKTOP access; OpenInputDesktop returns NULL when the
+        # secure/locked desktop owns the input, which is how lock is detected.
+        hdesk = user32.OpenInputDesktop(0, False, 0x0100)
+        if hdesk:
+            user32.CloseDesktop(hdesk)
+            return False
+        return True
+    except Exception:
+        return False
+
+
+def _start_idle_watcher(trigger_id, config, stop_event):
+    threshold = max(1.0, float(config.get("threshold_seconds", 300) or 300))
+    interval = max(0.5, float(config.get("poll_interval", 1.0) or 1.0))
+    fire_active = bool(config.get("fire_on_active", False))
+
+    def _loop():
+        was_idle = False
+        with _LOCK:
+            rec = _TRIGGERS.get(trigger_id)
+            if rec:
+                rec["status"] = "active"
+                rec["backend"] = "poll"
+        while not stop_event.is_set():
+            time.sleep(interval)
+            idle_ms = _get_idle_ms()
+            is_idle = idle_ms >= threshold * 1000
+            if is_idle and not was_idle:
+                was_idle = True
+                _fire_async(trigger_id, "idle",
+                            {"idle_ms": idle_ms, "threshold_seconds": threshold})
+            elif not is_idle and was_idle:
+                was_idle = False
+                if fire_active:
+                    _fire_async(trigger_id, "active", {"idle_ms": idle_ms})
+
+    t = threading.Thread(target=_loop, name=f"idle-{trigger_id}", daemon=True)
+    t.start()
+    return t
+
+
+def _start_lock_watcher(trigger_id, config, stop_event):
+    interval = max(0.5, float(config.get("poll_interval", 1.0) or 1.0))
+
+    def _loop():
+        was_locked = _is_workstation_locked()
+        with _LOCK:
+            rec = _TRIGGERS.get(trigger_id)
+            if rec:
+                rec["status"] = "active"
+                rec["backend"] = "poll"
+        while not stop_event.is_set():
+            time.sleep(interval)
+            locked = _is_workstation_locked()
+            if locked and not was_locked:
+                _fire_async(trigger_id, "locked", {"locked": True})
+            was_locked = locked
+
+    t = threading.Thread(target=_loop, name=f"lock-{trigger_id}", daemon=True)
+    t.start()
+    return t
+
+
+def _start_unlock_watcher(trigger_id, config, stop_event):
+    interval = max(0.5, float(config.get("poll_interval", 1.0) or 1.0))
+
+    def _loop():
+        was_locked = _is_workstation_locked()
+        with _LOCK:
+            rec = _TRIGGERS.get(trigger_id)
+            if rec:
+                rec["status"] = "active"
+                rec["backend"] = "poll"
+        while not stop_event.is_set():
+            time.sleep(interval)
+            locked = _is_workstation_locked()
+            if (not locked) and was_locked:
+                _fire_async(trigger_id, "unlocked", {"locked": False})
+            was_locked = locked
+
+    t = threading.Thread(target=_loop, name=f"unlock-{trigger_id}", daemon=True)
+    t.start()
+    return t
+
+
+# ---------------------------------------------------------------------------
 # Register / stop
 # ---------------------------------------------------------------------------
 
@@ -559,6 +675,12 @@ def _start_watcher(trigger_id, record):
         handle = _start_window_watcher(trigger_id, config, stop)
     elif kind == "process":
         handle = _start_process_watcher(trigger_id, config, stop)
+    elif kind == "idle":
+        handle = _start_idle_watcher(trigger_id, config, stop)
+    elif kind == "lock":
+        handle = _start_lock_watcher(trigger_id, config, stop)
+    elif kind == "unlock":
+        handle = _start_unlock_watcher(trigger_id, config, stop)
     else:
         stop.set()
         return
@@ -592,13 +714,18 @@ def register_routes(app, state, require_auth):
         """Register an event-driven trigger.
 
         Body:
-          kind         "fs" | "window" | "process"   (required)
+          kind         "fs" | "window" | "process" | "idle" | "lock" | "unlock"
+                       (required)
           webhook_url  http(s) URL to POST on fire    (required)
           events       list of event names to filter (optional; kind-defaults)
           config: kind-specific
             fs:      {path (required), recursive=true, poll_interval=2.0}
             window:  {title_pattern="", regex=false, poll_interval=1.5}
             process: {name (required), regex=false, poll_interval=2.0}
+            idle:    {threshold_seconds=300, poll_interval=1.0,
+                      fire_on_active=false}
+            lock:    {poll_interval=1.0}
+            unlock:  {poll_interval=1.0}
         """
         body = _json_body() or {}
         kind = (body.get("kind") or "").strip().lower()
@@ -622,8 +749,10 @@ def register_routes(app, state, require_auth):
         if kind == "process" and not (config.get("name") or config.get("pattern")):
             return jsonify({"error": "process trigger requires config.name"}), 400
 
-        default_events = {"fs": _FS_EVENTS, "window": _WIN_EVENTS,
-                          "process": _PROC_EVENTS}[kind]
+        default_events = {
+            "fs": _FS_EVENTS, "window": _WIN_EVENTS, "process": _PROC_EVENTS,
+            "idle": _IDLE_EVENTS, "lock": _LOCK_EVENTS, "unlock": _UNLOCK_EVENTS,
+        }[kind]
         if not events:
             events = list(default_events)
         else:
