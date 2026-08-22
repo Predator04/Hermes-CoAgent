@@ -47,10 +47,19 @@ def _get_token():
         # Prefer an existing token (another process may have created it).
         tok = _read_token_file(token_file, attempts=1, delay=0)
         if not tok:
-            # Generate a fresh token atomically with restrictive permissions.
-            tok = secrets.token_hex(32)
+            # A zero-byte file left behind by a crashed writer is stale —
+            # remove it so we don't retry reading an empty token forever.
             try:
-                fd = os.open(token_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                if os.path.getsize(token_file) == 0:
+                    os.unlink(token_file)
+            except OSError:
+                pass
+            # Generate a fresh token, then publish it atomically so a reader
+            # can never observe a partially-written token file.
+            tok = secrets.token_hex(32)
+            tmp_file = f"{token_file}.tmp.{os.getpid()}"
+            try:
+                fd = os.open(tmp_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
             except FileExistsError:
                 # Lost a race with a concurrent start — adopt the on-disk token.
                 tok = _read_token_file(token_file)
@@ -59,6 +68,14 @@ def _get_token():
                     f.write(tok)
                     f.flush()
                     os.fsync(f.fileno())
+                try:
+                    os.replace(tmp_file, token_file)
+                except OSError:
+                    try:
+                        os.unlink(tmp_file)
+                    except OSError:
+                        pass
+                    tok = _read_token_file(token_file)
         if not tok:
             # Never cache an empty token — a subsequent call retries and can
             # self-heal once the winning writer finishes.
@@ -101,8 +118,20 @@ def _run_capped(args, timeout=30, cap=100_000):
         proc.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
         proc.kill()
-        t_out.join()
-        t_err.join()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
+        # Close the pipes so the reader threads unblock even if a grandchild
+        # inherited stdout/stderr and keeps them open (otherwise join() below
+        # would hang forever).
+        for stream in (proc.stdout, proc.stderr):
+            try:
+                stream.close()
+            except OSError:
+                pass
+        t_out.join(timeout=5)
+        t_err.join(timeout=5)
         raise
     t_out.join()
     t_err.join()
@@ -212,6 +241,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 except ValueError:
                     self._send_json(400, {"error": "Invalid command"})
                     return
+                if not args:
+                    self._send_json(400, {"error": "cmd required"})
+                    return
                 try:
                     out, err, code = _run_capped(args)
                 except subprocess.TimeoutExpired:
@@ -231,6 +263,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     args = shlex.split(cmd_str, posix=False)
                 except ValueError:
                     self._send_json(400, {"error": "Invalid command"})
+                    return
+                if not args:
+                    self._send_json(400, {"error": "cmd required"})
                     return
                 kwargs = {"stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
                 if os.name == "posix":
