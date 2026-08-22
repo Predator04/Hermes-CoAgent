@@ -89,8 +89,5 @@ def test_hud_bad_input_returns_400(tmp_path, monkeypatch):
 
 
 def test_hud_routes_enforce_auth(tmp_path, monkeypatch):
-    import platform
-    if platform.system() != "Windows":
-        pytest.skip("Blueprint auth-wrapping isolation test differs to Windows on Linux")
     client = _client(tmp_path, monkeypatch, require_auth=_auth)
     assert client.get("/hud/status").status_code == 401

@@ -73,9 +73,6 @@ def test_reminder_bad_input_returns_400(tmp_path, monkeypatch):
 
 
 def test_reminder_routes_enforce_auth(tmp_path, monkeypatch):
-    import platform
-    if platform.system() != "Windows":
-        pytest.skip("Blueprint auth-wrapping isolation test differs to Windows on Linux")
     client = _client(tmp_path, monkeypatch, require_auth=_auth)
     response = client.get("/reminders/list")
     assert response.status_code == 401

@@ -101,8 +101,5 @@ def test_recipe_verify_run_verifies_each_step_before_proceeding(tmp_path, monkey
 
 
 def test_recipe_routes_enforce_auth(tmp_path, monkeypatch):
-    import platform
-    if platform.system() != "Windows":
-        pytest.skip("Blueprint auth-wrapping isolation test differs to Windows on Linux")
     client = _client(tmp_path, monkeypatch, require_auth=_auth)
     assert client.get("/recipes/list").status_code == 401
