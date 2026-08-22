@@ -42,10 +42,10 @@ def resolve_cua_exe(configured: str | None) -> str:
     )
 
 
-def copy_stream(src, dst, *, close_dst: bool = False) -> None:
+def copy_stream(src, dst, *, close_dst: bool = False, use_readline: bool = True) -> None:
     try:
         while True:
-            chunk = src.readline()
+            chunk = src.readline() if use_readline else src.read1(65536)
             if not chunk:
                 break
             dst.write(chunk)
@@ -80,12 +80,32 @@ def main() -> int:
     if not args.overlay:
         cmd.append("--no-overlay")
 
+    proc_holder = {"proc": None}
+
+    def _handle_sigterm(signum, frame):
+        proc = proc_holder.get("proc")
+        if proc is not None:
+            try:
+                proc.terminate()
+            except OSError:
+                pass
+
+    # Forward SIGTERM to the child so it doesn't become an orphan when the
+    # host (Hermes / MCP) shuts the bridge down. Install the handler BEFORE
+    # spawning the child so a SIGTERM in the launch window is never dropped.
+    try:
+        signal.signal(signal.SIGTERM, _handle_sigterm)
+    except (ValueError, OSError):
+        # Not the main thread (e.g. embedded) — signals can't be set here.
+        pass
+
     proc = subprocess.Popen(
         cmd,
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )
+    proc_holder["proc"] = proc
 
     assert proc.stdin is not None
     assert proc.stdout is not None
@@ -106,27 +126,12 @@ def main() -> int:
         threading.Thread(
             target=copy_stream,
             args=(proc.stderr, sys.stderr.buffer),
+            kwargs={"use_readline": False},
             daemon=True,
         ),
     ]
     for thread in threads:
         thread.start()
-
-    proc_holder = {"proc": proc}
-
-    def _handle_sigterm(signum, frame):
-        try:
-            proc_holder["proc"].terminate()
-        except OSError:
-            pass
-
-    # Forward SIGTERM to the child so it doesn't become an orphan when the
-    # host (Hermes / MCP) shuts the bridge down.
-    try:
-        signal.signal(signal.SIGTERM, _handle_sigterm)
-    except (ValueError, OSError):
-        # Not the main thread (e.g. embedded) — signals can't be set here.
-        pass
 
     try:
         code = proc.wait()
