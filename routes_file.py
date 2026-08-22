@@ -101,6 +101,8 @@ def register_routes(app, state, require_auth):
         except ValueError as e:
             return jsonify({"error": str(e)}), 403
         content = d.get("content", "")
+        if not isinstance(content, str):
+            return jsonify({"error": "content must be a string", "path": path}), 400
         try:
             allowed, reason = check_write_path(path)
             if not allowed:
