@@ -158,7 +158,9 @@ def register_routes(app, state, require_auth):
             elif ("/" not in app_path and "\\" not in app_path and ":" not in app_path
                   and app_path.lower().endswith(".exe")):
                 subprocess.Popen([app_path], shell=False)
-            elif app_path.endswith(".lnk") or app_path.endswith(".exe"):
+            elif app_path.endswith(".lnk"):
+                os.startfile(_sanitize_path(app_path))
+            elif app_path.endswith(".exe"):
                 safe_path = _sanitize_path(app_path)
                 subprocess.Popen([safe_path], shell=False)
             else:
