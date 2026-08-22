@@ -229,7 +229,10 @@ def _kill_fallback(data):
     name = str(data.get("name") or "").strip()
     if not name:
         raise ValueError("Missing pid or name")
-    if name.lower() in {"python", "python.exe", "pythonw", "pythonw.exe"}:
+    base_name = name.lower()
+    if base_name.endswith(".exe"):
+        base_name = base_name[:-4]
+    if base_name in {"python", "pythonw", "python3", "python3w"}:
         raise ValueError("Use pid when killing Python processes")
     if any(c in name for c in ("*", "?", "/", "\\")):
         raise ValueError("Process name contains invalid characters")
