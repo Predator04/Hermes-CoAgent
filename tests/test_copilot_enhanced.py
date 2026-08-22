@@ -2,6 +2,8 @@
 import functools
 import sys
 import threading
+import time
+import types
 from pathlib import Path
 
 import pytest
@@ -53,11 +55,30 @@ def _reset_goals():
         copilot._GOAL_ORDER.clear()
 
 
+def _fake_threading():
+    """Isolated threading namespace: fake Thread, real Event/RLock."""
+    return types.SimpleNamespace(
+        Thread=FakeThread,
+        Event=threading.Event,
+        RLock=threading.RLock,
+    )
+
+
+def _fake_time():
+    """Isolated time namespace: no-op sleep, real clock/formatting."""
+    return types.SimpleNamespace(
+        sleep=lambda _seconds: None,
+        time=time.time,
+        strftime=time.strftime,
+        localtime=time.localtime,
+    )
+
+
 def _client(monkeypatch, require_auth=_allow):
     _reset_goals()
     monkeypatch.setattr(auth, "AUTH_ENABLED", False)
     monkeypatch.setattr(auth, "AUTH_TOKEN", None)
-    monkeypatch.setattr(copilot.threading, "Thread", FakeThread)
+    monkeypatch.setattr(copilot, "threading", _fake_threading())
     app = Flask(__name__)
 
     class State:
@@ -145,7 +166,7 @@ def test_screenshot_verification_is_optional_for_non_screenshot_goal(monkeypatch
         lambda *_args, **_kwargs: ([{"action": "screenshot", "params": {}}], {"source": "test"}),
     )
     monkeypatch.setattr(copilot, "_coagent_request", lambda *_args, **_kwargs: {"error": "no desktop"})
-    monkeypatch.setattr(copilot.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(copilot, "time", _fake_time())
 
     copilot._run_goal(goal_id, "")
 
