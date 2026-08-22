@@ -620,6 +620,26 @@ TOOLS = {
     "stars": 58000,
     "url": "https://github.com/openinterpreter/open-interpreter"
   },
+  "pandoc": {
+    "added": "2026-08-22",
+    "command": "pandoc [OPTIONS] <input> -f <from> -t <to> [-o <output>]",
+    "desc": "Pandoc is a universal document converter that transforms between hundreds of markup and document formats \u2014 Markdown, HTML, DOCX, PDF (via engine), LaTeX, EPUB, reStructuredText, MediaWiki, plain text, and more. It is subprocess-callable and ideal for CoAgent document pipelines: convert generated reports and READMEs between formats, extract plain text from rich docs, and emit standalone HTML/PDF output. Reads stdin or a file and writes to stdout or an output path.",
+    "endpoints": {
+      "/auto/pandoc/convert": "POST \u2014 convert inline text or a file between any supported formats",
+      "/auto/pandoc/formats": "GET \u2014 list supported input/output formats",
+      "/auto/pandoc/info": "Feature metadata, install status, version",
+      "/auto/pandoc/ping": "Health check"
+    },
+    "exe": "pandoc",
+    "install": {
+      "choco": "choco install pandoc",
+      "scoop": "scoop install pandoc",
+      "winget": "winget install JohnMacFarlane.Pandoc"
+    },
+    "repo": "jgm/pandoc",
+    "stars": 45976,
+    "url": "https://github.com/jgm/pandoc"
+  },
   "pe_sieve": {
     "added": "2026-08-13",
     "command": "pe-sieve.exe /pid <PID> [/json] [/dmode <A|D|V|U|R|N>] [/quiet] [/minidmp] [/dir <out>]",
@@ -961,6 +981,26 @@ TOOLS = {
     "repo": "fujiapple852/trippy",
     "stars": 7459,
     "url": "https://github.com/fujiapple852/trippy"
+  },
+  "uv": {
+    "added": "2026-08-22",
+    "command": "uv [pip|run|tool|python|venv|sync|build] ...",
+    "desc": "uv is an extremely fast Python package and project manager written in Rust \u2014 a single binary that replaces pip, pip-tools, virtualenv, pipx, and more. It installs dependencies 10-100x faster than pip, manages virtual environments, runs scripts with pinned dependencies (inline metadata), and installs managed Python toolchains. Ideal for CoAgent's own dependency management, self-healing Python environments, and running isolated tooling.",
+    "endpoints": {
+      "/auto/uv/pip_install": "POST \u2014 install packages (list or requirements file) via uv pip",
+      "/auto/uv/run": "POST \u2014 run a command or Python script in a managed environment",
+      "/auto/uv/info": "Feature metadata, install status, version",
+      "/auto/uv/ping": "Health check"
+    },
+    "exe": "uv",
+    "install": {
+      "choco": "choco install uv",
+      "scoop": "scoop install uv",
+      "winget": "winget install astral-sh.uv"
+    },
+    "repo": "astral-sh/uv",
+    "stars": 88966,
+    "url": "https://github.com/astral-sh/uv"
   },
   "ventoy": {
     "added": "2026-07-24",
@@ -11424,6 +11464,194 @@ def _h_difftastic_290():
         return (jsonify({'error': str(e)}), 500)
 
 
+def _h_uv_291():
+    """Install Python packages with `uv pip install`.
+
+        Body (JSON):
+            packages (str|list, required): package spec(s) to install, e.g. 'requests'
+                or ['requests', 'numpy>=1.24']. Comma/space separated when a string.
+            requirements (str, optional): path to a requirements.txt file.
+            python (str, optional): target interpreter/venv path (--python).
+            extra_args (list, optional): extra uv flags, e.g. ['--upgrade'].
+            timeout (int, optional): max seconds. Default 120, max 600.
+        """
+    body = _json_body() or {}
+    packages = body.get('packages')
+    requirements = str(body.get('requirements') or '').strip()
+    if packages is None and not requirements:
+        return (jsonify({'error': "Provide 'packages' (str or list) or 'requirements' (file path)"}), 400)
+    exe = _find_tool('uv')
+    if not exe:
+        return (jsonify({'error': 'uv is not installed',
+                         'hint': 'Install with: winget install astral-sh.uv'}), 503)
+    if isinstance(packages, str):
+        pkgs = [p for p in packages.replace(',', ' ').split() if p]
+    elif isinstance(packages, list):
+        pkgs = [str(p) for p in packages if str(p).strip()]
+    else:
+        pkgs = []
+    if not pkgs and not requirements:
+        return (jsonify({'error': "'packages' resolved to empty; provide at least one package or a requirements file"}), 400)
+    if requirements and not os.path.isfile(requirements):
+        return (jsonify({'error': f'requirements file not found: {requirements}'}), 404)
+    try:
+        timeout = max(10, min(int(body.get('timeout', 120)), 600))
+    except (ValueError, TypeError):
+        timeout = 120
+    cmd = [exe, 'pip', 'install']
+    python = str(body.get('python') or '').strip()
+    if python:
+        cmd.extend(['--python', python])
+    for a in (body.get('extra_args') or []):
+        cmd.append(str(a))
+    if requirements:
+        cmd.extend(['-r', requirements])
+    cmd.extend(pkgs)
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, errors='replace', timeout=timeout)
+        out = (r.stdout or '') + (('\n' + r.stderr) if r.stderr else '')
+        if r.returncode != 0:
+            _log(f"[auto_uv_pip_install] rc={r.returncode}: {out[:300]}")
+            return (jsonify({'ok': False, 'rc': r.returncode, 'output': out.strip()}), 400)
+        return jsonify({'ok': True, 'installed': pkgs if pkgs else ['(from requirements)'], 'output': out.strip()})
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': f'uv pip install timed out after {timeout}s'}), 504)
+    except Exception as e:
+        _log(f'[auto_uv_pip_install] {e}')
+        return (jsonify({'error': str(e)}), 500)
+
+
+def _h_uv_292():
+    """Run a command or Python script with `uv run` (auto-manages env/deps).
+
+        Body (JSON):
+            args (str|list, required): command + arguments, e.g. 'python script.py'
+                or ['ruff', 'check', '.'].
+            cwd (str, optional): working directory.
+            timeout (int, optional): max seconds. Default 120, max 600.
+        """
+    body = _json_body() or {}
+    raw = body.get('args')
+    if raw is None:
+        return _missing_field(body, 'args')
+    exe = _find_tool('uv')
+    if not exe:
+        return (jsonify({'error': 'uv is not installed',
+                         'hint': 'Install with: winget install astral-sh.uv'}), 503)
+    if isinstance(raw, str):
+        parts = shlex.split(raw)
+    elif isinstance(raw, list):
+        parts = [str(p) for p in raw]
+    else:
+        return (jsonify({'error': "'args' must be a string or list"}), 400)
+    if not parts:
+        return (jsonify({'error': "'args' is empty"}), 400)
+    try:
+        timeout = max(10, min(int(body.get('timeout', 120)), 600))
+    except (ValueError, TypeError):
+        timeout = 120
+    cwd = str(body.get('cwd') or '').strip() or None
+    if cwd and not os.path.isdir(cwd):
+        return (jsonify({'error': f'cwd not found: {cwd}'}), 404)
+    try:
+        r = subprocess.run([exe, 'run'] + parts, capture_output=True, text=True,
+                           errors='replace', timeout=timeout, cwd=cwd)
+        out = (r.stdout or '') + (('\n' + r.stderr) if r.stderr else '')
+        return jsonify({'ok': r.returncode == 0, 'rc': r.returncode, 'output': out})
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': f'uv run timed out after {timeout}s'}), 504)
+    except Exception as e:
+        _log(f'[auto_uv_run] {e}')
+        return (jsonify({'error': str(e)}), 500)
+
+
+def _h_pandoc_293():
+    """Convert text or a file between any supported document formats.
+
+        Body (JSON):
+            from (str, required): source format, e.g. 'markdown', 'html', 'docx', 'rst'.
+            to (str, required): target format, e.g. 'markdown', 'html', 'docx', 'plain', 'latex'.
+            input (str, optional): inline content to convert. Provide this or 'path'.
+            path (str, optional): path to an input file.
+            output (str, optional): write result to this file path instead of returning inline.
+            standalone (bool, optional): produce a full standalone document. Default True.
+            extra_args (list, optional): additional pandoc flags.
+            timeout (int, optional): max seconds. Default 60, max 300.
+        """
+    body = _json_body() or {}
+    src_fmt = str(body.get('from') or '').strip()
+    dst_fmt = str(body.get('to') or '').strip()
+    if not src_fmt:
+        return (jsonify({'error': "Missing required field: from (source format)"}), 400)
+    if not dst_fmt:
+        return (jsonify({'error': "Missing required field: to (target format)"}), 400)
+    exe = _find_tool('pandoc')
+    if not exe:
+        return (jsonify({'error': 'pandoc is not installed',
+                         'hint': 'Install with: winget install JohnMacFarlane.Pandoc'}), 503)
+    raw_input = body.get('input')
+    path = str(body.get('path') or '').strip()
+    if raw_input is None and not path:
+        return (jsonify({'error': "Provide 'input' (inline text) or 'path' (file)"}), 400)
+    if path and not os.path.isfile(path):
+        return (jsonify({'error': f'File not found: {path}'}), 404)
+    try:
+        timeout = max(10, min(int(body.get('timeout', 60)), 300))
+    except (ValueError, TypeError):
+        timeout = 60
+    cmd = [exe, '-f', src_fmt, '-t', dst_fmt]
+    if str(body.get('standalone', 'true')).lower() not in ('0', 'false', 'no'):
+        cmd.append('--standalone')
+    for a in (body.get('extra_args') or []):
+        cmd.append(str(a))
+    stdin_data = None
+    if path:
+        cmd.append(path)
+    else:
+        stdin_data = raw_input if isinstance(raw_input, str) else str(raw_input)
+    output = str(body.get('output') or '').strip()
+    if output:
+        cmd.extend(['-o', output])
+    try:
+        r = subprocess.run(cmd, input=stdin_data, capture_output=True, text=True,
+                           errors='replace', timeout=timeout)
+        if r.returncode != 0:
+            _log(f"[auto_pandoc_convert] rc={r.returncode}: {(r.stderr or '')[:300]}")
+            return (jsonify({'error': (r.stderr or 'pandoc failed').strip()}), 400)
+        if output:
+            size = os.path.getsize(output) if os.path.isfile(output) else None
+            return jsonify({'ok': True, 'from': src_fmt, 'to': dst_fmt, 'output_path': output, 'bytes': size})
+        return jsonify({'ok': True, 'from': src_fmt, 'to': dst_fmt, 'result': r.stdout})
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': f'pandoc timed out after {timeout}s'}), 504)
+    except Exception as e:
+        _log(f'[auto_pandoc_convert] {e}')
+        return (jsonify({'error': str(e)}), 500)
+
+
+def _h_pandoc_294():
+    """List the input/output formats pandoc supports (and highlight styles)."""
+    exe = _find_tool('pandoc')
+    if not exe:
+        return (jsonify({'error': 'pandoc is not installed',
+                         'hint': 'Install with: winget install JohnMacFarlane.Pandoc'}), 503)
+    try:
+        ri = subprocess.run([exe, '--list-input-formats'], capture_output=True, text=True,
+                            errors='replace', timeout=30)
+        ro = subprocess.run([exe, '--list-output-formats'], capture_output=True, text=True,
+                            errors='replace', timeout=30)
+        input_formats = [x for x in (ri.stdout or '').splitlines() if x.strip()]
+        output_formats = [x for x in (ro.stdout or '').splitlines() if x.strip()]
+        return jsonify({'ok': ri.returncode == 0 and ro.returncode == 0,
+                        'input_formats': input_formats,
+                        'output_formats': output_formats})
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': 'pandoc format listing timed out'}), 504)
+    except Exception as e:
+        _log(f'[auto_pandoc_formats] {e}')
+        return (jsonify({'error': str(e)}), 500)
+
+
 def register_routes(app, state, require_auth):
     global _STATE
     _STATE = state
@@ -11721,6 +11949,10 @@ def register_routes(app, state, require_auth):
         ('/auto/jq/validate', ['POST'], _h_jq_288),
         ('/auto/difftastic/diff', ['POST'], _h_difftastic_289),
         ('/auto/difftastic/languages', ['GET'], _h_difftastic_290),
+        ('/auto/uv/pip_install', ['POST'], _h_uv_291),
+        ('/auto/uv/run', ['POST'], _h_uv_292),
+        ('/auto/pandoc/convert', ['POST'], _h_pandoc_293),
+        ('/auto/pandoc/formats', ['GET'], _h_pandoc_294),
     ]
     for _path, _methods, _fn in _ACTIONS:
         app.add_url_rule(_path, endpoint=_fn.__name__, view_func=require_auth(_fn), methods=_methods)
