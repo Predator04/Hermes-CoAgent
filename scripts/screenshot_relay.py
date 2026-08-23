@@ -211,8 +211,8 @@ def main() -> int:
             "refusing to bind to non-loopback host; the relay serves desktop "
             "screenshots and must remain local"
         )
-    server = ThreadingHTTPServer((args.host, args.port), RelayHandler)
-    _log(f"relay started host={args.host} port={args.port}")
+    server = ThreadingHTTPServer((host, args.port), RelayHandler)
+    _log(f"relay started host={host} port={args.port}")
     try:
         server.serve_forever(poll_interval=0.5)
     except KeyboardInterrupt:
