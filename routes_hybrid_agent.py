@@ -318,7 +318,7 @@ def _agent_act():
                         target_center = {"x": bbox[0] + bbox[2] // 2, "y": bbox[1] + bbox[3] // 2}
             if target_center:
                 _coagent_api_port = _self_port()
-                act = action if action in ("double_click", "right_click") else "click"
+                act = {"double_click": "dblclick", "right_click": "rclick"}.get(action, "click")
                 coagent_path = f"/mouse/{act}"
                 coagent_body = {"x": target_center["x"], "y": target_center["y"]}
                 import urllib.request, json
@@ -334,7 +334,27 @@ def _agent_act():
             click_error = str(exc)
 
     if not target:
-        clicked = True
+        # Dispatch targetless actions to the appropriate CoAgent endpoint.
+        _targetless = {
+            "scroll": ("/mouse/scroll", {"clicks": -3}),
+            "press_enter": ("/key/press", {"keys": ["enter"]}),
+            "escape": ("/key/press", {"keys": ["esc"]}),
+            "tab": ("/key/press", {"keys": ["tab"]}),
+        }
+        if action in _targetless:
+            try:
+                import urllib.request, json
+                _path, _tbody = _targetless[action]
+                _turl = f"http://127.0.0.1:{_self_port()}{_path}"
+                _tdata = json.dumps(_tbody).encode("utf-8")
+                _treq = urllib.request.Request(_turl, data=_tdata, headers={"Content-Type": "application/json"})
+                with urllib.request.urlopen(_treq, timeout=10):
+                    clicked = True
+            except Exception as exc:
+                _debug_failure(f"targetless {action}", exc)
+                click_error = str(exc)
+        else:
+            click_error = f"targetless action '{action}' is not implemented"
 
     # If target was provided but not resolved, fail explicitly
     if target and not payload:
@@ -408,7 +428,7 @@ def _agent_type():
     type_error = None
     try:
         import urllib.request, json as _json
-        _type_url = f"http://127.0.0.1:{_self_port()}/keyboard/type"
+        _type_url = f"http://127.0.0.1:{_self_port()}/key/type"
         _type_data = _json.dumps({"text": str(text)}).encode("utf-8")
         _type_req = urllib.request.Request(_type_url, data=_type_data, headers={"Content-Type": "application/json"})
         with urllib.request.urlopen(_type_req, timeout=10):
@@ -524,7 +544,7 @@ def _agent_plan_and_execute():
                             try:
                                 import urllib.request
                                 import json as _json
-                                act = action if action in ("double_click", "right_click") else "click"
+                                act = {"double_click": "dblclick", "right_click": "rclick"}.get(action, "click")
                                 _url = f"http://127.0.0.1:{_self_port()}/mouse/{act}"
                                 _data = _json.dumps({"x": target_center["x"], "y": target_center["y"]}).encode("utf-8")
                                 _req = urllib.request.Request(_url, data=_data, headers={"Content-Type": "application/json"})

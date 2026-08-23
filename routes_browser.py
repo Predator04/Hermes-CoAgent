@@ -1088,9 +1088,24 @@ def route_browser_workflow():
                             if url_error:
                                 step_result["error"] = url_error
                             else:
-                                timeout = _clamp_timeout(step, "timeout", 30000)
-                                page.goto(url, wait_until=step.get("wait_until", "load"), timeout=timeout)
-                                step_result["url"] = page.url
+                                gov = get_governor()
+                                allowed, reason = gov.check_url(url)
+                                if not allowed:
+                                    gov.record_block("workflow-navigate", url, reason)
+                                    step_result["error"] = reason
+                                else:
+                                    allowed, reason = gov.check_budget("workflow-navigate")
+                                    if not allowed:
+                                        gov.record_block("workflow-navigate", url, reason)
+                                        step_result["error"] = reason
+                                    else:
+                                        timeout = _clamp_timeout(step, "timeout", 30000)
+                                        page.goto(url, wait_until=step.get("wait_until", "load"), timeout=timeout)
+                                        final_url_error = _navigation_url_error(page.url)
+                                        if final_url_error:
+                                            step_result["error"] = f"navigation redirected to a blocked address: {final_url_error}"
+                                        else:
+                                            step_result["url"] = page.url
                     
                     elif action == "click":
                         selector = step.get("selector")
@@ -1902,7 +1917,23 @@ def route_browser_new_tab():
                 url_err = _navigation_url_error(url)
                 if url_err:
                     return _error(url_err, 403)
+                gov = get_governor()
+                allowed, reason = gov.check_url(url)
+                if not allowed:
+                    gov.record_block("new-tab", url, reason)
+                    return _error(reason, 403)
+                allowed, reason = gov.check_budget("new-tab")
+                if not allowed:
+                    gov.record_block("new-tab", url, reason)
+                    return _error(reason, 429)
                 new_page.goto(url, timeout=_clamp_timeout(data, "timeout", 15000))
+                final_url_error = _navigation_url_error(new_page.url)
+                if final_url_error:
+                    try:
+                        new_page.close()
+                    except Exception:
+                        pass
+                    return _error(f"navigation redirected to a blocked address: {final_url_error}", 403)
                 result["url"] = new_page.url
                 try:
                     result["title"] = new_page.title()
