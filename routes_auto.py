@@ -738,6 +738,34 @@ TOOLS = {
     "stars": 3500,
     "url": "https://github.com/RapidAI/RapidOCR"
   },
+  "rclone": {
+    "added": "2026-08-23",
+    "candidates": [
+      "C:\\Program Files\\rclone\\rclone.exe",
+      "C:\\Program Files (x86)\\rclone\\rclone.exe"
+    ],
+    "command": "rclone <listremotes|lsjson|size|about|sync|copy|check> [args]",
+    "desc": "rclone is 'rsync for cloud storage' - a single Go binary that lists, syncs, copies and manages files across 80+ providers (Google Drive, S3, OneDrive, Dropbox, Backblaze B2, SFTP, WebDAV, etc.). Subprocess-callable with --json output, so CoAgent can enumerate configured remotes, list files, measure usage/quota, and run automated cloud sync and backup jobs.",
+    "endpoints": {
+      "/auto/rclone/about": "POST - storage quota/usage for a remote (rclone about remote: --json)",
+      "/auto/rclone/check": "POST - integrity-check two paths (rclone check src: dst:)",
+      "/auto/rclone/copy": "POST - copy files from source to destination",
+      "/auto/rclone/info": "Feature metadata, install status, version",
+      "/auto/rclone/list": "POST - list files in a remote path as JSON (rclone lsjson)",
+      "/auto/rclone/ping": "Health check",
+      "/auto/rclone/remotes": "GET - list configured remotes (rclone listremotes --json)",
+      "/auto/rclone/size": "POST - total size + object count of a remote path",
+      "/auto/rclone/sync": "POST - one-way sync source to destination (dry-run option)"
+    },
+    "exe": "rclone",
+    "install": {
+      "scoop": "scoop install rclone",
+      "winget": "winget install Rclone.Rclone"
+    },
+    "repo": "rclone/rclone",
+    "stars": 59324,
+    "url": "https://github.com/rclone/rclone"
+  },
   "reg": {
     "added": "2026-07-10",
     "command": "reg <query|add|delete|copy|export|import|save|restore|load|unload|compare|flags>",
@@ -746,6 +774,32 @@ TOOLS = {
     "repo": "microsoft/windows",
     "stars": 0,
     "url": "https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/reg"
+  },
+  "restic": {
+    "added": "2026-08-23",
+    "candidates": [
+      "C:\\Program Files\\restic\\restic.exe",
+      "C:\\Program Files (x86)\\restic\\restic.exe"
+    ],
+    "command": "restic <init|backup|snapshots|restore|stats|check> [args]",
+    "desc": "restic is a fast, secure, deduplicated, end-to-end encrypted backup program written in Go. Versioned snapshots with AES-256 encryption. Fully CLI-driven with --json output and RESTIC_REPOSITORY / RESTIC_PASSWORD env vars, so CoAgent can run automated encrypted backup and restore jobs over local, SFTP, S3, and rclone backends.",
+    "endpoints": {
+      "/auto/restic/backup": "POST - back up a path into the repository (restic backup --json)",
+      "/auto/restic/init": "POST - initialize a new repository (restic init)",
+      "/auto/restic/info": "Feature metadata, install status, version",
+      "/auto/restic/ping": "Health check",
+      "/auto/restic/restore": "POST - restore a snapshot to a target directory",
+      "/auto/restic/snapshots": "GET - list snapshots in the repository (--json)",
+      "/auto/restic/stats": "GET - repository statistics (--json)"
+    },
+    "exe": "restic",
+    "install": {
+      "scoop": "scoop install restic",
+      "winget": "winget install restic.restic"
+    },
+    "repo": "restic/restic",
+    "stars": 35669,
+    "url": "https://github.com/restic/restic"
   },
   "ripgrep": {
     "added": "2026-08-08",
@@ -11652,6 +11706,417 @@ def _h_pandoc_294():
         return (jsonify({'error': str(e)}), 500)
 
 
+def _h_rclone_295():
+    """List configured rclone remotes (rclone listremotes --json)."""
+    exe = _find_tool('rclone')
+    if not exe:
+        return (jsonify({'error': 'rclone is not installed', 'hint': 'Install with: winget install Rclone.Rclone'}), 503)
+    try:
+        r = subprocess.run([exe, 'listremotes', '--json'], capture_output=True, text=True, errors='replace', timeout=30)
+        out = (r.stdout or '').strip()
+        remotes = None
+        if out:
+            try:
+                remotes = json_lib.loads(out)
+            except Exception:
+                remotes = [x.strip() for x in out.splitlines() if x.strip()]
+        return jsonify({'ok': r.returncode == 0, 'remotes': remotes, 'raw': out})
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': 'rclone listremotes timed out'}), 504)
+    except Exception as e:
+        _log(f'[auto_rclone_remotes] {e}')
+        return (jsonify({'error': str(e)}), 500)
+
+
+def _h_rclone_296():
+    """List files in a remote path as JSON (rclone lsjson <path>).
+
+        Body (JSON):
+            path (str, required): remote path, e.g. "gdrive:backups" or "s3:bucket/dir".
+            max_depth (int, optional): recursion depth limit. Default: recurse.
+            recursive (bool, optional): recurse into subdirectories. Default true.
+    """
+    body = _json_body()
+    path = body.get('path')
+    if not path:
+        return _missing_field(body, 'path')
+    exe = _find_tool('rclone')
+    if not exe:
+        return (jsonify({'error': 'rclone is not installed', 'hint': 'Install with: winget install Rclone.Rclone'}), 503)
+    args = ['lsjson', path]
+    md = body.get('max_depth')
+    if md is not None:
+        args += ['--max-depth', str(md)]
+    elif body.get('recursive', True) is False:
+        args += ['--max-depth', '1']
+    try:
+        r = subprocess.run([exe] + args, capture_output=True, text=True, errors='replace', timeout=120)
+        if r.returncode != 0:
+            _log(f'auto_rclone_list: rclone exited {r.returncode}: {r.stderr[:300]}')
+            return (jsonify({'error': r.stderr.strip() or 'rclone lsjson failed'}), 500)
+        entries = None
+        out = (r.stdout or '').strip()
+        if out:
+            try:
+                entries = json_lib.loads(out)
+            except Exception:
+                entries = out.splitlines()
+        return jsonify({'path': path,
+                        'count': len(entries) if isinstance(entries, list) else None,
+                        'entries': entries})
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': 'rclone lsjson timed out after 120s'}), 504)
+    except Exception as e:
+        _log(f'auto_rclone_list exception: {e}')
+        return (jsonify({'error': str(e)}), 500)
+
+
+def _h_rclone_297():
+    """Total size + object count of a remote path (rclone size <path> --json)."""
+    body = _json_body()
+    path = body.get('path')
+    if not path:
+        return _missing_field(body, 'path')
+    exe = _find_tool('rclone')
+    if not exe:
+        return (jsonify({'error': 'rclone is not installed', 'hint': 'Install with: winget install Rclone.Rclone'}), 503)
+    try:
+        r = subprocess.run([exe, 'size', path, '--json'], capture_output=True, text=True, errors='replace', timeout=120)
+        if r.returncode != 0:
+            _log(f'auto_rclone_size: rclone exited {r.returncode}: {r.stderr[:300]}')
+            return (jsonify({'error': r.stderr.strip() or 'rclone size failed'}), 500)
+        out = (r.stdout or '').strip()
+        size = None
+        if out:
+            try:
+                size = json_lib.loads(out)
+            except Exception:
+                size = out
+        return jsonify({'path': path, 'size': size})
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': 'rclone size timed out after 120s'}), 504)
+    except Exception as e:
+        _log(f'auto_rclone_size exception: {e}')
+        return (jsonify({'error': str(e)}), 500)
+
+
+def _h_rclone_298():
+    """Storage quota/usage for a remote (rclone about <remote>: --json)."""
+    body = _json_body()
+    remote = body.get('remote')
+    if not remote:
+        return _missing_field(body, 'remote')
+    remote = remote if remote.endswith(':') else remote + ':'
+    exe = _find_tool('rclone')
+    if not exe:
+        return (jsonify({'error': 'rclone is not installed', 'hint': 'Install with: winget install Rclone.Rclone'}), 503)
+    try:
+        r = subprocess.run([exe, 'about', remote, '--json'], capture_output=True, text=True, errors='replace', timeout=60)
+        if r.returncode != 0:
+            _log(f'auto_rclone_about: rclone exited {r.returncode}: {r.stderr[:300]}')
+            return (jsonify({'error': r.stderr.strip() or 'rclone about failed'}), 500)
+        out = (r.stdout or '').strip()
+        usage = None
+        if out:
+            try:
+                usage = json_lib.loads(out)
+            except Exception:
+                usage = out
+        return jsonify({'remote': remote, 'usage': usage})
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': 'rclone about timed out'}), 504)
+    except Exception as e:
+        _log(f'auto_rclone_about exception: {e}')
+        return (jsonify({'error': str(e)}), 500)
+
+
+def _h_rclone_299():
+    """One-way sync source to destination (rclone sync <src> <dst> [--dry-run]).
+
+        Body (JSON):
+            source (str, required): source path.
+            destination (str, required): destination path.
+            dry_run (bool, optional): preview changes without applying. Default false.
+            extra_args (list[str], optional): additional rclone flags.
+    """
+    body = _json_body()
+    source = body.get('source') or body.get('src')
+    destination = body.get('destination') or body.get('dst')
+    if not source:
+        return _missing_field(body, 'source')
+    if not destination:
+        return _missing_field(body, 'destination')
+    exe = _find_tool('rclone')
+    if not exe:
+        return (jsonify({'error': 'rclone is not installed', 'hint': 'Install with: winget install Rclone.Rclone'}), 503)
+    args = ['sync', source, destination]
+    if body.get('dry_run'):
+        args.append('--dry-run')
+    for a in body.get('extra_args') or []:
+        args.append(str(a))
+    try:
+        r = subprocess.run([exe] + args, capture_output=True, text=True, errors='replace', timeout=1800)
+        return jsonify({'ok': r.returncode == 0, 'source': source, 'destination': destination,
+                        'dry_run': bool(body.get('dry_run')),
+                        'output': (r.stdout or '').strip()[-4000:],
+                        'error_output': (r.stderr or '').strip()[-2000:]})
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': 'rclone sync timed out after 1800s'}), 504)
+    except Exception as e:
+        _log(f'auto_rclone_sync exception: {e}')
+        return (jsonify({'error': str(e)}), 500)
+
+
+def _h_rclone_300():
+    """Copy files from source to destination (rclone copy <src> <dst>).
+
+        Body (JSON):
+            source (str, required): source path.
+            destination (str, required): destination path.
+            extra_args (list[str], optional): additional rclone flags.
+    """
+    body = _json_body()
+    source = body.get('source') or body.get('src')
+    destination = body.get('destination') or body.get('dst')
+    if not source:
+        return _missing_field(body, 'source')
+    if not destination:
+        return _missing_field(body, 'destination')
+    exe = _find_tool('rclone')
+    if not exe:
+        return (jsonify({'error': 'rclone is not installed', 'hint': 'Install with: winget install Rclone.Rclone'}), 503)
+    args = ['copy', source, destination]
+    for a in body.get('extra_args') or []:
+        args.append(str(a))
+    try:
+        r = subprocess.run([exe] + args, capture_output=True, text=True, errors='replace', timeout=1800)
+        return jsonify({'ok': r.returncode == 0, 'source': source, 'destination': destination,
+                        'output': (r.stdout or '').strip()[-4000:],
+                        'error_output': (r.stderr or '').strip()[-2000:]})
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': 'rclone copy timed out after 1800s'}), 504)
+    except Exception as e:
+        _log(f'auto_rclone_copy exception: {e}')
+        return (jsonify({'error': str(e)}), 500)
+
+
+def _h_rclone_301():
+    """Integrity-check two paths (rclone check <src> <dst>).
+
+        Body (JSON):
+            source (str, required): source path.
+            destination (str, required): destination path.
+            download (bool, optional): check by downloading and hashing. Default false.
+            extra_args (list[str], optional): additional rclone flags.
+    """
+    body = _json_body()
+    source = body.get('source') or body.get('src')
+    destination = body.get('destination') or body.get('dst')
+    if not source:
+        return _missing_field(body, 'source')
+    if not destination:
+        return _missing_field(body, 'destination')
+    exe = _find_tool('rclone')
+    if not exe:
+        return (jsonify({'error': 'rclone is not installed', 'hint': 'Install with: winget install Rclone.Rclone'}), 503)
+    args = ['check', source, destination]
+    if body.get('download'):
+        args.append('--download')
+    for a in body.get('extra_args') or []:
+        args.append(str(a))
+    try:
+        r = subprocess.run([exe] + args, capture_output=True, text=True, errors='replace', timeout=600)
+        return jsonify({'ok': r.returncode == 0, 'source': source, 'destination': destination,
+                        'output': (r.stdout or '').strip()[-4000:],
+                        'error_output': (r.stderr or '').strip()[-2000:]})
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': 'rclone check timed out after 600s'}), 504)
+    except Exception as e:
+        _log(f'auto_rclone_check exception: {e}')
+        return (jsonify({'error': str(e)}), 500)
+
+
+def _restic__build_env(params):
+    """Build subprocess env from repository/password params (values never logged)."""
+    env = dict(os.environ)
+    repo = params.get('repository') or params.get('repo')
+    password = params.get('password')
+    password_file = params.get('password_file')
+    if repo:
+        env['RESTIC_REPOSITORY'] = repo
+    if password:
+        env['RESTIC_PASSWORD'] = password
+    elif password_file:
+        env['RESTIC_PASSWORD_FILE'] = password_file
+    return env
+
+
+def _h_restic_302():
+    """List snapshots in the repository (restic snapshots --json).
+
+        Query params:
+            repository (str, optional): repo location (else RESTIC_REPOSITORY env).
+            password (str, optional): repo password (else RESTIC_PASSWORD env).
+            password_file (str, optional): path to a password file.
+    """
+    exe = _find_tool('restic')
+    if not exe:
+        return (jsonify({'error': 'restic is not installed', 'hint': 'Install with: winget install restic.restic'}), 503)
+    env = _restic__build_env(request.args.to_dict())
+    try:
+        r = subprocess.run([exe, 'snapshots', '--json'], capture_output=True, text=True, errors='replace', timeout=60, env=env)
+        if r.returncode != 0:
+            _log(f'auto_restic_snapshots: restic exited {r.returncode}: {r.stderr[:300]}')
+            return (jsonify({'error': r.stderr.strip() or 'restic snapshots failed'}), 500)
+        out = (r.stdout or '').strip()
+        snapshots = None
+        if out:
+            try:
+                snapshots = json_lib.loads(out)
+            except Exception:
+                snapshots = out.splitlines()
+        return jsonify({'count': len(snapshots) if isinstance(snapshots, list) else 0, 'snapshots': snapshots})
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': 'restic snapshots timed out'}), 504)
+    except Exception as e:
+        _log(f'auto_restic_snapshots exception: {e}')
+        return (jsonify({'error': str(e)}), 500)
+
+
+def _h_restic_303():
+    """Back up one or more paths into the repository (restic backup --json).
+
+        Body (JSON):
+            path (str) or paths (list[str]) (required): what to back up.
+            repository (str, optional): repo location.
+            password (str, optional): repo password.
+            password_file (str, optional): path to a password file.
+            tags (list[str], optional): snapshot tags.
+            exclude (list[str], optional): glob patterns to exclude.
+    """
+    body = _json_body()
+    paths = body.get('paths') or ([body['path']] if body.get('path') else None)
+    if not paths:
+        return _missing_field(body, 'path')
+    if isinstance(paths, str):
+        paths = [paths]
+    exe = _find_tool('restic')
+    if not exe:
+        return (jsonify({'error': 'restic is not installed', 'hint': 'Install with: winget install restic.restic'}), 503)
+    env = _restic__build_env(body)
+    args = ['backup', '--json'] + [str(p) for p in paths]
+    for t in body.get('tags') or []:
+        args += ['--tag', str(t)]
+    for e in body.get('exclude') or []:
+        args += ['--exclude', str(e)]
+    try:
+        r = subprocess.run([exe] + args, capture_output=True, text=True, errors='replace', timeout=1800, env=env)
+        return jsonify({'ok': r.returncode == 0, 'paths': paths,
+                        'output': (r.stdout or '').strip()[-8000:],
+                        'error_output': (r.stderr or '').strip()[-2000:]})
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': 'restic backup timed out after 1800s'}), 504)
+    except Exception as e:
+        _log(f'auto_restic_backup exception: {e}')
+        return (jsonify({'error': str(e)}), 500)
+
+
+def _h_restic_304():
+    """Restore a snapshot to a target directory (restic restore <id> --target <dir>).
+
+        Body (JSON):
+            snapshot (str, required): snapshot ID or "latest".
+            target (str, required): directory to restore into.
+            repository (str, optional): repo location.
+            password (str, optional): repo password.
+            password_file (str, optional): path to a password file.
+            include (list[str], optional): paths to restore (default: all).
+    """
+    body = _json_body()
+    snapshot = body.get('snapshot')
+    target = body.get('target')
+    if not snapshot:
+        return _missing_field(body, 'snapshot')
+    if not target:
+        return _missing_field(body, 'target')
+    exe = _find_tool('restic')
+    if not exe:
+        return (jsonify({'error': 'restic is not installed', 'hint': 'Install with: winget install restic.restic'}), 503)
+    env = _restic__build_env(body)
+    args = ['restore', str(snapshot), '--target', str(target)]
+    for i in body.get('include') or []:
+        args += ['--include', str(i)]
+    try:
+        r = subprocess.run([exe] + args, capture_output=True, text=True, errors='replace', timeout=1800, env=env)
+        return jsonify({'ok': r.returncode == 0, 'snapshot': snapshot, 'target': target,
+                        'output': (r.stdout or '').strip()[-8000:],
+                        'error_output': (r.stderr or '').strip()[-2000:]})
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': 'restic restore timed out after 1800s'}), 504)
+    except Exception as e:
+        _log(f'auto_restic_restore exception: {e}')
+        return (jsonify({'error': str(e)}), 500)
+
+
+def _h_restic_305():
+    """Repository statistics (restic stats --json).
+
+        Query params: repository, password, password_file (optional).
+    """
+    exe = _find_tool('restic')
+    if not exe:
+        return (jsonify({'error': 'restic is not installed', 'hint': 'Install with: winget install restic.restic'}), 503)
+    env = _restic__build_env(request.args.to_dict())
+    try:
+        r = subprocess.run([exe, 'stats', '--json'], capture_output=True, text=True, errors='replace', timeout=120, env=env)
+        if r.returncode != 0:
+            _log(f'auto_restic_stats: restic exited {r.returncode}: {r.stderr[:300]}')
+            return (jsonify({'error': r.stderr.strip() or 'restic stats failed'}), 500)
+        out = (r.stdout or '').strip()
+        stats = None
+        if out:
+            try:
+                stats = json_lib.loads(out)
+            except Exception:
+                stats = out
+        return jsonify({'stats': stats})
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': 'restic stats timed out'}), 504)
+    except Exception as e:
+        _log(f'auto_restic_stats exception: {e}')
+        return (jsonify({'error': str(e)}), 500)
+
+
+def _h_restic_306():
+    """Initialize a new repository (restic init).
+
+        Body (JSON):
+            repository (str, required): repo location to initialize.
+            password (str, required): new repository password.
+    """
+    body = _json_body()
+    repository = body.get('repository')
+    password = body.get('password')
+    if not repository:
+        return _missing_field(body, 'repository')
+    if not password:
+        return _missing_field(body, 'password')
+    exe = _find_tool('restic')
+    if not exe:
+        return (jsonify({'error': 'restic is not installed', 'hint': 'Install with: winget install restic.restic'}), 503)
+    env = _restic__build_env(body)
+    try:
+        r = subprocess.run([exe, 'init'], capture_output=True, text=True, errors='replace', timeout=60, env=env)
+        return jsonify({'ok': r.returncode == 0,
+                        'output': (r.stdout or '').strip(),
+                        'error_output': (r.stderr or '').strip()[-2000:]})
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': 'restic init timed out'}), 504)
+    except Exception as e:
+        _log(f'auto_restic_init exception: {e}')
+        return (jsonify({'error': str(e)}), 500)
+
+
 def register_routes(app, state, require_auth):
     global _STATE
     _STATE = state
@@ -11953,6 +12418,18 @@ def register_routes(app, state, require_auth):
         ('/auto/uv/run', ['POST'], _h_uv_292),
         ('/auto/pandoc/convert', ['POST'], _h_pandoc_293),
         ('/auto/pandoc/formats', ['GET'], _h_pandoc_294),
+        ('/auto/rclone/remotes', ['GET'], _h_rclone_295),
+        ('/auto/rclone/list', ['POST'], _h_rclone_296),
+        ('/auto/rclone/size', ['POST'], _h_rclone_297),
+        ('/auto/rclone/about', ['POST'], _h_rclone_298),
+        ('/auto/rclone/sync', ['POST'], _h_rclone_299),
+        ('/auto/rclone/copy', ['POST'], _h_rclone_300),
+        ('/auto/rclone/check', ['POST'], _h_rclone_301),
+        ('/auto/restic/snapshots', ['GET'], _h_restic_302),
+        ('/auto/restic/backup', ['POST'], _h_restic_303),
+        ('/auto/restic/restore', ['POST'], _h_restic_304),
+        ('/auto/restic/stats', ['GET'], _h_restic_305),
+        ('/auto/restic/init', ['POST'], _h_restic_306),
     ]
     for _path, _methods, _fn in _ACTIONS:
         app.add_url_rule(_path, endpoint=_fn.__name__, view_func=require_auth(_fn), methods=_methods)
