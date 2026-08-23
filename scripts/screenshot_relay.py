@@ -61,7 +61,7 @@ def _win32_capture():
     import win32ui
 
     hwnd = win32gui.GetDesktopWindow()
-    hwnd_dc = src_dc = mem_dc = bitmap = None
+    hwnd_dc = src_dc = mem_dc = bitmap = old_bitmap = None
     try:
         left = win32api_get_metric(76)
         top = win32api_get_metric(77)
@@ -72,7 +72,7 @@ def _win32_capture():
         mem_dc = src_dc.CreateCompatibleDC()
         bitmap = win32ui.CreateBitmap()
         bitmap.CreateCompatibleBitmap(src_dc, width, height)
-        mem_dc.SelectObject(bitmap)
+        old_bitmap = mem_dc.SelectObject(bitmap)
         mem_dc.BitBlt((0, 0), (width, height), src_dc, (left, top), win32con.SRCCOPY)
         info = bitmap.GetInfo()
         bits = bitmap.GetBitmapBits(True)
@@ -86,6 +86,11 @@ def _win32_capture():
             1,
         )
     finally:
+        try:
+            if mem_dc is not None and old_bitmap is not None:
+                mem_dc.SelectObject(old_bitmap)
+        except Exception:
+            pass
         try:
             if bitmap is not None:
                 win32gui.DeleteObject(bitmap.GetHandle())
