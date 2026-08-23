@@ -36,7 +36,9 @@ def _windows_only():
 
 def _find_powershell():
     return (
-        shutil.which("powershell")
+        shutil.which("pwsh")
+        or shutil.which("pwsh.exe")
+        or shutil.which("powershell")
         or shutil.which("powershell.exe")
         or r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"
     )
