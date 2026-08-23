@@ -102,35 +102,38 @@ def _index_directory(path):
         _LOGGER.warning("rag_workspace: blocked indexing outside allowed roots: %s", path)
         return 0
     count = 0
-    for filepath in path.rglob("*"):
-        if filepath.is_symlink():
-            continue
-        if filepath.suffix.lower() not in _ALLOWED_EXTENSIONS:
-            continue
-        if filepath.stat().st_size > _MAX_FILE_SIZE:
-            continue
-        try:
-            text = filepath.read_text(encoding="utf-8", errors="replace")
-            if len(text.strip()) < 20:
+    for _root, _dirs, files in os.walk(path, followlinks=False):
+        for name in files:
+            filepath = Path(_root) / name
+            if filepath.is_symlink():
                 continue
-            rel_path = str(filepath.relative_to(path)) if path != filepath else filepath.name
-            chunks = _chunk_text(text, str(filepath))
-            doc = {
-                "id": hashlib.md5(str(filepath).encode()).hexdigest()[:12],
-                "path": str(filepath),
-                "filename": filepath.name,
-                "rel_path": rel_path,
-                "ext": filepath.suffix,
-                "size": filepath.stat().st_size,
-                "content_snippet": text[:200],
-                "chunks": chunks,
-                "indexed_at": datetime.now().isoformat(),
-            }
-            with _RAG_LOCK:
-                _INDEX["documents"].append(doc)
-            count += 1
-        except Exception as exc:
-            _debug_failure(f"index {filepath}", exc)
+            if filepath.suffix.lower() not in _ALLOWED_EXTENSIONS:
+                continue
+            try:
+                st = filepath.stat()
+                if st.st_size > _MAX_FILE_SIZE:
+                    continue
+                text = filepath.read_text(encoding="utf-8", errors="replace")
+                if len(text.strip()) < 20:
+                    continue
+                rel_path = str(filepath.relative_to(path))
+                chunks = _chunk_text(text, str(filepath))
+                doc = {
+                    "id": hashlib.md5(str(filepath).encode()).hexdigest()[:12],
+                    "path": str(filepath),
+                    "filename": filepath.name,
+                    "rel_path": rel_path,
+                    "ext": filepath.suffix,
+                    "size": st.st_size,
+                    "content_snippet": text[:200],
+                    "chunks": chunks,
+                    "indexed_at": datetime.now().isoformat(),
+                }
+                with _RAG_LOCK:
+                    _INDEX["documents"].append(doc)
+                count += 1
+            except Exception as exc:
+                _debug_failure(f"index {filepath}", exc)
     return count
 
 
@@ -204,11 +207,14 @@ def _save_index():
     try:
         with _RAG_LOCK:
             data = {
-                "documents": _INDEX["documents"],
+                "documents": list(_INDEX["documents"]),
                 "total_chunks": _INDEX.get("total_chunks", 0),
                 "indexed_at": _RAG_STATE["last_index_time"],
             }
-        path.write_text(json.dumps(data, indent=2, default=str), encoding="utf-8")
+            payload = json.dumps(data, indent=2, default=str)
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(payload, encoding="utf-8")
+        os.replace(tmp, path)
     except Exception as exc:
         _debug_failure("save_index", exc)
 
@@ -267,7 +273,7 @@ def _rag_query():
     body = request.get_json(force=True, silent=True) or {}
     query = body.get("query", "")
     try:
-        top_k = min(int(body.get("top_k", 10)), 50)
+        top_k = max(1, min(int(body.get("top_k", 10)), 50))
     except (TypeError, ValueError):
         top_k = 10
     if not query:
