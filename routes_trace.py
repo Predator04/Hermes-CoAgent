@@ -134,8 +134,12 @@ _SENSITIVE_KEY_PARTS = (
 
 def _scrub(value, depth=0):
     """Recursively redact sensitive fields before persisting/exporting spans."""
-    if depth > 8 or value is None:
-        return value
+    if value is None:
+        return None
+    if depth > 8:
+        # Never emit the raw value beyond the depth cutoff — that would leak
+        # sensitive fields nested deeper than the recursion budget.
+        return "[REDACTED-DEPTH]"
     if isinstance(value, dict):
         out = {}
         for key, val in value.items():
