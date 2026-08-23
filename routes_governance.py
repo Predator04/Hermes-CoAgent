@@ -579,8 +579,8 @@ class _Governor:
             if not enabled:
                 return text
             if len(text) > _REDACT_MAX_CHARS:
-                _log(f"[governance] redact input too large ({len(text)} chars), skipping")
-                return text
+                _log(f"[governance] redact input too large ({len(text)} chars), returning placeholder")
+                return "[REDACTED - input too large]"
             out = text
             for pattern, repl in _REDACT_PATTERNS:
                 try:
