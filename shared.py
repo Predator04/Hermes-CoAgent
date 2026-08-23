@@ -485,6 +485,11 @@ def _ensure_interactive_session():
         from ctypes import wintypes
         point = wintypes.POINT()
         ctypes.windll.user32.GetCursorPos(ctypes.byref(point))
+        # Session 0 / non-interactive desktops report the cursor at (0,0)
+        # even though GetCursorPos succeeds — so inspect the coordinates.
+        if point.x == 0 and point.y == 0:
+            _console("WARNING: No desktop access (cursor=(0,0)). Launch from Windows desktop.")
+            return False
         return True
     except Exception:
         _console("WARNING: No desktop access (cursor=(0,0)). Launch from Windows desktop.")
