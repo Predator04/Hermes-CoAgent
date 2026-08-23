@@ -48,6 +48,18 @@ def _window_layout():
         user32 = ctypes.windll.user32
         enum_proc = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
 
+        # Declare signatures so 64-bit HWND/RECT pointers aren't truncated to
+        # 32-bit c_int defaults, which silently corrupts handle/pointer values.
+        user32.IsWindowVisible.argtypes = [wintypes.HWND]
+        user32.IsWindowVisible.restype = wintypes.BOOL
+        user32.GetWindowTextLengthW.argtypes = [wintypes.HWND]
+        user32.GetWindowTextLengthW.restype = ctypes.c_int
+        user32.GetWindowTextW.restype = ctypes.c_int
+        user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+        user32.GetWindowRect.restype = wintypes.BOOL
+        user32.EnumWindows.argtypes = [enum_proc, wintypes.LPARAM]
+        user32.EnumWindows.restype = wintypes.BOOL
+
         def cb(hwnd, _lp):
             try:
                 if not user32.IsWindowVisible(hwnd):
@@ -73,7 +85,8 @@ def _window_layout():
                 pass
             return True
 
-        user32.EnumWindows(enum_proc(cb), 0)
+        if not user32.EnumWindows(enum_proc(cb), 0):
+            _log("[perception] EnumWindows failed during enumeration")
     except Exception as exc:
         _log(f"[perception] window layout failed: {exc}")
     # EnumWindows enumerates top-down in z-order; encode it explicitly.
