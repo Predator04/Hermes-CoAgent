@@ -326,8 +326,10 @@ def _start_fs_watcher(trigger_id, config, stop_event):
             if os.path.isfile(path):
                 state[path] = os.path.getmtime(path)
             else:
-                walker = os.walk(path) if recursive else [(path, next(os.walk(path))[1],
-                                                          next(os.walk(path))[2])]
+                if recursive:
+                    walker = os.walk(path)
+                else:
+                    walker = [next(os.walk(path), (path, [], []))]
                 for root, dirs, files in walker:
                     for name in files:
                         p = os.path.join(root, name)
@@ -904,6 +906,9 @@ def _stop_watcher(trigger_id):
 # Route registration
 # ---------------------------------------------------------------------------
 
+_MAX_TRIGGERS = 200
+
+
 def register_routes(app, state, require_auth):
 
     @app.route("/triggers/register", methods=["POST"])
@@ -987,6 +992,9 @@ def register_routes(app, state, require_auth):
             "error": None,
         }
         with _LOCK:
+            if len(_TRIGGERS) >= _MAX_TRIGGERS:
+                return jsonify({"error": "trigger limit reached",
+                                "max": _MAX_TRIGGERS}), 429
             _TRIGGERS[trigger_id] = record
         try:
             _start_watcher(trigger_id, record)
