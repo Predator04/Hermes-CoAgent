@@ -123,8 +123,8 @@ def _sc_query_all(sc_exe, state_filter="all"):
     # sc query returns paginated output; use bufsize= to grab all in one call
     out, err, rc = _run([sc_exe, "query", "type=", "service", "state=", state_filter, "bufsize=", "262144"], timeout=25)
     text_parts.append(out)
-    if rc != 0 and err:
-        return [], err, rc
+    if rc != 0:
+        return [], err or out, rc
     return _parse_sc_query("\n".join(text_parts)), "", 0
 
 
