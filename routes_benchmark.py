@@ -480,8 +480,8 @@ def _sanitize_task_name(name, idx):
     return n
 
 
-def _run_single_task(task, suite_name, run_dir, log_prefix):
-    task_name = _sanitize_task_name(task.get("name"), 0)
+def _run_single_task(task, suite_name, run_dir, log_prefix, idx):
+    task_name = _sanitize_task_name(task.get("name"), idx)
     task_dir = run_dir / task_name
     counter = 1
     while task_dir.exists():
@@ -543,7 +543,7 @@ def _run_suite(tasks, suite_name):
                                  "error": "task must be an object"})
             continue
         try:
-            record = _run_single_task(task, suite_name, run_dir, f"[bench/{run_id}/{idx}]")
+            record = _run_single_task(task, suite_name, run_dir, f"[bench/{run_id}/{idx}]", idx)
         except Exception as exc:
             record = {
                 "task": _sanitize_task_name(task.get("name"), idx),
