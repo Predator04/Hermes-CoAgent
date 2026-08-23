@@ -7,6 +7,8 @@
 
 **Local Windows desktop automation REST API server** — gives AI agents full control over mouse, keyboard, screen, windows, processes, browsers, and more through a single Flask HTTP API. Built for Hermes Agent but works with any LLM orchestration layer.
 
+> 📱 **Android companion:** drive a phone the same way (tap/swipe/type/navigate + UI-tree vision) — [Hermes CoAgent Android](https://github.com/Predator04/Hermes-CoAgent-Android)
+
 ---
 
 ## Quick Start
