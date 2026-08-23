@@ -112,7 +112,7 @@ def _read_clipboard_text():
             data = win32clipboard.GetClipboardData(win32con.CF_TEXT)
             if isinstance(data, bytes):
                 try:
-                    return data.decode("utf-8", errors="replace")
+                    return data.decode("mbcs", errors="replace")
                 except Exception:  # noqa: BLE001
                     return None
             return data if isinstance(data, str) else None
