@@ -260,7 +260,7 @@ def _collect_status(sources=None):
             })
         if acpi:
             result["sources"].append("acpi_thermal")
-            result["temperatures"].append({"acpi_zones": acpi})
+            result["acpi_zones"] = acpi
         elif rc != 0 and err:
             result["errors"]["acpi"] = err.strip()
 
@@ -379,5 +379,6 @@ def register_routes(app, state, require_auth):
             "fans": status.get("fans", []),
             "power": status.get("power", {}),
             "temperatures": status.get("temperatures", []),
+            "acpi_zones": status.get("acpi_zones", []),
             "errors": status.get("errors", {}),
         })
