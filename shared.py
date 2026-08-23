@@ -478,7 +478,8 @@ def _json_body(data=_JSON_BODY_SENTINEL, status=200):
     if data is not _JSON_BODY_SENTINEL:
         return jsonify(data), status
     try:
-        return request.get_json(force=True, silent=True) or {}
+        body = request.get_json(force=True, silent=True)
+        return body if isinstance(body, dict) else {}
     except Exception:
         return {}
 
