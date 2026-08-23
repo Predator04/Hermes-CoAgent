@@ -197,6 +197,7 @@ def _execute_goal_via_copilot(goal_text, timeout, log_lines):
     while time.time() < deadline:
         time.sleep(poll_interval)
         s, snap = _coagent_request(f"/copilot/goal/{goal_id}", method="GET", timeout=15)
+        poll_interval = min(poll_interval + 0.5, 3.0)
         if s >= 400:
             log_lines.append(f"[goal] poll {s}: {snap}")
             continue
@@ -205,7 +206,6 @@ def _execute_goal_via_copilot(goal_text, timeout, log_lines):
         if st in _GOAL_TERMINAL_STATES:
             log_lines.append(f"[goal] terminal status={st}")
             break
-        poll_interval = min(poll_interval + 0.5, 3.0)
     completed_ok = False
     if isinstance(final_snapshot, dict):
         st = str(final_snapshot.get("status") or "").lower()
