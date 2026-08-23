@@ -902,9 +902,30 @@ def register_routes(app, state, require_auth):
             if rw <= 0 or rh <= 0:
                 return jsonify({"error": "region has zero area after clamping"}), 400
             img = img.crop((rx, ry, rx + rw, ry + rh))
-        import pytesseract, pyperclip
-        text = pytesseract.image_to_string(img)
-        pyperclip.copy(text.strip())
+        try:
+            import pytesseract
+            import pyperclip
+        except ImportError as exc:
+            return jsonify({
+                "ok": False,
+                "error": "OCR unavailable",
+                "detail": f"{type(exc).__name__}: {exc}",
+                "suggestion": "Install pytesseract and the Tesseract OCR engine (pip install pytesseract)",
+                "code": "OCR_UNAVAILABLE",
+            }), 503
+        try:
+            text = pytesseract.image_to_string(img)
+        except Exception as exc:
+            return jsonify({
+                "ok": False,
+                "error": "OCR failed",
+                "detail": f"{type(exc).__name__}: {exc}",
+                "code": "OCR_FAILED",
+            }), 500
+        try:
+            pyperclip.copy(text.strip())
+        except Exception:
+            pass  # clipboard copy is best-effort
         return jsonify({"status": "ok", "text": text.strip(), "chars": len(text.strip())})
 
     @app.route("/screen/region", methods=["POST"])
