@@ -247,11 +247,11 @@ def _record_text(text, source="poll"):
     global _LAST_HASH
     if not isinstance(text, str) or not text:
         return None, False
+    eid = _entry_id(text)
     encoded = text.encode("utf-8", errors="replace")
     if len(encoded) > _MAX_TEXT_BYTES:
         text = encoded[:_MAX_TEXT_BYTES].decode("utf-8", errors="ignore")
 
-    eid = _entry_id(text)
     now = time.time()
 
     with _STATE_LOCK:
