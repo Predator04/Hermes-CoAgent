@@ -437,6 +437,11 @@ def register_routes(app, state, require_auth):
         """Combined UIA + text find."""
         d = _json_body()
         text = d.get("text", "")
+        if not isinstance(text, str):
+            text = str(text or "")
+        text = text.strip()
+        if not text:
+            return _missing_field("text")
         matches = []
         if ue.UIA_READY:
             snap = ue.uia_snapshot()
@@ -458,7 +463,7 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_uia_find_hybrid():
         d = _json_body()
-        text = (d.get("text") or d.get("name") or d.get("automation_id") or "").strip()
+        text = str(d.get("text") or d.get("name") or d.get("automation_id") or "").strip()
         if not text:
             return _missing_field("text")
         type_hint = (d.get("type") or d.get("control_type") or "").strip()
@@ -478,7 +483,7 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_uia_find_post():
         d = _json_body()
-        text = (d.get("text") or d.get("name") or d.get("automation_id") or "").strip()
+        text = str(d.get("text") or d.get("name") or d.get("automation_id") or "").strip()
         if not text:
             return _missing_field("text")
         type_hint = (d.get("type") or d.get("control_type") or "").strip()
@@ -646,7 +651,7 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_uia_click_hybrid():
         d = _json_body()
-        text = (d.get("text") or d.get("name") or d.get("automation_id") or "").strip()
+        text = str(d.get("text") or d.get("name") or d.get("automation_id") or "").strip()
         if not text:
             return _missing_field("text")
         type_hint = (d.get("type") or d.get("control_type") or "").strip()
