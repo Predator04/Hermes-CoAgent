@@ -9,6 +9,7 @@ from shared import _console, _json_body
 
 
 MAX_HISTORY = 100
+MAX_SCREENSHOT_CHARS = 5 * 1024 * 1024  # ~5 MB cap per screenshot to bound _HISTORY memory
 _LOCK = threading.RLock()
 _HISTORY = []
 
@@ -38,6 +39,16 @@ def _append_history(entry):
         _HISTORY.append(entry)
         if len(_HISTORY) > MAX_HISTORY:
             del _HISTORY[:len(_HISTORY) - MAX_HISTORY]
+
+
+def _bounded_screenshot(value):
+    """Return the screenshot only if within the size cap, else None."""
+    if not isinstance(value, str) or not value:
+        return None
+    if len(value) > MAX_SCREENSHOT_CHARS:
+        _console(f"[undo] dropping oversized screenshot ({len(value)} chars > {MAX_SCREENSHOT_CHARS})")
+        return None
+    return value
 
 
 def _client_post(app, path, payload):
@@ -182,8 +193,8 @@ def register_routes(app, state, require_auth):
             "action_type": str(action_type),
             "params": params,
             "timestamp": data.get("timestamp") or time.time(),
-            "screenshot_before": data.get("screenshot_before") or data.get("before_screenshot"),
-            "screenshot_after": data.get("screenshot_after") or data.get("screenshot_path"),
+            "screenshot_before": _bounded_screenshot(data.get("screenshot_before") or data.get("before_screenshot")),
+            "screenshot_after": _bounded_screenshot(data.get("screenshot_after") or data.get("screenshot_path")),
         }
         _append_history(entry)
         _console(f"[undo] tracked action_type={entry['action_type']}")
