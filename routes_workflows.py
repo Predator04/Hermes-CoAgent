@@ -240,7 +240,7 @@ def _compile_workflow(workflow):
             if text:
                 steps.append({"action": "ocr_find", "params": {"text": text}})
         elif ntype == "loop.repeat":
-            count = max(1, min(int(params.get("count", 1) or 1), 50))
+            count = max(1, min(_coerce_int(params.get("count"), 1), 50))
             body_ids = successors.get(node_id, [])
             body_snapshot_start = len(steps)
             for child_id in body_ids:
@@ -480,7 +480,8 @@ def route_workflows_run(workflow_id):
                               auth_header=auth, timeout=310)
     status_code = 200
     if isinstance(result, dict):
-        status_code = int(result.pop("status_code", 200) or 200)
+        code = result.pop("status_code", 200)
+        status_code = int(code) if code else 502
     return jsonify({"id": workflow.get("id"), "recipe": recipe, "run": result}), status_code
 
 
