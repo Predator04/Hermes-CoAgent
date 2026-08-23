@@ -169,6 +169,9 @@ def _safe_run_id(run_id):
 def _persist_span(run_id, span_dict):
     """Append the span to that run's JSONL file. Best-effort."""
     safe = _safe_run_id(run_id) or _new_trace_id()
+    # Keep the in-body run_id consistent with the on-disk file name so
+    # /trace/runs/<id> lookups agree with span data when run_id sanitizes empty.
+    span_dict["run_id"] = safe
     path = TRACES_DIR / f"{safe}.jsonl"
     with _TRACER_LOCK:
         entry = _ACTIVE_RUNS.get(safe)
@@ -177,6 +180,10 @@ def _persist_span(run_id, span_dict):
             _ACTIVE_RUNS[safe] = entry
             if len(_ACTIVE_RUNS) > MAX_RUNS_LISTED:
                 _ACTIVE_RUNS.popitem(last=False)
+        else:
+            # Bump active runs to the MRU end so LRU eviction never evicts a
+            # run that is still receiving spans.
+            _ACTIVE_RUNS.move_to_end(safe)
         try:
             with path.open("a", encoding="utf-8") as f:
                 f.write(json.dumps(span_dict, default=str, ensure_ascii=False) + "\n")
