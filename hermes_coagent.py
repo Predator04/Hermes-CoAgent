@@ -1563,7 +1563,7 @@ _short_routes = {
     "/cursor-style": "_cursor_style_proxy",
 }
 
-def _proxy_get(path): return lambda: jsonify({"proxy": path, "endpoint": f"use HTTP directly"})
+def _proxy_get(path): return lambda: jsonify({"proxy": path, "endpoint": f"use {path} directly"})
 
 for _route, _handler_name in list(_short_routes.items()):
     _ep = _route.lstrip("/").replace("/", "_") or "root"
