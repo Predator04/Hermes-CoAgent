@@ -251,7 +251,10 @@ def _is_windows_process_alive(pid):
     try:
         exit_code = wintypes.DWORD()
         if not kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
-            return False
+            # Couldn't query the exit code — state is unknown. Assume alive so
+            # a transient API failure doesn't cause _prepare_pid_file to delete
+            # a live instance's PID file (bypassing the single-instance lock).
+            return True
         return exit_code.value == STILL_ACTIVE
     finally:
         kernel32.CloseHandle(handle)
