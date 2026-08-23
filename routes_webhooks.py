@@ -26,6 +26,16 @@ _ALLOWED_EVENTS = {
     "error",
     "agent_completed",
     "user_login",
+    # OS session-change events pushed by routes_session.py's WTS monitor.
+    "session_lock",
+    "session_unlock",
+    "logon",
+    "logoff",
+    "console_connect",
+    "console_disconnect",
+    "remote_connect",
+    "remote_disconnect",
+    "session_test",
 }
 
 

@@ -1006,6 +1006,11 @@ except ImportError:
     reg_agent_tools = None
     features["agent_tools"] = False
 try:
+    from routes_session import register_routes as reg_session
+except ImportError:
+    reg_session = None
+    features["session_state"] = False
+try:
     from routes_everything import register_routes as reg_everything
 except ImportError:
     reg_everything = None
@@ -1278,6 +1283,9 @@ if reg_som:
 if reg_agent_tools:
     reg_agent_tools(app, state, require_auth)
     features["agent_tools"] = True
+if reg_session:
+    reg_session(app, state, require_auth)
+    features["session_state"] = True
 if reg_everything:
     reg_everything(app, state, require_auth)
     features["everything_search"] = True
@@ -1494,7 +1502,8 @@ def route_version():
                                  "fullpage_capture", "loop_stall_detection", "voice_stt",
                                  "auto_router", "semantic_capture", "benchmark_harness",
                                  "midrun_steering", "fleet_mode", "prompt_guard",
-                                 "safety_checkpoint", "perception_snapshot"],
+                                 "safety_checkpoint", "perception_snapshot",
+                                 "session_state"],
                     "modules": ["mouse", "ocr", "uia", "file", "media", "v63",
                                 "stream", "process", "voice", "cua", "copilot",
                                 "bypass", "toast", "deps", "config", "browser",
@@ -1506,7 +1515,7 @@ def route_version():
                                 "copilot_enhanced", "recipes", "healer",
                                 "goal_timeline_sse",
                                 "browser_v2", "mobile", "memory", "batching", "speculative_batching",
-                                "reminders", "hud", "perception"],
+                                "reminders", "hud", "perception", "session"],
                     "memory": memory_stats(),
                     "security": ["auth_token", "rate_limit", "input_sanitization",
                                  "cors_restricted", "security_headers"]})
