@@ -540,8 +540,9 @@ def _coagent_request(method, path, data=None, auth_header=None, timeout=30):
                 payload = json.loads(text)
             except json.JSONDecodeError:
                 payload = {"text": text}
-            if isinstance(payload, dict):
-                payload.setdefault("status_code", getattr(response, "status", 200))
+            if not isinstance(payload, dict):
+                payload = {"result": payload}
+            payload.setdefault("status_code", getattr(response, "status", 200))
             return payload
     except urllib.error.HTTPError as exc:
         text = exc.read().decode("utf-8", errors="replace")
@@ -549,7 +550,9 @@ def _coagent_request(method, path, data=None, auth_header=None, timeout=30):
             payload = json.loads(text) if text else {}
         except json.JSONDecodeError:
             payload = {"error": text or str(exc)}
-        if isinstance(payload, dict):
+        if not isinstance(payload, dict):
+            payload = {"error": str(payload), "status_code": exc.code}
+        else:
             payload.setdefault("error", payload.get("error") or f"HTTP {exc.code}")
             payload["status_code"] = exc.code
         return payload
