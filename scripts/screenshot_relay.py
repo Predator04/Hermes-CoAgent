@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import io
 import json
+import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -22,10 +23,13 @@ PORT = 9124
 LOG_FILE = Path(__file__).resolve().with_name("screenshot_relay.log")
 
 
+_log_lock = threading.Lock()
+
+
 def _log(message: str) -> None:
     line = f"{time.strftime('%Y-%m-%dT%H:%M:%S')} {message}\n"
     try:
-        with LOG_FILE.open("a", encoding="utf-8") as handle:
+        with _log_lock, LOG_FILE.open("a", encoding="utf-8") as handle:
             handle.write(line)
     except OSError:
         pass
