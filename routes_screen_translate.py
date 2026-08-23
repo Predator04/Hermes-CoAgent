@@ -88,14 +88,16 @@ def _monitor_enum():
         hmonitors.append(hmon)
         return True
 
-    ctypes.windll.user32.EnumDisplayMonitors(None, None, MonitorEnumProc(_cb), 0)
+    if not ctypes.windll.user32.EnumDisplayMonitors(None, None, MonitorEnumProc(_cb), 0):
+        raise RuntimeError("EnumDisplayMonitors failed")
 
     monitors = []
     MONITORINFOF_PRIMARY = 1
     for idx, hmon in enumerate(hmonitors):
         info = MONITORINFOEX()
         info.cbSize = ctypes.sizeof(MONITORINFOEX)
-        ctypes.windll.user32.GetMonitorInfoW(hmon, ctypes.byref(info))
+        if not ctypes.windll.user32.GetMonitorInfoW(hmon, ctypes.byref(info)):
+            continue
         r = info.rcMonitor
         dpi_x = ctypes.c_uint(96)
         dpi_y = ctypes.c_uint(96)
