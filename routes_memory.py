@@ -90,7 +90,6 @@ def _init_db(conn):
     )
     _rebuild_fts_if_empty(conn)
     conn.commit()
-    _DB_READY = True
     # Enforce the 90-day retention policy once per process start.
     try:
         archived = _archive_old_facts(conn)
@@ -105,6 +104,7 @@ def _init_db(conn):
         conn.rollback()
         from shared import _log
         _log(f"[memory] archive sweep failed: {type(e).__name__}: {e}")
+    _DB_READY = True
 
 
 def _rebuild_fts_if_empty(conn):
