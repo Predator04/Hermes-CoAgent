@@ -143,7 +143,7 @@ def _configured_safe_roots():
                 continue
             try:
                 roots.append(Path(raw_root).expanduser().resolve())
-            except OSError:
+            except (OSError, ValueError, RuntimeError):
                 print(f"[WARN] Ignoring invalid safe root: {raw_root}", file=sys.stderr)
     return roots
 
