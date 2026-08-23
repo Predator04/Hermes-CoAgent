@@ -415,6 +415,9 @@ class _Governor:
             if not netloc:
                 # Bare host or path-only string — take the first segment.
                 netloc = s.split("/", 1)[0]
+                # Drop any query/fragment so they can't be folded into the host
+                # and defeat denylist matching (e.g. "evil.com?x=1").
+                netloc = netloc.split("?", 1)[0].split("#", 1)[0]
             if "@" in netloc:
                 netloc = netloc.rsplit("@", 1)[1]
             if netloc.startswith("[") and "]" in netloc:
