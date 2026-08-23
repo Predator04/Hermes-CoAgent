@@ -71,7 +71,7 @@ def _rollback(sequence):
     if seq <= 0:
         return False, "sequence number must be positive"
     script = "Restore-Computer -RestorePoint %d -Confirm:$false" % seq
-    out, err, code = _ps(script, timeout=60)
+    out, err, code = _ps(script, timeout=600)
     if code != 0:
         return False, (err or out or "exit code %d" % code)
     return True, out
@@ -91,7 +91,8 @@ def register_routes(app, state, require_auth):
             sok, smsg = _create_shadow(volume)
             result["shadow_copy"] = {"ok": sok, "detail": smsg, "volume": volume}
         _log("checkpoint: create -> restore_point_ok=%s" % ok)
-        return jsonify(result), (200 if ok else 500)
+        overall_ok = ok and (not do_shadow or result.get("shadow_copy", {}).get("ok", False))
+        return jsonify(result), (200 if overall_ok else 500)
 
     @app.route("/checkpoint/list", methods=["GET"])
     @require_auth
@@ -99,12 +100,17 @@ def register_routes(app, state, require_auth):
         raw, err = _list_restore_points()
         if err:
             return jsonify({"error": err, "raw": raw}), 500
-        try:
-            parsed = json.loads(raw)
-            if isinstance(parsed, dict):
-                parsed = [parsed]
-        except Exception:
-            parsed = raw
+        if not raw:
+            parsed = []
+        else:
+            try:
+                parsed = json.loads(raw)
+                if isinstance(parsed, dict):
+                    parsed = [parsed]
+                elif parsed is None:
+                    parsed = []
+            except Exception:
+                parsed = raw
         return jsonify({"restore_points": parsed, "raw": raw})
 
     @app.route("/checkpoint/rollback", methods=["POST"])
