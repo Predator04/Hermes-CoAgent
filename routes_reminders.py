@@ -268,14 +268,22 @@ def _mark_delivery(reminder, ok, response, manual=False):
                     (next_at.isoformat(timespec="seconds"), now_text, now_text, reminder["id"]),
                 )
         else:
-            conn.execute(
-                """
-                UPDATE reminders
-                SET status = 'failed', last_error = ?, updated_at = ?
-                WHERE id = ?
-                """,
-                (str(response)[:1000], now_text, reminder["id"]),
-            )
+            if manual:
+                # A manual "test send" failure must not permanently disable a
+                # healthy reminder — just record the error.
+                conn.execute(
+                    "UPDATE reminders SET last_error = ?, updated_at = ? WHERE id = ?",
+                    (str(response)[:1000], now_text, reminder["id"]),
+                )
+            else:
+                conn.execute(
+                    """
+                    UPDATE reminders
+                    SET status = 'failed', last_error = ?, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (str(response)[:1000], now_text, reminder["id"]),
+                )
         conn.commit()
 
 
@@ -284,7 +292,21 @@ def _fire_reminder(reminder, manual=False):
         ok, response = _deliver(reminder)
     except Exception as exc:
         ok, response = False, f"{type(exc).__name__}: {exc}"
-    _mark_delivery(reminder, ok, response, manual=manual)
+    try:
+        _mark_delivery(reminder, ok, response, manual=manual)
+    except Exception as exc:
+        # If recording the outcome fails (e.g. a corrupted trigger_at), the row
+        # would otherwise stay 'active' and be re-delivered every scheduler
+        # tick forever. Quarantine it instead.
+        try:
+            with _DB_LOCK, _db() as conn:
+                conn.execute(
+                    "UPDATE reminders SET status = 'failed', last_error = ?, updated_at = ? WHERE id = ?",
+                    (str(exc)[:1000], _now().isoformat(timespec="seconds"), reminder["id"]),
+                )
+                conn.commit()
+        except Exception:
+            pass
     return ok, response
 
 
