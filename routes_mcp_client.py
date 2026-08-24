@@ -32,7 +32,21 @@ INIT_TIMEOUT = 30.0
 SHUTDOWN_TIMEOUT = 3.0
 MAX_STDIO_LINE_BYTES = 8 * 1024 * 1024
 MAX_HTTP_RESPONSE_BYTES = 16 * 1024 * 1024
-NAME_REGEX = re.compile(r"^[A-Za-z_][A-Za-z0-9_.\-]{0,63}$")
+NAME_REGEX = re.compile(r"^[A-Za-z_][A-Za-z0-9_.\-]{0,63}\Z")
+
+# Environment variables that are safe to inherit into user-registered MCP
+# server subprocesses. The parent CoAgent process may hold secrets (auth
+# tokens, cloud/tunnel credentials, etc.); inheriting its full environment
+# would hand those to any arbitrary command a caller registers. Callers pass
+# additional variables explicitly via the `env` field.
+_SAFE_INHERITED_ENV_KEYS = frozenset((
+    "PATH", "SystemRoot", "WINDIR", "COMSPEC", "PATHEXT",
+    "TEMP", "TMP", "HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA",
+    "HOMEDRIVE", "HOMEPATH", "OS", "NUMBER_OF_PROCESSORS",
+    "PROCESSOR_ARCHITECTURE", "USERNAME", "USERDOMAIN",
+    "ProgramFiles", "ProgramFiles(x86)", "CommonProgramFiles",
+    "LANG", "LC_ALL", "LC_CTYPE", "SHELL", "SSL_CERT_FILE",
+))
 
 SERVERS = {}
 REGISTRY_LOCK = threading.RLock()
@@ -125,7 +139,17 @@ def _url_is_unsafe(url):
     port = parsed.port
     if port is None:
         port = 443 if parsed.scheme.lower() == "https" else 80
-    for ip in _resolve_host(host, port):
+    addrs = _resolve_host(host, port)
+    if not addrs:
+        # Fail closed: if the host can't be resolved here we can't validate it,
+        # and attacker-controlled DNS can return a different answer at connect
+        # time (DNS rebinding).
+        return True
+    for ip in addrs:
+        # Unwrap IPv4-mapped IPv6 (e.g. ::ffff:169.254.169.254) so the
+        # loopback/private/link-local checks actually apply.
+        if ip.version == 6 and getattr(ip, "ipv4_mapped", None) is not None:
+            ip = ip.ipv4_mapped
         if (ip.is_loopback or ip.is_private or ip.is_link_local
                 or ip.is_multicast or ip.is_reserved or ip.is_unspecified):
             return True
@@ -217,7 +241,8 @@ class StdioServer:
 
     def start(self):
         argv = self._build_argv()
-        proc_env = os.environ.copy()
+        proc_env = {k: v for k, v in os.environ.items()
+                    if k in _SAFE_INHERITED_ENV_KEYS}
         for k, v in self.env.items():
             if not isinstance(k, str):
                 continue
