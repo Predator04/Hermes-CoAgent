@@ -298,6 +298,13 @@ def _python_executable():
     return sys.executable
 
 
+def _redact_secret(arg):
+    """Redact sensitive CLI args (e.g. --token=...) before they hit logs."""
+    if isinstance(arg, str) and arg.startswith("--token="):
+        return "--token=***"
+    return arg
+
+
 def _spawn_restart(reason):
     global _RESTART_PENDING
     with _STATUS_LOCK:
@@ -322,7 +329,10 @@ def _spawn_restart(reason):
             kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
         try:
             subprocess.Popen(args, **kwargs)
-            _log_action("restart_spawned", "critical", {"reason": reason, "args": args})
+            _log_action("restart_spawned", "critical", {
+                "reason": reason,
+                "args": [_redact_secret(a) for a in args],
+            })
         except Exception as exc:
             _log_action("restart_failed", "critical", {"reason": reason, "error": f"{type(exc).__name__}: {exc}"})
             with _STATUS_LOCK:
