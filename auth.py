@@ -463,14 +463,15 @@ def register_auth_routes(app):
         _stored_token, expires_at = entry
         if expires_at < now:
             return jsonify({"error": "Invalid or expired handoff code"}), 404
-        # Resolve the *current* token at exchange time. A token regenerated
-        # between mint and exchange would otherwise hand back a stale token
-        # that no longer authenticates (phone/dashboard silently locked out).
-        with _AUTH_LOCK:
-            current = AUTH_TOKEN
-        if not current:
+        # Return the token snapshotted when the code was minted. If the token
+        # was regenerated after minting, the stored token is now stale and will
+        # fail authentication — which is intentional: token regen is the
+        # recovery path for a leaked credential, and an unexchanged handoff
+        # code must not hand out the freshly regenerated token (that would let
+        # a stolen code survive a regen and defeat the recovery).
+        if not _stored_token:
             return jsonify({"error": "Auth token not configured"}), 500
-        return jsonify({"token": current})
+        return jsonify({"token": _stored_token})
 
     @app.route("/csrf-token", methods=["GET"])
     @require_auth
