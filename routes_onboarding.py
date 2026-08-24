@@ -295,7 +295,7 @@ def route_onboard_tunnel():
     if not _first_run_or_authed():
         return jsonify({"error": "Unauthorized"}), 401
     token = _auth.AUTH_TOKEN or _auth._load_token() or ""
-    body_bytes = json.dumps({"method": "cloudflare", "port": SERVER_PORT, "timeout": 25}).encode("utf-8")
+    body_bytes = json.dumps({"method": "ngrok", "port": SERVER_PORT, "timeout": 25}).encode("utf-8")
     req = urllib.request.Request(
         f"http://127.0.0.1:{SERVER_PORT}/tunnel/start",
         data=body_bytes,
