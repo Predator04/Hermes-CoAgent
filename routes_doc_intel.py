@@ -114,6 +114,18 @@ def _resolve_source(body):
                 jsonify({"error": "filename required when using base64 data"}),
                 400,
             )
+        # Reject oversized payloads *before* decoding so a huge base64 blob
+        # cannot force a large allocation. base64 inflates ~4/3, so an encoded
+        # size beyond this bound is guaranteed to exceed _MAX_INLINE_BYTES.
+        encoded_len = len(str(data_b64))
+        if encoded_len > (_MAX_INLINE_BYTES * 4 // 3) + 4:
+            return None, None, None, (
+                jsonify({
+                    "error": "payload too large",
+                    "detail": f"encoded {encoded_len} bytes exceeds limit",
+                }),
+                413,
+            )
         try:
             raw = base64.b64decode(str(data_b64), validate=False)
         except Exception as exc:
