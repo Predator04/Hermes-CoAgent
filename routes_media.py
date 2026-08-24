@@ -271,6 +271,47 @@ def _build_tunnel_command(method, exe, port):
         return [exe, "http", str(port), "--log=stdout"]
     raise ValueError("Unsupported tunnel method")
 
+def _tunnel_help_message(method, recent_output=None, missing=False, timed_out=False):
+    """Return a short, plain, user facing hint for a tunnel failure."""
+    if missing:
+        if method == "ngrok":
+            return ("Ngrok is not installed. CoAgent tries to install it automatically. "
+                    "If that fails, download it from https://ngrok.com/download.")
+        return ("Cloudflared is not installed. Install it from "
+                "https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/.")
+    text = " ".join(recent_output or []).lower()
+    if method == "ngrok":
+        if ("invalid" in text and ("token" in text or "authtoken" in text)) or "err_ngrok_105" in text:
+            return ("Your ngrok authtoken is invalid. Get a fresh one at "
+                    "https://dashboard.ngrok.com/get-started/your-authtoken and paste it in the field above.")
+        if "err_ngrok_121" in text or "agent version" in text or "too old" in text:
+            return ("Your ngrok is outdated. Run: ngrok update. Or reinstall from "
+                    "https://ngrok.com/download.")
+    if timed_out:
+        return ("The tunnel is still starting. Wait a few seconds and check /tunnel/status, "
+                "or stop and retry.")
+    if method == "cloudflare":
+        return ("Cloudflare tunnel could not start. See "
+                "https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/do-more-with-tunnels/trycloudflare/ for setup steps.")
+    return "The tunnel exited before a public URL appeared. Check the recent output above and try again."
+
+def _configure_ngrok_authtoken(exe, token_val):
+    """Persist an ngrok authtoken via ngrok config add authtoken. Tolerate failures."""
+    if not exe or not isinstance(token_val, str):
+        return
+    token_val = token_val.strip()
+    if not token_val:
+        return
+    try:
+        cf = subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0
+        subprocess.run(
+            [exe, "config", "add-authtoken", token_val],
+            capture_output=True, text=True, timeout=15, creationflags=cf,
+        )
+        _log(f"Tunnel: ngrok authtoken written to config (len={len(token_val)})")
+    except Exception as e:
+        _log(f"Tunnel: ngrok config add-authtoken failed: {type(e).__name__}: {e}")
+
 def _macro_path(name):
     if not isinstance(name, str) or not _MACRO_NAME_RE.fullmatch(name):
         raise ValueError("Invalid macro name")
@@ -978,7 +1019,11 @@ $s.Speak($text)
                 "error": f"{method} not found in PATH",
                 "method": method,
                 "tools": {k: bool(v) for k, v in tools.items()},
+                "help": _tunnel_help_message(method, missing=True),
             }), 404
+
+        if method == "ngrok":
+            _configure_ngrok_authtoken(exe, d.get("ngrok_authtoken"))
 
         cmd = _build_tunnel_command(method, exe, port)
         create_flags = subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0
@@ -1011,7 +1056,11 @@ $s.Speak($text)
             except Exception as e:
                 _TUNNEL_STATE.update({"process": None, "started_at": None, "exit_code": None})
                 _log(f"Tunnel start failed ({method}): {type(e).__name__}: {e}")
-                return jsonify({"error": str(e), "method": method}), 500
+                return jsonify({
+                    "error": str(e),
+                    "method": method,
+                    "help": _tunnel_help_message(method),
+                }), 500
             _TUNNEL_STATE["process"] = proc
         threading.Thread(target=_tunnel_reader, args=(proc, method), daemon=True,
                          name=f"tunnel-{method}-reader").start()
@@ -1042,9 +1091,11 @@ $s.Speak($text)
                     "port": port,
                     "exit_code": exit_code,
                     "recent_output": recent,
+                    "help": _tunnel_help_message(method, recent_output=recent),
                 }), 502
             time.sleep(0.25)
 
+        recent_snap = _tunnel_status_snapshot()["recent_output"]
         _log(f"Tunnel still starting: method={method} port={port} pid={proc.pid}")
         return jsonify({
             "error": "Timed out waiting for public tunnel URL",
@@ -1053,7 +1104,8 @@ $s.Speak($text)
             "method": method,
             "port": port,
             "pid": proc.pid,
-            "recent_output": _tunnel_status_snapshot()["recent_output"],
+            "recent_output": recent_snap,
+            "help": _tunnel_help_message(method, recent_output=recent_snap, timed_out=True),
         }), 504
 
     @app.route("/tunnel/stop", methods=["POST"])

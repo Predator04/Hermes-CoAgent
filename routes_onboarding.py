@@ -295,7 +295,16 @@ def route_onboard_tunnel():
     if not _first_run_or_authed():
         return jsonify({"error": "Unauthorized"}), 401
     token = _auth.AUTH_TOKEN or _auth._load_token() or ""
-    body_bytes = json.dumps({"method": "ngrok", "port": SERVER_PORT, "timeout": 25}).encode("utf-8")
+    incoming = request.get_json(silent=True) or {}
+    method = str(incoming.get("method") or "ngrok").strip().lower()
+    if method not in {"ngrok", "cloudflare"}:
+        method = "ngrok"
+    ngrok_authtoken_raw = incoming.get("ngrok_authtoken")
+    ngrok_authtoken = str(ngrok_authtoken_raw).strip() if isinstance(ngrok_authtoken_raw, str) else ""
+    payload = {"method": method, "port": SERVER_PORT, "timeout": 25}
+    if ngrok_authtoken:
+        payload["ngrok_authtoken"] = ngrok_authtoken
+    body_bytes = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
         f"http://127.0.0.1:{SERVER_PORT}/tunnel/start",
         data=body_bytes,
@@ -484,8 +493,21 @@ button:disabled{opacity:.45;cursor:not-allowed}
   <div class="card hidden" id="step3">
     <h2>Connect other devices</h2>
     <div id="remoteBlock">
-      <p style="margin:0 0 8px;color:var(--muted)">Start a Cloudflare tunnel for a public URL your phone can scan.</p>
-      <div style="display:flex;gap:8px;align-items:center">
+      <p style="margin:0 0 8px;color:var(--muted)">Start a tunnel to get a public URL your phone can scan.</p>
+      <div style="margin:8px 0">
+        <label style="margin-right:14px"><input type="radio" name="tunnelMethod" value="ngrok" checked onchange="onMethodChange()"> ngrok (recommended)</label>
+        <label><input type="radio" name="tunnelMethod" value="cloudflare" onchange="onMethodChange()"> Cloudflare</label>
+      </div>
+      <div id="ngrokBlock">
+        <label for="ngrokToken" style="display:block;color:var(--muted);font-size:12px;margin:6px 0 4px">
+          Ngrok authtoken (optional). <a href="https://dashboard.ngrok.com/get-started/your-authtoken" target="_blank" rel="noopener">Get your authtoken</a>.
+        </label>
+        <input class="token-input" id="ngrokToken" type="text" placeholder="paste your ngrok authtoken here" autocomplete="off" style="width:100%">
+        <p style="color:var(--muted);font-size:12px;margin:6px 0 0">
+          1. Create a free account at ngrok.com. 2. Copy your authtoken from the dashboard. 3. Paste it here. 4. Click Start tunnel.
+        </p>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;margin-top:10px">
         <button id="tunnelBtn" onclick="startTunnel()">Start tunnel</button>
         <span id="tunnelStatus" style="color:var(--muted);font-size:12px"></span>
       </div>
@@ -588,23 +610,43 @@ async function regenToken() {
   } finally { btn.disabled = false; }
 }
 
+function onMethodChange() {
+  const methodEl = document.querySelector('input[name=tunnelMethod]:checked');
+  const method = methodEl ? methodEl.value : "ngrok";
+  const ngrokBlock = document.getElementById("ngrokBlock");
+  if (ngrokBlock) ngrokBlock.style.display = (method === "ngrok") ? "" : "none";
+}
+
 async function startTunnel() {
   const btn = document.getElementById("tunnelBtn");
+  const methodEl = document.querySelector('input[name=tunnelMethod]:checked');
+  const method = methodEl ? methodEl.value : "ngrok";
+  const tokenEl = document.getElementById("ngrokToken");
+  const authtoken = tokenEl ? (tokenEl.value || "").trim() : "";
+  const origLabel = btn.textContent;
   btn.disabled = true;
-  document.getElementById("tunnelStatus").textContent = "Starting…";
+  btn.textContent = "Starting...";
+  document.getElementById("tunnelStatus").textContent = "Starting the tunnel. This may take a few seconds.";
   try {
-    const r = await fetch("/onboard/tunnel", { method: "POST", headers: h() });
+    const r = await fetch("/onboard/tunnel", {
+      method: "POST", headers: h(),
+      body: JSON.stringify({ method: method, ngrok_authtoken: authtoken }),
+    });
     const d = await r.json();
     if (!r.ok || !d.url) {
-      throw new Error(d.error || d.detail || "tunnel start failed");
+      const msg = d.help || d.error || d.detail || "Tunnel start failed.";
+      throw new Error(msg);
     }
     state.tunnel_url = d.url;
-    document.getElementById("tunnelStatus").textContent = "Public URL ready";
+    document.getElementById("tunnelStatus").textContent = "Public URL ready.";
     showQr(d.url);
   } catch (e) {
     document.getElementById("tunnelStatus").textContent = "";
-    setPageMsg("Tunnel failed: " + e.message + ". Install cloudflared and retry, or share the LAN URL manually.", "err");
-  } finally { btn.disabled = false; }
+    setPageMsg("Tunnel failed. " + e.message, "err");
+  } finally {
+    btn.disabled = false;
+    btn.textContent = origLabel || "Start tunnel";
+  }
 }
 
 async function showQr(url) {
