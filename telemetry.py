@@ -28,6 +28,7 @@ def _get_db():
             _LOGGER.warning("Telemetry DB not initialized (call init_telemetry first)")
             _WARNED = True
         return None
+    db = None
     try:
         db = sqlite3.connect(str(TELEMETRY_DB_PATH), timeout=5.0)
         db.row_factory = sqlite3.Row
@@ -36,6 +37,8 @@ def _get_db():
         return db
     except Exception as e:
         _LOGGER.error("Telemetry DB connect failed: %s", e)
+        if db is not None:
+            db.close()
         return None
 
 
