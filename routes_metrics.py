@@ -282,3 +282,10 @@ def register_routes(app, state, require_auth):
         return response
 
     app.register_blueprint(metrics_bp)
+    # The metrics endpoint exposes internal telemetry (route surface, error
+    # rates, memory RSS, live stream counts) and must require auth like every
+    # other route when auth is enabled.
+    if require_auth is not None:
+        app.view_functions["metrics.route_metrics"] = require_auth(
+            app.view_functions["metrics.route_metrics"]
+        )
