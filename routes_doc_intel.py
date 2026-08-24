@@ -216,8 +216,9 @@ def _pdf_page_count(path):
             pass
     if _HAS_PYPDF:
         try:
-            reader = pypdf.PdfReader(path)
-            return len(reader.pages)
+            with open(path, "rb") as fh:
+                reader = pypdf.PdfReader(fh)
+                return len(reader.pages)
         except Exception:
             pass
     return 0
@@ -243,14 +244,15 @@ def _pdf_extract(path, page_spec, want_tables, ocr_mode):
     # Metadata via pypdf when available (pdfplumber does not expose it uniformly).
     if _HAS_PYPDF:
         try:
-            reader = pypdf.PdfReader(path)
-            meta = reader.metadata or {}
-            for k, v in (meta.items() if hasattr(meta, "items") else []):
-                key = str(k).lstrip("/")
-                try:
-                    metadata[key] = str(v)
-                except Exception:
-                    continue
+            with open(path, "rb") as fh:
+                reader = pypdf.PdfReader(fh)
+                meta = reader.metadata or {}
+                for k, v in (meta.items() if hasattr(meta, "items") else []):
+                    key = str(k).lstrip("/")
+                    try:
+                        metadata[key] = str(v)
+                    except Exception:
+                        continue
         except Exception as exc:
             _log(f"doc/extract pypdf metadata failed: {type(exc).__name__}: {exc}")
 
@@ -280,16 +282,17 @@ def _pdf_extract(path, page_spec, want_tables, ocr_mode):
     # Fill missing pages with pypdf text.
     if _HAS_PYPDF and any(pno not in text_by_page or not text_by_page[pno] for pno in pages_wanted):
         try:
-            reader = pypdf.PdfReader(path)
-            engines.add("pypdf")
-            for pno in pages_wanted:
-                if text_by_page.get(pno):
-                    continue
-                try:
-                    text_by_page[pno] = (reader.pages[pno - 1].extract_text() or "").strip()
-                except Exception as exc:
-                    _log(f"doc/extract pypdf text p{pno} failed: {exc}")
-                    text_by_page.setdefault(pno, "")
+            with open(path, "rb") as fh:
+                reader = pypdf.PdfReader(fh)
+                engines.add("pypdf")
+                for pno in pages_wanted:
+                    if text_by_page.get(pno):
+                        continue
+                    try:
+                        text_by_page[pno] = (reader.pages[pno - 1].extract_text() or "").strip()
+                    except Exception as exc:
+                        _log(f"doc/extract pypdf text p{pno} failed: {exc}")
+                        text_by_page.setdefault(pno, "")
         except Exception as exc:
             _log(f"doc/extract pypdf open failed: {type(exc).__name__}: {exc}")
 
