@@ -354,7 +354,7 @@ def register_auth_routes(app):
     @app.route('/auth/token/show', methods=['GET'])
     @require_auth
     def auth_token_show():
-        """Return full token (requires auth). Use sparingly — leaks full token in response."""
+        """Return a token preview (first 4 + last 4 chars). Never returns the full token."""
         if not AUTH_ENABLED:
             return jsonify({'error': 'Auth not enabled'}), 400
         with _AUTH_LOCK:
