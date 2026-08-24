@@ -53,6 +53,20 @@ def _auth_header(preferred=None):
         return ""
 
 
+def _coerce_int(value, default):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _coerce_float(value, default):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def _coagent_request(method, path, data=None, auth_header=None, timeout=30):
     headers = {"Accept": "application/json"}
     body = None
@@ -208,11 +222,17 @@ def _prev_from_result(result):
     return {"result": result}
 
 
+def _result_error(result):
+    if isinstance(result, dict):
+        return result.get("error")
+    return f"unexpected response type: {type(result).__name__}"
+
+
 def _run_one_step(step, previous, auth_header):
     action = str(step.get("action") or "").strip().lower()
     params = _step_params(step, previous)
     if action == "wait":
-        seconds = max(0.0, min(float(params.get("seconds", 1)), 3600.0))
+        seconds = max(0.0, min(_coerce_float(params.get("seconds", 1), 1.0), 3600.0))
         time.sleep(seconds)
         return {"status": "ok", "result": {"status": "ok", "slept": seconds}}
     if action == "launch":
@@ -220,7 +240,7 @@ def _run_one_step(step, previous, auth_header):
         result = _coagent_request("POST", "/process/start", {"path": query}, auth_header=auth_header)
         if isinstance(result, dict) and result.get("error"):
             result = _coagent_request("POST", "/app/open", {"path": query}, auth_header=auth_header)
-        return {"status": "error" if result.get("error") else "ok", "result": result}
+        return {"status": "error" if _result_error(result) else "ok", "result": result}
     if action == "click":
         if ("x" not in params or "y" not in params) and _step_target_text(step):
             target_payload = {
@@ -233,42 +253,42 @@ def _run_one_step(step, previous, auth_header):
             result = _coagent_request("POST", "/uia/click-hybrid", target_payload, auth_header=auth_header)
         else:
             result = _coagent_request("POST", "/mouse/click", params, auth_header=auth_header)
-        return {"status": "error" if result.get("error") else "ok", "result": result}
+        return {"status": "error" if _result_error(result) else "ok", "result": result}
     if action == "type":
         if "text" not in params and _step_target_text(step):
             params["text"] = _step_target_text(step)
         result = _coagent_request("POST", "/key/type", params, auth_header=auth_header)
-        return {"status": "error" if result.get("error") else "ok", "result": result}
+        return {"status": "error" if _result_error(result) else "ok", "result": result}
     if action in {"key", "hotkey", "press"}:
         keys = params.get("keys", params.get("key", []))
         if isinstance(keys, str):
             keys = [part for part in keys.replace("+", " ").split() if part]
         result = _coagent_request("POST", "/key/press", {"keys": keys}, auth_header=auth_header)
-        return {"status": "error" if result.get("error") else "ok", "result": result}
+        return {"status": "error" if _result_error(result) else "ok", "result": result}
     if action == "ocr_find":
         result = _coagent_request("POST", "/ocr/find", params, auth_header=auth_header)
-        return {"status": "error" if result.get("error") else "ok", "result": result}
+        return {"status": "error" if _result_error(result) else "ok", "result": result}
     if action == "telegram_send":
         result = _coagent_request("POST", "/telegram/send", params, auth_header=auth_header)
         if isinstance(result, dict) and result.get("status_code") == 404:
             result = _telegram_send(params)
-        return {"status": "error" if result.get("error") else "ok", "result": result}
+        return {"status": "error" if _result_error(result) else "ok", "result": result}
     if action == "screenshot":
         result = _coagent_request("GET", "/screen/base64", auth_header=auth_header)
-        return {"status": "error" if result.get("error") else "ok", "result": result}
+        return {"status": "error" if _result_error(result) else "ok", "result": result}
     if action == "finder_click":
         result = _coagent_request("POST", "/finder/click", params, auth_header=auth_header)
-        return {"status": "error" if result.get("error") else "ok", "result": result}
+        return {"status": "error" if _result_error(result) else "ok", "result": result}
     if action == "finder_type":
         result = _coagent_request("POST", "/finder/type", params, auth_header=auth_header)
-        return {"status": "error" if result.get("error") else "ok", "result": result}
+        return {"status": "error" if _result_error(result) else "ok", "result": result}
     return {"status": "error", "result": {"error": f"Unknown action: {action}"}}
 
 
 def _execute_steps(steps, timeout=300, auth_header=None):
     """Execute a list of steps via CoAgent internal API calls."""
     results = []
-    deadline = time.time() + max(1, int(timeout or 300))
+    deadline = time.time() + max(1, _coerce_int(timeout, 300))
     previous = {}
     for index, step in enumerate(steps):
         action = str(step.get("action") or "").strip().lower()
@@ -468,27 +488,32 @@ def _run_recipe(recipe_id, auth_header=None, triggered_by="manual"):
 def _scheduler_loop():
     _console(f"[recipes] scheduler started interval={SCHEDULER_INTERVAL_SECONDS}s croniter={HAS_CRONITER}")
     while True:
-        now = datetime.now().replace(second=0, microsecond=0)
-        due = []
-        with _RECIPES_LOCK:
-            recipes = list(_RECIPES.values())
-        for recipe in recipes:
-            if not recipe.get("enabled") or not recipe.get("schedule"):
-                continue
-            recipe_id = recipe["recipe_id"]
-            minute_key = now.strftime("%Y%m%d%H%M")
-            if _SCHED_LAST_RUN.get(recipe_id) == minute_key:
-                continue
-            if _cron_schedule_matches(recipe.get("schedule"), now):
-                _SCHED_LAST_RUN[recipe_id] = minute_key
-                due.append(recipe_id)
-        for recipe_id in due:
-            threading.Thread(
-                target=_run_recipe,
-                args=(recipe_id, _auth_header(None), "schedule"),
-                name=f"recipe-{recipe_id[:8]}",
-                daemon=True,
-            ).start()
+        try:
+            now = datetime.now().replace(second=0, microsecond=0)
+            due = []
+            with _RECIPES_LOCK:
+                recipes = list(_RECIPES.values())
+                last_run = dict(_SCHED_LAST_RUN)
+            for recipe in recipes:
+                if not recipe.get("enabled") or not recipe.get("schedule"):
+                    continue
+                recipe_id = recipe["recipe_id"]
+                minute_key = now.strftime("%Y%m%d%H%M")
+                if last_run.get(recipe_id) == minute_key:
+                    continue
+                if _cron_schedule_matches(recipe.get("schedule"), now):
+                    with _RECIPES_LOCK:
+                        _SCHED_LAST_RUN[recipe_id] = minute_key
+                    due.append(recipe_id)
+            for recipe_id in due:
+                threading.Thread(
+                    target=_run_recipe,
+                    args=(recipe_id, _auth_header(None), "schedule"),
+                    name=f"recipe-{recipe_id[:8]}",
+                    daemon=True,
+                ).start()
+        except Exception as exc:
+            _console(f"[recipes] scheduler iteration error: {type(exc).__name__}: {exc}")
         time.sleep(SCHEDULER_INTERVAL_SECONDS)
 
 
@@ -607,7 +632,7 @@ def _verify_target_exists(step, auth_header):
 
 
 def _execute_steps_with_verification(steps, auth_header, timeout=300):
-    deadline = time.time() + max(1, int(timeout or 300))
+    deadline = time.time() + max(1, _coerce_int(timeout, 300))
     total = len(steps)
     completed = 0
     previous = {}
