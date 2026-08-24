@@ -85,10 +85,14 @@ def _get_idle_time_ms():
         lii = LASTINPUTINFO()
         lii.cbSize = ctypes.sizeof(LASTINPUTINFO)
         if ctypes.windll.user32.GetLastInputInfo(ctypes.byref(lii)):
-            get_tick = ctypes.windll.kernel32.GetTickCount64
-            get_tick.restype = ctypes.c_uint64
+            # dwTime is a 32-bit DWORD (GetTickCount). Use the matching 32-bit
+            # counter so both wrap together at 49.7 days — comparing against
+            # GetTickCount64 would produce wildly inflated idle values after wrap.
+            get_tick = ctypes.windll.kernel32.GetTickCount
+            get_tick.restype = ctypes.c_uint32
             tick_count = get_tick()
-            return max(0, int(tick_count) - int(lii.dwTime))
+            last_input = ctypes.c_uint32(lii.dwTime).value
+            return int((tick_count - last_input) & 0xFFFFFFFF)
     except Exception:
         pass
     return None
@@ -141,7 +145,6 @@ def _has_modal_dialog():
 _STOP_WORDS = frozenset((
     "the", "a", "an", "on", "in", "at", "to", "and", "or", "of",
     "click", "press", "tap", "select", "find", "open", "close",
-    "button", "link", "field", "input", "checkbox", "tab",
 ))
 
 
