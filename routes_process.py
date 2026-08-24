@@ -28,9 +28,11 @@ _WINDOW_TITLES_TTL = 2.0
 
 def _window_titles_by_pid():
     now = time.monotonic()
-    cached = _WINDOW_TITLES_CACHE.get("value") or {}
-    if cached and (now - _WINDOW_TITLES_CACHE["ts"]) < _WINDOW_TITLES_TTL:
-        return cached
+    # Honor the TTL based on the timestamp (not the truthiness of the cached
+    # value) so an empty result is cached too and EnumWindows doesn't re-run
+    # on every request when no windows are visible.
+    if (now - _WINDOW_TITLES_CACHE["ts"]) < _WINDOW_TITLES_TTL:
+        return _WINDOW_TITLES_CACHE.get("value") or {}
     titles = {}
     try:
         import ctypes
