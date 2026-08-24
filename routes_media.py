@@ -174,7 +174,7 @@ def _extract_tunnel_url(text):
             return match.rstrip(".,);]")
     return None
 
-def _append_tunnel_output(method, text):
+def _append_tunnel_output(method, text, proc=None):
     line = (text or "").rstrip()
     if not line:
         return
@@ -185,6 +185,8 @@ def _append_tunnel_output(method, text):
         pass
     url = _extract_tunnel_url(line)
     with _TUNNEL_LOCK:
+        if proc is not None and _TUNNEL_STATE.get("process") is not proc:
+            return
         _TUNNEL_STATE["output"].append(line)
         del _TUNNEL_STATE["output"][:-200]
         if url:
@@ -196,9 +198,9 @@ def _tunnel_reader(proc, method):
             for line in iter(proc.stdout.readline, ""):
                 if not line:
                     break
-                _append_tunnel_output(method, line)
+                _append_tunnel_output(method, line, proc)
     except Exception as e:
-        _append_tunnel_output(method, f"reader error: {type(e).__name__}: {e}")
+        _append_tunnel_output(method, f"reader error: {type(e).__name__}: {e}", proc)
     finally:
         try:
             exit_code = proc.poll()
@@ -285,14 +287,19 @@ def _macro_path(name):
 def _load_scheduler():
     if SCHEDULER_FILE.exists():
         try:
-            return json.loads(SCHEDULER_FILE.read_text())
+            data = json.loads(SCHEDULER_FILE.read_text())
         except Exception:
             return {"actions": []}
+        if isinstance(data, dict) and isinstance(data.get("actions"), list):
+            return data
+        return {"actions": []}
     return {"actions": []}
 
 def _save_scheduler(data):
     backup_file(SCHEDULER_FILE)
-    SCHEDULER_FILE.write_text(json.dumps(data, indent=2))
+    tmp = SCHEDULER_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    tmp.replace(SCHEDULER_FILE)
 
 def _scheduler_busy_response():
     return jsonify({"error": "Scheduler file is busy"}), 409
@@ -739,9 +746,13 @@ $text = [System.IO.File]::ReadAllText($TextPath, [System.Text.Encoding]::UTF8)
 $s.Speak($text)
 ''')
                 ps_path = ps_file.name
-            subprocess.run(["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass",
-                            "-File", ps_path, "-TextPath", text_path], timeout=30,
-                           creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0)
+            result = subprocess.run(["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass",
+                                    "-File", ps_path, "-TextPath", text_path], timeout=30,
+                                    capture_output=True, text=True,
+                                    creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0)
+            if result.returncode != 0:
+                err = (result.stderr or result.stdout or "").strip()[:300]
+                return jsonify({"error": f"TTS failed (exit {result.returncode}): {err}"}), 500
             return jsonify({"status": "spoken", "text": text[:100]})
         except Exception as e:
             return jsonify({"error": str(e)}), 500
@@ -782,7 +793,7 @@ $s.Speak($text)
         try:
             data = _load_scheduler()
             for a in data["actions"]:
-                if a["name"] == name:
+                if a.get("name") == name:
                     a["cron"] = cron; a["action"] = action; a["updated"] = time.time()
                     _save_scheduler(data)
                     return jsonify({"status": "updated", "name": name})
@@ -802,7 +813,7 @@ $s.Speak($text)
             return _scheduler_busy_response()
         try:
             data = _load_scheduler()
-            data["actions"] = [a for a in data["actions"] if a["name"] != name]
+            data["actions"] = [a for a in data["actions"] if a.get("name") != name]
             _save_scheduler(data)
             _log(f"Scheduler: removed '{name}'")
             return jsonify({"status": "removed", "name": name})
@@ -819,7 +830,9 @@ $s.Speak($text)
         try:
             data = _load_scheduler()
             for a in data["actions"]:
-                if a["name"] == name:
+                if a.get("name") == name:
+                    from routes_mouse import _execute_action_wrapper
+                    _execute_action_wrapper(a.get("action", {}), state)
                     _log(f"Scheduler: ran '{name}'")
                     return jsonify({"status": "executed", "name": name})
         finally:
@@ -866,8 +879,15 @@ $s.Speak($text)
             return jsonify({"error": str(e)}), 400
         if not path.exists():
             return jsonify({"error": f"Macro '{name}' not found"}), 404
-        macro = json.loads(path.read_text(encoding="utf-8"))
+        try:
+            macro = json.loads(path.read_text(encoding="utf-8"))
+        except (ValueError, OSError) as exc:
+            return jsonify({"error": f"Macro '{name}' is corrupt: {exc}"}), 500
+        if not isinstance(macro, dict):
+            return jsonify({"error": f"Macro '{name}' must be a JSON object"}), 500
         actions = macro.get("actions", [])
+        if not isinstance(actions, list):
+            return jsonify({"error": f"Macro '{name}' actions must be a list"}), 500
         for a in actions:
             from routes_mouse import _execute_action_wrapper
             _execute_action_wrapper(a, state)
@@ -960,6 +980,8 @@ $s.Speak($text)
                 "tools": {k: bool(v) for k, v in tools.items()},
             }), 404
 
+        cmd = _build_tunnel_command(method, exe, port)
+        create_flags = subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0
         with _TUNNEL_LOCK:
             if _tunnel_active_locked():
                 current = _tunnel_status_snapshot()
@@ -973,33 +995,27 @@ $s.Speak($text)
                 "exit_code": None,
                 "output": [],
             })
-
-        cmd = _build_tunnel_command(method, exe, port)
-        create_flags = subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0
-        try:
-            proc = subprocess.Popen(
-                cmd,
-                cwd=str(COAGENT_DIR),
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                stdin=subprocess.DEVNULL,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                bufsize=1,
-                creationflags=create_flags,
-            )
-        except Exception as e:
-            with _TUNNEL_LOCK:
+            try:
+                proc = subprocess.Popen(
+                    cmd,
+                    cwd=str(COAGENT_DIR),
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    stdin=subprocess.DEVNULL,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    bufsize=1,
+                    creationflags=create_flags,
+                )
+            except Exception as e:
                 _TUNNEL_STATE.update({"process": None, "started_at": None, "exit_code": None})
-            _log(f"Tunnel start failed ({method}): {type(e).__name__}: {e}")
-            return jsonify({"error": str(e), "method": method}), 500
-
-        with _TUNNEL_LOCK:
+                _log(f"Tunnel start failed ({method}): {type(e).__name__}: {e}")
+                return jsonify({"error": str(e), "method": method}), 500
             _TUNNEL_STATE["process"] = proc
         threading.Thread(target=_tunnel_reader, args=(proc, method), daemon=True,
                          name=f"tunnel-{method}-reader").start()
-        _append_tunnel_output(method, "started: " + " ".join(cmd))
+        _append_tunnel_output(method, "started: " + " ".join(cmd), proc)
 
         deadline = time.time() + wait_timeout
         while time.time() < deadline:
