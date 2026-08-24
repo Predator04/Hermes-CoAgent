@@ -143,11 +143,15 @@ def _bg_tick(action: str):
 
 def _bg_done():
     with _BG_LOCK:
-        global _BG_ACTIVE
-        _BG_ACTIVE = False
+        global _BG_ACTIVE, _BG_TASK, _BG_STARTED, _BG_ACTIONS, _BG_LAST_ACTION
         task = _BG_TASK
         actions = _BG_ACTIONS
         started = _BG_STARTED
+        _BG_ACTIVE = False
+        _BG_TASK = ""
+        _BG_STARTED = 0.0
+        _BG_ACTIONS = 0
+        _BG_LAST_ACTION = ""
     elapsed = time.time() - started if started else 0
     _console(f"[BACKGROUND] ✓ {task} — {actions} actions in {elapsed:.1f}s")
 
@@ -160,6 +164,8 @@ def _find_window_by_title(title: str):
     Uses EnumWindows with a properly-typed callback that is held alive
     for the duration of the enumeration.
     """
+    if not title:
+        return 0
     result = wintypes.HWND(0)
 
     @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
