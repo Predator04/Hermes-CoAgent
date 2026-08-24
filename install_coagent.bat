@@ -106,8 +106,8 @@ for /d %%d in ("%STAGE%\Predator04-Hermes-CoAgent-*") do (
 )
 
 rmdir /s /q "%STAGE%" 2>nul
-echo   Update download failed. Falling back to fresh install...
-goto :fresh_download
+echo   Update download failed (no GitHub auth?). Using existing installed code...
+goto :got_code
 
 :: ---------------------------------------------------------------
 :: FRESH DOWNLOAD - standard 3-method download into an empty dir.
