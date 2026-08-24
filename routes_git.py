@@ -1,6 +1,7 @@
 """Git backup, commit, push, and rollback routes."""
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -31,6 +32,9 @@ def _file_busy_payload():
 
 def _run_git(args, timeout=120):
     cmd = ["git", *args]
+    env = dict(os.environ)
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    env["GIT_ASKPASS"] = "echo"
     try:
         proc = subprocess.run(
             cmd,
@@ -38,6 +42,8 @@ def _run_git(args, timeout=120):
             capture_output=True,
             text=True,
             timeout=timeout,
+            stdin=subprocess.DEVNULL,
+            env=env,
         )
         return {
             "args": cmd,
@@ -71,6 +77,23 @@ def _ensure_token_gitignored():
     if missing:
         prefix = "" if not text or text.endswith(("\n", "\r")) else "\n"
         ignore_path.write_text(text + prefix + "\n".join(missing) + "\n", encoding="utf-8")
+    # .gitignore only affects untracked files — drop any secret that was
+    # already tracked so the ignore rules actually protect it.
+    try:
+        tracked_result = _run_git(["ls-files"], timeout=30)
+        if tracked_result.get("ok"):
+            def _is_secret_name(name):
+                if name in {".token", ".env", "credentials.json", "coagent_token.txt"}:
+                    return True
+                if name.startswith((".token", ".env")):
+                    return True
+                return name.endswith((".key", ".pem"))
+            to_untrack = [p for p in tracked_result.get("stdout", "").splitlines()
+                          if p and _is_secret_name(os.path.basename(p))]
+            if to_untrack:
+                _run_git(["rm", "--cached", "--ignore-unmatch", *to_untrack], timeout=60)
+    except Exception:
+        pass
     return {"path": str(ignore_path), "added": missing}
 
 
@@ -185,13 +208,22 @@ def _copy_tree(src, backup_dir):
     rel = src.resolve().relative_to(COAGENT_DIR)
     dst = backup_dir / rel
     if dst.exists():
-        # Copy to temp, then atomically replace
+        # Stage to a temp dir, move the live dir aside, then swap in the new
+        # tree so a crash can never leave `dst` destroyed with no replacement.
         tmp_dst = dst.with_name(dst.name + ".tmp")
+        old_dst = dst.with_name(dst.name + ".old")
         if tmp_dst.exists():
             shutil.rmtree(tmp_dst)
         shutil.copytree(src, tmp_dst)
-        shutil.rmtree(dst)
-        tmp_dst.rename(dst)
+        if old_dst.exists():
+            shutil.rmtree(old_dst)
+        dst.rename(old_dst)
+        try:
+            tmp_dst.rename(dst)
+        except BaseException:
+            old_dst.rename(dst)
+            raise
+        shutil.rmtree(old_dst)
     else:
         shutil.copytree(src, dst)
     return str(dst)
