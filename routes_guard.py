@@ -53,7 +53,8 @@ def _scan(text):
     """Return (matches, score, risk)."""
     if not isinstance(text, str) or not text:
         return [], 0, "none"
-    if len(text) > _MAX_INPUT:
+    truncated = len(text) > _MAX_INPUT
+    if truncated:
         text = text[:_MAX_INPUT]
     normalized = unicodedata.normalize("NFKC", text)
     normalized = re.sub(r"[\u200b-\u200d\u2060\ufeff\u00ad]", "", normalized)
@@ -81,6 +82,18 @@ def _scan(text):
         risk = "low"
     else:
         risk = "none"
+    if truncated and risk == "none":
+        # Content beyond _MAX_INPUT was never scanned. Returning "none" here
+        # would let flagged payloads past the guard un-neutralized, so force
+        # a flag so sanitize() wraps the full input.
+        risk = "medium"
+        matches.append({
+            "rule": "truncation",
+            "severity": "medium",
+            "match": "input exceeds %d chars" % _MAX_INPUT,
+            "start": _MAX_INPUT,
+        })
+        score += SEVERITY_WEIGHT["medium"]
     return matches, score, risk
 
 
