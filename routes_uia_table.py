@@ -257,13 +257,20 @@ def _extract_via_descendants(element, max_rows, max_cols):
         except Exception:
             continue
         if ct in _HEADER_CONTROL_TYPES:
-            try:
-                for child in elem.children():
-                    text = _element_text(child)
-                    if text:
-                        headers.append(text)
-            except Exception:
-                pass
+            if ct == "headeritem":
+                # headeritem is a leaf: its label lives on the element itself,
+                # not on child elements.
+                text = _element_text(elem)
+                if text:
+                    headers.append(text)
+            else:
+                try:
+                    for child in elem.children():
+                        text = _element_text(child)
+                        if text:
+                            headers.append(text)
+                except Exception:
+                    pass
             if headers:
                 break
 
