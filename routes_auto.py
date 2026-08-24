@@ -1240,6 +1240,46 @@ TOOLS = {
     "repo": "ajeetdsouza/zoxide",
     "stars": 38583,
     "url": "https://github.com/ajeetdsouza/zoxide"
+  },
+  "miller": {
+    "added": "2026-08-24",
+    "command": "mlr --icsv --ojson <verb> [args]",
+    "desc": "Miller (mlr) is like awk/sed/cut/join/sort for name-indexed data (CSV, TSV, tabular JSON, DKVP). Convert between formats, filter, aggregate, and reshape tabular data with a single verb chain. Ships a single statically-linked binary (mlr.exe).",
+    "endpoints": {
+      "/auto/miller/info": "Feature metadata, install status, version",
+      "/auto/miller/ping": "Health check",
+      "/auto/miller/convert": "POST \u2014 convert between CSV/TSV/JSON/etc.",
+      "/auto/miller/stats": "POST \u2014 summary statistics for a column",
+      "/auto/miller/process": "POST \u2014 run a Miller verb chain"
+    },
+    "exe": "mlr",
+    "install": {
+      "scoop": "scoop install main/miller",
+      "winget": "winget install Miller.Miller"
+    },
+    "repo": "johnkerl/miller",
+    "stars": 10002,
+    "url": "https://github.com/johnkerl/miller"
+  },
+  "tokei": {
+    "added": "2026-08-24",
+    "command": "tokei [path] --output json",
+    "desc": "Tokei counts lines of code \u2014 files, lines, code, comments, and blanks \u2014 grouped by language across 150+ languages. Emits JSON/YAML/CBOR for programmatic consumption. Very fast; handles nested comments and respects .gitignore.",
+    "endpoints": {
+      "/auto/tokei/info": "Feature metadata, install status, version",
+      "/auto/tokei/ping": "Health check",
+      "/auto/tokei/count": "POST \u2014 code statistics grouped by language",
+      "/auto/tokei/languages": "GET \u2014 list recognized languages",
+      "/auto/tokei/files": "POST \u2014 per-file breakdown"
+    },
+    "exe": "tokei",
+    "install": {
+      "scoop": "scoop install tokei",
+      "winget": "winget install XAMPPRocky.tokei"
+    },
+    "repo": "XAMPPRocky/tokei",
+    "stars": 14848,
+    "url": "https://github.com/XAMPPRocky/tokei"
   }
 }
 
@@ -12117,6 +12157,250 @@ def _h_restic_306():
         return (jsonify({'error': str(e)}), 500)
 
 
+# ---- miller (mlr) action handlers ----
+
+_MILLER_FORMATS = ('csv', 'tsv', 'json', 'dkvp', 'pprint', 'nidx', 'xtab', 'markdown')
+
+
+def _miller__resolve_input(body):
+    """Return (data_str_or_None, path_or_None, error_response_or_None)."""
+    data = body.get('data')
+    path = str(body.get('path') or '').strip()
+    if data is None and not path:
+        return None, None, _missing_field(body, 'data')
+    if path and not os.path.isfile(path):
+        return None, None, (jsonify({'error': f'File not found: {path}'}), 404)
+    return data, path, None
+
+
+def _miller__build_cmd(exe, in_fmt, out_fmt, verb_args, path):
+    if in_fmt not in _MILLER_FORMATS or out_fmt not in _MILLER_FORMATS:
+        return None, (jsonify({'error': f'Invalid format. Allowed: {", ".join(_MILLER_FORMATS)}'}), 400)
+    cmd = [exe, f'--i{in_fmt}', f'--o{out_fmt}'] + verb_args
+    if path:
+        cmd.append(path)
+    return cmd, None
+
+
+def _h_miller_307():
+    """Convert tabular data between formats (CSV/TSV/JSON/DKVP/...).
+
+        Body (JSON):
+            data (str, optional): inline input text (CSV/TSV/JSON/...).
+            path (str, optional): path to an input file instead of `data`.
+            input_format (str, optional): csv|tsv|json|dkvp|pprint|nidx|xtab|markdown. Default csv.
+            output_format (str, optional): same set. Default json.
+    """
+    body = _json_body()
+    data, path, err = _miller__resolve_input(body)
+    if err:
+        return err
+    exe = _find_tool('miller')
+    if not exe:
+        return (jsonify({'error': 'miller is not installed', 'hint': 'winget install Miller.Miller'}), 503)
+    in_fmt = str(body.get('input_format') or 'csv').strip().lower()
+    out_fmt = str(body.get('output_format') or 'json').strip().lower()
+    cmd, err = _miller__build_cmd(exe, in_fmt, out_fmt, [], path)
+    if err:
+        return err
+    try:
+        r = subprocess.run(cmd, input=None if path else str(data), capture_output=True,
+                           text=True, errors='replace', timeout=60)
+        if r.returncode != 0:
+            _log(f'[miller convert] rc={r.returncode}: {r.stderr[:300]}')
+            return (jsonify({'error': r.stderr.strip() or 'miller convert failed'}), 500)
+        return jsonify({'ok': True, 'output_format': out_fmt, 'output': r.stdout})
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': 'miller convert timed out'}), 504)
+    except Exception as e:
+        _log(f'[miller convert] {str(e)}')
+        return (jsonify({'error': str(e)}), 500)
+
+
+def _h_miller_308():
+    """Compute summary statistics for a named column.
+
+        Body (JSON):
+            field (str, required): column name to summarize.
+            data (str, optional): inline input text.
+            path (str, optional): input file path.
+            input_format (str, optional): default csv.
+            aggregators (str, optional): comma list e.g. count,mean,min,max,sum.
+                Default count,mean,min,max,sum.
+    """
+    body = _json_body()
+    field = str(body.get('field') or '').strip()
+    if not field:
+        return _missing_field(body, 'field')
+    data, path, err = _miller__resolve_input(body)
+    if err:
+        return err
+    exe = _find_tool('miller')
+    if not exe:
+        return (jsonify({'error': 'miller is not installed', 'hint': 'winget install Miller.Miller'}), 503)
+    in_fmt = str(body.get('input_format') or 'csv').strip().lower()
+    agg = str(body.get('aggregators') or 'count,mean,min,max,sum').strip()
+    cmd, err = _miller__build_cmd(exe, in_fmt, 'json', ['stats1', '-a', agg, '-f', field], path)
+    if err:
+        return err
+    try:
+        r = subprocess.run(cmd, input=None if path else str(data), capture_output=True,
+                           text=True, errors='replace', timeout=60)
+        if r.returncode != 0:
+            _log(f'[miller stats] rc={r.returncode}: {r.stderr[:300]}')
+            return (jsonify({'error': r.stderr.strip() or 'miller stats failed'}), 500)
+        return jsonify({'ok': True, 'field': field, 'aggregators': agg, 'output': r.stdout})
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': 'miller stats timed out'}), 504)
+    except Exception as e:
+        _log(f'[miller stats] {str(e)}')
+        return (jsonify({'error': str(e)}), 500)
+
+
+def _h_miller_309():
+    """Run an arbitrary Miller verb chain against inline data or a file.
+
+        Body (JSON):
+            verbs (str, required): Miller verb chain, e.g. "cut -f a,b then sort -f a".
+            data (str, optional): inline input text.
+            path (str, optional): input file path.
+            input_format (str, optional): default csv.
+            output_format (str, optional): default json.
+    """
+    body = _json_body()
+    verbs = str(body.get('verbs') or '').strip()
+    if not verbs:
+        return _missing_field(body, 'verbs')
+    data, path, err = _miller__resolve_input(body)
+    if err:
+        return err
+    exe = _find_tool('miller')
+    if not exe:
+        return (jsonify({'error': 'miller is not installed', 'hint': 'winget install Miller.Miller'}), 503)
+    in_fmt = str(body.get('input_format') or 'csv').strip().lower()
+    out_fmt = str(body.get('output_format') or 'json').strip().lower()
+    try:
+        verb_args = shlex.split(verbs)
+    except ValueError as e:
+        return (jsonify({'error': f'Invalid verbs string: {e}'}), 400)
+    if not verb_args:
+        return (jsonify({'error': 'verbs string parsed to nothing'}), 400)
+    cmd, err = _miller__build_cmd(exe, in_fmt, out_fmt, verb_args, path)
+    if err:
+        return err
+    try:
+        r = subprocess.run(cmd, input=None if path else str(data), capture_output=True,
+                           text=True, errors='replace', timeout=60)
+        if r.returncode != 0:
+            _log(f'[miller process] rc={r.returncode}: {r.stderr[:300]}')
+            return (jsonify({'error': r.stderr.strip() or 'miller process failed'}), 500)
+        return jsonify({'ok': True, 'output': r.stdout})
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': 'miller process timed out'}), 504)
+    except Exception as e:
+        _log(f'[miller process] {str(e)}')
+        return (jsonify({'error': str(e)}), 500)
+
+
+# ---- tokei action handlers ----
+
+def _h_tokei_310():
+    """Count lines of code in a path, grouped by language.
+
+        Body (JSON):
+            path (str, required): file or directory to analyze.
+            exclude (str, optional): glob pattern to ignore.
+            sort (str, optional): files|lines|blanks|code|comments.
+    """
+    body = _json_body()
+    path = str(body.get('path') or '').strip()
+    if not path:
+        return _missing_field(body, 'path')
+    if not os.path.exists(path):
+        return (jsonify({'error': f'Path not found: {path}'}), 404)
+    exe = _find_tool('tokei')
+    if not exe:
+        return (jsonify({'error': 'tokei is not installed', 'hint': 'winget install XAMPPRocky.tokei'}), 503)
+    cmd = [exe, path, '--output', 'json']
+    exclude = str(body.get('exclude') or '').strip()
+    if exclude:
+        cmd += ['--exclude', exclude]
+    sort = str(body.get('sort') or '').strip().lower()
+    if sort in ('files', 'lines', 'blanks', 'code', 'comments'):
+        cmd += ['--sort', sort]
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, errors='replace', timeout=120)
+        if r.returncode != 0:
+            _log(f'[tokei count] rc={r.returncode}: {r.stderr[:300]}')
+            return (jsonify({'error': r.stderr.strip() or 'tokei count failed'}), 500)
+        try:
+            stats = json_lib.loads(r.stdout)
+        except Exception:
+            stats = r.stdout
+        return jsonify({'ok': True, 'path': path, 'stats': stats})
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': 'tokei count timed out'}), 504)
+    except Exception as e:
+        _log(f'[tokei count] {str(e)}')
+        return (jsonify({'error': str(e)}), 500)
+
+
+def _h_tokei_311():
+    """List the programming languages tokei recognizes."""
+    exe = _find_tool('tokei')
+    if not exe:
+        return (jsonify({'error': 'tokei is not installed', 'hint': 'winget install XAMPPRocky.tokei'}), 503)
+    try:
+        r = subprocess.run([exe, '--languages'], capture_output=True, text=True, errors='replace', timeout=30)
+        if r.returncode != 0:
+            _log(f'[tokei languages] rc={r.returncode}: {r.stderr[:300]}')
+            return (jsonify({'error': r.stderr.strip() or 'tokei languages failed'}), 500)
+        langs = [ln.strip() for ln in (r.stdout or '').splitlines() if ln.strip()]
+        return jsonify({'ok': True, 'count': len(langs), 'languages': langs})
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': 'tokei languages timed out'}), 504)
+    except Exception as e:
+        _log(f'[tokei languages] {str(e)}')
+        return (jsonify({'error': str(e)}), 500)
+
+
+def _h_tokei_312():
+    """Per-file code statistics for a directory.
+
+        Body (JSON):
+            path (str, required): directory to analyze.
+            exclude (str, optional): glob pattern to ignore.
+    """
+    body = _json_body()
+    path = str(body.get('path') or '').strip()
+    if not path:
+        return _missing_field(body, 'path')
+    if not os.path.isdir(path):
+        return (jsonify({'error': f'Not a directory: {path}'}), 404)
+    exe = _find_tool('tokei')
+    if not exe:
+        return (jsonify({'error': 'tokei is not installed', 'hint': 'winget install XAMPPRocky.tokei'}), 503)
+    cmd = [exe, path, '--files', '--output', 'json']
+    exclude = str(body.get('exclude') or '').strip()
+    if exclude:
+        cmd += ['--exclude', exclude]
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, errors='replace', timeout=120)
+        if r.returncode != 0:
+            _log(f'[tokei files] rc={r.returncode}: {r.stderr[:300]}')
+            return (jsonify({'error': r.stderr.strip() or 'tokei files failed'}), 500)
+        try:
+            stats = json_lib.loads(r.stdout)
+        except Exception:
+            stats = r.stdout
+        return jsonify({'ok': True, 'path': path, 'stats': stats})
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': 'tokei files timed out'}), 504)
+    except Exception as e:
+        _log(f'[tokei files] {str(e)}')
+        return (jsonify({'error': str(e)}), 500)
+
+
 def register_routes(app, state, require_auth):
     global _STATE
     _STATE = state
@@ -12430,6 +12714,12 @@ def register_routes(app, state, require_auth):
         ('/auto/restic/restore', ['POST'], _h_restic_304),
         ('/auto/restic/stats', ['GET'], _h_restic_305),
         ('/auto/restic/init', ['POST'], _h_restic_306),
+        ('/auto/miller/convert', ['POST'], _h_miller_307),
+        ('/auto/miller/stats', ['POST'], _h_miller_308),
+        ('/auto/miller/process', ['POST'], _h_miller_309),
+        ('/auto/tokei/count', ['POST'], _h_tokei_310),
+        ('/auto/tokei/languages', ['GET'], _h_tokei_311),
+        ('/auto/tokei/files', ['POST'], _h_tokei_312),
     ]
     for _path, _methods, _fn in _ACTIONS:
         app.add_url_rule(_path, endpoint=_fn.__name__, view_func=require_auth(_fn), methods=_methods)
