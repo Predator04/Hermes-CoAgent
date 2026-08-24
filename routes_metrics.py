@@ -61,7 +61,7 @@ def _le_sort_value(le):
 
 
 def _label(value):
-    return str(value).replace("\\", "\\\\").replace("\n", "\\n").replace('"', '\\"')
+    return str(value).replace("\\", "\\\\").replace("\n", "\\n").replace("\r", "\\r").replace('"', '\\"')
 
 
 def _route_path():
