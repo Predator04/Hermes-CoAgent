@@ -36,13 +36,19 @@ def _ps(script, timeout=60):
 
 
 def _ps_json(script, timeout=60):
-    """Run PowerShell, try to parse JSON output; fall back to raw text."""
+    """Run PowerShell, try to parse JSON output; fall back to raw text.
+
+    Always returns a dict so callers can safely subscript / use ``in``.
+    Non-object JSON (``null``, arrays, scalars) is treated as a parse failure.
+    """
     stdout, stderr, code = _ps(script, timeout=timeout)
     if stdout:
         try:
-            return json.loads(stdout), stderr, code
+            parsed = json.loads(stdout)
         except (ValueError, TypeError):
-            pass
+            parsed = None
+        if isinstance(parsed, dict):
+            return parsed, stderr, code
     return {"raw": stdout or stderr}, stderr, code
 
 
