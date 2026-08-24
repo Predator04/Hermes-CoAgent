@@ -160,6 +160,11 @@ def _coerce_tunnel_port(value):
         raise ValueError("Tunnel port must be between 1 and 65535")
     return port
 
+_DOMAIN_RE = re.compile(r"^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$", re.IGNORECASE)
+
+def _valid_domain(value):
+    return bool(_DOMAIN_RE.match(value))
+
 def _extract_tunnel_url(text):
     for match in _TUNNEL_URL_RE.findall(text or ""):
         lowered = match.lower().rstrip(".,);]")
@@ -264,11 +269,14 @@ def _stop_tunnel_locked():
     })
     return stopped
 
-def _build_tunnel_command(method, exe, port):
+def _build_tunnel_command(method, exe, port, domain=None):
     if method == "cloudflare":
         return [exe, "tunnel", "--url", f"http://127.0.0.1:{port}"]
     if method == "ngrok":
-        return [exe, "http", str(port), "--log=stdout"]
+        cmd = [exe, "http", str(port), "--log=stdout"]
+        if domain:
+            cmd += ["--domain", domain]
+        return cmd
     raise ValueError("Unsupported tunnel method")
 
 def _tunnel_help_message(method, recent_output=None, missing=False, timed_out=False):
@@ -1005,6 +1013,10 @@ $s.Speak($text)
         except (TypeError, ValueError):
             return jsonify({"error": "Invalid tunnel timeout"}), 400
 
+        domain = str(d.get("domain", "") or "").strip()
+        if domain and not _valid_domain(domain):
+            return jsonify({"error": "Invalid tunnel domain", "domain": domain}), 400
+
         tools = _tunnel_tools()
         exe = tools.get(method)
         if not exe and method == "ngrok" and _ensure_ngrok is not None:
@@ -1025,7 +1037,7 @@ $s.Speak($text)
         if method == "ngrok":
             _configure_ngrok_authtoken(exe, d.get("ngrok_authtoken"))
 
-        cmd = _build_tunnel_command(method, exe, port)
+        cmd = _build_tunnel_command(method, exe, port, domain=domain)
         create_flags = subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0
         with _TUNNEL_LOCK:
             if _tunnel_active_locked():

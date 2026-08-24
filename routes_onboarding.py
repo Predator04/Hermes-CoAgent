@@ -301,9 +301,13 @@ def route_onboard_tunnel():
         method = "ngrok"
     ngrok_authtoken_raw = incoming.get("ngrok_authtoken")
     ngrok_authtoken = str(ngrok_authtoken_raw).strip() if isinstance(ngrok_authtoken_raw, str) else ""
+    domain_raw = incoming.get("domain")
+    domain = str(domain_raw).strip() if isinstance(domain_raw, str) else ""
     payload = {"method": method, "port": SERVER_PORT, "timeout": 25}
     if ngrok_authtoken:
         payload["ngrok_authtoken"] = ngrok_authtoken
+    if domain:
+        payload["domain"] = domain
     body_bytes = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
         f"http://127.0.0.1:{SERVER_PORT}/tunnel/start",
@@ -503,8 +507,12 @@ button:disabled{opacity:.45;cursor:not-allowed}
           Ngrok authtoken (optional). <a href="https://dashboard.ngrok.com/get-started/your-authtoken" target="_blank" rel="noopener">Get your authtoken</a>.
         </label>
         <input class="token-input" id="ngrokToken" type="text" placeholder="paste your ngrok authtoken here" autocomplete="off" style="width:100%">
+        <label for="ngrokDomain" style="display:block;color:var(--muted);font-size:12px;margin:8px 0 4px">
+          Reserved domain (optional, for a permanent URL). <a href="https://dashboard.ngrok.com/domains" target="_blank" rel="noopener">Reserve a domain</a>.
+        </label>
+        <input class="token-input" id="ngrokDomain" type="text" placeholder="e.g. mylaptop.ngrok-free.app" autocomplete="off" style="width:100%">
         <p style="color:var(--muted);font-size:12px;margin:6px 0 0">
-          1. Create a free account at ngrok.com. 2. Copy your authtoken from the dashboard. 3. Paste it here. 4. Click Start tunnel.
+          1. Create a free account at ngrok.com. 2. Copy your authtoken from the dashboard. 3. Reserve a static domain under Domains. 4. Paste both here. 5. Click Start tunnel.
         </p>
       </div>
       <div style="display:flex;gap:8px;align-items:center;margin-top:10px">
@@ -623,6 +631,8 @@ async function startTunnel() {
   const method = methodEl ? methodEl.value : "ngrok";
   const tokenEl = document.getElementById("ngrokToken");
   const authtoken = tokenEl ? (tokenEl.value || "").trim() : "";
+  const domainEl = document.getElementById("ngrokDomain");
+  const domain = domainEl ? (domainEl.value || "").trim() : "";
   const origLabel = btn.textContent;
   btn.disabled = true;
   btn.textContent = "Starting...";
@@ -630,7 +640,7 @@ async function startTunnel() {
   try {
     const r = await fetch("/onboard/tunnel", {
       method: "POST", headers: h(),
-      body: JSON.stringify({ method: method, ngrok_authtoken: authtoken }),
+      body: JSON.stringify({ method: method, ngrok_authtoken: authtoken, domain: domain }),
     });
     const d = await r.json();
     if (!r.ok || !d.url) {
