@@ -519,7 +519,7 @@ def register_routes(app, state, require_auth):
             _log(f"[VOICE] Start failed: {msg}")
             return jsonify({"error": msg}), 503
 
-        d = _json_body()
+        d = _json_body() or {}
         language = d.get("language", "en-US")
         with _VOICE_LOCK:
             if _VOICE_THREAD and _VOICE_THREAD.is_alive():
