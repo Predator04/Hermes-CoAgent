@@ -1,5 +1,5 @@
 """File, app launch, and power management routes."""
-import os, subprocess, ctypes, sys
+import os, subprocess, ctypes, sys, tempfile
 from pathlib import Path
 from flask import jsonify
 from shared import _json_body, _log, _missing_field, COAGENT_DIR, _sanitize_path, _sanitize_cmd
@@ -83,10 +83,12 @@ def register_routes(app, state, require_auth):
             return jsonify({"error": str(e)}), 403
         if not os.path.isfile(path):
             return jsonify({"error": "File not found"}), 404
-        if os.path.getsize(path) > 50 * 1024 * 1024:
-            return jsonify({"error": "File too large (>50MB)"}), 413
         try:
             with open(path, "r", encoding="utf-8", errors="replace") as f:
+                # Check size on the opened fd to avoid a TOCTOU window where the
+                # file grows past the 50MB limit between getsize() and read().
+                if os.fstat(f.fileno()).st_size > 50 * 1024 * 1024:
+                    return jsonify({"error": "File too large (>50MB)"}), 413
                 content = f.read()
             return jsonify({"path": path, "content": content, "size": len(content)})
         except Exception as e:
@@ -111,8 +113,22 @@ def register_routes(app, state, require_auth):
             if parent:
                 os.makedirs(parent, exist_ok=True)
             backup_path = backup_file(path)
-            with open(path, "w", encoding="utf-8") as f:
-                f.write(content)
+            # Write atomically: stage to a temp file then os.replace() so a crash
+            # or disk-full mid-write cannot truncate the original file.
+            fd, tmp_path = tempfile.mkstemp(dir=parent or ".", prefix=".coagent_write_", suffix=".tmp")
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    f.write(content)
+                if os.path.exists(path):
+                    import shutil as _shutil
+                    _shutil.copymode(path, tmp_path)
+                os.replace(tmp_path, path)
+            except BaseException:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+                raise
             _log(f"File written: {path} ({len(content)} chars)")
             return jsonify({"status": "ok", "path": path, "size": len(content), "backup": backup_path})
         except Exception as e:
