@@ -741,6 +741,7 @@ from routes_telegram import register_routes as reg_telegram
 from routes_memory import register_routes as reg_memory, memory_stats
 from routes_reminders import register_routes as reg_reminders
 from routes_hud import register_routes as reg_hud
+from routes_idle import register_routes as reg_idle
 
 try:
     from routes_recorder_gif import register_routes as reg_recorder_gif
@@ -1159,6 +1160,7 @@ reg_rag_workspace(app, state, require_auth)
 reg_telegram(app, state, require_auth)
 reg_mcp(app, state, require_auth)
 reg_mcp_client(app, state, require_auth)
+reg_idle(app, state, require_auth)
 reg_memory(app, state, require_auth)
 features["memory"] = True
 reg_reminders(app, state, require_auth)
