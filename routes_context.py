@@ -18,6 +18,15 @@ from flask import jsonify, request
 from shared import _log
 
 
+# Set Pillow's decompression-bomb guard once at import time. Mutating this on
+# every request races with concurrent workers and leaks into unrelated calls.
+try:
+    from PIL import Image as _PIL_Image
+    _PIL_Image.MAX_IMAGE_PIXELS = 50_000_000
+except Exception:
+    _PIL_Image = None
+
+
 DEFAULT_BUDGET = 8000  # rough token budget (~ 32 KB of JSON)
 
 _TARGET_PATH_PREFIXES = ("/uia/tree", "/uia/snapshot", "/process/list", "/screen")
@@ -171,10 +180,6 @@ def downscale_screenshot(img_bytes, budget=DEFAULT_BUDGET, max_dim=1280, quality
         return img_bytes, {"downscaled": False, "reason": "empty"}
     try:
         from PIL import Image
-        # Guard against decompression bombs: cap the decoded pixel count well
-        # below Pillow's default (~89M) so a malicious image can't force huge
-        # RAM allocation during im.load().
-        Image.MAX_IMAGE_PIXELS = 50_000_000
     except ImportError:
         return img_bytes, {"downscaled": False, "reason": "pillow_missing"}
     try:
@@ -214,7 +219,7 @@ def downscale_screenshot(img_bytes, budget=DEFAULT_BUDGET, max_dim=1280, quality
     except Exception as e:
         return img_bytes, {"downscaled": False, "reason": f"encode_failed:{type(e).__name__}"}
     new_bytes = out_buf.getvalue()
-    if len(new_bytes) >= orig_bytes and scale >= 1.0:
+    if len(new_bytes) >= orig_bytes:
         return img_bytes, {
             "downscaled": False,
             "reason": "no_savings",
@@ -396,7 +401,10 @@ def optimize_payload(payload, budget=DEFAULT_BUDGET, hint=None):
             new_payload = dict(payload)
             new_payload["processes"] = new_procs
             if isinstance(new_procs, list) and len(new_procs) != len(procs):
-                new_payload["count"] = len(new_procs)
+                new_payload["count"] = sum(
+                    1 for p in new_procs
+                    if not (isinstance(p, dict) and "_truncated_items" in p)
+                )
             filtered = {k: v for k, v in rep.items() if k != "actions"}
             report["actions"].append({"op": "trim_processes", **filtered})
             report["tokens_after"] = estimate_tokens(new_payload)
@@ -562,8 +570,16 @@ def register_routes(app, state, require_auth):
                     "ok": False,
                     "error": f"invalid base64: {type(e).__name__}",
                 }), 400
-            max_dim = int(body.get("max_dim") or _budget_to_max_dim(budget))
-            quality = int(body.get("quality") or _budget_to_quality(budget))
+            try:
+                max_dim = int(body.get("max_dim") or _budget_to_max_dim(budget))
+            except (TypeError, ValueError):
+                max_dim = _budget_to_max_dim(budget)
+            max_dim = max(1, min(max_dim, 4096))
+            try:
+                quality = int(body.get("quality") or _budget_to_quality(budget))
+            except (TypeError, ValueError):
+                quality = _budget_to_quality(budget)
+            quality = max(1, min(quality, 95))
             new_bytes, rep = downscale_screenshot(
                 raw, budget=budget, max_dim=max_dim, quality=quality,
             )
