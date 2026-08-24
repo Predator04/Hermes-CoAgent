@@ -45,6 +45,7 @@ setup(
     entry_points={
         "console_scripts": [
             "hermes-coagent = hermes_coagent:main",
+            "coagent = coagent_cli:main",
         ],
     },
     include_package_data=True,
