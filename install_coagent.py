@@ -409,7 +409,7 @@ Shortcut.Save
     schtasks_cmd = [
         "schtasks", "/create", "/tn", "CoAgent", "/tr",
         f'"{bat_path}"', "/sc", "onlogon",
-        "/it", "/f", "/delay", "0000:30"
+        "/it", "/f", "/rl", "HIGHEST", "/delay", "0000:30"
     ]
     if username:
         schtasks_cmd += ["/ru", username]

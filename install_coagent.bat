@@ -5,6 +5,14 @@ REM Handles fresh installs, updates in place, and wipe-and-restart.
 
 setlocal enabledelayedexpansion
 
+:: Self-elevate to administrator (needed to register the auto-start task)
+fltmc >nul 2>&1
+if %errorlevel% neq 0 (
+    echo Requesting administrator privileges...
+    powershell -NoProfile -Command "Start-Process -FilePath '%~f0' -Verb RunAs"
+    exit /b
+)
+
 echo.
 echo ==========================================
 echo  Hermes CoAgent - One-Click Installer
