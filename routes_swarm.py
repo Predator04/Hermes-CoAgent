@@ -18,6 +18,7 @@ Endpoints:
     GET  /swarm/version
 """
 
+import copy
 import json
 import queue
 import re
@@ -121,7 +122,7 @@ def _short_text(value, limit=200, fallback=""):
     if not text:
         text = str(fallback or "").strip()
     if len(text) > limit:
-        return text[: max(0, limit - 1)].rstrip() + "..."
+        return text[: max(0, limit - 3)].rstrip() + "..."
     return text
 
 
@@ -1053,8 +1054,10 @@ def route_swarm_stop(run_id):
             run["status"] = "stopping"
         run["updated_at"] = _now()
         # Snapshot under the same lock so a concurrent _trim_runs() eviction
-        # can't make the later _RUNS[run_id] access raise KeyError.
-        snapshot = _snapshot(run)
+        # can't make the later _RUNS[run_id] access raise KeyError. Deep-copy so
+        # jsonify() outside the lock never serializes a task list/dict that a
+        # worker thread is still mutating (RuntimeError: dict changed size).
+        snapshot = copy.deepcopy(_snapshot(run))
     _log(run_id, "warn", "Stop requested", "\U0001F7E1")
     _emit(run_id, "swarm_status", {"status": "stopping", "icon": STATUS_ICONS["stopping"]})
     _emit_timeline(run_id)
