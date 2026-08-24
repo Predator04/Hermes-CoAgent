@@ -102,6 +102,9 @@ def _restore_window(entry):
     rect = entry.get("rect", {})
     show_cmd = entry.get("show_cmd", 1)
 
+    if not title:
+        return False, "empty title"
+
     windows = _enum_windows()
 
     # Exact title match first, then prefix/contains fallback
@@ -116,22 +119,28 @@ def _restore_window(entry):
         return False, f"No window matching '{title[:60]}'"
 
     hwnd = match["hwnd"]
-    l = rect.get("left", 0)
-    t = rect.get("top", 0)
-    w = rect.get("right", 800) - l
-    h = rect.get("bottom", 600) - t
+    if not all(k in rect for k in ("left", "top", "right", "bottom")):
+        return False, f"invalid rect for '{title[:60]}'"
+    l = rect["left"]
+    t = rect["top"]
+    w = rect["right"] - l
+    h = rect["bottom"] - t
 
     SW_RESTORE = 9
-    SW_MAXIMIZE = 3
-    SW_MINIMIZE = 6
+    # WINDOWPLACEMENT.showCmd values (NOT the ShowWindow nCmd constants):
+    # SW_SHOWNORMAL=1, SW_SHOWMINIMIZED=2, SW_SHOWMAXIMIZED=3.
+    # Previously compared against SW_MINIMIZE (6), which never matched, so a
+    # minimized window fell through to the restore-and-move branch.
+    SW_SHOWMAXIMIZED = 3
+    SW_SHOWMINIMIZED = 2
     SW_SHOWNORMAL = 1
 
-    if show_cmd == SW_MAXIMIZE:
+    if show_cmd == SW_SHOWMAXIMIZED:
         ctypes.windll.user32.ShowWindow(hwnd, SW_RESTORE)
         time.sleep(0.04)
-        ctypes.windll.user32.ShowWindow(hwnd, SW_MAXIMIZE)
-    elif show_cmd == SW_MINIMIZE:
-        ctypes.windll.user32.ShowWindow(hwnd, SW_MINIMIZE)
+        ctypes.windll.user32.ShowWindow(hwnd, SW_SHOWMAXIMIZED)
+    elif show_cmd == SW_SHOWMINIMIZED:
+        ctypes.windll.user32.ShowWindow(hwnd, SW_SHOWMINIMIZED)
     else:
         ctypes.windll.user32.ShowWindow(hwnd, SW_RESTORE)
         time.sleep(0.04)
