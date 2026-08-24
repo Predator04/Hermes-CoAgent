@@ -151,7 +151,7 @@ def _find_table_element(desktop, window_title, selector, automation_id, control_
             return True
         if needle_sel:
             if needle_sel in name or needle_sel in aid:
-                return ct in _TABLE_CONTROL_TYPES or ct_hint == "" and ct != ""
+                return ct in _TABLE_CONTROL_TYPES
             return False
         return ct in _TABLE_CONTROL_TYPES
 
