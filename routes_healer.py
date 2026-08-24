@@ -52,6 +52,7 @@ MIN_HEALTHY_PROBES = 3
 _CONFIG_LOCK = threading.RLock()
 _LOG_LOCK = threading.RLock()
 _STATUS_LOCK = threading.RLock()
+_SAMPLES_LOCK = threading.Lock()
 _HEALER_CONFIG = dict(DEFAULT_CONFIG)
 _HEALER_LOG = deque(maxlen=100)
 _ERROR_TOTAL_SAMPLES = deque(maxlen=240)
@@ -241,12 +242,13 @@ def _metric_error_total():
 def _errors_last_hour():
     now = time.time()
     current = _metric_error_total()
-    _ERROR_TOTAL_SAMPLES.append((now, current))
-    while _ERROR_TOTAL_SAMPLES and now - _ERROR_TOTAL_SAMPLES[0][0] > 3600:
-        _ERROR_TOTAL_SAMPLES.popleft()
-    if len(_ERROR_TOTAL_SAMPLES) < 2:
-        return 0
-    return max(0, current - _ERROR_TOTAL_SAMPLES[0][1])
+    with _SAMPLES_LOCK:
+        _ERROR_TOTAL_SAMPLES.append((now, current))
+        while _ERROR_TOTAL_SAMPLES and now - _ERROR_TOTAL_SAMPLES[0][0] > 3600:
+            _ERROR_TOTAL_SAMPLES.popleft()
+        if len(_ERROR_TOTAL_SAMPLES) < 2:
+            return 0
+        return max(0, current - _ERROR_TOTAL_SAMPLES[0][1])
 
 
 def _route_total():
