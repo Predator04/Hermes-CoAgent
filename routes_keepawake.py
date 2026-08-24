@@ -93,6 +93,9 @@ def _stop_hold_locked():
         # Bounded join: wait for the holder to observe the signal and clear its
         # execution-state flag so we don't report "stopped" prematurely.
         t.join(timeout=2.0)
+        if t.is_alive():
+            _log("keepawake: holder thread did not exit within 2s of stop; "
+                 "execution-state flag may persist until the thread exits")
     _hold["active"] = False
     _hold["display_off"] = False
     _hold["since"] = None
