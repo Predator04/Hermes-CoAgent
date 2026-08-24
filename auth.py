@@ -142,7 +142,14 @@ def _save_token(token):
     try:
         fd, tmp_path = tempfile.mkstemp(prefix=".token", suffix=".tmp", dir=str(tp.parent))
         try:
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
+            try:
+                f = os.fdopen(fd, "w", encoding="utf-8")
+            except Exception:
+                # fdopen failed before taking ownership of the fd — close it
+                # ourselves to avoid leaking the descriptor.
+                os.close(fd)
+                raise
+            with f:
                 f.write(token)
             if os.name != "nt":
                 os.chmod(tmp_path, 0o600)
