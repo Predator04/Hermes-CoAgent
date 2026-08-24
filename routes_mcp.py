@@ -22,6 +22,10 @@ _MAX_SSE_SUBSCRIBERS = 32
 _SUBSCRIBERS = []
 _SUBSCRIBERS_LOCK = threading.Lock()
 
+# Set in register_routes(); used by prompts/list + prompts/get to reach the
+# agent-skills catalog exposed by routes_skills.py (state.skills).
+_STATE = None
+
 _EXCLUDED_PATHS = {
     "/mcp",
     "/mcp/events",
@@ -512,8 +516,124 @@ def _read_resource(app, params):
             "time": datetime.now(timezone.utc).isoformat(),
         }, indent=2)
     else:
+        # Resolve resource-template shapes (file / clipboard).
+        templated = _read_resource_template(uri)
+        if templated is not None:
+            return {"contents": [templated]}
         return None
     return {"contents": [{"uri": uri, "mimeType": "application/json", "text": text}]}
+
+
+def _resource_templates_list():
+    """Resource templates for the common shapes (screenshot, file, clipboard)."""
+    return {
+        "resourceTemplates": [
+            {
+                "uriTemplate": "coagent://screenshot/{monitor}",
+                "name": "screenshot",
+                "description": "Capture a screenshot of the given monitor (default 0).",
+                "mimeType": "image/jpeg",
+            },
+            {
+                "uriTemplate": "coagent://file/{path}",
+                "name": "file",
+                "description": "Read the text contents of a file on the CoAgent host.",
+                "mimeType": "text/plain",
+            },
+            {
+                "uriTemplate": "coagent://clipboard",
+                "name": "clipboard",
+                "description": "Read the current clipboard text.",
+                "mimeType": "text/plain",
+            },
+        ]
+    }
+
+
+def _read_resource_template(uri):
+    """Resolve a resource-template URI (file / clipboard) to text contents."""
+    if uri == "coagent://clipboard":
+        try:
+            import subprocess
+            out = subprocess.run(
+                ["powershell", "-NoProfile", "-Command", "Get-Clipboard"],
+                capture_output=True, timeout=10,
+            )
+            text = (out.stdout or b"").decode("utf-8", errors="replace")
+            return {"uri": uri, "mimeType": "text/plain", "text": text}
+        except Exception:
+            return None
+    if uri.startswith("coagent://file/"):
+        path = uri[len("coagent://file/"):]
+        try:
+            import os
+            if not path or not os.path.isfile(path):
+                return None
+            with open(path, "r", encoding="utf-8", errors="replace") as fh:
+                text = fh.read()
+            return {"uri": uri, "mimeType": "text/plain", "text": text}
+        except Exception:
+            return None
+    return None
+
+
+def _prompts_list(state=None):
+    """Expose the agent-skills catalog as MCP prompt templates."""
+    state = state if state is not None else _STATE
+    prompts = []
+    skills = getattr(state, "skills", None) if state is not None else None
+    if skills is not None:
+        listing = skills.get("list") if isinstance(skills, dict) else None
+        if callable(listing):
+            try:
+                for meta in listing() or []:
+                    name = (meta or {}).get("name")
+                    if not name:
+                        continue
+                    prompts.append({
+                        "name": name,
+                        "description": ((meta or {}).get("description") or "").strip(),
+                        "arguments": [],
+                    })
+            except Exception:
+                pass
+    prompts.sort(key=lambda p: p["name"].lower())
+    return {"prompts": prompts}
+
+
+def _get_prompt(state, params):
+    """Return a skill body as an MCP prompt (user message)."""
+    if not isinstance(params, dict):
+        return None
+    name = params.get("name")
+    if not isinstance(name, str) or not name:
+        return None
+    skills = getattr(state, "skills", None) if state is not None else None
+    getter = skills.get("get") if isinstance(skills, dict) else None
+    if callable(getter):
+        try:
+            entry = getter(name)
+        except Exception:
+            entry = None
+        if entry:
+            body = (entry.get("body") or "").strip()
+            desc = (entry.get("description") or "").strip()
+            messages = []
+            if desc:
+                messages.append({
+                    "role": "user",
+                    "content": {"type": "text", "text": desc},
+                })
+            if body:
+                messages.append({
+                    "role": "user",
+                    "content": {"type": "text", "text": body},
+                })
+            return {
+                "description": desc,
+                "messages": messages,
+            }
+    return None
 
 
 def _initialize_result(params):
@@ -524,6 +644,7 @@ def _initialize_result(params):
         "capabilities": {
             "tools": {"listChanged": True},
             "resources": {"listChanged": True},
+            "prompts": {"listChanged": True},
         },
         "serverInfo": {
             "name": AGENT_NAME,
@@ -572,10 +693,19 @@ def _handle_rpc(app, message):
             return _jsonrpc_result(request_id, result)
         if method == "resources/list":
             return _jsonrpc_result(request_id, _resources_list(app))
+        if method == "resources/templates/list":
+            return _jsonrpc_result(request_id, _resource_templates_list())
         if method == "resources/read":
             result = _read_resource(app, params)
             if result is None:
                 return _jsonrpc_error(request_id, -32002, "Resource not found", {"uri": params.get("uri")})
+            return _jsonrpc_result(request_id, result)
+        if method == "prompts/list":
+            return _jsonrpc_result(request_id, _prompts_list(_STATE))
+        if method == "prompts/get":
+            result = _get_prompt(_STATE, params)
+            if result is None:
+                return _jsonrpc_error(request_id, -32602, "Prompt not found", {"name": params.get("name") if isinstance(params, dict) else None})
             return _jsonrpc_result(request_id, result)
         return None if is_notification else _jsonrpc_error(request_id, -32601, f"Method not found: {method}")
     except Exception as exc:
@@ -649,6 +779,9 @@ def run_stdio_server(app, stdin=None, stdout=None, stderr=None):
 
 
 def register_routes(app, state, require_auth):
+    global _STATE
+    _STATE = state
+
     @app.route("/mcp", methods=["GET", "POST"])
     @require_auth
     def route_mcp_jsonrpc():
