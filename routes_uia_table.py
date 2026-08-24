@@ -295,9 +295,12 @@ def _extract_via_descendants(element, max_rows, max_cols):
             continue
 
         try:
-            key = (info.name or "", info.automation_id or "", id(elem))
+            rid = tuple(info.runtime_id or ())
         except Exception:
-            key = (id(elem),)
+            rid = ()
+        if not rid:
+            rid = (id(elem),)
+        key = (info.name or "", info.automation_id or "", rid)
         if key in seen_row_ids:
             continue
         seen_row_ids.add(key)
