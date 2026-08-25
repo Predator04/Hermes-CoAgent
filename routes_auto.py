@@ -1280,6 +1280,46 @@ TOOLS = {
     "repo": "XAMPPRocky/tokei",
     "stars": 14848,
     "url": "https://github.com/XAMPPRocky/tokei"
+  },
+  "jc": {
+    "added": "2026-08-25",
+    "command": "jc -p --<parser> [data on stdin]",
+    "desc": "jc (JSON Convert) converts the output of popular command-line tools, file types, and common strings into structured JSON or YAML. Supports 100+ parsers including Windows ipconfig, netstat, and systeminfo. Pipe raw command output in, get clean JSON out \u2014 ideal for turning legacy text-based tools into machine-readable automation endpoints.",
+    "endpoints": {
+      "/auto/jc/info": "Feature metadata, install status, version",
+      "/auto/jc/ping": "Health check",
+      "/auto/jc/parse": "POST \u2014 convert command output text (or run a command via magic syntax) to JSON/YAML",
+      "/auto/jc/parsers": "GET \u2014 list available parsers"
+    },
+    "exe": "jc",
+    "install": {
+      "pip": "pip install jc",
+      "winget": "winget install KellyBrazil.jc"
+    },
+    "repo": "kellyjonbrazil/jc",
+    "stars": 8666,
+    "url": "https://github.com/kellyjonbrazil/jc"
+  },
+  "ruff": {
+    "added": "2026-08-25",
+    "command": "ruff check <path> --output-format json",
+    "desc": "ruff is an extremely fast Python linter and formatter written in Rust (10-100x faster than alternatives). Lint with hundreds of rules, auto-fix violations, and format code \u2014 all with machine-readable JSON output ideal for code-review and self-improvement pipelines.",
+    "endpoints": {
+      "/auto/ruff/info": "Feature metadata, install status, version",
+      "/auto/ruff/ping": "Health check",
+      "/auto/ruff/check": "POST \u2014 lint a file/directory (JSON output, optional --fix, --select rules)",
+      "/auto/ruff/format": "POST \u2014 format a file/directory (or check-only mode)",
+      "/auto/ruff/rule": "GET \u2014 explain a lint rule by code"
+    },
+    "exe": "ruff",
+    "install": {
+      "pip": "pip install ruff",
+      "scoop": "scoop install ruff",
+      "winget": "winget install astral-sh.ruff"
+    },
+    "repo": "astral-sh/ruff",
+    "stars": 49316,
+    "url": "https://github.com/astral-sh/ruff"
   }
 }
 
@@ -12401,6 +12441,178 @@ def _h_tokei_312():
         return (jsonify({'error': str(e)}), 500)
 
 
+def _h_jc_313():
+    """Convert raw command output (or a full command) to JSON/YAML via jc.
+
+        Body (JSON):
+            data (str, optional): raw text output to parse (sent to stdin).
+            command (str, optional): full command to run via jc magic syntax
+                (e.g. "ipconfig"). One of `data` or `command` is required.
+            parser (str, optional): jc parser name (e.g. ipconfig, netstat,
+                systeminfo, ls, df). If omitted, jc auto-detects when possible.
+            pretty (bool, optional): pretty-print output. Default true.
+            yaml (bool, optional): emit YAML instead of JSON. Default false.
+    """
+    body = _json_body()
+    data = body.get('data')
+    command = str(body.get('command') or '').strip()
+    if data is None and not command:
+        return _missing_field(body, 'data')
+    parser = str(body.get('parser') or '').strip()
+    pretty = bool(body.get('pretty', True))
+    yaml = bool(body.get('yaml', False))
+    exe = _find_tool('jc')
+    if not exe:
+        return (jsonify({'error': 'jc is not installed', 'hint': 'pip install jc  OR  winget install KellyBrazil.jc'}), 503)
+    cmd = [exe]
+    if pretty:
+        cmd.append('-p')
+    if yaml:
+        cmd.append('-y')
+    if parser:
+        cmd.append('--' + parser)
+    if command:
+        cmd += shlex.split(command)
+    try:
+        r = subprocess.run(cmd, input=None if command else str(data),
+                           capture_output=True, text=True, errors='replace', timeout=60)
+        if r.returncode != 0:
+            _log(f'[jc parse] rc={r.returncode}: {r.stderr[:300]}')
+            return (jsonify({'error': r.stderr.strip() or 'jc parse failed'}), 500)
+        out = r.stdout
+        if not yaml:
+            try:
+                out = json_lib.loads(out)
+            except Exception:
+                pass
+        return jsonify({'ok': True, 'parser': parser or 'auto', 'output': out})
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': 'jc parse timed out'}), 504)
+    except Exception as e:
+        _log(f'[jc parse] {str(e)}')
+        return (jsonify({'error': str(e)}), 500)
+
+
+def _h_jc_314():
+    """List all jc parsers available on this system."""
+    exe = _find_tool('jc')
+    if not exe:
+        return (jsonify({'error': 'jc is not installed', 'hint': 'pip install jc  OR  winget install KellyBrazil.jc'}), 503)
+    try:
+        r = subprocess.run([exe, '--about'], capture_output=True, text=True, errors='replace', timeout=30)
+        if r.returncode != 0:
+            _log(f'[jc parsers] rc={r.returncode}: {r.stderr[:300]}')
+            return (jsonify({'error': r.stderr.strip() or 'jc --about failed'}), 500)
+        return jsonify({'ok': True, 'about': r.stdout})
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': 'jc parsers timed out'}), 504)
+    except Exception as e:
+        _log(f'[jc parsers] {str(e)}')
+        return (jsonify({'error': str(e)}), 500)
+
+
+def _h_ruff_315():
+    """Lint a file or directory with ruff.
+
+        Body (JSON):
+            path (str, required): file or directory to lint.
+            fix (bool, optional): auto-fix violations. Default false.
+            select (str, optional): comma-separated rule codes to limit to.
+            output_format (str, optional): json|text|github|gitlab|grouped. Default json.
+    """
+    body = _json_body()
+    path = str(body.get('path') or '').strip()
+    if not path:
+        return _missing_field(body, 'path')
+    exe = _find_tool('ruff')
+    if not exe:
+        return (jsonify({'error': 'ruff is not installed', 'hint': 'pip install ruff  OR  winget install astral-sh.ruff'}), 503)
+    fmt = str(body.get('output_format') or 'json').strip().lower()
+    cmd = [exe, 'check', path, '--output-format', fmt]
+    if body.get('fix'):
+        cmd.append('--fix')
+    sel = str(body.get('select') or '').strip()
+    if sel:
+        cmd += ['--select', sel]
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, errors='replace', timeout=120)
+        # ruff returns rc=1 when violations are found; that's a valid result, not an error
+        if r.returncode not in (0, 1):
+            _log(f'[ruff check] rc={r.returncode}: {r.stderr[:300]}')
+            return (jsonify({'error': r.stderr.strip() or 'ruff check failed'}), 500)
+        out = r.stdout
+        if fmt == 'json':
+            try:
+                out = json_lib.loads(out)
+            except Exception:
+                pass
+        return jsonify({'ok': True, 'path': path, 'violations': out,
+                        'count': len(out) if isinstance(out, list) else None})
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': 'ruff check timed out'}), 504)
+    except Exception as e:
+        _log(f'[ruff check] {str(e)}')
+        return (jsonify({'error': str(e)}), 500)
+
+
+def _h_ruff_316():
+    """Format a file or directory with ruff.
+
+        Body (JSON):
+            path (str, required): file or directory to format.
+            check (bool, optional): don't write; just report what would change. Default false.
+    """
+    body = _json_body()
+    path = str(body.get('path') or '').strip()
+    if not path:
+        return _missing_field(body, 'path')
+    exe = _find_tool('ruff')
+    if not exe:
+        return (jsonify({'error': 'ruff is not installed', 'hint': 'pip install ruff  OR  winget install astral-sh.ruff'}), 503)
+    cmd = [exe, 'format', path]
+    if body.get('check'):
+        cmd.append('--check')
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, errors='replace', timeout=120)
+        if r.returncode not in (0, 1):
+            _log(f'[ruff format] rc={r.returncode}: {r.stderr[:300]}')
+            return (jsonify({'error': r.stderr.strip() or 'ruff format failed'}), 500)
+        return jsonify({'ok': True, 'path': path, 'check': bool(body.get('check')),
+                        'would_reformat': r.returncode == 1, 'output': (r.stdout or r.stderr).strip()})
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': 'ruff format timed out'}), 504)
+    except Exception as e:
+        _log(f'[ruff format] {str(e)}')
+        return (jsonify({'error': str(e)}), 500)
+
+
+def _h_ruff_317():
+    """Explain a lint rule by its code (e.g. E501, F401, B008).
+
+        Query params:
+            code (str, required): rule code to explain.
+    """
+    code = str(request.args.get('code') or '').strip()
+    if not code:
+        code = str(_json_body().get('code') or '').strip()
+    if not code:
+        return _missing_field({'code': ''}, 'code')
+    exe = _find_tool('ruff')
+    if not exe:
+        return (jsonify({'error': 'ruff is not installed', 'hint': 'pip install ruff  OR  winget install astral-sh.ruff'}), 503)
+    try:
+        r = subprocess.run([exe, 'rule', code], capture_output=True, text=True, errors='replace', timeout=30)
+        if r.returncode != 0:
+            _log(f'[ruff rule] rc={r.returncode}: {r.stderr[:300]}')
+            return (jsonify({'error': r.stderr.strip() or 'ruff rule failed'}), 500)
+        return jsonify({'ok': True, 'code': code, 'explanation': r.stdout})
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': 'ruff rule timed out'}), 504)
+    except Exception as e:
+        _log(f'[ruff rule] {str(e)}')
+        return (jsonify({'error': str(e)}), 500)
+
+
 def register_routes(app, state, require_auth):
     global _STATE
     _STATE = state
@@ -12720,6 +12932,11 @@ def register_routes(app, state, require_auth):
         ('/auto/tokei/count', ['POST'], _h_tokei_310),
         ('/auto/tokei/languages', ['GET'], _h_tokei_311),
         ('/auto/tokei/files', ['POST'], _h_tokei_312),
+        ('/auto/jc/parse', ['POST'], _h_jc_313),
+        ('/auto/jc/parsers', ['GET'], _h_jc_314),
+        ('/auto/ruff/check', ['POST'], _h_ruff_315),
+        ('/auto/ruff/format', ['POST'], _h_ruff_316),
+        ('/auto/ruff/rule', ['GET'], _h_ruff_317),
     ]
     for _path, _methods, _fn in _ACTIONS:
         app.add_url_rule(_path, endpoint=_fn.__name__, view_func=require_auth(_fn), methods=_methods)
