@@ -22,7 +22,7 @@ def register_routes(app, jsonify, request, COAGENT_DIR, _log, _json_body, requir
         quality = d.get("quality", 85)
         
         shots_dir = Path(COAGENT_DIR) / "camera_shots"
-        shots_dir.mkdir(exist_ok=True)
+        shots_dir.mkdir(parents=True, exist_ok=True)
         fname = f"snapshot_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}.jpg"
         path = shots_dir / fname
         
@@ -36,12 +36,13 @@ def register_routes(app, jsonify, request, COAGENT_DIR, _log, _json_body, requir
         for name, method in methods:
             try:
                 result = method(path, quality)
-                if result:
-                    _log(f"Webcam capture via {name}: {fname}")
-                    break
             except Exception as e:
                 last_error = f"{name}: {e}"
                 continue
+            if result:
+                _log(f"Webcam capture via {name}: {fname}")
+                break
+            last_error = f"{name}: returned no image"
         else:
             _log(f"All webcam capture methods failed: {last_error}")
             return jsonify({
