@@ -139,7 +139,7 @@ def _collect_uia_elements(ue, monitor_index=0):
         for child in node.get("children", []) or []:
             walk(child, depth + 1)
 
-    root = snap.get("tree", {})
+    root = snap.get("tree") or {}
     for child in root.get("children", []) or []:
         walk(child)
 
@@ -240,7 +240,10 @@ def register_routes(app, state, require_auth):
             )), 500
 
         d = _json_body()
-        monitor_index = int(d.get("monitor", 0))
+        try:
+            monitor_index = int(d.get("monitor") or 0)
+        except (TypeError, ValueError):
+            monitor_index = 0
         use_ocr_fallback = bool(d.get("ocr_fallback", True))
 
         # Capture screenshot
@@ -487,7 +490,7 @@ def register_routes(app, state, require_auth):
                 from routes_uia import _walk_uia_nodes, _rect_payload
                 snap = ue.uia_snapshot(timeout=3)
                 if snap.get("success"):
-                    for node in _walk_uia_nodes(snap.get("tree", {})):
+                    for node in _walk_uia_nodes(snap.get("tree") or {}):
                         rect = _rect_payload(node.get("rect"))
                         if not rect:
                             continue
