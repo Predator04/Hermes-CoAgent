@@ -138,7 +138,14 @@ def _safe_extract_member(tar, member, root, dest_dir):
     """
     if member.name == root:
         return False
-    rel_name = member.name[len(root) + 1:] if member.name.startswith(root + "/") else member.name
+    # Refuse absolute / drive-relative paths outright (TarSlip defense).
+    if member.name.startswith("/") or (len(member.name) > 1 and member.name[1] == ":"):
+        console(f"  ⚠ Skipping unsafe path in tarball: {member.name}", "yellow")
+        return False
+    if root and member.name.startswith(root + "/"):
+        rel_name = member.name[len(root) + 1:]
+    else:
+        rel_name = member.name
     if not rel_name:
         return False
     dest_root = os.path.abspath(dest_dir)
@@ -556,7 +563,7 @@ def cmd_update(args):
                 else:
                     console("  ✓ Already up to date", "green")
                     return 0
-    except (urllib.error.URLError, ConnectionError, OSError) as e:
+    except (urllib.error.URLError, ConnectionError, OSError, json.JSONDecodeError, ValueError) as e:
         console(f"  Server not reachable (is it running?): {e}", "yellow")
         console("  Falling back to direct download...")
 
@@ -713,7 +720,13 @@ def cmd_uninstall(args):
     except Exception:
         pass
 
-    run(["taskkill", "/f", "/im", "pythonw.exe"], check=False)
+    # Kill CoAgent by PID from its pidfile — never every pythonw.exe on the box.
+    pid_file = install_dir / "coagent.pid"
+    try:
+        pid = int(pid_file.read_text().strip())
+        run(["taskkill", "/f", "/t", "/pid", str(pid)], check=False)
+    except Exception:
+        pass
 
     # Remove scheduled tasks
     run(["schtasks", "/delete", "/tn", "CoAgent", "/f"], check=False)
