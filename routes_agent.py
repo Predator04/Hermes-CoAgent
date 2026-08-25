@@ -213,11 +213,12 @@ def _load_provider_config_unlocked():
                 else:
                     provider = _validate_provider_name(loaded.get("provider"))
                     config["provider"] = provider
-                    config["providers"][provider] = {
-                        key: loaded.get(key)
-                        for key in ("api_key", "model", "base_url")
-                        if loaded.get(key) not in (None, "")
-                    }
+                    if provider is not None:
+                        config["providers"][provider] = {
+                            key: loaded.get(key)
+                            for key in ("api_key", "model", "base_url")
+                            if loaded.get(key) not in (None, "")
+                        }
     except Exception as exc:
         _console(f"[agent] failed to load provider config: {exc}")
     try:
@@ -314,7 +315,7 @@ def _provider_settings(provider, data=None):
     if data.get("model") not in (None, ""):
         entry["model"] = _validate_model(data.get("model"))
     if data.get("base_url") not in (None, ""):
-        entry["base_url"] = _validate_base_url(data.get("base_url"))
+        entry["base_url"] = _validate_base_url(data.get("base_url"), allow_private=(provider == "ollama"))
     if data.get("api_key") not in (None, ""):
         entry["api_key"] = _validate_api_key(data.get("api_key"))
     env_key = PROVIDER_ENV_KEYS.get(provider)
