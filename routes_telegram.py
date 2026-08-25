@@ -241,18 +241,17 @@ def route_agent_exec_and_send():
         _save_config(config)
         return jsonify({"error": error_msg}), 500
 
-    # Extract findings from stdout
-    stdout = result.get("stdout", "")
-    all_text = result.get("stdout", "") + "\n" + result.get("stderr", "")
-    findings = _extract_findings(all_text)
+    # Extract findings from agent output (stdout+stderr combined, as returned by _execute_agent)
+    output = result.get("output") or ""
+    findings = _extract_findings(output)
 
     if not findings:
-        # No structured findings — send raw stdout summary
+        # No structured findings — send raw output summary
         msg = f"🤖 *Codex Complete* (exit: {result.get('exit_code')})\n\n"
-        if stdout:
-            msg += "```\n" + stdout[:3500] + "\n```"
+        if output:
+            msg += "```\n" + output[:3500] + "\n```"
         else:
-            msg += "No stdout output."
+            msg += "No output."
         msg += f"\n\n_Duration: {result.get('duration_seconds', '?')}s_"
         target_chat = _resolve_target_chat(config)
         ok, resp_data = _send_telegram(config["bot_token"], target_chat, msg)
