@@ -193,6 +193,9 @@ def _broadcast(event, data):
         for sub in _SUBSCRIBERS:
             try:
                 sub.put_nowait(message)
+            except queue.Full:
+                # Slow subscriber: drop this message rather than disconnect it.
+                continue
             except Exception:
                 dead.append(sub)
         for sub in dead:
@@ -348,7 +351,7 @@ def _fill_path(rule, args):
 def _response_payload(resp):
     content_type = resp.headers.get("Content-Type", "")
     mimetype = content_type.split(";", 1)[0].strip().lower()
-    if "application/json" in content_type:
+    if mimetype == "application/json" or mimetype.endswith("+json"):
         return resp.get_json(silent=True)
     data = resp.get_data()
     if mimetype.startswith("image/"):
