@@ -1096,6 +1096,21 @@ try:
 except ImportError:
     reg_checkpoint = None
     features["safety_checkpoint"] = False
+try:
+    from routes_organize import register_routes as reg_organize
+except ImportError:
+    reg_organize = None
+    features["file_organizer"] = False
+try:
+    from routes_office import register_routes as reg_office
+except ImportError:
+    reg_office = None
+    features["office_authoring"] = False
+try:
+    from routes_scheduler import register_routes as reg_scheduler_tasks
+except ImportError:
+    reg_scheduler_tasks = None
+    features["task_persistence"] = False
 
 reg_background(app, state, require_auth)
 features["background_control"] = True
@@ -1309,6 +1324,15 @@ if reg_virtual_desktop:
 if reg_doc_intel:
     reg_doc_intel(app, state, require_auth)
     features["doc_intel"] = True
+if reg_organize:
+    reg_organize(app, state, require_auth)
+    features["file_organizer"] = True
+if reg_office:
+    reg_office(app, state, require_auth)
+    features["office_authoring"] = True
+if reg_scheduler_tasks:
+    reg_scheduler_tasks(app, state, require_auth)
+    features["task_persistence"] = True
 if reg_dragdrop:
     reg_dragdrop(app, state, require_auth)
     features["dragdrop"] = True
@@ -1505,7 +1529,8 @@ def route_version():
                                  "auto_router", "semantic_capture", "benchmark_harness",
                                  "midrun_steering", "fleet_mode", "prompt_guard",
                                  "safety_checkpoint", "perception_snapshot",
-                                 "session_state"],
+                                 "session_state", "file_organizer",
+                                 "office_authoring", "task_persistence"],
                     "modules": ["mouse", "ocr", "uia", "file", "media", "v63",
                                 "stream", "process", "voice", "cua", "copilot",
                                 "bypass", "toast", "deps", "config", "browser",
@@ -1517,7 +1542,8 @@ def route_version():
                                 "copilot_enhanced", "recipes", "healer",
                                 "goal_timeline_sse",
                                 "browser_v2", "mobile", "memory", "batching", "speculative_batching",
-                                "reminders", "hud", "perception", "session"],
+                                "reminders", "hud", "perception", "session",
+                                "organize", "office", "scheduler_tasks"],
                     "memory": memory_stats(),
                     "security": ["auth_token", "rate_limit", "input_sanitization",
                                  "cors_restricted", "security_headers"]})
