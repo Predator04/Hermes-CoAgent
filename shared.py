@@ -289,7 +289,7 @@ def _can_bind_port(port, host="127.0.0.1"):
                 sock.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
             sock.bind((probe_host, int(port)))
         return True
-    except OSError:
+    except (OSError, ValueError, TypeError):
         return False
 
 
