@@ -312,13 +312,13 @@ def register_routes(app, state, require_auth):
             return jsonify({"error": "loop_delay and step_delay must be numeric"}), 400
 
         run_id = uuid.uuid4().hex[:12]
-        _STOP_EVENT.clear()
         with _STATE_LOCK:
             if _STATE["active"]:
                 return jsonify({
                     "error": "a background agent task is already running",
                     "run_id": _STATE["run_id"],
                 }), 409
+            _STOP_EVENT.clear()
             _reset_state(run_id, task, len(steps))
 
         worker = threading.Thread(
@@ -369,6 +369,6 @@ def register_routes(app, state, require_auth):
         return jsonify({
             "status": "stopping",
             "run_id": run_id,
-            "stopped": True,
+            "stopped": joined,
             "joined": joined,
         })
