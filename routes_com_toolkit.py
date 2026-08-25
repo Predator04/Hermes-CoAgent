@@ -239,7 +239,7 @@ def _com_system():
 
     elif action == "volume":
         try:
-            level = min(100, max(0, int(value or 50)))
+            level = min(100, max(0, int(value if value is not None else 50)))
         except (TypeError, ValueError):
             return jsonify({"ok": False, "error": "volume value must be a number 0-100"}), 400
         script = f"""
@@ -249,7 +249,7 @@ def _com_system():
         result = _ps_execute(script)
 
     elif action == "processes":
-        result = _wmi_query("SELECT Name, ProcessId, WorkingSetSize, CPU FROM Win32_PerfFormattedData_PerfProc_Process WHERE Name != '_Total'")
+        result = _wmi_query("SELECT Name, IDProcess, WorkingSet, PercentProcessorTime FROM Win32_PerfFormattedData_PerfProc_Process WHERE Name != '_Total'")
 
     elif action == "services":
         result = _wmi_query("SELECT Name, DisplayName, State, StartMode FROM Win32_Service WHERE State='Running'")
