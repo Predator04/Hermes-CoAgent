@@ -106,7 +106,12 @@ def _public(trigger_id, record):
 
 def _valid_url(url):
     parsed = urllib.parse.urlparse(url)
-    return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
+    return (
+        parsed.scheme in {"http", "https"}
+        and bool(parsed.netloc)
+        and not parsed.username
+        and not parsed.password
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -663,7 +668,9 @@ def _get_idle_ms():
         lii.cbSize = ctypes.sizeof(LASTINPUTINFO)
         if ctypes.windll.user32.GetLastInputInfo(ctypes.byref(lii)):
             tick = ctypes.windll.kernel32.GetTickCount()
-            return max(0, int(tick - lii.dwTime))
+            # 32-bit GetTickCount wraps after ~49.7 days uptime; modular
+            # subtraction keeps the idle reading correct across the wrap.
+            return int(tick - lii.dwTime) & 0xFFFFFFFF
     except Exception:
         pass
     return 0
@@ -1000,8 +1007,10 @@ def register_routes(app, state, require_auth):
             _start_watcher(trigger_id, record)
         except Exception as exc:
             with _LOCK:
-                record["status"] = "error"
-                record["error"] = f"{type(exc).__name__}: {exc}"
+                _TRIGGERS.pop(trigger_id, None)
+            _stop_watcher(trigger_id)
+            return jsonify({"error": "failed to start trigger watcher",
+                            "detail": f"{type(exc).__name__}: {exc}"}), 500
 
         response = _public(trigger_id, record)
         response["secret"] = record["secret"]  # one-time reveal
