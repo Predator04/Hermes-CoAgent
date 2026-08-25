@@ -32,11 +32,12 @@ def _safe_json_body():
 def _route_call(tool, data, success_status="ok"):
     try:
         result = cua_call(tool, data)
-        if not result.get("ok"):
-            _log(f"[CUA] {tool} failed: {result.get('error')}")
+        if not isinstance(result, dict) or not result.get("ok"):
+            err = result.get("error") if isinstance(result, dict) else None
+            _log(f"[CUA] {tool} failed: {err!r}")
             return jsonify(result), 502
         _log(f"[CUA] {tool} ok")
-        return jsonify({"status": success_status, **result})
+        return jsonify({**result, "status": success_status})
     except FileNotFoundError as exc:
         _log(f"[CUA] {tool} unavailable: {exc}")
         return jsonify({"ok": False, "tool": tool, "error": str(exc)}), 503
