@@ -27,6 +27,7 @@ Flags:
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -41,18 +42,35 @@ POLL_INTERVAL = 2.0
 
 TERMINAL_STATUSES = {"completed", "failed", "stopped"}
 
+# Opaque tokens are sent as "Authorization: Bearer <token>". Reject anything
+# with whitespace/control characters to avoid header injection or broken auth.
+_TOKEN_RE = re.compile(r"^[A-Za-z0-9._~+/=\-]+$")
+
 
 def _eprint(*args, **kwargs):
     print(*args, file=sys.stderr, **kwargs)
 
 
+def _validate_token(token):
+    """Return token if it is a safe opaque string, else None."""
+    if token and _TOKEN_RE.match(token):
+        return token
+    return None
+
+
 def _find_token(explicit_token):
     """Resolve the bearer token from --token, env, or the .token file."""
     if explicit_token:
-        return explicit_token
+        tok = _validate_token(explicit_token.strip())
+        if tok is None:
+            _eprint("warning: --token contains invalid characters; ignoring it")
+        else:
+            return tok
     env = os.environ.get("COAGENT_TOKEN")
     if env:
-        return env.strip()
+        tok = _validate_token(env.strip())
+        if tok:
+            return tok
     candidates = [
         Path(__file__).resolve().parent / ".token",
         Path.cwd() / ".token",
@@ -61,8 +79,9 @@ def _find_token(explicit_token):
         try:
             if candidate.is_file():
                 token = candidate.read_text(encoding="utf-8", errors="replace").strip()
-                if token:
-                    return token
+                tok = _validate_token(token)
+                if tok:
+                    return tok
         except OSError:
             continue
     return None
@@ -245,9 +264,22 @@ def main(argv=None):
         deadline = time.time() + args.timeout
         last_sig = None
         last_gstatus = None
+        consecutive_failures = 0
         while True:
             time.sleep(POLL_INTERVAL)
             status, snap = _request(base_url, "GET", f"/copilot/goal/{goal_id}", token=token, timeout=15)
+            if status == 0:
+                # Connection failure is indistinguishable from "no update" unless
+                # checked explicitly. Bail after a few consecutive failures instead
+                # of silently burning the full --timeout budget.
+                consecutive_failures += 1
+                err = snap.get("error") if isinstance(snap, dict) else snap
+                _eprint(f"warning: connection failed ({consecutive_failures}): {err}")
+                if consecutive_failures >= 3:
+                    _eprint("error: lost connection to server")
+                    return 1
+                continue
+            consecutive_failures = 0
             if status == 404:
                 _eprint("error: goal disappeared from the server")
                 return 1
@@ -268,6 +300,14 @@ def main(argv=None):
                 break
             if time.time() >= deadline:
                 _eprint(f"timeout reached after {args.timeout}s")
+                # Cancel the still-running goal so it doesn't keep executing with
+                # no client watching (in --attach mode) or get terminated
+                # mid-action below (in spawn mode).
+                try:
+                    _request(base_url, "POST", f"/copilot/stop/{goal_id}", token=token, timeout=10)
+                    _eprint("goal stop requested after timeout")
+                except Exception as exc:
+                    _eprint(f"warning: failed to request goal stop: {exc}")
                 out = dict(snap)
                 out["timed_out"] = True
                 print(json.dumps(out, indent=2, default=str))
@@ -279,6 +319,11 @@ def main(argv=None):
         if proc is not None:
             try:
                 proc.terminate()
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait()
             except Exception:
                 pass
 
