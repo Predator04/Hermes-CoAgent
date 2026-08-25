@@ -37,6 +37,21 @@ def _has_user32():
     return hasattr(ctypes, "windll") and hasattr(ctypes.windll, "user32")
 
 
+def _configure_user32():
+    """Set 64-bit-safe prototypes for the touch window APIs."""
+    if not _has_user32():
+        return None
+    user32 = ctypes.windll.user32
+    try:
+        user32.GetForegroundWindow.restype = ctypes.wintypes.HWND
+        user32.GetDesktopWindow.restype = ctypes.wintypes.HWND
+        user32.RegisterTouchWindow.argtypes = (ctypes.wintypes.HWND, ctypes.wintypes.ULONG)
+        user32.RegisterTouchWindow.restype = ctypes.wintypes.BOOL
+    except Exception:
+        pass
+    return user32
+
+
 def _digitizer_info():
     if not _has_user32():
         return {"available": False, "raw": 0, "reason": "Win32 user32 is unavailable"}
@@ -53,9 +68,9 @@ def _digitizer_info():
 
 
 def _register_touch_windows():
-    if not _has_user32():
+    user32 = _configure_user32()
+    if user32 is None:
         return {"registered": [], "errors": ["Win32 user32 is unavailable"]}
-    user32 = ctypes.windll.user32
     candidates = []
     try:
         candidates.append(("foreground", user32.GetForegroundWindow()))
