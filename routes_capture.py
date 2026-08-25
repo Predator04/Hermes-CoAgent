@@ -168,8 +168,16 @@ def _capture_path(name):
 def _write_capture(name, capture):
     path = _capture_path(name)
     tmp = path.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(capture, indent=2), encoding="utf-8")
-    tmp.replace(path)
+    try:
+        tmp.write_text(json.dumps(capture, indent=2), encoding="utf-8")
+        tmp.replace(path)
+    except Exception:
+        # Don't leave an orphaned temp file behind if the write/replace failed
+        try:
+            tmp.unlink(missing_ok=True)
+        except Exception:
+            pass
+        raise
     return path
 
 
@@ -390,7 +398,8 @@ def _replay_step(step):
         return record
     except Exception as exc:
         record["error"] = f"{type(exc).__name__}: {exc}"
-        record["traceback"] = traceback.format_exc()
+        # Log the full traceback internally; do not leak internal paths/frames to the client
+        _log(f"[capture] replay step failed: {type(exc).__name__}: {exc}\n{traceback.format_exc()}")
         return record
 
 
