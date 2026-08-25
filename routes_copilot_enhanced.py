@@ -185,8 +185,12 @@ def _step_error_text(step):
 
 def _step_duration_ms(step):
     value = step.get("duration_ms")
-    if value is None:
-        value = step.get("duration_seconds")
+    if value is not None:
+        try:
+            return max(0, int(round(float(value))))
+        except (TypeError, ValueError):
+            return None
+    value = step.get("duration_seconds")
     if value is None:
         value = step.get("duration")
     if value is None:
@@ -195,9 +199,7 @@ def _step_duration_ms(step):
         number = float(value)
     except (TypeError, ValueError):
         return None
-    if number < 1000 and step.get("duration_ms") is None:
-        number *= 1000
-    return max(0, int(round(number)))
+    return max(0, int(round(number * 1000)))
 
 
 def _step_icon(step):
@@ -1714,7 +1716,7 @@ def _run_goal(goal_id, auth_header):
 
 def _active_goal_count():
     with _GOALS_LOCK:
-        return sum(1 for goal in _GOALS.values() if goal.get("status") in {"queued", "planning", "running"})
+        return sum(1 for goal in _GOALS.values() if goal.get("status") in {"queued", "planning", "running", "stopping"})
 
 
 def _trim_goals():
