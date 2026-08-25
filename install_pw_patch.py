@@ -20,7 +20,10 @@ def find_context_manager():
         if os.path.exists(path):
             return path
     # Fallback: check common locations
-    import playwright
+    try:
+        import playwright
+    except ImportError as e:
+        raise FileNotFoundError("Playwright is not installed") from e
     base = os.path.dirname(playwright.__file__)
     path = os.path.join(base, "sync_api", "_context_manager.py")
     if os.path.exists(path):
@@ -62,7 +65,7 @@ def apply_patch(filepath):
         # or closing paren behind (which previously produced a SyntaxError).
         alt_re = re.compile(r"raise Error\(.*?\)", re.DOTALL)
         if alt_re.search(content):
-            content = alt_re.sub("pass  # Patched by CoAgent", content)
+            content = alt_re.sub("pass  # Patched by CoAgent", content, count=1)
         else:
             print("  Could not patch. Please manually edit:")
             print(f"  {filepath}")
