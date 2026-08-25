@@ -134,7 +134,12 @@ def _ocr_flat():
         result, _ = engine(np.array(img))
         words = []
         for det in (result or []):
-            box, txt, conf = det[0], det[1], det[2]
+            if not det or len(det) < 2:
+                continue
+            box, txt = det[0], det[1]
+            if not box:
+                continue
+            conf = det[2] if len(det) > 2 else 0.0
             xs = [p[0] for p in box]
             ys = [p[1] for p in box]
             words.append({
