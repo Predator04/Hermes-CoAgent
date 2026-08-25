@@ -175,7 +175,14 @@ def _background_sendinput(action, x, y, button="left"):
         ctypes.windll.user32.mouse_event(btn_down, 0, 0, 0, 0)
         ctypes.windll.user32.mouse_event(btn_up, 0, 0, 0, 0)
     except Exception:
-        pyautogui.click(x, y, button=button)
+        # Fallback: respect the requested action instead of collapsing everything
+        # to a single click (doubleclick/rightclick must not silently degrade).
+        if action == "doubleclick":
+            pyautogui.doubleClick(x, y, button=button)
+        elif action == "rightclick":
+            pyautogui.rightClick(x, y)
+        else:
+            pyautogui.click(x, y, button=button)
 
 def _mouse_action(action, x, y, button="left", background=True, state=None):
     if state and state.emergency_stop:
@@ -552,31 +559,37 @@ def register_routes(app, state, require_auth):
                     btn_down = MOUSEEVENTF_LEFTDOWN if btn == "left" else MOUSEEVENTF_RIGHTDOWN
                     btn_up = MOUSEEVENTF_LEFTUP if btn == "left" else MOUSEEVENTF_RIGHTUP
 
-                    ctypes.windll.user32.SetCursorPos(x1, y1)
-                    time.sleep(0.05)
-                    ctypes.windll.user32.mouse_event(btn_down, 0, 0, 0, 0)
-                    time.sleep(0.02)
+                    pressed = False
+                    try:
+                        ctypes.windll.user32.SetCursorPos(x1, y1)
+                        time.sleep(0.05)
+                        ctypes.windll.user32.mouse_event(btn_down, 0, 0, 0, 0)
+                        pressed = True
+                        time.sleep(0.02)
 
-                    for i in range(1, steps + 1):
-                        t = i / steps
-                        # Cubic ease-in-out for natural acceleration/deceleration
-                        t_e = t * t * (3.0 - 2.0 * t)
-                        cx = x1 + dx * t_e
-                        cy = y1 + dy * t_e
-                        # Perpendicular jitter that tapers at endpoints
-                        if dist > 1 and max_jitter > 0:
-                            taper = min(t, 1.0 - t) * 4.0
-                            jitter = random.gauss(0, max_jitter * taper * 0.4)
-                            perp_x = -dy / dist
-                            perp_y = dx / dist
-                            cx += perp_x * jitter
-                            cy += perp_y * jitter
-                        ctypes.windll.user32.SetCursorPos(int(cx), int(cy))
-                        time.sleep(step_delay)
+                        for i in range(1, steps + 1):
+                            t = i / steps
+                            # Cubic ease-in-out for natural acceleration/deceleration
+                            t_e = t * t * (3.0 - 2.0 * t)
+                            cx = x1 + dx * t_e
+                            cy = y1 + dy * t_e
+                            # Perpendicular jitter that tapers at endpoints
+                            if dist > 1 and max_jitter > 0:
+                                taper = min(t, 1.0 - t) * 4.0
+                                jitter = random.gauss(0, max_jitter * taper * 0.4)
+                                perp_x = -dy / dist
+                                perp_y = dx / dist
+                                cx += perp_x * jitter
+                                cy += perp_y * jitter
+                            ctypes.windll.user32.SetCursorPos(int(cx), int(cy))
+                            time.sleep(step_delay)
 
-                    ctypes.windll.user32.SetCursorPos(x2, y2)
-                    time.sleep(0.02)
-                    ctypes.windll.user32.mouse_event(btn_up, 0, 0, 0, 0)
+                        ctypes.windll.user32.SetCursorPos(x2, y2)
+                        time.sleep(0.02)
+                    finally:
+                        # Always release the button, even if interpolation raised
+                        if pressed:
+                            ctypes.windll.user32.mouse_event(btn_up, 0, 0, 0, 0)
                 else:
                     pyautogui.moveTo(x1, y1)
                     pyautogui.drag(x2 - x1, y2 - y1, button=btn,
