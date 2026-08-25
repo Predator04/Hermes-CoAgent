@@ -22,7 +22,7 @@ class OAuthHandler(http.server.BaseHTTPRequestHandler):
         parsed = urllib.parse.urlparse(self.path)
         params = urllib.parse.parse_qs(parsed.query)
         print(f"\n=== OAUTH CALLBACK ===", flush=True)
-        print(f"Path: {self.path}", flush=True)
+        print(f"Path: {parsed.path}", flush=True)
         print(f"Params: {json.dumps({k: ('<redacted>' if k in ('code', 'state', 'error_description') else (v[0][:80] if isinstance(v, list) and v else str(v)[:80])) for k, v in params.items()}, indent=2)}", flush=True)
         
         # Save the code if present
