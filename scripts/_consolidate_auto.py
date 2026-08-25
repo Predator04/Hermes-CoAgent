@@ -246,7 +246,9 @@ def _used_names_in_code(code):
 
 def filter_imports(import_lines, relocated):
     """Keep only imports whose bound names are actually referenced by relocated code."""
-    used = set()
+    # The generated framework (_find_tool / _register_generic) and the TOOLS
+    # block depend on these regardless of what bespoke actions reference.
+    used = {"shutil", "subprocess", "glob", "os", "json", "jsonify"}
     for _kind, _tool, code in relocated:
         used.update(_used_names_in_code(code))
     result = []
