@@ -99,6 +99,8 @@ def _validate_url(url):
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https"):
         return f"Unsupported URL scheme: {parsed.scheme or 'none'}"
+    if parsed.username or parsed.password:
+        return "URL must not contain embedded credentials (user:pass@)"
     raw_hostname = parsed.hostname or ""
     if not raw_hostname:
         return "URL must include a hostname"
@@ -169,8 +171,7 @@ def _validate_url(url):
 
 
 def _error(message, status=400, **extra):
-    payload = {"error": message}
-    payload.update(extra)
+    payload = {**extra, "error": message}
     return jsonify(payload), status
 
 
