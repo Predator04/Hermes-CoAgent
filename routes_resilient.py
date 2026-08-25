@@ -63,6 +63,37 @@ _NEGATIVE_LABELS = ["no", "cancel", "deny", "reject", "abort"]
 _BUTTON_CLASSES = ("Button", "CCPushButton", "TButton", "WindowsForms10.BUTTON")
 
 
+def _configure_user32_scalars(user32):
+    """Set argtypes/restype on user32 calls so 64-bit handles aren't truncated.
+
+    Without explicit prototypes, ctypes coerces every integer argument to a
+    32-bit ``c_int``. On 64-bit Windows, HWND (and WPARAM/LPARAM) are 64-bit
+    values, so a handle whose high bit is set gets truncated (or raises
+    OverflowError), causing clicks/close attempts to target the wrong window.
+    """
+    import ctypes
+    from ctypes import wintypes
+    user32.IsWindowVisible.argtypes = [wintypes.HWND]
+    user32.IsWindowVisible.restype = wintypes.BOOL
+    user32.IsWindow.argtypes = [wintypes.HWND]
+    user32.IsWindow.restype = wintypes.BOOL
+    user32.GetWindowTextLengthW.argtypes = [wintypes.HWND]
+    user32.GetWindowTextLengthW.restype = ctypes.c_int
+    user32.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+    user32.GetWindowTextW.restype = ctypes.c_int
+    user32.GetClassNameW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+    user32.GetClassNameW.restype = ctypes.c_int
+    user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+    user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+    user32.SendMessageTimeoutW.argtypes = [
+        wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM,
+        wintypes.UINT, wintypes.UINT, ctypes.POINTER(ctypes.c_ulong),
+    ]
+    user32.SendMessageTimeoutW.restype = ctypes.c_ssize_t
+    user32.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+    user32.PostMessageW.restype = wintypes.BOOL
+
+
 # ---------------------------------------------------------------------------
 # ctypes / user32 window enumeration
 # ---------------------------------------------------------------------------
@@ -74,8 +105,10 @@ def _enum_top_windows_ctypes():
         import ctypes
         from ctypes import wintypes
         user32 = ctypes.windll.user32
+        _configure_user32_scalars(user32)
 
         enum_proc_type = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+        user32.EnumWindows.restype = wintypes.BOOL
 
         def callback(hwnd, _lparam):
             try:
@@ -125,8 +158,11 @@ def _list_child_buttons_ctypes(hwnd):
         import ctypes
         from ctypes import wintypes
         user32 = ctypes.windll.user32
+        _configure_user32_scalars(user32)
 
         enum_child_type = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+        user32.EnumChildWindows.argtypes = [wintypes.HWND, enum_child_type, wintypes.LPARAM]
+        user32.EnumChildWindows.restype = wintypes.BOOL
 
         def cb(child, _lparam):
             try:
@@ -160,7 +196,9 @@ def _click_button_ctypes(button_hwnd):
         SMTO_ABORTIFHUNG = 0x0002
         SMTO_NORMAL = 0x0000
         result = ctypes.c_ulong()
-        ret = ctypes.windll.user32.SendMessageTimeoutW(
+        user32 = ctypes.windll.user32
+        _configure_user32_scalars(user32)
+        ret = user32.SendMessageTimeoutW(
             button_hwnd, BM_CLICK, 0, 0,
             SMTO_ABORTIFHUNG | SMTO_NORMAL, 2000, ctypes.byref(result))
         return bool(ret)
@@ -170,10 +208,28 @@ def _click_button_ctypes(button_hwnd):
 
 
 def _post_wm_close(hwnd):
+    """Post WM_CLOSE to a window and report whether it actually closed.
+
+    ``PostMessageW`` only returns whether the message was queued, not whether
+    the window closed (the app may ignore it or show a "save changes" prompt).
+    Poll ``IsWindow`` briefly so callers get an honest result instead of a
+    false "clicked=True".
+    """
     try:
         import ctypes
         WM_CLOSE = 0x0010
-        return bool(ctypes.windll.user32.PostMessageW(hwnd, WM_CLOSE, 0, 0))
+        user32 = ctypes.windll.user32
+        _configure_user32_scalars(user32)
+        if not user32.IsWindow(hwnd):
+            return False
+        if not user32.PostMessageW(hwnd, WM_CLOSE, 0, 0):
+            return False
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline:
+            if not user32.IsWindow(hwnd):
+                return True
+            time.sleep(0.05)
+        return False
     except Exception as exc:
         _log(f"[resilient] WM_CLOSE failed: {exc}")
         return False
@@ -188,11 +244,14 @@ def _pick_safe_button(buttons, mode):
             t = text.lower().replace("&", "")
             if t == want or t.startswith(want + " ") or t == want + "...":
                 return bh, text
-    # Amp-strip loose contains match (word-boundary to avoid "no" matching "not now")
+    # Strict fallback: only match when the whole label is the target word
+    # (optionally followed by trailing punctuation/ellipsis). A word-boundary
+    # "contains" match would wrongly confirm destructive labels such as
+    # "Yes, delete everything" or "Continue and discard changes".
     for want in labels:
         for bh, _cls, text in normalized:
-            t = text.lower().replace("&", "")
-            if re.search(rf"\b{re.escape(want)}\b", t):
+            t = text.lower().replace("&", "").strip().rstrip(".\u2026! \t")
+            if t == want:
                 return bh, text
     return None, None
 
@@ -216,9 +275,12 @@ def _dismiss_with_pywinauto(hwnd, mode):
         labels = _NEGATIVE_LABELS if mode == "negative" else _SAFE_LABELS
         for want in labels:
             try:
-                btn = dlg.child_window(title_re=f"(?i)^{re.escape(want)}$", control_type="Button")
+                btn = dlg.child_window(title_re=f"(?i)^&?{re.escape(want)}$", control_type="Button")
                 if btn.exists(timeout=0.5):
-                    btn.click_input()
+                    # .click() uses the UIA Invoke pattern (no synthetic mouse
+                    # movement). .click_input() moves the real cursor, racing the
+                    # user and failing on a locked/RDP-disconnected session.
+                    btn.click()
                     return {"clicked": True, "label": want, "backend": "pywinauto_uia"}
             except Exception:
                 continue
