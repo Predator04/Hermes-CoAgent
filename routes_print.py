@@ -187,7 +187,7 @@ def register_routes(app, state, require_auth):
         for entry in printers:
             if isinstance(entry, dict):
                 entry["Default"] = bool(
-                    default_name and entry.get("Name") == default_name
+                    default_name and str(entry.get("Name") or "").casefold() == str(default_name).casefold()
                 )
 
         return jsonify({
