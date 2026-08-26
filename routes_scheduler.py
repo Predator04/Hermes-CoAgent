@@ -148,7 +148,7 @@ def _build_create_args(recipe_id, trigger, time_value, launcher):
 def register_routes(app, state, require_auth):
     @app.route("/scheduler/tasks", methods=["POST"])
     @require_auth
-    def route_scheduler_create():
+    def route_scheduler_tasks_create():
         if os.name != "nt":
             return _windows_only()
         body = _json_body()
@@ -199,7 +199,7 @@ def register_routes(app, state, require_auth):
 
     @app.route("/scheduler/tasks", methods=["GET"])
     @require_auth
-    def route_scheduler_list():
+    def route_scheduler_tasks_list():
         if os.name != "nt":
             return _windows_only()
         out, err, rc = _run_schtasks(["/Query", "/FO", "CSV", "/NH"])
@@ -223,7 +223,7 @@ def register_routes(app, state, require_auth):
 
     @app.route("/scheduler/tasks/<name>/run", methods=["POST"])
     @require_auth
-    def route_scheduler_run(name):
+    def route_scheduler_tasks_run(name):
         if os.name != "nt":
             return _windows_only()
         if not _TASK_NAME_RE.match(name):
@@ -240,7 +240,7 @@ def register_routes(app, state, require_auth):
 
     @app.route("/scheduler/tasks/<name>", methods=["DELETE"])
     @require_auth
-    def route_scheduler_delete(name):
+    def route_scheduler_tasks_delete(name):
         if os.name != "nt":
             return _windows_only()
         if not _TASK_NAME_RE.match(name):

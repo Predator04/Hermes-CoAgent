@@ -324,13 +324,16 @@ def _session_monitor_loop():
             ("cbWndExtra", ctypes.c_int),
             ("hInstance", wintypes.HINSTANCE),
             ("hIcon", wintypes.HICON),
-            ("hCursor", wintypes.HCURSOR),
+            ("hCursor", wintypes.HANDLE),
             ("hbrBackground", wintypes.HBRUSH),
             ("lpszMenuName", wintypes.LPCWSTR),
             ("lpszClassName", wintypes.LPCWSTR),
         ]
 
     user32.DefWindowProcW.restype = ctypes.c_ssize_t
+    user32.DefWindowProcW.argtypes = [
+        wintypes.HWND, wintypes.UINT, ctypes.c_ssize_t, ctypes.c_ssize_t,
+    ]
 
     class_name = "CoAgentSessionMonitorWnd"
     hinst = kernel32.GetModuleHandleW(None)
