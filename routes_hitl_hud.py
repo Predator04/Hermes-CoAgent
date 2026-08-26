@@ -66,13 +66,15 @@ def _flash_rect(bbox, duration_ms=2000, color_rgba=(255, 0, 0, 80)):
             return True
         finally:
             # Always restore GDI state and destroy the window, even on errors.
-            if hwnd_dc is not None and old_brush is not None:
+            # CreateWindowEx/GetDC/CreateSolidBrush return 0 (not None) on
+            # failure, so guard with truthiness to skip the 0 sentinel.
+            if hwnd_dc and old_brush is not None:
                 win32gui.SelectObject(hwnd_dc, old_brush)
-            if brush is not None:
+            if brush:
                 win32gui.DeleteObject(brush)
-            if hwnd is not None and hwnd_dc is not None:
+            if hwnd and hwnd_dc:
                 win32gui.ReleaseDC(hwnd, hwnd_dc)
-            if hwnd is not None:
+            if hwnd:
                 win32gui.DestroyWindow(hwnd)
             _PREVIEW_HWND = None
     except Exception as exc:
