@@ -849,8 +849,10 @@ def register_routes(app, state, require_auth):
             if not model:
                 return jsonify({"error": "Could not get bounding box for element"}), 500
 
-            # content quad: [x1,y1, x2,y1, x2,y2, x1,y2]
-            quad = model["content"]
+            # content quad: [x1,y1, x2,y1, x2,y2, x1,y2] — fall back to border.
+            quad = model.get("content") or model.get("border")
+            if not quad or len(quad) < 8:
+                return jsonify({"error": "Element has no clickable bounding box"}), 500
             cx = (quad[0] + quad[2] + quad[4] + quad[6]) / 4
             cy = (quad[1] + quad[3] + quad[5] + quad[7]) / 4
 
@@ -896,14 +898,15 @@ def register_routes(app, state, require_auth):
                     box_resp = _cdp(port, "DOM.getBoxModel", {"nodeId": node_id})
                     model = box_resp.get("result", {}).get("model")
                     if model:
-                        quad = model["content"]
-                        cx = (quad[0] + quad[2] + quad[4] + quad[6]) / 4
-                        cy = (quad[1] + quad[3] + quad[5] + quad[7]) / 4
-                        for ev in ("mousePressed", "mouseReleased"):
-                            _cdp(port, "Input.dispatchMouseEvent", {
-                                "type": ev, "x": cx, "y": cy,
-                                "button": "left", "clickCount": 1,
-                            })
+                        quad = model.get("content") or model.get("border")
+                        if quad and len(quad) >= 8:
+                            cx = (quad[0] + quad[2] + quad[4] + quad[6]) / 4
+                            cy = (quad[1] + quad[3] + quad[5] + quad[7]) / 4
+                            for ev in ("mousePressed", "mouseReleased"):
+                                _cdp(port, "Input.dispatchMouseEvent", {
+                                    "type": ev, "x": cx, "y": cy,
+                                    "button": "left", "clickCount": 1,
+                                })
 
             for ch in text:
                 _cdp(port, "Input.dispatchKeyEvent", {"type": "keyDown", "text": ch})
