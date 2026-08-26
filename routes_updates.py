@@ -33,7 +33,9 @@ GITHUB_API_LATEST = "https://api.github.com/repos/Predator04/Hermes-CoAgent/rele
 PRESERVE_FILES = {".token", "telegram_config.json", "config.json"}
 SKIP_DIRS = {"__pycache__", ".pytest_cache", ".git"}
 RESTART_FLAG = COAGENT_DIR / ".restart_requested"
-LOCK_PATH = COAGENT_DIR / ".update.lock"
+# Lock must live OUTSIDE COAGENT_DIR: _atomic_update renames COAGENT_DIR → .bak,
+# and an open lock file inside would block the rename (Windows) or be deleted (POSIX).
+LOCK_PATH = Path(tempfile.gettempdir()) / "hermes-coagent.update.lock"
 
 _RESTART_LOCK = threading.Lock()
 _LOCK_FD: int | None = None
@@ -69,6 +71,8 @@ def _acquire_fs_lock() -> bool:
             if exc.errno in (errno.EACCES, errno.EAGAIN):
                 return False
             raise
+        os.ftruncate(_LOCK_FD, 0)
+        os.lseek(_LOCK_FD, 0, os.SEEK_SET)
         os.write(_LOCK_FD, json.dumps({"pid": os.getpid(), "ts": time.time()}).encode())
         return True
     except Exception:
@@ -257,7 +261,10 @@ def _safe_tar_members(tar, destination):
 def _extract_tarball(tarball_path, extract_dir):
     with tarfile.open(tarball_path, "r:*") as tar:
         members = _safe_tar_members(tar, extract_dir)
-        tar.extractall(extract_dir, members=members)
+        if sys.version_info >= (3, 12):
+            tar.extractall(extract_dir, members=members, filter="data")
+        else:
+            tar.extractall(extract_dir, members=members)
     roots = [item for item in Path(extract_dir).iterdir() if item.is_dir()]
     return roots[0] if len(roots) == 1 else Path(extract_dir)
 
