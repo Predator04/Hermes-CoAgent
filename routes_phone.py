@@ -1,6 +1,7 @@
 """Android phone bridge routes using ADB."""
 
 import base64
+import os
 import re
 import subprocess
 
@@ -11,8 +12,15 @@ from shared import COAGENT_DIR, _json_body
 
 PHONE_SCREENSHOT = COAGENT_DIR / "phone.png"
 
-# Allowed Android keycodes (common subset)
-_KEYCODE_PATTERN = re.compile(r"^[A-Z][A-Z0-9_]+$")
+# Allowed Android keycodes: named constants (KEYCODE_HOME) or numeric codes
+# (3, 26, 82, ...). The previous pattern required >=2 uppercase letters, which
+# wrongly rejected numeric and single-letter codes.
+_KEYCODE_PATTERN = re.compile(r"^(?:[A-Z][A-Z0-9_]*|\d{1,4})$")
+
+# Android package/component names. Allowlist (letters/digits/underscore/dots)
+# rejects quotes, globs, and shell metacharacters that adb's on-device sh
+# would otherwise re-parse.
+_PACKAGE_PATTERN = re.compile(r"^[a-zA-Z][a-zA-Z0-9_]*(?:\.[a-zA-Z][a-zA-Z0-9_]*)*$")
 
 
 def _safe_int(val, default=0):
@@ -87,7 +95,9 @@ def _input_text(text):
     # Reject shell metacharacters that could cause command injection via adb shell
     if any(ch in value for ch in _FORBIDDEN_TEXT_CHARS):
         return None  # caller should reject the request
-    return value.replace("%", "%25").replace(" ", "%s").replace("\\", "\\\\").replace('"', '\\"')
+    # Only "%s" (space) is special to `adb shell input text`; it does NOT
+    # URL-decode "%25" back to "%", so a "%" must be passed through literally.
+    return value.replace(" ", "%s").replace("\\", "\\\\").replace('"', '\\"')
 
 
 def register_routes(app, state, require_auth):
@@ -104,7 +114,14 @@ def register_routes(app, state, require_auth):
         if not result.get("ok"):
             return _json_result(result)
         raw = result.get("stdout", b"")
-        PHONE_SCREENSHOT.write_bytes(raw)
+        # Verify PNG magic before overwriting a previously-good screenshot so a
+        # truncated/garbage response can't clobber it.
+        if not raw or not raw.startswith(b"\x89PNG\r\n\x1a\n"):
+            return jsonify({"status": "error", "error": "adb returned empty/invalid PNG data"}), 502
+        # Atomic write: never expose a half-written file to concurrent readers.
+        tmp = PHONE_SCREENSHOT.with_suffix(".tmp")
+        tmp.write_bytes(raw)
+        os.replace(tmp, PHONE_SCREENSHOT)
         if request.args.get("raw") in {"1", "true", "yes"}:
             return Response(raw, mimetype="image/png")
         return jsonify({"status": "ok", "path": str(PHONE_SCREENSHOT), "bytes": len(raw), "png_b64": base64.b64encode(raw).decode("ascii")})
@@ -172,9 +189,7 @@ def register_routes(app, state, require_auth):
     def route_phone_app_start():
         data = _json_body()
         package = data.get("package")
-        if not isinstance(package, str) or not package:
-            return _error("package is required")
-        if re.search(r'[;&|`$<>(){}\s]', package):
+        if not isinstance(package, str) or not _PACKAGE_PATTERN.match(package):
             return _error("invalid package name")
         return _json_result(_run_adb(data, ["shell", "monkey", "-p", package, "1"], timeout=20))
 
@@ -183,9 +198,7 @@ def register_routes(app, state, require_auth):
     def route_phone_app_stop():
         data = _json_body()
         package = data.get("package")
-        if not isinstance(package, str) or not package:
-            return _error("package is required")
-        if re.search(r'[;&|`$<>(){}\s]', package):
+        if not isinstance(package, str) or not _PACKAGE_PATTERN.match(package):
             return _error("invalid package name")
         return _json_result(_run_adb(data, ["shell", "am", "force-stop", package], timeout=20))
 
