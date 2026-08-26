@@ -56,7 +56,7 @@ TRACKED_DEPS = [
     {"module": "googleapiclient", "package": "google-api-python-client"},
     {"module": "google_auth_oauthlib", "package": "google-auth-oauthlib"},
     {"module": "google.auth", "package": "google-auth"},
-    {"module": "google.auth.transport.requests", "package": "google-auth-httplib2"},
+    {"module": "google.auth.transport.requests", "package": "google-auth"},
 ]
 
 
