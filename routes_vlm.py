@@ -75,10 +75,9 @@ def _pil_to_png_b64(pil_img, max_side=1600):
         if max_side and longest > max_side:
             scale = max_side / float(longest)
             new_size = (max(1, int(w * scale)), max(1, int(h * scale)))
-            try:
-                resample = img.Resampling.LANCZOS  # PIL >= 9.1
-            except AttributeError:
-                resample = 1  # LANCZOS integer fallback
+            from PIL import Image
+            # Resampling lives on the PIL.Image module, not the Image instance.
+            resample = getattr(Image, "Resampling", Image).LANCZOS
             img = img.resize(new_size, resample)
     except Exception:
         pass
