@@ -655,11 +655,16 @@ def register_routes(app, state, require_auth):
         # Resolve port from pid / window name when not given directly
         if port is None:
             apps = _scan_cef_processes() or _probe_fallback_ports()
-            if pid:
-                for a in apps:
-                    if a["pid"] == pid:
-                        port = a["debug_port"]
-                        break
+            if pid is not None:
+                try:
+                    pid_i = int(pid)
+                except (TypeError, ValueError):
+                    pid_i = None
+                if pid_i is not None:
+                    for a in apps:
+                        if a["pid"] == pid_i:
+                            port = a["debug_port"]
+                            break
             elif window_hint:
                 hint = window_hint.lower()
                 for a in apps:
