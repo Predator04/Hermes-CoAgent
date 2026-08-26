@@ -192,10 +192,24 @@ def _hitl_redirect():
 @hitl_bp.route("/hitl/configure", methods=["POST"])
 def _hitl_configure():
     body = request.get_json(force=True, silent=True) or {}
+    # Validate/coerce before mutating shared state so a bad request can never
+    # corrupt _HITL_STATE (read via int() / hotkey registration downstream).
+    updates = {}
+    if "delay_ms" in body:
+        try:
+            delay_ms = int(body["delay_ms"])
+        except (TypeError, ValueError, OverflowError):
+            return jsonify({"ok": False, "error": "delay_ms must be an integer"}), 400
+        updates["delay_ms"] = max(0, min(delay_ms, 60000))
+    if "require_confirmation" in body:
+        updates["require_confirmation"] = bool(body["require_confirmation"])
+    if "hotkey" in body:
+        hotkey = body["hotkey"]
+        if not isinstance(hotkey, str) or not hotkey.strip():
+            return jsonify({"ok": False, "error": "hotkey must be a non-empty string"}), 400
+        updates["hotkey"] = hotkey.strip()
     with _HITL_LOCK:
-        for key in ("delay_ms", "require_confirmation", "hotkey"):
-            if key in body:
-                _HITL_STATE[key] = body[key]
+        _HITL_STATE.update(updates)
     return jsonify({"ok": True, **_HITL_STATE})
 
 
