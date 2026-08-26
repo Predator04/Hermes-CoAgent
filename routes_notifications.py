@@ -235,6 +235,16 @@ def _record_and_dispatch(entries):
     return new_entries
 
 
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Reject redirects so a validated URL cannot 302 to an internal target."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+_OPENER = urllib.request.build_opener(_NoRedirectHandler())
+
+
 def _dispatch_webhooks(subscribers, entries):
     """POST each new entry to every subscriber URL in a background thread."""
     def _worker():
@@ -250,7 +260,7 @@ def _dispatch_webhooks(subscribers, entries):
                     headers={"Content-Type": "application/json"},
                     method="POST",
                 )
-                with urllib.request.urlopen(req, timeout=_WEBHOOK_TIMEOUT):
+                with _OPENER.open(req, timeout=_WEBHOOK_TIMEOUT):
                     pass
             except (urllib.error.URLError, OSError, ValueError) as exc:
                 _log(f"notify: webhook {url} failed: {exc}")
@@ -297,10 +307,26 @@ def _valid_webhook_url(url):
     return _host_is_public(host)
 
 
+def _ip_is_public(ip):
+    """True only for public unicast addresses (unwraps IPv4-mapped IPv6)."""
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+        ip = ip.ipv4_mapped
+    if (
+        ip.is_loopback
+        or ip.is_link_local
+        or ip.is_private
+        or ip.is_reserved
+        or ip.is_multicast
+        or ip.is_unspecified
+    ):
+        return False
+    return ip.is_global
+
+
 def _host_is_public(host):
     """True only if host resolves to public unicast address(es)."""
     try:
-        ip = ipaddress.ip_address(host)
+        return _ip_is_public(ipaddress.ip_address(host))
     except ValueError:
         try:
             infos = socket.getaddrinfo(host, None, proto=socket.IPPROTO_TCP)
@@ -314,10 +340,9 @@ def _host_is_public(host):
                 a = ipaddress.ip_address(addr)
             except ValueError:
                 return False
-            if not a.is_global:
+            if not _ip_is_public(a):
                 return False
         return True
-    return ip.is_global
 
 
 def register_routes(app, state, require_auth):
