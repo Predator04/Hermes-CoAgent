@@ -52,9 +52,9 @@ def _describe_via_ocr(screenshot_bytes):
     """Use Windows OCR to extract all text, then summarize."""
     try:
         from PIL import Image
-        img = Image.open(io.BytesIO(screenshot_bytes))
         from routes_ocr import _windows_ocr
-        ocr_result = _windows_ocr(img)
+        with Image.open(io.BytesIO(screenshot_bytes)) as img:
+            ocr_result = _windows_ocr(img)
         if ocr_result.get("success"):
             text = ocr_result.get("text", "")
             lines = [l.strip() for l in text.split() if l.strip()]
@@ -96,9 +96,9 @@ def _find_on_screen(query, screenshot_bytes):
     """Find text on screen and return positions."""
     try:
         from PIL import Image
-        img = Image.open(io.BytesIO(screenshot_bytes))
         from routes_ocr import ocr_find_text
-        matches = ocr_find_text(query, img)
+        with Image.open(io.BytesIO(screenshot_bytes)) as img:
+            matches = ocr_find_text(query, img)
         return matches
     except Exception as exc:
         _debug_failure("find_on_screen", exc)
@@ -109,9 +109,9 @@ def _screen_region_brief(screenshot_bytes):
     """Return a quick description of what's on screen."""
     try:
         from PIL import Image
-        img = Image.open(io.BytesIO(screenshot_bytes))
-        w, h = img.size
-        dominant_colors = _get_dominant_colors(img)
+        with Image.open(io.BytesIO(screenshot_bytes)) as img:
+            w, h = img.size
+            dominant_colors = _get_dominant_colors(img)
         return {
             "dimensions": f"{w}x{h}",
             "aspect": f"{w/h:.2f}" if h else "?",
@@ -179,8 +179,8 @@ def _vision_describe():
     region = _screen_region_brief(screenshot)
 
     from PIL import Image
-    img = Image.open(io.BytesIO(screenshot))
-    w, h = img.size
+    with Image.open(io.BytesIO(screenshot)) as img:
+        w, h = img.size
 
     result = {
         "ok": ocr.get("success", False),
@@ -223,9 +223,9 @@ def _vision_find():
     if matches:
         try:
             from PIL import Image
-            img = Image.open(io.BytesIO(screenshot))
             from routes_ocr import _windows_ocr
-            full_ocr = _windows_ocr(img)
+            with Image.open(io.BytesIO(screenshot)) as img:
+                full_ocr = _windows_ocr(img)
             if full_ocr.get("success"):
                 context_text = full_ocr.get("text", "")[:500]
         except Exception:
@@ -268,10 +268,10 @@ def _vision_quick_scan():
             return jsonify({"ok": False, "error": "empty screenshot"}), 500
 
         from PIL import Image
-        img = Image.open(io.BytesIO(data))
-        w, h = img.size
         from routes_ocr import _windows_ocr
-        ocr = _windows_ocr(img)
+        with Image.open(io.BytesIO(data)) as img:
+            w, h = img.size
+            ocr = _windows_ocr(img)
         lines = ocr.get("text", "").split()[:30] if ocr.get("success") else []
 
         return jsonify({
