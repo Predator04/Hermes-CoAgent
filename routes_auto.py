@@ -1320,6 +1320,47 @@ TOOLS = {
     "repo": "astral-sh/ruff",
     "stars": 49316,
     "url": "https://github.com/astral-sh/ruff"
+  },
+  "mise": {
+    "added": "2026-08-26",
+    "command": "mise <ls|current|tasks|exec|run> [args]",
+    "desc": "mise-en-place is a polyglot developer tool version manager and task runner (successor to asdf/rtx). Pin per-project versions of Node, Python, Go, Rust, and hundreds more via mise.toml, run named tasks, and set env vars. Emits machine-readable JSON for ls/current/tasks \u2014 ideal for reproducible, script-driven tool setup and project automation.",
+    "endpoints": {
+      "/auto/mise/info": "Feature metadata, install status, version",
+      "/auto/mise/ping": "Health check",
+      "/auto/mise/list": "GET \u2014 list installed tools and versions as JSON",
+      "/auto/mise/current": "GET \u2014 active tool versions for the current scope",
+      "/auto/mise/tasks": "GET \u2014 list tasks defined in mise.toml",
+      "/auto/mise/exec": "POST \u2014 run a command under a specific tool version",
+      "/auto/mise/run": "POST \u2014 run a named task"
+    },
+    "exe": "mise",
+    "install": {
+      "scoop": "scoop install mise",
+      "winget": "winget install jdx.mise"
+    },
+    "repo": "jdx/mise",
+    "stars": 33057,
+    "url": "https://github.com/jdx/mise"
+  },
+  "shellcheck": {
+    "added": "2026-08-26",
+    "command": "shellcheck -f json1 <script>",
+    "desc": "ShellCheck is a static analysis tool for shell scripts. It detects syntax errors, semantic issues, and subtle bugs in sh/bash/dash/ksh scripts, with JSON/XML/GCC machine-readable output (json1 format) and auto-fix suggestions. Ideal for auditing scripts in CI and self-improvement pipelines.",
+    "endpoints": {
+      "/auto/shellcheck/info": "Feature metadata, install status, version",
+      "/auto/shellcheck/ping": "Health check",
+      "/auto/shellcheck/check": "POST \u2014 lint a shell script (provided as text) with JSON output",
+      "/auto/shellcheck/file": "POST \u2014 lint a shell script file by path"
+    },
+    "exe": "shellcheck",
+    "install": {
+      "scoop": "scoop install shellcheck",
+      "winget": "winget install koalaman.shellcheck"
+    },
+    "repo": "koalaman/shellcheck",
+    "stars": 39929,
+    "url": "https://github.com/koalaman/shellcheck"
   }
 }
 
@@ -12613,6 +12654,237 @@ def _h_ruff_317():
         return (jsonify({'error': str(e)}), 500)
 
 
+def _h_mise_318():
+    """List tools and versions managed by mise.
+
+        Query params:
+            json (bool, optional): machine-readable output. Default true.
+    """
+    exe = _find_tool('mise')
+    if not exe:
+        return (jsonify({'error': 'mise is not installed', 'hint': 'scoop install mise  OR  winget install jdx.mise'}), 503)
+    as_json = str(request.args.get('json', 'true')).lower() != 'false'
+    cmd = [exe, 'ls', '--json'] if as_json else [exe, 'ls']
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, errors='replace', timeout=30)
+        if r.returncode != 0:
+            _log(f'[mise list] rc={r.returncode}: {r.stderr[:300]}')
+            return (jsonify({'error': r.stderr.strip() or 'mise ls failed'}), 500)
+        out = r.stdout
+        if as_json:
+            try:
+                out = json_lib.loads(out)
+            except Exception:
+                pass
+        return jsonify({'ok': True, 'tools': out})
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': 'mise ls timed out'}), 504)
+    except Exception as e:
+        _log(f'[mise list] {str(e)}')
+        return (jsonify({'error': str(e)}), 500)
+
+
+def _h_mise_319():
+    """Show the active tool versions for the current directory scope."""
+    exe = _find_tool('mise')
+    if not exe:
+        return (jsonify({'error': 'mise is not installed', 'hint': 'scoop install mise  OR  winget install jdx.mise'}), 503)
+    cwd = str(request.args.get('cwd') or '').strip() or None
+    try:
+        r = subprocess.run([exe, 'current', '--json'], capture_output=True, text=True, errors='replace', timeout=30, cwd=cwd)
+        if r.returncode != 0:
+            r2 = subprocess.run([exe, 'current'], capture_output=True, text=True, errors='replace', timeout=30, cwd=cwd)
+            if r2.returncode != 0:
+                _log(f'[mise current] rc={r2.returncode}: {r2.stderr[:300]}')
+                return (jsonify({'error': r2.stderr.strip() or 'mise current failed'}), 500)
+            return jsonify({'ok': True, 'current': r2.stdout})
+        out = r.stdout
+        try:
+            out = json_lib.loads(out)
+        except Exception:
+            pass
+        return jsonify({'ok': True, 'current': out})
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': 'mise current timed out'}), 504)
+    except Exception as e:
+        _log(f'[mise current] {str(e)}')
+        return (jsonify({'error': str(e)}), 500)
+
+
+def _h_mise_320():
+    """List tasks defined in the current mise config (mise.toml / .mise.toml).
+
+        Query params:
+            cwd (str, optional): directory containing the config.
+    """
+    exe = _find_tool('mise')
+    if not exe:
+        return (jsonify({'error': 'mise is not installed', 'hint': 'scoop install mise  OR  winget install jdx.mise'}), 503)
+    cwd = str(request.args.get('cwd') or '').strip() or None
+    try:
+        r = subprocess.run([exe, 'tasks', 'ls', '--json'], capture_output=True, text=True, errors='replace', timeout=30, cwd=cwd)
+        if r.returncode != 0:
+            r2 = subprocess.run([exe, 'tasks', 'ls'], capture_output=True, text=True, errors='replace', timeout=30, cwd=cwd)
+            if r2.returncode != 0:
+                _log(f'[mise tasks] rc={r2.returncode}: {r2.stderr[:300]}')
+                return (jsonify({'error': r2.stderr.strip() or 'mise tasks ls failed'}), 500)
+            return jsonify({'ok': True, 'tasks': r2.stdout})
+        out = r.stdout
+        try:
+            out = json_lib.loads(out)
+        except Exception:
+            pass
+        return jsonify({'ok': True, 'tasks': out})
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': 'mise tasks timed out'}), 504)
+    except Exception as e:
+        _log(f'[mise tasks] {str(e)}')
+        return (jsonify({'error': str(e)}), 500)
+
+
+def _h_mise_321():
+    """Run a command under a specific tool version via mise exec.
+
+        Body (JSON):
+            command (str, required): tool@version plus the command to run, e.g.
+                "node@20 -- node -v" or "python@3.11 -- python script.py".
+            cwd (str, optional): working directory.
+    """
+    body = _json_body()
+    command = str(body.get('command') or '').strip()
+    if not command:
+        return _missing_field(body, 'command')
+    exe = _find_tool('mise')
+    if not exe:
+        return (jsonify({'error': 'mise is not installed', 'hint': 'scoop install mise  OR  winget install jdx.mise'}), 503)
+    cwd = str(body.get('cwd') or '').strip() or None
+    try:
+        cmd = [exe, 'exec'] + shlex.split(command)
+        r = subprocess.run(cmd, capture_output=True, text=True, errors='replace', timeout=300, cwd=cwd)
+        return jsonify({'ok': r.returncode == 0, 'returncode': r.returncode,
+                        'stdout': r.stdout, 'stderr': r.stderr})
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': 'mise exec timed out'}), 504)
+    except Exception as e:
+        _log(f'[mise exec] {str(e)}')
+        return (jsonify({'error': str(e)}), 500)
+
+
+def _h_mise_322():
+    """Run a named task defined in the current mise config.
+
+        Body (JSON):
+            task (str, required): task name to run.
+            cwd (str, optional): directory containing the config.
+    """
+    body = _json_body()
+    task = str(body.get('task') or '').strip()
+    if not task:
+        return _missing_field(body, 'task')
+    exe = _find_tool('mise')
+    if not exe:
+        return (jsonify({'error': 'mise is not installed', 'hint': 'scoop install mise  OR  winget install jdx.mise'}), 503)
+    cwd = str(body.get('cwd') or '').strip() or None
+    try:
+        r = subprocess.run([exe, 'run', task], capture_output=True, text=True, errors='replace', timeout=600, cwd=cwd)
+        return jsonify({'ok': r.returncode == 0, 'returncode': r.returncode,
+                        'stdout': r.stdout, 'stderr': r.stderr})
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': 'mise run timed out'}), 504)
+    except Exception as e:
+        _log(f'[mise run] {str(e)}')
+        return (jsonify({'error': str(e)}), 500)
+
+
+def _h_shellcheck_323():
+    """Lint a shell script (provided as text) with ShellCheck.
+
+        Body (JSON):
+            script (str, required): shell script source to lint.
+            shell (str, optional): shell dialect: sh|bash|dash|ksh. Default auto-detect.
+            format (str, optional): json1|json|checkstyle|gcc|tty. Default json1.
+            severity (str, optional): minimum severity: error|warning|info|style.
+    """
+    body = _json_body()
+    script = body.get('script')
+    if script is None:
+        return _missing_field(body, 'script')
+    exe = _find_tool('shellcheck')
+    if not exe:
+        return (jsonify({'error': 'shellcheck is not installed', 'hint': 'scoop install shellcheck  OR  winget install koalaman.shellcheck'}), 503)
+    fmt = str(body.get('format') or 'json1').strip()
+    shell = str(body.get('shell') or '').strip()
+    severity = str(body.get('severity') or '').strip()
+    cmd = [exe, '-f', fmt]
+    if shell:
+        cmd += ['-s', shell]
+    if severity:
+        cmd += ['-S', severity]
+    cmd.append('-')
+    try:
+        r = subprocess.run(cmd, input=str(script), capture_output=True, text=True, errors='replace', timeout=60)
+        # shellcheck returns rc=1 when issues are found; that is a valid result
+        if r.returncode not in (0, 1):
+            _log(f'[shellcheck check] rc={r.returncode}: {r.stderr[:300]}')
+            return (jsonify({'error': r.stderr.strip() or 'shellcheck failed'}), 500)
+        out = r.stdout
+        if fmt in ('json', 'json1'):
+            try:
+                out = json_lib.loads(out)
+            except Exception:
+                pass
+        count = len(out.get('comments', [])) if isinstance(out, dict) else (len(out) if isinstance(out, list) else None)
+        return jsonify({'ok': True, 'format': fmt, 'issues': out, 'count': count})
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': 'shellcheck timed out'}), 504)
+    except Exception as e:
+        _log(f'[shellcheck check] {str(e)}')
+        return (jsonify({'error': str(e)}), 500)
+
+
+def _h_shellcheck_324():
+    """Lint a shell script file by path.
+
+        Body (JSON):
+            path (str, required): path to the script to lint.
+            format (str, optional): json1|json|checkstyle|gcc|tty. Default json1.
+            shell (str, optional): shell dialect: sh|bash|dash|ksh.
+    """
+    body = _json_body()
+    path = str(body.get('path') or '').strip()
+    if not path:
+        return _missing_field(body, 'path')
+    exe = _find_tool('shellcheck')
+    if not exe:
+        return (jsonify({'error': 'shellcheck is not installed', 'hint': 'scoop install shellcheck  OR  winget install koalaman.shellcheck'}), 503)
+    if not os.path.isfile(path):
+        return (jsonify({'error': f'file not found: {path}'}), 400)
+    fmt = str(body.get('format') or 'json1').strip()
+    shell = str(body.get('shell') or '').strip()
+    cmd = [exe, '-f', fmt]
+    if shell:
+        cmd += ['-s', shell]
+    cmd.append(path)
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, errors='replace', timeout=60)
+        if r.returncode not in (0, 1):
+            _log(f'[shellcheck file] rc={r.returncode}: {r.stderr[:300]}')
+            return (jsonify({'error': r.stderr.strip() or 'shellcheck failed'}), 500)
+        out = r.stdout
+        if fmt in ('json', 'json1'):
+            try:
+                out = json_lib.loads(out)
+            except Exception:
+                pass
+        count = len(out.get('comments', [])) if isinstance(out, dict) else (len(out) if isinstance(out, list) else None)
+        return jsonify({'ok': True, 'path': path, 'format': fmt, 'issues': out, 'count': count})
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': 'shellcheck timed out'}), 504)
+    except Exception as e:
+        _log(f'[shellcheck file] {str(e)}')
+        return (jsonify({'error': str(e)}), 500)
+
+
 def register_routes(app, state, require_auth):
     global _STATE
     _STATE = state
@@ -12937,6 +13209,13 @@ def register_routes(app, state, require_auth):
         ('/auto/ruff/check', ['POST'], _h_ruff_315),
         ('/auto/ruff/format', ['POST'], _h_ruff_316),
         ('/auto/ruff/rule', ['GET'], _h_ruff_317),
+        ('/auto/mise/list', ['GET'], _h_mise_318),
+        ('/auto/mise/current', ['GET'], _h_mise_319),
+        ('/auto/mise/tasks', ['GET'], _h_mise_320),
+        ('/auto/mise/exec', ['POST'], _h_mise_321),
+        ('/auto/mise/run', ['POST'], _h_mise_322),
+        ('/auto/shellcheck/check', ['POST'], _h_shellcheck_323),
+        ('/auto/shellcheck/file', ['POST'], _h_shellcheck_324),
     ]
     for _path, _methods, _fn in _ACTIONS:
         app.add_url_rule(_path, endpoint=_fn.__name__, view_func=require_auth(_fn), methods=_methods)
