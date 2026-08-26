@@ -4,6 +4,7 @@ Before any screenshot leaves to a cloud LLM, OCR it locally and mask
 sensitive areas (credit cards, SSNs, email addresses, phone numbers).
 """
 import base64
+import copy
 import io
 import logging
 import re
@@ -32,6 +33,10 @@ _PII_STATS = {
     "text_processed": 0,
     "last_redaction": None,
 }
+
+# Refuse to decode/redact images larger than 50 megapixels — a small compressed
+# PNG can decompress to a gigantic bitmap and exhaust memory (decompression bomb).
+_MAX_IMAGE_PIXELS = 50_000_000
 
 
 def _debug_failure(context, exc):
@@ -66,11 +71,14 @@ def _redact_text(text):
         return text, 0
     # Sort by start position descending to avoid offset issues
     sorted_regions = sorted(regions, key=lambda r: -r["start"])
+    # Snapshot mask_char under lock so a concurrent /pii/configure can't race it.
+    with _PII_LOCK:
+        mask_char = _PII_CONFIG["mask_char"]
     result = text
     count = 0
     for region in sorted_regions:
         mask_len = region["end"] - region["start"]
-        result = result[:region["start"]] + (_PII_CONFIG["mask_char"] * mask_len) + result[region["end"]:]
+        result = result[:region["start"]] + (mask_char * mask_len) + result[region["end"]:]
         count += 1
     return result, count
 
@@ -80,35 +88,50 @@ def _redact_image(base64_str):
     try:
         from PIL import Image, ImageDraw
         img_data = base64.b64decode(base64_str)
-        img = Image.open(io.BytesIO(img_data))
-        draw = ImageDraw.Draw(img)
+        with Image.open(io.BytesIO(img_data)) as img:
+            w, h = img.size
+            if w * h > _MAX_IMAGE_PIXELS:
+                _LOGGER.warning("image too large (%dx%d) — refusing to redact", w, h)
+                return None, [], -1  # caller must block
+            draw = ImageDraw.Draw(img)
 
-        # Try to use pytesseract for OCR
-        try:
-            import pytesseract
-            ocr_data = pytesseract.image_to_data(img, output_type=pytesseract.Output.DICT)
-            regions_masked = []
-            for i in range(len(ocr_data["text"])):
-                text = ocr_data["text"][i]
-                if not text or not text.strip():
-                    continue
-                pii_regions = _find_pii_regions(text)
-                if pii_regions:
-                    x, y, w, h = (ocr_data["left"][i], ocr_data["top"][i],
-                                   ocr_data["width"][i], ocr_data["height"][i])
-                    draw.rectangle([x, y, x + w, y + h], fill="black")
-                    regions_masked.append({
-                        "x": x, "y": y, "w": w, "h": h,
-                        "matched": text[:20],
-                    })
+            try:
+                import pytesseract
+                ocr_data = pytesseract.image_to_data(img, output_type=pytesseract.Output.DICT)
+                regions_masked = []
 
-            buf = io.BytesIO()
-            img.save(buf, format="PNG")
-            result_base64 = base64.b64encode(buf.getvalue()).decode()
-            return result_base64, regions_masked, len(regions_masked)
-        except ImportError:
-            _LOGGER.warning("pytesseract not installed — cannot redact image PII")
-            return None, [], -1  # error indicator: caller must block
+                # Group words by (block, paragraph, line). The previous per-word
+                # loop could never match multi-word PII like "4111 1111 1111 1111"
+                # or a space-separated phone number, because each OCR word was
+                # tested in isolation. Concatenate each line's words, run the
+                # regexes over the full line, and mask the whole line's box.
+                lines = {}
+                for i in range(len(ocr_data["text"])):
+                    text = ocr_data["text"][i]
+                    if not text or not text.strip():
+                        continue
+                    key = (ocr_data["block_num"][i], ocr_data["par_num"][i],
+                           ocr_data["line_num"][i])
+                    lines.setdefault(key, []).append(i)
+
+                for indices in lines.values():
+                    line_text = " ".join(ocr_data["text"][i].strip() for i in indices)
+                    if _find_pii_regions(line_text):
+                        # Union of the bounding boxes for this line's words.
+                        x0 = min(ocr_data["left"][i] for i in indices)
+                        y0 = min(ocr_data["top"][i] for i in indices)
+                        x1 = max(ocr_data["left"][i] + ocr_data["width"][i] for i in indices)
+                        y1 = max(ocr_data["top"][i] + ocr_data["height"][i] for i in indices)
+                        draw.rectangle([x0, y0, x1, y1], fill="black")
+                        regions_masked.append({"x": x0, "y": y0, "w": x1 - x0, "h": y1 - y0})
+
+                buf = io.BytesIO()
+                img.save(buf, format="PNG")
+                result_base64 = base64.b64encode(buf.getvalue()).decode()
+                return result_base64, regions_masked, len(regions_masked)
+            except ImportError:
+                _LOGGER.warning("pytesseract not installed — cannot redact image PII")
+                return None, [], -1  # error indicator: caller must block
     except Exception as exc:
         _debug_failure("redact_image", exc)
         return None, [], -1  # error indicator: caller must block
@@ -171,24 +194,37 @@ def _pii_configure():
             for name, cfg in body["patterns"].items():
                 if name in _PII_CONFIG["patterns"]:
                     if isinstance(cfg, dict):
-                        # Validate regex before accepting
-                        new_regex = cfg.get("regex")
-                        if new_regex is not None and isinstance(new_regex, str):
-                            if len(new_regex) > 500:
-                                return jsonify({"ok": False, "error": "regex too long (max 500 chars)"}), 400
-                            try:
-                                re.compile(new_regex)
-                            except re.error as e:
-                                return jsonify({"ok": False, "error": f"invalid regex: {e}"}), 400
-                        _PII_CONFIG["patterns"][name].update(cfg)
+                        # Whitelist keys — never let arbitrary client keys pollute config.
+                        for key in ("enabled", "regex"):
+                            if key not in cfg:
+                                continue
+                            if key == "enabled" and not isinstance(cfg[key], bool):
+                                continue
+                            if key == "regex":
+                                new_regex = cfg[key]
+                                if new_regex is None:
+                                    _PII_CONFIG["patterns"][name]["regex"] = None
+                                    continue
+                                if not isinstance(new_regex, str):
+                                    continue
+                                if len(new_regex) > 500:
+                                    return jsonify({"ok": False, "error": "regex too long (max 500 chars)"}), 400
+                                try:
+                                    re.compile(new_regex)
+                                except re.error as e:
+                                    return jsonify({"ok": False, "error": f"invalid regex: {e}"}), 400
+                            _PII_CONFIG["patterns"][name][key] = cfg[key]
                     else:
-                        _PII_CONFIG["patterns"][name]["enabled"] = bool(cfg)
+                        if isinstance(cfg, bool):
+                            _PII_CONFIG["patterns"][name]["enabled"] = cfg
         if "mask_char" in body:
             mask_char = body["mask_char"]
             if not isinstance(mask_char, str) or len(mask_char) != 1:
                 return jsonify({"ok": False, "error": "mask_char must be a single character"}), 400
             _PII_CONFIG["mask_char"] = mask_char
-    return jsonify({"ok": True, "config": _PII_CONFIG})
+        # Serialize inside the lock so the returned config is a consistent snapshot.
+        config_snapshot = copy.deepcopy(_PII_CONFIG)
+    return jsonify({"ok": True, "config": config_snapshot})
 
 
 @pii_bp.route("/pii/test", methods=["POST"])
