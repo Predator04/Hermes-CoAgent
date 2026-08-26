@@ -4,6 +4,7 @@ import importlib
 import re
 import subprocess
 import sys
+from collections import deque
 from importlib import metadata
 
 from flask import Blueprint, jsonify
@@ -235,7 +236,8 @@ def route_deps_auto():
     if not SERVER_LOG.exists():
         return jsonify({"installed": [], "missing": [], "errors": [], "log": str(SERVER_LOG)})
     try:
-        lines = SERVER_LOG.read_text(encoding="utf-8", errors="replace").splitlines()[-5000:]
+        with SERVER_LOG.open("r", encoding="utf-8", errors="replace") as f:
+            lines = deque(f, maxlen=5000)
     except Exception as e:
         return _error(f"Cannot read log: {e}", 500)
     missing = []
@@ -250,7 +252,9 @@ def route_deps_auto():
     for module in missing[:10]:
         package = _package_for_module(module)
         if not _allowed_package(package):
-            return _error("auto-install package is not in the allowed install list", package=package, module=module)
+            results.append({"module": module, "package": package,
+                            "action": "skipped", "reason": "not in allowed install list"})
+            continue
         try:
             result = _pip_install(package)
             results.append({
