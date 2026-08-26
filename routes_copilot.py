@@ -436,7 +436,7 @@ def register_routes(app, state, require_auth):
         steps = []
         handled_any = False
         _log(f"CoPilot automate prompt: {prompt[:300]}")
-        for clause in _split_prompt(prompt):
+        for clause in _split_prompt(prompt)[:10]:
             handled, step = _run_clause(clause, state)
             handled_any = handled_any or handled
             step["clause"] = clause
@@ -446,7 +446,12 @@ def register_routes(app, state, require_auth):
                            status=step.get("status", "ok"))
             if step.get("status") == "error" and d.get("stop_on_error", True):
                 break
-        status = "ok" if steps and all(s.get("status") == "ok" for s in steps) else "partial"
+        if not steps or all(s.get("status") == "error" for s in steps):
+            status = "error"
+        elif all(s.get("status") == "ok" for s in steps):
+            status = "ok"
+        else:
+            status = "partial"
         code = 200 if handled_any else 400
         return jsonify({"status": status, "prompt": prompt, "steps": steps}), code
 
