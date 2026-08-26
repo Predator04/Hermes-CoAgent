@@ -275,12 +275,16 @@ def _launch_app_or_url(target):
     if re.match(r"^https?://", target):
         webbrowser.open_new_tab(target)
         return {"status": "ok", "kind": "url", "target": target, "url": target}
-    if "." in lowered and " " not in lowered:
-        url = "https://" + target if not lowered.startswith("http") else target
-        webbrowser.open_new_tab(url)
-        return {"status": "ok", "kind": "url", "target": target, "url": url}
-    for key, exe in APP_MAP.items():
-        if key in lowered:
+    # Only auto-open a URL when the target looks like a bare domain (no slashes
+    # or leading dots) — otherwise a path like "../../etc/hosts" would be
+    # treated as a URL and opened in the browser.
+    if re.fullmatch(r"(?:[a-z0-9-]+\.)+[a-z]{2,}", lowered):
+        webbrowser.open_new_tab("https://" + target)
+        return {"status": "ok", "kind": "url", "target": target, "url": "https://" + target}
+    # Match apps on word boundaries (longest key first) so "open recalculate"
+    # doesn't launch calc.exe and "open cmdlet" doesn't launch cmd.exe.
+    for key, exe in sorted(APP_MAP.items(), key=lambda kv: -len(kv[0])):
+        if re.search(rf"\b{re.escape(key)}(?![\w+])", lowered):
             create_flags = subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0
             subprocess.Popen([exe], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                              stderr=subprocess.DEVNULL, creationflags=create_flags)
