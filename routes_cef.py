@@ -132,7 +132,12 @@ class _CDPSocket:
             if not chunk:
                 raise ConnectionError("WebSocket handshake failed — connection closed")
             resp += chunk
-        if b"101" not in resp:
+        status_line = resp.split(b"\r\n", 1)[0]
+        try:
+            status_code = int(status_line.split(b" ")[1])
+        except (IndexError, ValueError):
+            status_code = 0
+        if status_code != 101:
             raise ConnectionError(f"WebSocket upgrade rejected: {resp[:200]!r}")
 
     # ------------------------------------------------------------------
