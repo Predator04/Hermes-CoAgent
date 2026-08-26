@@ -166,13 +166,20 @@ def register_routes(app, state, require_auth):
         finally:
             _MACHINES_LOCK.release()
         machine = None
-        if data.get("name"):
-            machine = machines.get(str(data.get("name")))
+        name = data.get("name")
+        if name:
+            if not isinstance(name, str) or not name.strip():
+                return _error("name must be a non-empty string", 400)
+            machine = machines.get(name.strip())
             if not machine:
                 return _error("saved machine not found", 404)
         mac = data.get("mac") or (machine or {}).get("mac")
         if not mac:
             return _error("mac is required", 400)
+        try:
+            mac = _normalize_mac(mac)
+        except ValueError as e:
+            return _error(str(e))
         broadcast = data.get("broadcast") or data.get("ip") or (machine or {}).get("broadcast") or "255.255.255.255"
         try:
             broadcast = _validate_broadcast(broadcast)
@@ -185,6 +192,6 @@ def register_routes(app, state, require_auth):
         port = max(1, min(port, 65535))
         try:
             sent = _send_wol(mac, str(broadcast), port)
-            return jsonify({"status": "sent", "mac": _normalize_mac(mac), "broadcast": broadcast, "port": port, "bytes": sent})
+            return jsonify({"status": "sent", "mac": mac, "broadcast": broadcast, "port": port, "bytes": sent})
         except Exception as e:
             return jsonify({"error": str(e), "type": type(e).__name__}), 500
