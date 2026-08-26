@@ -23,8 +23,9 @@ if not os.path.exists(backup):
     shutil.copy2(filepath, backup)
     print(f"Backup created: {backup}")
 
-# Read and patch
-with open(filepath, 'r') as f:
+# Read and patch — force UTF-8 and preserve line endings so the file's
+# non-ASCII bytes and newline style survive the round-trip on Windows.
+with open(filepath, 'r', encoding='utf-8', newline='') as f:
     content = f.read()
 
 # Comment out the asyncio check
@@ -51,8 +52,12 @@ if old not in content:
 
 content = content.replace(old, new, 1)
 
-with open(filepath, 'w') as f:
+# Atomic write: write to a temp file then replace, so an interruption can't
+# leave Playwright's file empty or half-written.
+tmp_path = filepath + ".tmp"
+with open(tmp_path, 'w', encoding='utf-8', newline='') as f:
     f.write(content)
+os.replace(tmp_path, filepath)
 
 print(f"Patched: {filepath}")
 print("Lines 45-49 replaced to skip asyncio check")
