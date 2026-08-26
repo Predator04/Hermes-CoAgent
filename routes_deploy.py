@@ -56,8 +56,9 @@ def _error(message: str, status: int = 400, **extra):
 
 def _log(msg: str):
     ts = time.strftime("%H:%M:%S")
-    _DEPLOY_STATE["log"].append(f"[{ts}] {msg}")
-    _DEPLOY_STATE["step"] = msg
+    with _DEPLOY_LOCK:
+        _DEPLOY_STATE["log"].append(f"[{ts}] {msg}")
+        _DEPLOY_STATE["step"] = msg
 
 
 def _find_python() -> str | None:
@@ -165,6 +166,7 @@ def route_deploy_status():
     """Live status of current/last deploy run + ngrok explanation."""
     with _DEPLOY_LOCK:
         state = dict(_DEPLOY_STATE)
+        state["log"] = list(_DEPLOY_STATE["log"])
     return jsonify({
         "phase": state["phase"],
         "step": state["step"],
@@ -289,13 +291,15 @@ def route_deploy_oneclick():
         # Verify it's up
         import urllib.request
         try:
-            resp = urllib.request.urlopen(f"http://127.0.0.1:{port}/ping", timeout=10)
+            with urllib.request.urlopen(f"http://127.0.0.1:{port}/ping", timeout=10):
+                pass
             _log("CoAgent is running!")
         except Exception:
             _log("Waiting for CoAgent to start...")
             time.sleep(5)
             try:
-                resp = urllib.request.urlopen(f"http://127.0.0.1:{port}/ping", timeout=10)
+                with urllib.request.urlopen(f"http://127.0.0.1:{port}/ping", timeout=10):
+                    pass
                 _log("CoAgent is running!")
             except Exception as e2:
                 _log(f"CoAgent may still be starting: {e2}")
@@ -328,8 +332,8 @@ def route_deploy_oneclick():
                 _DEPLOY_STATE["ngrok_pid"] = ngrok_proc.pid
                 time.sleep(3)
                 try:
-                    resp = urllib.request.urlopen("http://127.0.0.1:4040/api/tunnels", timeout=10)
-                    data = json.loads(resp.read())
+                    with urllib.request.urlopen("http://127.0.0.1:4040/api/tunnels", timeout=10) as resp:
+                        data = json.loads(resp.read())
                     for t in data.get("tunnels", []):
                         if t.get("proto") == "https":
                             ngrok_url = t["public_url"]
@@ -374,8 +378,8 @@ def route_deploy_tunnel():
         tunnel_url = _DEPLOY_STATE["ngrok_url"]
         try:
             import urllib.request
-            resp = urllib.request.urlopen("http://127.0.0.1:4040/api/tunnels", timeout=5)
-            data = json.loads(resp.read())
+            with urllib.request.urlopen("http://127.0.0.1:4040/api/tunnels", timeout=5) as resp:
+                data = json.loads(resp.read())
             for t in data.get("tunnels", []):
                 if t.get("proto") == "https":
                     tunnel_active = True
@@ -438,8 +442,8 @@ def route_deploy_tunnel():
             time.sleep(3)
 
             import urllib.request
-            resp = urllib.request.urlopen("http://127.0.0.1:4040/api/tunnels", timeout=10)
-            data = json.loads(resp.read())
+            with urllib.request.urlopen("http://127.0.0.1:4040/api/tunnels", timeout=10) as resp:
+                data = json.loads(resp.read())
             for t in data.get("tunnels", []):
                 if t.get("proto") == "https":
                     _DEPLOY_STATE["ngrok_url"] = t["public_url"]
