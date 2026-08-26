@@ -87,7 +87,10 @@ if _HAS_CTYPES and wintypes is not None:
         _user32.CloseClipboard.restype = wintypes.BOOL
         _user32.CloseClipboard.argtypes = []
     except Exception:
-        pass
+        # If any prototype failed to bind, the remaining ones were skipped and
+        # would default to c_int returns — truncating 64-bit HGLOBAL handles.
+        # Fail safe: treat ctypes as unavailable rather than corrupt handles.
+        _HAS_CTYPES = False
 
 
 def _windows_only():
