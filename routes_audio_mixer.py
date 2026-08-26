@@ -13,6 +13,7 @@ import time, so the Linux syntax-check CI stays green.
 """
 
 import json as _json
+import math
 import os
 import re
 import shutil
@@ -93,6 +94,10 @@ def _clamp_volume(raw):
     try:
         val = float(raw)
     except (TypeError, ValueError):
+        return None
+    # float("nan") / float("inf") pass through both comparisons below unchanged
+    # and would corrupt the audio session state, so reject non-finite values.
+    if math.isnan(val) or math.isinf(val):
         return None
     if val < 0.0:
         val = 0.0
@@ -401,6 +406,10 @@ def _ps_resolve_pids(match_name):
     base = match_name
     if base.lower().endswith(".exe"):
         base = base[:-4]
+    # A name like ".exe" matches the regex but strips to "", which would make
+    # Get-Process -Name '' throw. Reject empty after stripping.
+    if not base:
+        return [], "invalid process name"
     # ASCII-only single-quoted arg; regex above already banned quotes and
     # anything that could break out of the string literal below.
     script = (
@@ -506,9 +515,13 @@ def register_routes(app, state, require_auth):
 
         match_pid = None
         if match_pid_raw is not None:
+            # bool is a subclass of int; int(True) == 1 would silently target
+            # PID 1 (an unrelated process). Reject booleans explicitly.
+            if isinstance(match_pid_raw, bool):
+                return jsonify({"error": "invalid pid"}), 400
             try:
                 match_pid = int(match_pid_raw)
-                if match_pid < 0:
+                if match_pid <= 0:
                     raise ValueError
             except (TypeError, ValueError):
                 return jsonify({"error": "invalid pid"}), 400
