@@ -116,11 +116,16 @@ def _coerce_int(value, default, lo, hi):
 
 
 def _note_record(path):
-    stat = path.stat()
+    try:
+        stat = path.stat()
+        relative = str(path.resolve().relative_to(_vault())).replace("\\", "/")
+    except (OSError, ValueError):
+        # Note deleted between rglob and stat, or a symlink escaping the vault.
+        return None
     return {
         "name": path.stem,
         "path": str(path),
-        "relative": str(path.resolve().relative_to(_vault())).replace("\\", "/"),
+        "relative": relative,
         "bytes": stat.st_size,
         "mtime": stat.st_mtime,
     }
@@ -135,7 +140,7 @@ def register_routes(app, state, require_auth):
         if not vault.exists():
             return _error("vault not found", 404, vault=str(vault))
         limit = _coerce_int(data.get("limit", 1000), 1000, 1, 10000)
-        notes = [_note_record(path) for path in sorted(vault.rglob("*.md"))[:limit]]
+        notes = [rec for rec in (_note_record(path) for path in sorted(vault.rglob("*.md"))[:limit]) if rec]
         return jsonify({"vault": str(vault), "notes": notes, "count": len(notes)})
 
     @app.route("/obsidian/search", methods=["POST"])
