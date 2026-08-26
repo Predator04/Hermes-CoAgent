@@ -319,6 +319,9 @@ def _connect_to_port(port: int, title_hint: str | None = None) -> tuple[_CDPSock
     """
     from urllib.parse import urlparse
     pages = _list_pages(port)
+    # Only targets with a debuggable WebSocket endpoint can be connected to —
+    # service workers, DevTools frontends, and already-attached targets omit it.
+    pages = [p for p in pages if p.get("webSocketDebuggerUrl")]
     page = _pick_page(pages, title_hint)
     if not page:
         raise ValueError(f"No debuggable pages found on port {port}")
