@@ -105,10 +105,13 @@ def _rest_request(method, path, body=None, timeout=3):
 
 
 def _coerce_int(value, default, lo, hi):
-    try:
-        n = int(value or default)
-    except (TypeError, ValueError):
+    if value is None or value == "":
         n = default
+    else:
+        try:
+            n = int(value)
+        except (TypeError, ValueError):
+            n = default
     return max(lo, min(n, hi))
 
 
