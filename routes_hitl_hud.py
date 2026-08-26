@@ -93,6 +93,8 @@ def _hitl_preview():
         duration = max(100, min(int(body.get("duration_ms", 2000)), 5000))
     except (TypeError, ValueError, OverflowError):
         return jsonify({"ok": False, "error": "bbox and duration_ms must be numeric"}), 400
+    if bbox[2] <= 0 or bbox[3] <= 0:
+        return jsonify({"ok": False, "error": "bbox width and height must be positive"}), 400
     with _HITL_LOCK:
         _HITL_STATE["preview_active"] = True
     ok = _flash_rect(bbox, duration)
