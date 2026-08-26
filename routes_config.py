@@ -48,8 +48,12 @@ def _original_name_from_backup(backup_name):
 
 
 def _prune_backups_for(path: Path):
+    # `*` in the glob also matches dots, so `config.yaml.*.bak` would also match
+    # `config.yaml.new.<ts>.bak`. Filter by the decoded original name so we only
+    # ever prune backups that actually belong to `path`.
     backups = sorted(
-        BACKUP_DIR.glob(f"{path.name}.*.bak"),
+        (p for p in BACKUP_DIR.glob(f"{path.name}.*.bak")
+         if _original_name_from_backup(p.name) == path.name),
         key=_stat_safe,
         reverse=True,
     )
