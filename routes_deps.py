@@ -107,7 +107,22 @@ def _is_lazy(module_name):
     return False
 
 
+def _module_is_known(module_name):
+    """Return True if module_name is a tracked dep or maps to an allowed package."""
+    if not isinstance(module_name, str) or not module_name:
+        return False
+    root = module_name.split(".", 1)[0]
+    for dep in TRACKED_DEPS:
+        if dep["module"] == module_name or dep["module"].split(".", 1)[0] == root:
+            return True
+    return _package_for_module(module_name) in ALLOWED_PACKAGES
+
+
 def _check_module(module_name, package=None):
+    if not _module_is_known(module_name):
+        return {"module": module_name, "package": package or module_name,
+                "installed": False, "version": None,
+                "error": "module is not in the allowed list"}
     if _is_lazy(module_name):
         # Lazy modules: check if pip package exists without importing
         pkg_name = package or module_name.split(".", 1)[0].replace("_", "-")
