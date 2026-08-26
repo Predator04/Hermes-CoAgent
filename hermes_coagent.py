@@ -1067,6 +1067,21 @@ except ImportError:
     reg_ngrok = None
     features["ngrok_auto_install"] = False
 try:
+    from routes_env import register_routes as reg_env
+except ImportError:
+    reg_env = None
+    features["env_management"] = False
+try:
+    from routes_defender import register_routes as reg_defender
+except ImportError:
+    reg_defender = None
+    features["defender_management"] = False
+try:
+    from routes_startup import register_routes as reg_startup
+except ImportError:
+    reg_startup = None
+    features["startup_management"] = False
+try:
     from routes_capture import register_routes as reg_capture
 except ImportError:
     reg_capture = None
@@ -1345,6 +1360,15 @@ if reg_eventlog:
 if reg_ngrok:
     reg_ngrok(app, state, require_auth)
     features["ngrok_auto_install"] = True
+if reg_env:
+    reg_env(app, state, require_auth)
+    features["env_management"] = True
+if reg_defender:
+    reg_defender(app, state, require_auth)
+    features["defender_management"] = True
+if reg_startup:
+    reg_startup(app, state, require_auth)
+    features["startup_management"] = True
 if reg_capture:
     reg_capture(app, state, require_auth)
     features["semantic_capture"] = True
