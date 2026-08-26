@@ -131,8 +131,9 @@ def _check_module(module_name, package=None):
             return {"module": module_name, "package": pkg_name, "installed": True, "version": version, "lazy": True}
         except metadata.PackageNotFoundError:
             return {"module": module_name, "package": pkg_name, "installed": False, "version": None, "lazy": True}
-        except Exception:
-            pass
+        except Exception as e:
+            return {"module": module_name, "package": pkg_name, "installed": False,
+                    "version": None, "lazy": True, "error": f"{type(e).__name__}: {e}"}
     try:
         importlib.import_module(module_name)
         installed = True
