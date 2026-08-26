@@ -218,8 +218,15 @@ class _CDPSocket:
                     if slot:
                         slot["result"] = msg
                         slot["event"].set()
-            except Exception:
+            except Exception as exc:
                 self._running = False
+                # Connection lost — wake every in-flight caller immediately so
+                # they raise ConnectionError instead of blocking to timeout.
+                with self._lock:
+                    for slot in self._pending.values():
+                        slot["error"] = exc
+                        slot["event"].set()
+                    self._pending.clear()
                 break
 
     # ------------------------------------------------------------------
@@ -250,6 +257,10 @@ class _CDPSocket:
         with self._lock:
             slot = self._pending.pop(cmd_id, {})
 
+        if slot.get("error") is not None:
+            raise ConnectionError(
+                f"CDP connection lost while awaiting '{method}': {slot['error']}"
+            )
         if not triggered:
             raise TimeoutError(f"CDP command '{method}' timed out after {timeout}s")
         return slot.get("result", {})
