@@ -599,49 +599,55 @@ def register_routes(app, state, require_auth):
             return jsonify({"ok": False, "error": "Screen capture failed",
                             "code": "CAPTURE_FAILED"}), 500
 
-        img_w, img_h = img.size
+        try:
+            img_w, img_h = img.size
 
-        # For region/window captures the image is smaller than the screen;
-        # query the actual monitor width so scale is computed correctly.
-        screen_width = img_w
-        if region or window:
+            # For region/window captures the image is smaller than the screen;
+            # query the actual monitor width so scale is computed correctly.
+            screen_width = img_w
+            if region or window:
+                try:
+                    import mss
+                    with mss.mss() as sct:
+                        screen_width = sct.monitors[1]["width"]
+                except Exception:
+                    pass
+
+            elements = _detect_elements(img, offset=offset, screen_width=screen_width)
+
+            if want_ocr:
+                ox, oy = offset
+                for elem in elements:
+                    rel_x = elem["bbox"]["x"] - ox
+                    rel_y = elem["bbox"]["y"] - oy
+                    elem["text"] = _ocr_elem_text(img, rel_x, rel_y,
+                                                  elem["bbox"]["w"], elem["bbox"]["h"])
+                # Reclassify elements confirmed to have text as buttons when shape matches
+                for elem in elements:
+                    if (elem["text"] and
+                            elem["bbox"]["w"] > 60 and
+                            elem["bbox"]["h"] > 18 and
+                            elem["type"] not in ("button", "input")):
+                        ar = elem["bbox"]["w"] / max(elem["bbox"]["h"], 1)
+                        if 2.0 <= ar <= 20.0:
+                            elem["type"] = "button"
+                            elem["confidence"] = min(elem["confidence"] + 0.15, 0.85)
+
+            return jsonify({
+                "ok": True,
+                "count": len(elements),
+                "elements": elements,
+                "elapsed_ms": round((time.time() - t0) * 1000, 1),
+                "backend": "numpy+pil" if _HAS_NUMPY else "pil",
+                "region": region,
+                "window": window,
+                "display_info": {"width": img_w, "height": img_h},
+            })
+        finally:
             try:
-                import mss
-                with mss.mss() as sct:
-                    screen_width = sct.monitors[1]["width"]
+                img.close()
             except Exception:
                 pass
-
-        elements = _detect_elements(img, offset=offset, screen_width=screen_width)
-
-        if want_ocr:
-            ox, oy = offset
-            for elem in elements:
-                rel_x = elem["bbox"]["x"] - ox
-                rel_y = elem["bbox"]["y"] - oy
-                elem["text"] = _ocr_elem_text(img, rel_x, rel_y,
-                                              elem["bbox"]["w"], elem["bbox"]["h"])
-            # Reclassify elements confirmed to have text as buttons when shape matches
-            for elem in elements:
-                if (elem["text"] and
-                        elem["bbox"]["w"] > 60 and
-                        elem["bbox"]["h"] > 18 and
-                        elem["type"] not in ("button", "input")):
-                    ar = elem["bbox"]["w"] / max(elem["bbox"]["h"], 1)
-                    if 2.0 <= ar <= 20.0:
-                        elem["type"] = "button"
-                        elem["confidence"] = min(elem["confidence"] + 0.15, 0.85)
-
-        return jsonify({
-            "ok": True,
-            "count": len(elements),
-            "elements": elements,
-            "elapsed_ms": round((time.time() - t0) * 1000, 1),
-            "backend": "numpy+pil" if _HAS_NUMPY else "pil",
-            "region": region,
-            "window": window,
-            "display_info": {"width": img_w, "height": img_h},
-        })
 
     @app.route("/vision/click", methods=["POST"])
     @require_auth
@@ -686,110 +692,116 @@ def register_routes(app, state, require_auth):
 
         ox, oy = offset
 
-        # --- Strategy 1: OCR text match (fast, accurate) ----------------------
-        if target_text:
-            word_bbox = _ocr_find_text(img, target_text)
-            if word_bbox:
-                wx, wy, ww, wh = word_bbox[:4]
-                click_x = ox + wx + ww // 2
-                click_y = oy + wy + wh // 2
-                clicked = _click_at(click_x, click_y)
-                thumb = _thumbnail_b64(img, wx, wy, ww, wh)
-                return jsonify({
-                    "ok": clicked,
-                    "clicked": clicked,
-                    "method": "ocr_text_match",
-                    "matched_text": target_text,
-                    "click_point": {"x": click_x, "y": click_y},
-                    "thumbnail": thumb,
-                    "elapsed_ms": round((time.time() - t0) * 1000, 1),
-                })
+        try:
+            # --- Strategy 1: OCR text match (fast, accurate) ----------------------
+            if target_text:
+                word_bbox = _ocr_find_text(img, target_text)
+                if word_bbox:
+                    wx, wy, ww, wh = word_bbox[:4]
+                    click_x = ox + wx + ww // 2
+                    click_y = oy + wy + wh // 2
+                    clicked = _click_at(click_x, click_y)
+                    thumb = _thumbnail_b64(img, wx, wy, ww, wh)
+                    return jsonify({
+                        "ok": clicked,
+                        "clicked": clicked,
+                        "method": "ocr_text_match",
+                        "matched_text": target_text,
+                        "click_point": {"x": click_x, "y": click_y},
+                        "thumbnail": thumb,
+                        "elapsed_ms": round((time.time() - t0) * 1000, 1),
+                    })
 
-        # --- Strategy 2: visual detection + color / element scoring -----------
-        click_screen_w = img.size[0]
-        if region or window:
+            # --- Strategy 2: visual detection + color / element scoring -----------
+            click_screen_w = img.size[0]
+            if region or window:
+                try:
+                    import mss
+                    with mss.mss() as sct:
+                        click_screen_w = sct.monitors[1]["width"]
+                except Exception:
+                    pass
+            elements = _detect_elements(img, offset=offset, screen_width=click_screen_w)
+
+            if elem_type_filter:
+                typed = [e for e in elements if e["type"] == elem_type_filter]
+                if typed:
+                    elements = typed
+
+            scored = []
+            for elem in elements:
+                score = 0.0
+
+                if target_color:
+                    dist = _color_distance(elem["color"], target_color)
+                    if dist < 30:
+                        score += 50
+                    elif dist < 70:
+                        score += 20
+                    elif dist < 120:
+                        score += 5
+
+                if target_text:
+                    rel_x = elem["bbox"]["x"] - ox
+                    rel_y = elem["bbox"]["y"] - oy
+                    text = _ocr_elem_text(img, rel_x, rel_y,
+                                          elem["bbox"]["w"], elem["bbox"]["h"])
+                    elem["text"] = text
+                    needle = target_text.lower()
+                    haystack = text.lower()
+                    if needle == haystack:
+                        score += 80
+                    elif needle in haystack:
+                        score += 55
+                    elif any(w in haystack for w in needle.split() if len(w) > 2):
+                        score += 20
+
+                if elem["type"] == "button":
+                    score += 8
+                score += elem["confidence"] * 0.05
+
+                if score > 0:
+                    scored.append((score, elem))
+
+            if not scored:
+                return jsonify({
+                    "ok": False,
+                    "error": (f"No element matching text={target_text!r} "
+                              f"color={target_color!r} found"),
+                    "code": "NOT_FOUND",
+                    "elements_searched": len(elements),
+                    "elapsed_ms": round((time.time() - t0) * 1000, 1),
+                }), 404
+
+            scored.sort(key=lambda x: -x[0])
+            best_score, best = scored[0]
+
+            bx = best["bbox"]["x"]
+            by = best["bbox"]["y"]
+            bw = best["bbox"]["w"]
+            bh = best["bbox"]["h"]
+            click_x = bx + bw // 2
+            click_y = by + bh // 2
+            clicked = _click_at(click_x, click_y)
+
+            thumb = _thumbnail_b64(img, bx - ox, by - oy, bw, bh)
+
+            return jsonify({
+                "ok": clicked,
+                "clicked": clicked,
+                "method": "visual_detection",
+                "element": best,
+                "score": round(best_score, 1),
+                "click_point": {"x": click_x, "y": click_y},
+                "thumbnail": thumb,
+                "candidates": len(scored),
+                "elapsed_ms": round((time.time() - t0) * 1000, 1),
+            })
+        finally:
             try:
-                import mss
-                with mss.mss() as sct:
-                    click_screen_w = sct.monitors[1]["width"]
+                img.close()
             except Exception:
                 pass
-        elements = _detect_elements(img, offset=offset, screen_width=click_screen_w)
-
-        if elem_type_filter:
-            typed = [e for e in elements if e["type"] == elem_type_filter]
-            if typed:
-                elements = typed
-
-        scored = []
-        for elem in elements:
-            score = 0.0
-
-            if target_color:
-                dist = _color_distance(elem["color"], target_color)
-                if dist < 30:
-                    score += 50
-                elif dist < 70:
-                    score += 20
-                elif dist < 120:
-                    score += 5
-
-            if target_text:
-                rel_x = elem["bbox"]["x"] - ox
-                rel_y = elem["bbox"]["y"] - oy
-                text = _ocr_elem_text(img, rel_x, rel_y,
-                                      elem["bbox"]["w"], elem["bbox"]["h"])
-                elem["text"] = text
-                needle = target_text.lower()
-                haystack = text.lower()
-                if needle == haystack:
-                    score += 80
-                elif needle in haystack:
-                    score += 55
-                elif any(w in haystack for w in needle.split() if len(w) > 2):
-                    score += 20
-
-            if elem["type"] == "button":
-                score += 8
-            score += elem["confidence"] * 0.05
-
-            if score > 0:
-                scored.append((score, elem))
-
-        if not scored:
-            return jsonify({
-                "ok": False,
-                "error": (f"No element matching text={target_text!r} "
-                          f"color={target_color!r} found"),
-                "code": "NOT_FOUND",
-                "elements_searched": len(elements),
-                "elapsed_ms": round((time.time() - t0) * 1000, 1),
-            }), 404
-
-        scored.sort(key=lambda x: -x[0])
-        best_score, best = scored[0]
-
-        bx = best["bbox"]["x"]
-        by = best["bbox"]["y"]
-        bw = best["bbox"]["w"]
-        bh = best["bbox"]["h"]
-        click_x = bx + bw // 2
-        click_y = by + bh // 2
-        clicked = _click_at(click_x, click_y)
-
-        thumb = _thumbnail_b64(img, bx - ox, by - oy, bw, bh)
-
-        return jsonify({
-            "ok": clicked,
-            "clicked": clicked,
-            "method": "visual_detection",
-            "element": best,
-            "score": round(best_score, 1),
-            "click_point": {"x": click_x, "y": click_y},
-            "thumbnail": thumb,
-            "candidates": len(scored),
-            "elapsed_ms": round((time.time() - t0) * 1000, 1),
-        })
 
     @app.route("/vision/ocr", methods=["POST"])
     @require_auth
@@ -818,32 +830,40 @@ def register_routes(app, state, require_auth):
             return jsonify({"ok": False, "error": "Screen capture failed",
                             "code": "CAPTURE_FAILED"}), 500
 
-        result = _ocr_image(img)
-        elapsed = round((time.time() - t0) * 1000, 1)
+        result = None
+        elapsed = 0.0
+        try:
+            result = _ocr_image(img)
+            elapsed = round((time.time() - t0) * 1000, 1)
 
-        if result.get("success"):
-            ox, oy = offset
-            words = result.get("words", [])
-            # Translate word bboxes from image-relative to screen-absolute
-            for word in words:
-                bbox = word.get("bbox")
-                if bbox and len(bbox) >= 4:
-                    word["bbox"] = [bbox[0] + ox, bbox[1] + oy, bbox[2], bbox[3]]
+            if result.get("success"):
+                ox, oy = offset
+                words = result.get("words", [])
+                # Translate word bboxes from image-relative to screen-absolute
+                for word in words:
+                    bbox = word.get("bbox")
+                    if bbox and len(bbox) >= 4:
+                        word["bbox"] = [bbox[0] + ox, bbox[1] + oy, bbox[2], bbox[3]]
+                return jsonify({
+                    "ok": True,
+                    "text": result.get("text", ""),
+                    "words": words,
+                    "word_count": result.get("word_count", len(words)),
+                    "line_count": result.get("line_count", 0),
+                    "region": region,
+                    "window": window,
+                    "elapsed_ms": elapsed,
+                })
+
             return jsonify({
-                "ok": True,
-                "text": result.get("text", ""),
-                "words": words,
-                "word_count": result.get("word_count", len(words)),
-                "line_count": result.get("line_count", 0),
-                "region": region,
-                "window": window,
+                "ok": False,
+                "error": result.get("error", "OCR failed"),
+                "text": "",
+                "words": [],
                 "elapsed_ms": elapsed,
-            })
-
-        return jsonify({
-            "ok": False,
-            "error": result.get("error", "OCR failed"),
-            "text": "",
-            "words": [],
-            "elapsed_ms": elapsed,
-        }), 500
+            }), 500
+        finally:
+            try:
+                img.close()
+            except Exception:
+                pass
