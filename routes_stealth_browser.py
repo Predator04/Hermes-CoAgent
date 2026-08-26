@@ -40,6 +40,7 @@ _BROWSER = None   # Browser instance
 _CONTEXT = None   # Browser context
 _PAGE = None      # Active page
 _PROFILES_DIR = None
+_ACTIVE_PROFILE = None  # name of the persistent profile currently open in _CONTEXT
 _LAUNCH_ARGS = None
 
 
@@ -217,7 +218,7 @@ def _load_playwright():
 
 def _ensure_browser(new_page: bool = False, profile: str = None):
     """Get or create browser page. Creates browser if needed."""
-    global _BROWSER, _CONTEXT, _PAGE, _PROFILES_DIR
+    global _BROWSER, _CONTEXT, _PAGE, _PROFILES_DIR, _ACTIVE_PROFILE
 
     pw = _load_playwright()
     launched = False
@@ -245,6 +246,7 @@ def _ensure_browser(new_page: bool = False, profile: str = None):
                 viewport={"width": 1920, "height": 1080},
             )
             _PAGE = _CONTEXT.pages[0] if _CONTEXT.pages else _CONTEXT.new_page()
+            _ACTIVE_PROFILE = profile
         else:
             _BROWSER = pw.chromium.launch(
                 headless=False,
@@ -259,12 +261,18 @@ def _ensure_browser(new_page: bool = False, profile: str = None):
                 ),
             )
             _PAGE = _CONTEXT.new_page()
+            _ACTIVE_PROFILE = None
 
         # Inject all stealth scripts before any page loads
         _inject_stealth(_PAGE)
         launched = True
 
     if new_page and _PAGE and not launched:
+        try:
+            if not _PAGE.is_closed():
+                _PAGE.close()
+        except Exception:
+            pass
         _PAGE = _CONTEXT.new_page()
         _inject_stealth(_PAGE)
 
@@ -562,7 +570,7 @@ def route_stealth_wait():
 @stealth_bp.route("/stealth/close", methods=["POST"])
 def route_stealth_close():
     """Close the stealth browser."""
-    global _BROWSER, _CONTEXT, _PAGE, _PW, _PW_NAME
+    global _BROWSER, _CONTEXT, _PAGE, _PW, _PW_NAME, _ACTIVE_PROFILE
 
     with _STEALTH_LOCK:
         try:
@@ -578,6 +586,7 @@ def route_stealth_close():
             _BROWSER = None
             _CONTEXT = None
             _PAGE = None
+            _ACTIVE_PROFILE = None
             if _PW is not None:
                 try:
                     _PW.stop()
@@ -718,10 +727,18 @@ def route_stealth_profile():
                 return _error(str(e), status=500)
 
     if action == "delete":
+        if _ACTIVE_PROFILE == name:
+            return _error(
+                f"Profile '{name}' is currently in use; close the browser first",
+                status=409,
+            )
         profile_dir = _PROFILES_DIR / name
         if profile_dir.exists():
             import shutil
-            shutil.rmtree(profile_dir)
+            try:
+                shutil.rmtree(profile_dir)
+            except OSError as exc:
+                return _error(f"Failed to delete profile '{name}': {exc}", status=500)
             return jsonify({"action": "deleted", "profile": name})
         return _error(f"Profile '{name}' not found", status=404)
 
