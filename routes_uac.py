@@ -103,8 +103,10 @@ def _run_elevated_via_task(command, arguments="", working_dir=None):
 
     ps_cmd = (
         f"{action_part}; "
+        f"$trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddSeconds(1); "
+        f"$trigger.EndBoundary = (Get-Date).AddMinutes(15).ToString('s'); "
         f"Register-ScheduledTask -TaskName {_psq(task_name)} -Action $action "
-        f"-Trigger (New-ScheduledTaskTrigger -Once -At (Get-Date).AddSeconds(1)) "
+        f"-Trigger $trigger "
         f"-Principal (New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Highest) "
         f"-Settings (New-ScheduledTaskSettingsSet -DeleteExpiredTaskAfter (New-TimeSpan -Seconds 60) -ExecutionTimeLimit (New-TimeSpan -Minutes 10)) "
         f"-Force | Out-Null; "
@@ -280,6 +282,12 @@ def _try_click_ocr(button_target):
                     }
     except Exception:
         pass
+    finally:
+        # Release the screen capture (memory + Windows GDI handles).
+        try:
+            img.close()
+        except Exception:
+            pass
 
     return {"clicked": False, "reason": "OCR did not find UAC button text on screen"}
 
@@ -405,14 +413,18 @@ def register_routes(app, state, require_auth):
         """
         d = _json_body() or {}
         button_target = (d.get("button") or "yes").strip().lower()
-        wait_sec = min(float(d.get("timeout", 5)), 30.0)
+        try:
+            wait_sec = float(d.get("timeout", 5))
+        except (TypeError, ValueError):
+            wait_sec = 5.0
+        wait_sec = max(0.0, min(wait_sec, 30.0))
 
         if button_target not in ("yes", "no"):
             return jsonify({"error": "button must be 'yes' or 'no'"}), 400
 
-        # Warn if secure desktop is still on
+        # Warn if secure desktop is still on (only when we can positively read it)
         secure_desk = _reg_read_dword("PromptOnSecureDesktop")
-        if secure_desk != 0:
+        if secure_desk is not None and secure_desk != 0:
             return jsonify({
                 "status": "warning",
                 "clicked": False,
