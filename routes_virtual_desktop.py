@@ -73,6 +73,17 @@ def _find_powershell():
     )
 
 
+def _escape_like_wildcards(s):
+    """Escape PowerShell `-like` wildcards so they match literally."""
+    return (
+        s.replace("`", "``")
+        .replace("*", "`*")
+        .replace("?", "`?")
+        .replace("[", "`[")
+        .replace("]", "`]")
+    )
+
+
 # ---------------------------------------------------------------------------
 # PowerShell backend (VirtualDesktop module by MScholtes)
 # ---------------------------------------------------------------------------
@@ -144,7 +155,11 @@ def _ps_create_desktop(name=None, switch=False):
 
 def _ps_switch_desktop(index=None, name=None):
     if index is not None:
-        body = "Switch-Desktop -Desktop " + str(int(index)) + ";"
+        body = (
+            "$d = Get-Desktop -Index " + str(int(index)) + ";"
+            "if ($null -eq $d) { Write-Output '{\"error\":\"desktop not found\"}';"
+            " exit 3 }; Switch-Desktop -Desktop $d;"
+        )
     elif isinstance(name, str) and name.strip():
         safe = name.replace('"', ' ').replace("'", " ")
         body = (
@@ -166,7 +181,7 @@ def _ps_move_window(hwnd=None, title=None, index=None, name=None):
     if hwnd is not None:
         target = "$h = [IntPtr]" + str(int(hwnd)) + ";"
     elif isinstance(title, str) and title.strip():
-        safe = title.replace('"', ' ').replace("'", " ")
+        safe = _escape_like_wildcards(title.replace('"', ' ').replace("'", " "))
         target = (
             "$p = Get-Process | Where-Object { $_.MainWindowTitle -like '*"
             + safe + "*' -and $_.MainWindowHandle -ne 0 } | Select-Object -First 1;"
@@ -285,7 +300,11 @@ def register_routes(app, state, require_auth):
         if not isinstance(body, dict):
             body = {}
         name = body.get("name") if isinstance(body.get("name"), str) else None
-        switch = bool(body.get("switch"))
+        raw_switch = body.get("switch")
+        if isinstance(raw_switch, bool):
+            switch = raw_switch
+        else:
+            switch = str(raw_switch).strip().lower() in ("1", "true", "yes", "on")
         stdout, stderr, rc = _ps_create_desktop(name=name, switch=switch)
         payload, status = _parse_ps_json(stdout, stderr, rc)
         if status == 200 and isinstance(payload, dict):
