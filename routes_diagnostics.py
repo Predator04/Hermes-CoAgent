@@ -130,7 +130,7 @@ def _check_browser():
         chromium_ok = False
         with sync_playwright() as pw:
             chromium_path = pw.chromium.executable_path
-            chromium_ok = os.path.exists(chromium_path)
+            chromium_ok = bool(chromium_path) and os.path.exists(chromium_path)
         return {
             "status": "ok" if chromium_ok else "warning",
             "playwright": pl_version,
@@ -183,7 +183,7 @@ def _check_disk():
         stat = shutil.disk_usage(drive)
         free_gb = round(stat.free / (1024 ** 3), 2)
         total_gb = round(stat.total / (1024 ** 3), 2)
-        used_pct = round((stat.used / stat.total) * 100, 1)
+        used_pct = round((stat.used / stat.total) * 100, 1) if stat.total else 0
         if free_gb > 5:
             status = "ok"
         elif free_gb > 1:
@@ -302,8 +302,14 @@ def register_routes(app, state, require_auth):
         ]
         for t in threads:
             t.start()
+        # Join against a single shared deadline so N stuck checks cost ~12s
+        # total, not 12s each (the per-thread timeout is applied sequentially).
+        deadline = time.monotonic() + 12
         for t in threads:
-            t.join(timeout=12)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            t.join(timeout=remaining)
 
         # Snapshot under lock so late-completing threads can't race our iteration
         with lock:
