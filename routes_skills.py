@@ -162,8 +162,8 @@ def _load_one(skill_md: Path) -> Optional[Dict[str, Any]]:
         _log(f"skills: path escapes skills root, skipping {skill_md}")
         return None
     try:
-        raw = skill_md.read_text(encoding="utf-8", errors="replace")
         mtime = skill_md.stat().st_mtime
+        raw = skill_md.read_text(encoding="utf-8", errors="replace")
     except OSError as e:
         _log(f"skills: cannot read {skill_md}: {e}")
         return None
@@ -387,6 +387,18 @@ def _import_one(
         result["imported"] = False
         result["error"] = "destination escapes skills root"
         return result
+    if overwrite and dest_dir.exists():
+        # Replace, not merge: drop stale files from a prior version so the
+        # imported package doesn't retain orphaned scripts/references/assets.
+        try:
+            if dest_dir.is_symlink() or dest_dir.is_file():
+                dest_dir.unlink()
+            else:
+                shutil.rmtree(dest_dir)
+        except OSError as e:
+            result["imported"] = False
+            result["error"] = f"cannot replace existing skill: {e}"
+            return result
     try:
         files = _copy_skill_package(src_md.parent, dest_dir)
     except OSError as e:
