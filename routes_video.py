@@ -212,13 +212,15 @@ def _spawn_ffmpeg(argv):
         close_fds=True,
     )
     stderr_buffer = []
+    buf_lock = threading.Lock()
 
     def _drain():
         try:
             for line in proc.stderr:
-                stderr_buffer.append(line.decode("utf-8", "replace"))
-                if len(stderr_buffer) > _MAX_STDERR_LINES:
-                    del stderr_buffer[:-_MAX_STDERR_LINES]
+                with buf_lock:
+                    stderr_buffer.append(line.decode("utf-8", "replace"))
+                    if len(stderr_buffer) > _MAX_STDERR_LINES:
+                        del stderr_buffer[:-_MAX_STDERR_LINES]
         except Exception:
             pass
 
@@ -226,7 +228,7 @@ def _spawn_ffmpeg(argv):
         target=_drain, name="ffmpeg-stderr-drain", daemon=True,
     )
     drain_thread.start()
-    return proc, stderr_buffer, drain_thread
+    return proc, stderr_buffer, drain_thread, buf_lock
 
 
 def _proc_status(entry):
@@ -284,7 +286,12 @@ def _drain_stderr(entry):
         drain_thread.join(timeout=2.0)
     buf = entry.get("stderr_buffer") or []
     if buf:
-        entry["stderr"] = "".join(buf)
+        lock = entry.get("stderr_lock")
+        if lock is not None:
+            with lock:
+                entry["stderr"] = "".join(list(buf))
+        else:
+            entry["stderr"] = "".join(list(buf))
 
 
 def _stop_recording(rec_id, timeout=8.0):
@@ -490,7 +497,7 @@ def register_routes(app, state, require_auth):
             )
 
             try:
-                proc, stderr_buffer, drain_thread = _spawn_ffmpeg(argv)
+                proc, stderr_buffer, drain_thread, buf_lock = _spawn_ffmpeg(argv)
             except OSError as exc:
                 return jsonify({"error": f"spawn failed: {exc}"}), 500
 
@@ -506,7 +513,8 @@ def register_routes(app, state, require_auth):
                         pass
                     if drain_thread is not None and drain_thread.is_alive():
                         drain_thread.join(timeout=1.0)
-                    err = "".join(stderr_buffer)
+                    with buf_lock:
+                        err = "".join(list(stderr_buffer))
                 finally:
                     try:
                         if proc.stdin:
@@ -535,6 +543,7 @@ def register_routes(app, state, require_auth):
                 "returncode": None,
                 "stderr": "",
                 "stderr_buffer": stderr_buffer,
+                "stderr_lock": buf_lock,
                 "drain_thread": drain_thread,
                 "argv": argv,
                 "fps": fps,
