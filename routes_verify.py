@@ -95,6 +95,8 @@ def _coagent_request(path, payload=None, method="POST", timeout=20):
             data = json.loads(exc.read().decode("utf-8", errors="replace"))
         except Exception:
             data = {"error": str(exc)}
+        if not isinstance(data, dict):
+            data = {"error": f"HTTP {exc.code}: unexpected body type", "body": data}
         data.setdefault("status_code", exc.code)
         return data
     except Exception as exc:
