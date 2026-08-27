@@ -139,7 +139,26 @@ def _collect_snapshot():
     out, err, rc = _run_ps(_LIST_DEVICES_PS, timeout=25)
     if rc != 0:
         return [], err.strip() or f"Get-PnpDevice failed (rc={rc})"
-    devices = _normalize_devices(_parse_json_output(out))
+    text = (out or "").strip()
+    # Distinguish "parse failed" from "zero devices". ConvertTo-Json emits
+    # "null" (or empty output) when nothing matches -- a legitimate empty
+    # snapshot. Non-JSON output is a collection error and must not be
+    # mistaken for an empty device list (which would cause the next monitor
+    # poll to report every real device as detached and all devices as
+    # freshly attached).
+    if not text:
+        return [], None
+    try:
+        data = _json.loads(text)
+    except ValueError:
+        return [], "Get-PnpDevice returned non-JSON output"
+    if isinstance(data, list):
+        entries = data
+    elif isinstance(data, dict):
+        entries = [data]
+    else:
+        entries = []
+    devices = _normalize_devices(entries)
     return devices, None
 
 
@@ -279,14 +298,17 @@ def register_routes(app, state, require_auth):
         if isinstance(body, dict):
             reset = bool(body.get("reset", False))
 
-        current, err = _collect_snapshot()
-        if err:
-            return jsonify({"error": err}), 500
-
-        current_by_id = {d["id"]: d for d in current}
-        current_ids = set(current_by_id)
-
         with _MONITOR_LOCK:
+            # Collect the snapshot under the lock so two concurrent monitor
+            # requests cannot both diff against the same "previous" snapshot
+            # and silently lose device-change events.
+            current, err = _collect_snapshot()
+            if err:
+                return jsonify({"error": err}), 500
+
+            current_by_id = {d["id"]: d for d in current}
+            current_ids = set(current_by_id)
+
             previous = _MONITOR_STATE["snapshot"]
             previous_ts = _MONITOR_STATE["ts"]
             baseline = previous is None or reset
