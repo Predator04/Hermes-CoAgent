@@ -333,7 +333,7 @@ def register_routes(app, state, require_auth):
     # ----------------------- Excel COM engine (live) ---------------------
     def _com_excel():
         if os.name != "nt":
-            return None, jsonify({"error": "Windows-only endpoint"}), 501
+            return None, (jsonify({"error": "Windows-only endpoint"}), 501)
         if not _HAS_COM:
             return None, _missing_engine("Excel COM", "pywin32")
         return win32com.client, None
