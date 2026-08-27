@@ -46,17 +46,19 @@ def _param(name, location="path", schema_type="string", required=True, descripti
 
 
 def _body(properties=None, required=None, description="JSON request body"):
+    schema = {
+        "type": "object",
+        "properties": properties or {},
+        "additionalProperties": True,
+    }
+    if required:
+        schema["required"] = required
     return {
         "required": True,
         "description": description,
         "content": {
             "application/json": {
-                "schema": {
-                    "type": "object",
-                    "properties": properties or {},
-                    "required": required or [],
-                    "additionalProperties": True,
-                }
+                "schema": schema,
             }
         },
     }
