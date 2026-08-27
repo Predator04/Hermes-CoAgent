@@ -11,14 +11,17 @@ rather than failing at import time so the Linux syntax-check CI stays green.
 All PowerShell / subprocess strings are pure ASCII.
 """
 
+import ipaddress
 import json as _json
 import os
 import re
 import shutil
+import socket
 import subprocess
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 
@@ -176,15 +179,45 @@ def _poll_key(log_name, level):
     return f"{log_name}|{level if level is not None else '*'}"
 
 
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Refuse redirects so a webhook target can't 302 into an internal host."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
 def _valid_webhook_url(url):
+    """Reject non-http(s) URLs and SSRF targets (loopback/private/link-local/metadata)."""
     if not isinstance(url, str) or not url:
         return False
-    return url.startswith("http://") or url.startswith("https://")
+    try:
+        parsed = urllib.parse.urlparse(url)
+    except ValueError:
+        return False
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        return False
+    port = parsed.port
+    if port is None:
+        port = 443 if parsed.scheme == "https" else 80
+    try:
+        infos = socket.getaddrinfo(parsed.hostname, port, proto=socket.IPPROTO_TCP)
+    except (socket.gaierror, OSError):
+        return False
+    for info in infos:
+        try:
+            ip = ipaddress.ip_address(info[4][0])
+        except ValueError:
+            return False
+        if (ip.is_loopback or ip.is_private or ip.is_link_local
+                or ip.is_multicast or ip.is_reserved or ip.is_unspecified):
+            return False
+    return True
 
 
 def _dispatch_webhooks(subscribers, events):
     def _worker():
         payload_bytes = _json.dumps({"events": events}).encode("utf-8")
+        opener = urllib.request.build_opener(_NoRedirectHandler)
         for sub in subscribers:
             url = sub.get("url")
             if not url:
@@ -196,9 +229,9 @@ def _dispatch_webhooks(subscribers, events):
                     headers={"Content-Type": "application/json"},
                     method="POST",
                 )
-                with urllib.request.urlopen(req, timeout=_WEBHOOK_TIMEOUT):
+                with opener.open(req, timeout=_WEBHOOK_TIMEOUT):
                     pass
-            except (urllib.error.URLError, OSError, ValueError) as exc:
+            except (urllib.error.URLError, urllib.error.HTTPError, OSError, ValueError) as exc:
                 _log(f"eventlog: webhook {url} failed: {exc}")
     threading.Thread(target=_worker, name="eventlog-webhook", daemon=True).start()
 
