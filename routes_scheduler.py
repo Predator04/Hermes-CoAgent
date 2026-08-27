@@ -249,14 +249,17 @@ def register_routes(app, state, require_auth):
         if not _TASK_NAME_RE.match(name):
             return jsonify({"error": "invalid task name"}), 400
         out, err, rc = _run_schtasks(["/Delete", "/TN", name, "/F"])
-        # Also remove the generated launcher for tidiness.
-        recipe_id = name[len("CoAgent-Recipe-"):]
-        launcher = _SCHED_DIR / f"run_recipe_{recipe_id}.bat"
-        try:
-            if launcher.exists():
-                launcher.unlink()
-        except OSError:
-            pass
+        # Also remove the generated launcher for tidiness — but only when the
+        # task was actually deleted; otherwise the still-scheduled task would
+        # point at a missing launcher and silently no-op on every future fire.
+        if rc == 0:
+            recipe_id = name[len("CoAgent-Recipe-"):]
+            launcher = _SCHED_DIR / f"run_recipe_{recipe_id}.bat"
+            try:
+                if launcher.exists():
+                    launcher.unlink()
+            except OSError:
+                pass
         _log(f"scheduler/delete task={name} rc={rc}")
         return jsonify({
             "status": "ok" if rc == 0 else "error",
