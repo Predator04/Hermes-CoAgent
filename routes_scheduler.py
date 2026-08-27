@@ -112,7 +112,7 @@ def _write_launcher(recipe_id):
     _SCHED_DIR.mkdir(parents=True, exist_ok=True)
     launcher = _SCHED_DIR / f"run_recipe_{recipe_id}.bat"
     port = _self_port()
-    token_file = str(COAGENT_DIR / ".token").replace("\\", "\\\\")
+    token_file = str(COAGENT_DIR / ".token")
     # Pure-ASCII batch. curl.exe ships with Windows 10 1803+.
     content = (
         "@echo off\r\n"
