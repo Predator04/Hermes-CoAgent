@@ -212,6 +212,9 @@ def register_routes(app, state, require_auth):
                 # CSV columns: TaskName,NextRunTime,Status
                 parts = [p.strip('"') for p in line.split('","')]
                 name = parts[0].strip('"') if parts else line
+                # schtasks /FO CSV emits a leading backslash on root-folder task
+                # names (e.g. "\CoAgent-Recipe-abc"); strip it before matching.
+                name = name.lstrip("\\")
                 if name.startswith("CoAgent-Recipe-"):
                     tasks.append({
                         "task_name": name,
