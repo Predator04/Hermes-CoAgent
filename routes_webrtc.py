@@ -22,9 +22,9 @@ body{margin:0;background:#101216;color:#eef2f6;font:14px system-ui,Segoe UI,Aria
 <body>
 <header><strong>Hermes Remote</strong><span class="muted" id="state">connecting</span><button id="shot">Frame</button></header>
 <div class="wrap"><img id="screen" alt="remote desktop"></div>
-<!-- sessionStorage keeps URL-provided tokens scoped to the current tab. -->
+<!-- token is injected server-side; sessionStorage is only a same-tab fallback. -->
 <script>
-const params=new URLSearchParams(location.search);const queryToken=params.get("token")||"";if(queryToken){sessionStorage.setItem("hermes_token",queryToken);params.delete("token");const cleanUrl=location.pathname+(params.toString()?"?"+params.toString():"")+location.hash;history.replaceState(null,document.title,cleanUrl)}const token=queryToken||sessionStorage.getItem("hermes_token")||"";
+const token="__HERMES_TOKEN__"||sessionStorage.getItem("hermes_token")||"";
 function headers(json=false){const h={};if(token)h.Authorization="Bearer "+token;if(json)h["Content-Type"]="application/json";return h}
 async function frame(){const r=await fetch("/screen/jpeg?ts="+Date.now(),{headers:headers(false)});if(!r.ok)throw new Error("screen "+r.status);const b=await r.blob();const img=document.getElementById("screen");const old=img.src;img.src=URL.createObjectURL(b);if(old)URL.revokeObjectURL(old);document.getElementById("state").textContent="polling "+window.location.host}
 document.getElementById("shot").onclick=()=>frame().catch(e=>document.getElementById("state").textContent=e.message);
@@ -40,13 +40,21 @@ def _capture_frame(quality=70):
     return _capture_jpeg(force=True, quality=quality)
 
 
+_MAX_CAPTURE_FAILURES = 30
+
+
 def _mjpeg_generator(interval=0.1, quality=70):
+    failures = 0
     while True:
         try:
             frame = _capture_frame(quality=quality)
         except Exception:
+            failures += 1
+            if failures >= _MAX_CAPTURE_FAILURES:
+                return
             time.sleep(interval)
             continue
+        failures = 0
         if frame:
             yield (b"--frame\r\n"
                    b"Content-Type: image/jpeg\r\n"
@@ -55,12 +63,17 @@ def _mjpeg_generator(interval=0.1, quality=70):
 
 
 def _sse_generator(interval=0.1, quality=70):
+    failures = 0
     while True:
         try:
             frame = _capture_frame(quality=quality)
         except Exception:
+            failures += 1
+            if failures >= _MAX_CAPTURE_FAILURES:
+                return
             time.sleep(interval)
             continue
+        failures = 0
         if frame:
             payload = base64.b64encode(frame).decode("ascii")
             yield f"event: frame\ndata: {payload}\n\n"
@@ -73,7 +86,16 @@ def register_routes(app, state, require_auth):
     @app.route("/remote", methods=["GET"])
     @require_auth
     def route_remote():
-        response = Response(REMOTE_HTML, mimetype="text/html")
+        # Inject the auth token server-side instead of reading it from the URL
+        # query string, which would leak it into server access logs, browser
+        # history, and Referer headers. json.dumps yields a safe JS string
+        # literal; when auth is disabled AUTH_TOKEN is empty and the downstream
+        # require_auth endpoints also pass through.
+        import json as _json
+        import auth as _auth
+        safe_token = _json.dumps(getattr(_auth, "AUTH_TOKEN", "") or "")
+        html = REMOTE_HTML.replace('"__HERMES_TOKEN__"', safe_token)
+        response = Response(html, mimetype="text/html")
         response.headers["Content-Security-Policy"] = CSP
         return response
 
