@@ -68,12 +68,16 @@ def _send_telegram(bot_token, chat_id, text, parse_mode="Markdown"):
     """Send a message via Telegram Bot API. Returns (ok, response_or_error)."""
     if not text or not text.strip():
         return True, "nothing to send"
-    payload = json.dumps({
+    payload = {
         "chat_id": chat_id,
         "text": text[:4096],  # Telegram limit
-        "parse_mode": parse_mode,
         "disable_web_page_preview": True,
-    }).encode()
+    }
+    # Omit parse_mode when empty/None so callers can send plain text without
+    # Telegram rejecting an empty parse_mode value.
+    if parse_mode:
+        payload["parse_mode"] = parse_mode
+    payload = json.dumps(payload).encode()
     url = TELEGRAM_API.format(token=bot_token)
     try:
         req = urllib.request.Request(url, data=payload,
