@@ -194,8 +194,8 @@ def _normalize_bbox(raw, image_size):
             x, y, w, h = left, top, right - left, bottom - top
     elif isinstance(raw, (list, tuple)) and len(raw) >= 4:
         a, b, c, d = raw[0], raw[1], raw[2], raw[3]
-        # heuristic: if c > a and d > b and both look like coords, it may be x2/y2
-        if c > a and d > b and (a + c) > c and image_size:
+        # heuristic: if c > a and d > b it may be x2/y2 (not x/y/w/h)
+        if c > a and d > b and image_size:
             # Ambiguous — pick x2y2 if c/d are within image bounds and > a/b
             iw, ih = image_size
             if c <= iw + 1 and d <= ih + 1 and (c - a) < iw and (d - b) < ih:
