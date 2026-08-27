@@ -202,7 +202,11 @@ def _scan(directory: Path, rename_template: str = "", sort_by_category: bool = T
         by_hash = defaultdict(list)
         for path in group:
             try:
-                digest = hashlib.sha256(path.read_bytes()).hexdigest()
+                h = hashlib.sha256()
+                with path.open("rb") as fh:
+                    for chunk in iter(lambda: fh.read(1 << 20), b""):
+                        h.update(chunk)
+                digest = h.hexdigest()
             except (OSError, MemoryError):
                 # Huge/unreadable file: fall back to (size, name) identity.
                 digest = f"size:{size}:{path.name.lower()}"
