@@ -268,6 +268,9 @@ def _apply_actions(directory: Path, actions, include_duplicates=False,
                 skipped.append({**action, "why": "missing from"})
                 continue
             src = Path(src_raw)
+            if not _safe_target(directory, src):
+                errors.append({**action, "why": "source escapes scan directory"})
+                continue
             if not src.is_file():
                 skipped.append({**action, "why": "source no longer exists"})
                 continue
@@ -302,6 +305,9 @@ def _apply_actions(directory: Path, actions, include_duplicates=False,
         dst = Path(dst_raw)
         if not _safe_target(directory, dst):
             errors.append({**action, "why": "target escapes scan directory"})
+            continue
+        if not _safe_target(directory, src):
+            errors.append({**action, "why": "source escapes scan directory"})
             continue
         if not src.is_file():
             skipped.append({**action, "why": "source no longer exists"})
