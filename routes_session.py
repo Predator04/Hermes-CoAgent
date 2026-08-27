@@ -118,9 +118,16 @@ def _is_locked():
     """True when the interactive desktop is locked (OpenInputDesktop fails)."""
     try:
         import ctypes
+        from ctypes import wintypes
         user32 = ctypes.windll.user32
         # DESKTOP_SWITCHDESKTOP (0x0100). OpenInputDesktop returns NULL when the
         # secure/Winlogon desktop owns the input, which is how lock is detected.
+        # Bind restype/argtypes so the 64-bit HDESK handle isn't truncated to a
+        # signed 32-bit c_int (a truncated handle reads as NULL -> false "locked").
+        user32.OpenInputDesktop.restype = wintypes.HDESK
+        user32.OpenInputDesktop.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        user32.CloseDesktop.restype = wintypes.BOOL
+        user32.CloseDesktop.argtypes = [wintypes.HDESK]
         hdesk = user32.OpenInputDesktop(0, False, 0x0100)
         if hdesk:
             user32.CloseDesktop(hdesk)
