@@ -341,7 +341,11 @@ def route_onboard_autostart():
     if os.name != "nt":
         return jsonify({"ok": False, "error": "Autostart is Windows-only"}), 501
     data = request.get_json(silent=True) or {}
-    enabled = bool(data.get("enabled"))
+    enabled = data.get("enabled")
+    if isinstance(enabled, str):
+        enabled = enabled.strip().lower() not in ("", "false", "0", "no", "off")
+    else:
+        enabled = bool(enabled)
     action = "/Enable" if enabled else "/Disable"
     if enabled and not _autostart_task_exists():
         ok, detail = _create_autostart_task()
