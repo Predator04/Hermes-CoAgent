@@ -17,6 +17,7 @@ Coordinate model:
 """
 
 import ctypes
+import math
 
 from flask import jsonify
 
@@ -215,6 +216,8 @@ def register_routes(app, state, require_auth):
             y = float(data.get("y"))
         except (TypeError, ValueError):
             return jsonify({"error": "x and y must be numbers"}), 400
+        if not (math.isfinite(x) and math.isfinite(y)):
+            return jsonify({"error": "x and y must be finite numbers"}), 400
         from_space = str(data.get("from", "physical")).lower()
         to_space = str(data.get("to", "logical")).lower()
         if from_space not in ("physical", "logical") or to_space not in ("physical", "logical"):
