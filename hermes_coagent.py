@@ -191,6 +191,8 @@ def _ensure_registered_route_auth():
     for endpoint, view_func in list(app.view_functions.items()):
         if endpoint == "static" or getattr(view_func, "_hermes_auth_wrapped", False):
             continue
+        if getattr(view_func, "_hermes_public", False):
+            continue
         rules = [rule for rule in app.url_map.iter_rules() if rule.endpoint == endpoint]
         if rules and all(_is_auth_exempt(rule.rule) for rule in rules):
             continue
@@ -218,6 +220,12 @@ _AUTH_FAIL_WINDOW = 30   # seconds
 def _auth_gate():
     if _is_auth_exempt(request.path):
         return None
+    # Endpoints marked _hermes_public opt out of Bearer auth and rely on their own
+    # authentication (e.g. the HMAC-signed inbound webhook receive endpoint).
+    rule = getattr(request, "url_rule", None)
+    if rule is not None and rule.endpoint in app.view_functions:
+        if getattr(app.view_functions[rule.endpoint], "_hermes_public", False):
+            return None
     result = _require_auth(lambda: None)()
     if result is not None:
         # Track and throttle failed auth attempts

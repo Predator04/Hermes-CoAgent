@@ -285,11 +285,15 @@ def _run_one_step(step, previous, auth_header):
     return {"status": "error", "result": {"error": f"Unknown action: {action}"}}
 
 
-def _execute_steps(steps, timeout=300, auth_header=None):
-    """Execute a list of steps via CoAgent internal API calls."""
+def _execute_steps(steps, timeout=300, auth_header=None, initial_context=None):
+    """Execute a list of steps via CoAgent internal API calls.
+
+    ``initial_context`` seeds the ``$prev.`` reference namespace (e.g. the JSON
+    payload of an inbound webhook), so early steps can template in external input.
+    """
     results = []
     deadline = time.time() + max(1, _coerce_int(timeout, 300))
-    previous = {}
+    previous = dict(initial_context or {})
     for index, step in enumerate(steps):
         action = str(step.get("action") or "").strip().lower()
         start = time.time()
@@ -319,6 +323,9 @@ def _execute_steps(steps, timeout=300, auth_header=None):
             if status != "ok":
                 break
             previous = _prev_from_result(result)
+            if initial_context:
+                # Keep injected context available to later steps as well.
+                previous = {**initial_context, **previous}
         except Exception as exc:
             results.append({
                 "step_index": index,

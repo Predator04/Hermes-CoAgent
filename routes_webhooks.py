@@ -9,9 +9,10 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 from copy import deepcopy
 
-from flask import Blueprint, jsonify
+from flask import Blueprint, jsonify, request
 
 from shared import _is_private_url, _json_body, _log
 
@@ -161,6 +162,222 @@ def fire_webhook(event_type, data):
     return len(targets)
 
 
+# ---------------------------------------------------------------- inbound webhooks
+# Receive-side webhooks: an external service (GitHub, Stripe, n8n, Zapier, IFTTT,
+# monitoring) POSTs to /webhooks/incoming/<hook_id> to trigger a recipe or
+# workflow. Each hook carries an optional HMAC secret; the receive endpoint is
+# public (no Bearer auth) and authenticated via the X-Webhook-Signature header,
+# mirroring the outbound signing in _dispatch_one.
+_INBOUND_HOOKS = {}
+_INBOUND_LOCK = threading.Lock()
+_INBOUND_RECENT_LIMIT = 20
+
+
+def _inbound_public(hook_id, record, include_secret=False):
+    out = {
+        "id": hook_id,
+        "target_type": record.get("target_type"),
+        "target_id": record.get("target_id"),
+        "url_path": f"/webhooks/incoming/{hook_id}",
+        "created_at": record.get("created_at"),
+        "last_received": record.get("last_received"),
+        "last_run": record.get("last_run"),
+        "secret_set": bool(record.get("secret")),
+    }
+    if include_secret:
+        out["secret"] = record.get("secret")
+    return out
+
+
+def _verify_inbound_signature(raw_body, secret, signature_header):
+    """Constant-time HMAC check. A hook without a secret accepts any payload."""
+    if not secret:
+        return True
+    if not signature_header:
+        return False
+    expected = hmac.new(secret.encode("utf-8"), raw_body, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, signature_header)
+
+
+def _resolve_inbound_steps(hook):
+    """Resolve the mapped recipe/workflow to a list of steps (or an error)."""
+    target_type = hook.get("target_type")
+    target_id = str(hook.get("target_id") or "")
+    if target_type == "recipe":
+        try:
+            import routes_recipes
+            with routes_recipes._RECIPES_LOCK:
+                recipe = dict(routes_recipes._RECIPES.get(target_id) or {})
+            if not recipe:
+                return None, f"recipe '{target_id}' not found"
+            steps = recipe.get("steps")
+            if not isinstance(steps, list) or not steps:
+                return None, f"recipe '{target_id}' has no steps"
+            return steps, None
+        except Exception as exc:
+            return None, f"recipes engine unavailable: {type(exc).__name__}: {exc}"
+    if target_type == "workflow":
+        try:
+            import routes_workflows
+            workflow = routes_workflows._load_workflow(target_id)
+            if not workflow:
+                return None, f"workflow '{target_id}' not found"
+            recipe = routes_workflows._compile_workflow(workflow)
+            steps = recipe.get("steps") if isinstance(recipe, dict) else None
+            if not isinstance(steps, list) or not steps:
+                return None, f"workflow '{target_id}' compiled to zero steps"
+            return steps, None
+        except Exception as exc:
+            return None, f"workflows engine unavailable: {type(exc).__name__}: {exc}"
+    return None, "target_type must be 'recipe' or 'workflow'"
+
+
+def _run_inbound_target(hook_id, hook, payload, run_id):
+    """Run the mapped target in a background thread and record the result."""
+    started = time.time()
+    steps, error = _resolve_inbound_steps(hook)
+    if error:
+        result = {"run_id": run_id, "hook_id": hook_id, "status": "error", "error": error}
+    else:
+        try:
+            import routes_recipes
+            # Seed the webhook payload as $prev.input / $prev.webhook so steps
+            # can template in the received JSON body.
+            results = routes_recipes._execute_steps(
+                steps,
+                auth_header=None,
+                initial_context={"input": payload, "webhook": payload},
+            )
+            failed = [r for r in results if r.get("status") != "ok"]
+            result = {
+                "run_id": run_id,
+                "hook_id": hook_id,
+                "status": "failed" if failed else "completed",
+                "completed": sum(1 for r in results if r.get("status") == "ok"),
+                "failed": len(failed),
+                "steps": results,
+            }
+        except Exception as exc:
+            result = {
+                "run_id": run_id,
+                "hook_id": hook_id,
+                "status": "error",
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+    result["trigger"] = "inbound_webhook"
+    result["duration_seconds"] = round(time.time() - started, 3)
+    with _INBOUND_LOCK:
+        current = _INBOUND_HOOKS.get(hook_id)
+        if current:
+            current["last_received"] = _now()
+            current["last_run"] = result
+            recent = list(current.get("recent_runs") or [])
+            recent.insert(0, result)
+            current["recent_runs"] = recent[:_INBOUND_RECENT_LIMIT]
+    _log(
+        f"[webhooks] inbound {hook_id} -> {result.get('status')} "
+        f"({result.get('completed', 0)} ok / {result.get('failed', 0)} failed)"
+    )
+    return result
+
+
+@webhooks_bp.route("/webhooks/incoming/register", methods=["POST"])
+def route_webhooks_incoming_register():
+    data = _json_body() or {}
+    target_type = str(data.get("target_type") or "").strip().lower()
+    target_id = str(data.get("target_id") or "").strip()
+    secret = str(data.get("secret") or "").strip()
+    if target_type not in {"recipe", "workflow"}:
+        return jsonify({"error": "target_type must be 'recipe' or 'workflow'"}), 400
+    if not target_id:
+        return jsonify({"error": "target_id is required"}), 400
+    # Resolve the target now so a hook pointing at a missing recipe/workflow is rejected.
+    steps, error = _resolve_inbound_steps({"target_type": target_type, "target_id": target_id})
+    if error:
+        return jsonify({"error": error}), 400
+    hook_id = secrets.token_urlsafe(18)
+    if not secret:
+        secret = secrets.token_urlsafe(32)
+    record = {
+        "target_type": target_type,
+        "target_id": target_id,
+        "secret": secret,
+        "created_at": _now(),
+        "last_received": None,
+        "last_run": None,
+        "recent_runs": [],
+    }
+    with _INBOUND_LOCK:
+        _INBOUND_HOOKS[hook_id] = record
+    return jsonify(_inbound_public(hook_id, record, include_secret=True)), 201
+
+
+@webhooks_bp.route("/webhooks/incoming/list", methods=["GET"])
+def route_webhooks_incoming_list():
+    with _INBOUND_LOCK:
+        hooks = [
+            _inbound_public(hook_id, record)
+            for hook_id, record in sorted(_INBOUND_HOOKS.items())
+        ]
+    return jsonify({"inbound_webhooks": hooks, "count": len(hooks)})
+
+
+@webhooks_bp.route("/webhooks/incoming/test/<hook_id>", methods=["POST"])
+def route_webhooks_incoming_test(hook_id):
+    with _INBOUND_LOCK:
+        record = dict(_INBOUND_HOOKS.get(hook_id) or {})
+    if not record:
+        return jsonify({"error": "inbound hook not found", "id": hook_id}), 404
+    data = _json_body() or {}
+    run_id = uuid.uuid4().hex
+    threading.Thread(
+        target=_run_inbound_target,
+        args=(hook_id, record, data, run_id),
+        name=f"inbound-test-{hook_id[:8]}",
+        daemon=True,
+    ).start()
+    return jsonify({"status": "queued", "run_id": run_id, "hook_id": hook_id})
+
+
+@webhooks_bp.route("/webhooks/incoming/<hook_id>", methods=["POST"])
+def route_webhooks_incoming_receive(hook_id):
+    with _INBOUND_LOCK:
+        record = dict(_INBOUND_HOOKS.get(hook_id) or {})
+    if not record:
+        return jsonify({"error": "inbound hook not found", "id": hook_id}), 404
+    raw_body = request.get_data()
+    signature = request.headers.get("X-Webhook-Signature", "")
+    if not _verify_inbound_signature(raw_body, record.get("secret"), signature):
+        return jsonify({"error": "invalid signature"}), 401
+    try:
+        payload = json.loads(raw_body.decode("utf-8")) if raw_body else {}
+    except Exception:
+        payload = {"raw": raw_body.decode("utf-8", errors="replace")}
+    run_id = uuid.uuid4().hex
+    threading.Thread(
+        target=_run_inbound_target,
+        args=(hook_id, record, payload, run_id),
+        name=f"inbound-{hook_id[:8]}",
+        daemon=True,
+    ).start()
+    return jsonify({"status": "accepted", "run_id": run_id, "hook_id": hook_id}), 202
+
+
+# The receive endpoint is public (no Bearer token): external callers authenticate
+# via the per-hook HMAC secret instead. The global auth gate and the wrapper
+# below both skip any view function carrying this flag.
+route_webhooks_incoming_receive._hermes_public = True
+
+
+@webhooks_bp.route("/webhooks/incoming/<hook_id>", methods=["DELETE"])
+def route_webhooks_incoming_delete(hook_id):
+    with _INBOUND_LOCK:
+        removed = _INBOUND_HOOKS.pop(hook_id, None)
+    if not removed:
+        return jsonify({"error": "inbound hook not found", "id": hook_id}), 404
+    return jsonify({"status": "deleted", "id": hook_id})
+
+
 @webhooks_bp.route("/webhooks/list", methods=["GET"])
 def route_webhooks_list():
     with _WEBHOOK_LOCK:
@@ -242,6 +459,8 @@ def route_webhooks_test(webhook_id):
 def register_routes(app, state, require_auth):
     for endpoint, view_func in list(webhooks_bp.view_functions.items()):
         if getattr(view_func, "_hermes_auth_wrapped", False):
+            continue
+        if getattr(view_func, "_hermes_public", False):
             continue
         wrapped = require_auth(view_func)
         wrapped._hermes_auth_wrapped = True
