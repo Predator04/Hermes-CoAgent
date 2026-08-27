@@ -139,13 +139,16 @@ def _excel_read(path, sheet=None, cell_range=None):
     if not _HAS_XLSX:
         return None, _missing_engine("Excel", "openpyxl")
     wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
-    ws = wb[sheet] if sheet and sheet in wb.sheetnames else wb.active
-    if cell_range:
-        cells = ws[cell_range]
-        grid = [[c.value for c in row] for row in cells]
-    else:
-        grid = [[c.value for c in row] for row in ws.iter_rows()]
-    return {"path": path, "sheet": ws.title, "grid": grid, "rows": len(grid)}, None
+    try:
+        ws = wb[sheet] if sheet and sheet in wb.sheetnames else wb.active
+        if cell_range:
+            cells = ws[cell_range]
+            grid = [[c.value for c in row] for row in cells]
+        else:
+            grid = [[c.value for c in row] for row in ws.iter_rows()]
+        return {"path": path, "sheet": ws.title, "grid": grid, "rows": len(grid)}, None
+    finally:
+        wb.close()
 
 
 # ---------------------------------------------------------------------------
