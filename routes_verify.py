@@ -299,7 +299,7 @@ def register_routes(app, state, require_auth):
         """
         body = _json_body() or {}
         expected = body.get("expected")
-        if not expected:
+        if not isinstance(expected, str) or not expected.strip():
             return jsonify({"error": "Missing required field: expected"}), 400
 
         region = body.get("region") if isinstance(body.get("region"), dict) else None
