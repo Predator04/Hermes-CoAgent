@@ -54,10 +54,25 @@ def _find_ngrok() -> str | None:
     return None
 
 
+_MAX_DOWNLOAD_BYTES = 50 * 1024 * 1024  # 50 MB — the ngrok zip is ~15 MB; cap to avoid OOM/zip-bomb
+
+
 def _download_zip(url: str, timeout: int = 120) -> bytes:
     req = urllib.request.Request(url, headers={"User-Agent": "CoAgent-Ngrok-Installer/1.0"})
     with urllib.request.urlopen(req, timeout=timeout) as resp:
-        return resp.read()
+        chunks = []
+        total = 0
+        while True:
+            chunk = resp.read(65536)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > _MAX_DOWNLOAD_BYTES:
+                raise RuntimeError(
+                    f"download exceeds {_MAX_DOWNLOAD_BYTES // (1024 * 1024)} MB safety cap"
+                )
+            chunks.append(chunk)
+        return b"".join(chunks)
 
 
 def _extract_ngrok(zip_bytes: bytes, dest_dir: Path) -> Path:
@@ -66,21 +81,28 @@ def _extract_ngrok(zip_bytes: bytes, dest_dir: Path) -> Path:
     with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
         exe_name = None
         for name in zf.namelist():
-            # Only accept a member whose basename is exactly ngrok.exe, so a
-            # path-traversal entry like ../../Windows/System32/ngrok.exe is
-            # rejected rather than trusted as the payload.
+            # Only accept a member whose basename is exactly ngrok.exe. We
+            # write to a fixed target path under dest_dir, so a traversal-style
+            # entry name can never influence where the payload lands.
             base = name.replace("\\", "/").rstrip("/").split("/")[-1]
             if base.lower() == "ngrok.exe":
                 exe_name = name
                 break
         if not exe_name:
             raise RuntimeError("ngrok.exe not found inside downloaded zip")
-        with zf.open(exe_name) as src:
-            target = dest_dir / "ngrok.exe"
-            tmp = dest_dir / "ngrok.exe.tmp"
-            with open(tmp, "wb") as dst:
+        target = dest_dir / "ngrok.exe"
+        tmp = dest_dir / "ngrok.exe.tmp"
+        try:
+            with zf.open(exe_name) as src, open(tmp, "wb") as dst:
                 shutil.copyfileobj(src, dst)
             os.replace(tmp, target)
+        finally:
+            # Never leave a partial ngrok.exe.tmp behind (e.g. target busy).
+            if tmp.exists():
+                try:
+                    tmp.unlink()
+                except OSError:
+                    pass
     return target
 
 
@@ -103,7 +125,8 @@ def _ngrok_version(ngrok_path: str, timeout: int = 10) -> str | None:
             capture_output=True, text=True, timeout=timeout,
         )
         if r.returncode == 0:
-            return (r.stdout or "").strip().splitlines()[0] if r.stdout else None
+            lines = (r.stdout or "").strip().splitlines()
+            return lines[0] if lines else None
     except Exception:
         return None
     return None
