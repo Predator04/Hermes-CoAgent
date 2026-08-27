@@ -159,7 +159,18 @@ def register_routes(app, state, require_auth):
             speed = data.get("speed")
 
             if smart_mode is not None:
-                EMBER_STATE["smart_mode"] = bool(smart_mode)
+                if isinstance(smart_mode, bool):
+                    EMBER_STATE["smart_mode"] = smart_mode
+                elif isinstance(smart_mode, str):
+                    s = smart_mode.strip().lower()
+                    if s in ("true", "1", "yes", "on"):
+                        EMBER_STATE["smart_mode"] = True
+                    elif s in ("false", "0", "no", "off"):
+                        EMBER_STATE["smart_mode"] = False
+                    else:
+                        return jsonify({"error": "smart_mode must be a boolean"}), 400
+                else:
+                    return jsonify({"error": "smart_mode must be a boolean"}), 400
             if size in ("small", "medium", "large"):
                 EMBER_STATE["size"] = size
             if speed in ("calm", "normal", "hyper"):
