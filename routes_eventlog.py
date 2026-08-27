@@ -51,6 +51,7 @@ _DEFAULT_POLL_INTERVAL = 5.0
 _MIN_POLL_INTERVAL = 1.0
 _MAX_POLL_INTERVAL = 60.0
 _WEBHOOK_TIMEOUT = 5.0
+_MAX_SUBSCRIBERS = 50
 
 _SUB_LOCK = threading.Lock()
 _SUBSCRIBERS = {}       # sub_id -> {"url", "log", "level", "poll_key", ...}
@@ -408,6 +409,10 @@ def register_routes(app, state, require_auth):
         key = _poll_key(log_name, level)
         sub_id = uuid.uuid4().hex
         with _SUB_LOCK:
+            if len(_SUBSCRIBERS) >= _MAX_SUBSCRIBERS:
+                return jsonify({
+                    "error": f"subscriber limit reached ({_MAX_SUBSCRIBERS})",
+                }), 429
             _SUBSCRIBERS[sub_id] = {
                 "url": url,
                 "log": log_name,
