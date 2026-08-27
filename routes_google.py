@@ -227,6 +227,11 @@ def route_google_gmail_send():
         return _error("subject is required")
     if not isinstance(body, str):
         return _error("body is required")
+    # Reject embedded CR/LF to prevent email header injection (forged Bcc/From).
+    if "\r" in to_addr or "\n" in to_addr:
+        return _error("to must not contain newlines")
+    if "\r" in subject or "\n" in subject:
+        return _error("subject must not contain newlines")
     try:
         message = MIMEText(body)
         message["to"] = to_addr
