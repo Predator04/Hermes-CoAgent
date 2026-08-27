@@ -54,6 +54,7 @@ def _window_layout():
         user32.IsWindowVisible.restype = wintypes.BOOL
         user32.GetWindowTextLengthW.argtypes = [wintypes.HWND]
         user32.GetWindowTextLengthW.restype = ctypes.c_int
+        user32.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
         user32.GetWindowTextW.restype = ctypes.c_int
         user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
         user32.GetWindowRect.restype = wintypes.BOOL
