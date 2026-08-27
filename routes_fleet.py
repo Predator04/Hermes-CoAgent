@@ -15,6 +15,7 @@ Endpoints:
 
 import ipaddress
 import json
+import os
 import socket
 import threading
 import time
@@ -67,6 +68,13 @@ def _peer_url_blocked(url):
             addr = ipaddress.ip_address(info[4][0])
         except ValueError:
             continue
+        # Normalize IPv4-mapped IPv6 (e.g. ::ffff:127.0.0.1) back to IPv4 so it
+        # cannot slip past the loopback/link-local checks below. (ipv4_mapped
+        # returns None for non-mapped addresses on some Python versions.)
+        if isinstance(addr, ipaddress.IPv6Address):
+            mapped = addr.ipv4_mapped
+            if mapped is not None:
+                addr = mapped
         for net in _FORBIDDEN_PEER_NETS:
             if addr in net:
                 return "peer URL targets a forbidden address (%s)" % addr
@@ -98,7 +106,10 @@ def _load():
     global _peers
     try:
         if _PEERS_FILE.exists():
-            _peers = json.loads(_PEERS_FILE.read_text(encoding="utf-8"))
+            loaded = json.loads(_PEERS_FILE.read_text(encoding="utf-8"))
+            if not isinstance(loaded, dict):
+                raise ValueError("fleet peers file must be a JSON object")
+            _peers = loaded
     except Exception as exc:
         _log(f"fleet: failed to load peers: {exc}")
 
@@ -106,7 +117,12 @@ def _load():
 def _save():
     try:
         tmp = _PEERS_FILE.with_suffix(".tmp")
-        tmp.write_text(json.dumps(_peers, indent=2), encoding="utf-8")
+        payload = json.dumps(_peers, indent=2)
+        # Write with restrictive permissions — the file holds bearer tokens and
+        # must never be world-readable.
+        fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(payload)
         tmp.replace(_PEERS_FILE)
     except Exception as exc:
         _log(f"fleet: failed to save peers: {exc}")
@@ -137,6 +153,8 @@ def _peer_request(peer, method, path, body=None, timeout=20):
     blocked = _peer_url_blocked(url)
     if blocked:
         return None, None, None, blocked
+    if token and any(ord(c) < 32 for c in token):
+        return None, None, None, "peer token contains control characters"
     target = url + ("/" + path.lstrip("/") if path else "")
     headers = {"Content-Type": "application/json", "Accept": "application/json"}
     if token:
@@ -145,11 +163,11 @@ def _peer_request(peer, method, path, body=None, timeout=20):
     if body is not None:
         payload = json.dumps(body).encode("utf-8")
     req = urllib.request.Request(target, data=payload, headers=headers, method=method.upper())
-    start = time.time()
+    start = time.monotonic()
     try:
         with _PEER_OPENER.open(req, timeout=timeout) as resp:
             raw_bytes = resp.read(_MAX_PEER_RESPONSE_BYTES + 1)
-            elapsed = round((time.time() - start) * 1000)
+            elapsed = round((time.monotonic() - start) * 1000)
             if len(raw_bytes) > _MAX_PEER_RESPONSE_BYTES:
                 return resp.status, None, elapsed, "peer response exceeds %d bytes" % _MAX_PEER_RESPONSE_BYTES
             raw = raw_bytes.decode("utf-8", "replace")
@@ -158,10 +176,10 @@ def _peer_request(peer, method, path, body=None, timeout=20):
             except json.JSONDecodeError:
                 return resp.status, {"raw": raw}, elapsed, None
     except urllib.error.HTTPError as exc:
-        elapsed = round((time.time() - start) * 1000)
+        elapsed = round((time.monotonic() - start) * 1000)
         return exc.code, None, elapsed, "HTTP %d" % exc.code
     except Exception as exc:
-        elapsed = round((time.time() - start) * 1000)
+        elapsed = round((time.monotonic() - start) * 1000)
         return None, None, elapsed, str(exc)
 
 
@@ -173,8 +191,16 @@ def register_routes(app, state, require_auth):
         name = (data.get("name") or data.get("id") or "").strip()
         url = _norm_url(data.get("url") or data.get("host") or "")
         token = data.get("token") or ""
+        if not isinstance(token, str):
+            return jsonify({"error": "token must be a string"}), 400
         if not name or not url:
             return jsonify({"error": "name and url are required"}), 400
+        # Reject control characters to prevent log-line injection and CRLF
+        # header injection when the token is forwarded as a Bearer header.
+        if any(ord(c) < 32 for c in name):
+            return jsonify({"error": "name must not contain control characters"}), 400
+        if any(ord(c) < 32 for c in token):
+            return jsonify({"error": "token must not contain control characters"}), 400
         with _lock:
             _peers[name] = {"url": url, "token": token, "added": int(time.time())}
             _save()
