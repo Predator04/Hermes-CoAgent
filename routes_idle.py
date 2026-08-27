@@ -78,7 +78,12 @@ def is_session_locked():
         return False
     try:
         user32 = ctypes.windll.user32
-        return not bool(user32.OpenInputDesktop(0, False, 0))
+        user32.OpenInputDesktop.restype = ctypes.c_void_p
+        hdesk = user32.OpenInputDesktop(0, False, 0)
+        locked = not bool(hdesk)
+        if hdesk:
+            user32.CloseDesktop(hdesk)
+        return locked
     except Exception:  # noqa: BLE001
         return False
 
@@ -183,7 +188,8 @@ class IdleGate:
             "result": None,
         }
         with self._lock:
-            if len(self._items) >= MAX_QUEUE_ITEMS:
+            queued_count = sum(1 for it in self._items.values() if it.get("status") == "queued")
+            if queued_count >= MAX_QUEUE_ITEMS:
                 raise RuntimeError("idle gate queue is full")
             self._items[item_id] = item
             self._order.append(item_id)
@@ -320,7 +326,8 @@ def register_routes(app, state, require_auth):
     @app.route("/idle/queue", methods=["GET"])
     @require_auth
     def route_idle_queue_list():
-        return jsonify({"ok": True, "count": len(gate.list_items()), "items": gate.list_items()})
+        items = gate.list_items()
+        return jsonify({"ok": True, "count": len(items), "items": items})
 
     @app.route("/idle/queue", methods=["POST"])
     @require_auth
