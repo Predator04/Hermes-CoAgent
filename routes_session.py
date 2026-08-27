@@ -174,9 +174,16 @@ def _get_idle_ms():
         lii = LASTINPUTINFO()
         lii.cbSize = ctypes.sizeof(LASTINPUTINFO)
         if ctypes.windll.user32.GetLastInputInfo(ctypes.byref(lii)):
-            tick = ctypes.windll.kernel32.GetTickCount64()
-            tick.restype = ctypes.c_uint64
-            return max(0, int(tick()) - int(lii.dwTime))
+            # Bind restype/argtypes BEFORE calling so the 64-bit tick counter
+            # isn't truncated to a signed 32-bit c_int (which wraps after ~24.8
+            # days of uptime). The old code called GetTickCount64() first and
+            # then set .restype on the returned int, raising AttributeError and
+            # leaving idle_ms permanently null.
+            get_tick = ctypes.windll.kernel32.GetTickCount64
+            get_tick.restype = ctypes.c_uint64
+            get_tick.argtypes = []
+            now = get_tick()
+            return max(0, int(now) - int(lii.dwTime))
     except Exception:
         pass
     return None
