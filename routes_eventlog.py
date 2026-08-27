@@ -243,6 +243,7 @@ def _poll_loop(key, log_name, level, interval, stop_evt):
     seen_ids = {}
     consecutive_errors = 0
     while not stop_evt.is_set():
+        fetch_started = time.time()
         try:
             events, err = _fetch_events(log_name, level, last_ts, max_events=200)
             if err:
@@ -267,7 +268,7 @@ def _poll_loop(key, log_name, level, interval, stop_evt):
                                 if s.get("poll_key") == key]
                     if subs:
                         _dispatch_webhooks(subs, new_events)
-                last_ts = time.time()
+                last_ts = fetch_started
         except Exception as exc:  # noqa: BLE001
             consecutive_errors += 1
             _log(f"eventlog poll fatal {key}: {exc}")
@@ -340,6 +341,7 @@ def register_routes(app, state, require_auth):
             consecutive_errors = 0
             try:
                 while True:
+                    fetch_started = time.time()
                     events, err = _fetch_events(
                         log_name, level, last_ts, max_events=max_events
                     )
@@ -366,7 +368,7 @@ def register_routes(app, state, require_auth):
                             )
                         while len(seen_ids) > _MAX_SEEN_IDS:
                             seen_ids.pop(next(iter(seen_ids)))
-                        last_ts = time.time()
+                        last_ts = fetch_started
                         if not emitted:
                             yield ": keepalive\n\n"
                     time.sleep(interval)
