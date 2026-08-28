@@ -378,8 +378,7 @@ def _run_native_hud(config, stop_event, token, ready_event):
             user32.DestroyWindow(hwnd)
         with _HUD_LOCK:
             if token == _HUD_TOKEN:
-                _HUD_STATE.update(visible=False, mode="native", error=None)
-                _HUD_STATE["updated_at"] = _now_text()
+                _write_status(visible=False, mode="native", error=None)
 
 
 def _fallback_show(config, error=None):
