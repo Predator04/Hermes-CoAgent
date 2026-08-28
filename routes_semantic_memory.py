@@ -62,6 +62,8 @@ def _save():
                 json.dumps(_MEMORY_CACHE, indent=2, default=str),
                 encoding="utf-8"
             )
+            # Activity/window titles are sensitive — keep the file owner-only.
+            os.chmod(tmp, 0o600)
             os.replace(tmp, _MEMORY_FILE)
         except Exception as exc:
             _debug_failure("save", exc)
@@ -145,6 +147,8 @@ def _memory_observe():
 @memory_bp.route("/memory/query", methods=["POST"])
 def _memory_query():
     body = request.get_json(force=True, silent=True) or {}
+    if not isinstance(body, dict):
+        body = {}
     query = (body.get("query") or "").strip().lower()
     with _MEMORY_LOCK:
         events = _MEMORY_CACHE.get("events", [])
