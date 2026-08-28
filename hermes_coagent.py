@@ -1055,6 +1055,21 @@ except ImportError:
     reg_doc_intel = None
     features["doc_intel"] = False
 try:
+    from routes_qr import register_routes as reg_qr
+except ImportError:
+    reg_qr = None
+    features["qr_decode"] = False
+try:
+    from routes_vault import register_routes as reg_vault
+except ImportError:
+    reg_vault = None
+    features["credential_vault"] = False
+try:
+    from routes_supervisor import register_routes as reg_supervisor
+except ImportError:
+    reg_supervisor = None
+    features["task_supervisor"] = False
+try:
     from routes_dragdrop import register_routes as reg_dragdrop
 except ImportError:
     reg_dragdrop = None
@@ -1347,6 +1362,15 @@ if reg_virtual_desktop:
 if reg_doc_intel:
     reg_doc_intel(app, state, require_auth)
     features["doc_intel"] = True
+if reg_qr:
+    reg_qr(app, state, require_auth)
+    features["qr_decode"] = True
+if reg_vault:
+    reg_vault(app, state, require_auth)
+    features["credential_vault"] = True
+if reg_supervisor:
+    reg_supervisor(app, state, require_auth)
+    features["task_supervisor"] = True
 if reg_organize:
     reg_organize(app, state, require_auth)
     features["file_organizer"] = True
@@ -1562,7 +1586,8 @@ def route_version():
                                  "midrun_steering", "fleet_mode", "prompt_guard",
                                  "safety_checkpoint", "perception_snapshot",
                                  "session_state", "file_organizer",
-                                 "office_authoring", "task_persistence"],
+                                 "office_authoring", "task_persistence",
+                                 "qr_decode", "credential_vault", "task_supervisor"],
                     "modules": ["mouse", "ocr", "uia", "file", "media", "v63",
                                 "stream", "process", "voice", "cua", "copilot",
                                 "bypass", "toast", "deps", "config", "browser",
@@ -1575,7 +1600,8 @@ def route_version():
                                 "goal_timeline_sse",
                                 "browser_v2", "mobile", "memory", "batching", "speculative_batching",
                                 "reminders", "hud", "perception", "session",
-                                "organize", "office", "scheduler_tasks"],
+                                "organize", "office", "scheduler_tasks",
+                                "qr", "vault", "supervisor"],
                     "memory": memory_stats(),
                     "security": ["auth_token", "rate_limit", "input_sanitization",
                                  "cors_restricted", "security_headers"]})
