@@ -84,7 +84,7 @@ def _kill_coagent(pid):
                 capture_output=True, timeout=10,
             )
             time.sleep(1)
-    except subprocess.SubprocessError:
+    except (OSError, subprocess.SubprocessError):
         pass
     finally:
         try:
