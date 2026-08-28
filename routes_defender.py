@@ -106,23 +106,31 @@ if ($null -ne $p.ExclusionIpAddress) { $ips = @($p.ExclusionIpAddress) }
 _EXCL_ADD_SCRIPT = r"""
 $type = $env:COAGENT_DEF_TYPE
 $value = $env:COAGENT_DEF_VALUE
-switch ($type) {
-  'path'      { Add-MpPreference -ExclusionPath $value }
-  'process'   { Add-MpPreference -ExclusionProcess $value }
-  'extension' { Add-MpPreference -ExclusionExtension $value }
+try {
+  switch ($type) {
+    'path'      { Add-MpPreference -ExclusionPath $value -ErrorAction Stop }
+    'process'   { Add-MpPreference -ExclusionProcess $value -ErrorAction Stop }
+    'extension' { Add-MpPreference -ExclusionExtension $value -ErrorAction Stop }
+  }
+  [ordered]@{ type=$type; value=$value; added=$true } | ConvertTo-Json -Compress
+} catch {
+  [ordered]@{ type=$type; value=$value; added=$false; error=$_.Exception.Message } | ConvertTo-Json -Compress
 }
-[ordered]@{ type=$type; value=$value; added=$true } | ConvertTo-Json -Compress
 """
 
 _EXCL_REMOVE_SCRIPT = r"""
 $type = $env:COAGENT_DEF_TYPE
 $value = $env:COAGENT_DEF_VALUE
-switch ($type) {
-  'path'      { Remove-MpPreference -ExclusionPath $value }
-  'process'   { Remove-MpPreference -ExclusionProcess $value }
-  'extension' { Remove-MpPreference -ExclusionExtension $value }
+try {
+  switch ($type) {
+    'path'      { Remove-MpPreference -ExclusionPath $value -ErrorAction Stop }
+    'process'   { Remove-MpPreference -ExclusionProcess $value -ErrorAction Stop }
+    'extension' { Remove-MpPreference -ExclusionExtension $value -ErrorAction Stop }
+  }
+  [ordered]@{ type=$type; value=$value; removed=$true } | ConvertTo-Json -Compress
+} catch {
+  [ordered]@{ type=$type; value=$value; removed=$false; error=$_.Exception.Message } | ConvertTo-Json -Compress
 }
-[ordered]@{ type=$type; value=$value; removed=$true } | ConvertTo-Json -Compress
 """
 
 _SCAN_QUICK_SCRIPT = r"""
@@ -181,6 +189,8 @@ def register_routes(app, state, require_auth):
         })
         if code != 0 and "raw" in result:
             return jsonify({"error": stderr or result["raw"]}), 500
+        if result.get("added") is False:
+            return jsonify({"error": result.get("error") or "failed to add exclusion"}), 500
         _log(f"defender: add {etype} exclusion {value}")
         return jsonify(result)
 
@@ -200,6 +210,8 @@ def register_routes(app, state, require_auth):
         })
         if code != 0 and "raw" in result:
             return jsonify({"error": stderr or result["raw"]}), 500
+        if result.get("removed") is False:
+            return jsonify({"error": result.get("error") or "failed to remove exclusion"}), 500
         _log(f"defender: remove {etype} exclusion {value}")
         return jsonify(result)
 
