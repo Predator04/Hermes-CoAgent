@@ -120,7 +120,7 @@ def route_logs_analyze():
     except (TypeError, ValueError):
         limit = 1000
     lines = _read_lines(limit)
-    errors = [_redact(_normalize_error(line)) for line in lines if _is_error(line)]
+    errors = [_normalize_error(_redact(line)) for line in lines if _is_error(line)]
     counts = Counter(errors)
     common = [{"error": message, "count": count} for message, count in counts.most_common(20)]
     suggestions = [
