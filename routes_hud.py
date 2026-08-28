@@ -50,14 +50,15 @@ def _write_status(**updates):
         _HUD_STATE.update(updates)
         _HUD_STATE["updated_at"] = _now_text()
         payload = dict(_HUD_STATE)
-    try:
-        tmp = HUD_STATUS_FILE.with_name(
-            f"{HUD_STATUS_FILE.name}.tmp.{os.getpid()}.{threading.get_ident()}"
-        )
-        tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-        tmp.replace(HUD_STATUS_FILE)
-    except Exception as exc:
-        _console(f"[hud] status write failed: {type(exc).__name__}: {exc}")
+        try:
+            tmp = HUD_STATUS_FILE.with_name(
+                f"{HUD_STATUS_FILE.name}.tmp.{os.getpid()}.{threading.get_ident()}"
+            )
+            tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            os.chmod(tmp, 0o600)
+            tmp.replace(HUD_STATUS_FILE)
+        except Exception as exc:
+            _console(f"[hud] status write failed: {type(exc).__name__}: {exc}")
     return payload
 
 
