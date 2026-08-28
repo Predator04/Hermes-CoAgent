@@ -1361,6 +1361,44 @@ TOOLS = {
     "repo": "koalaman/shellcheck",
     "stars": 39929,
     "url": "https://github.com/koalaman/shellcheck"
+  },
+  "dust": {
+    "added": "2026-08-28",
+    "command": "dust -j <path>  (JSON disk usage)",
+    "desc": "dust is a more intuitive version of du, written in Rust. It shows disk usage as a sorted tree and can emit machine-readable JSON (-j) with per-entry byte sizes and nested children — ideal for automated disk-space auditing and finding the largest files/directories.",
+    "endpoints": {
+      "/auto/dust/info": "Feature metadata, install status, version",
+      "/auto/dust/ping": "Health check",
+      "/auto/dust/usage": "POST — disk-usage JSON tree of a path (depth/min-size/apparent-size)",
+      "/auto/dust/largest": "POST — top N largest files/directories as JSON"
+    },
+    "exe": "dust",
+    "install": {
+      "scoop": "scoop install dust",
+      "winget": "winget install bootandy.dust"
+    },
+    "repo": "bootandy/dust",
+    "stars": 12192,
+    "url": "https://github.com/bootandy/dust"
+  },
+  "onefetch": {
+    "added": "2026-08-28",
+    "command": "onefetch --output json <repo-path>",
+    "desc": "onefetch is a command-line Git information tool written in Rust. It summarizes a local repository (project info, language breakdown, commit/contributor stats, license, last change) entirely offline, with machine-readable JSON and YAML output for pipeline-friendly repo metadata.",
+    "endpoints": {
+      "/auto/onefetch/info": "Feature metadata, install status, version",
+      "/auto/onefetch/ping": "Health check",
+      "/auto/onefetch/repo": "POST — full repo metadata as JSON",
+      "/auto/onefetch/languages": "POST — language breakdown of a repo"
+    },
+    "exe": "onefetch",
+    "install": {
+      "scoop": "scoop install onefetch",
+      "winget": "winget install o2sh.onefetch"
+    },
+    "repo": "o2sh/onefetch",
+    "stars": 12035,
+    "url": "https://github.com/o2sh/onefetch"
   }
 }
 
@@ -12885,6 +12923,187 @@ def _h_shellcheck_324():
         return (jsonify({'error': str(e)}), 500)
 
 
+def _h_dust_325():
+    """Analyze disk usage of a path and return a JSON tree.
+
+        Body (JSON):
+            path (str, required): directory to analyze.
+            depth (int, optional): max directory depth to recurse.
+            min_size (str, optional): only include entries larger than this (e.g. '30MB').
+            apparent (bool, optional): use apparent size (file length) instead of disk usage.
+    """
+    body = _json_body()
+    path = str(body.get('path') or '').strip()
+    if not path:
+        return _missing_field(body, 'path')
+    exe = _find_tool('dust')
+    if not exe:
+        return (jsonify({'error': 'dust is not installed', 'hint': 'scoop install dust  OR  winget install bootandy.dust'}), 503)
+    if not os.path.isdir(path):
+        return (jsonify({'error': f'directory not found: {path}'}), 400)
+    cmd = [exe, '-j', '-P']
+    if body.get('apparent'):
+        cmd.append('-s')
+    depth = body.get('depth')
+    if depth is not None:
+        try:
+            cmd += ['-d', str(int(depth))]
+        except (TypeError, ValueError):
+            pass
+    min_size = str(body.get('min_size') or '').strip()
+    if min_size:
+        cmd += ['-z', min_size]
+    cmd.append(path)
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, errors='replace', timeout=120)
+        if r.returncode != 0:
+            _log(f'[dust usage] rc={r.returncode}: {r.stderr[:300]}')
+            return (jsonify({'error': r.stderr.strip() or 'dust failed'}), 500)
+        out = r.stdout.strip()
+        try:
+            data = json_lib.loads(out)
+        except Exception:
+            data = out
+        return jsonify({'ok': True, 'path': path, 'tree': data})
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': 'dust timed out'}), 504)
+    except Exception as e:
+        _log(f'[dust usage] {str(e)}')
+        return (jsonify({'error': str(e)}), 500)
+
+
+def _h_dust_326():
+    """Return the N largest files/directories under a path as JSON.
+
+        Body (JSON):
+            path (str, required): directory to scan.
+            count (int, optional): number of largest entries to return (default 10).
+            apparent (bool, optional): use apparent size instead of disk usage.
+    """
+    body = _json_body()
+    path = str(body.get('path') or '').strip()
+    if not path:
+        return _missing_field(body, 'path')
+    exe = _find_tool('dust')
+    if not exe:
+        return (jsonify({'error': 'dust is not installed', 'hint': 'scoop install dust  OR  winget install bootandy.dust'}), 503)
+    if not os.path.isdir(path):
+        return (jsonify({'error': f'directory not found: {path}'}), 400)
+    try:
+        count = max(1, int(body.get('count') or 10))
+    except (TypeError, ValueError):
+        count = 10
+    cmd = [exe, '-j', '-P', '-n', str(count)]
+    if body.get('apparent'):
+        cmd.append('-s')
+    cmd.append(path)
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, errors='replace', timeout=120)
+        if r.returncode != 0:
+            _log(f'[dust largest] rc={r.returncode}: {r.stderr[:300]}')
+            return (jsonify({'error': r.stderr.strip() or 'dust failed'}), 500)
+        out = r.stdout.strip()
+        try:
+            data = json_lib.loads(out)
+        except Exception:
+            data = out
+        return jsonify({'ok': True, 'path': path, 'count': count, 'entries': data})
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': 'dust timed out'}), 504)
+    except Exception as e:
+        _log(f'[dust largest] {str(e)}')
+        return (jsonify({'error': str(e)}), 500)
+
+
+def _h_onefetch_327():
+    """Return full Git repository metadata as JSON.
+
+        Body (JSON):
+            path (str, required): path to the repository (a directory containing .git).
+            output (str, optional): json|yaml. Default json.
+    """
+    body = _json_body()
+    path = str(body.get('path') or '').strip()
+    if not path:
+        return _missing_field(body, 'path')
+    exe = _find_tool('onefetch')
+    if not exe:
+        return (jsonify({'error': 'onefetch is not installed', 'hint': 'scoop install onefetch  OR  winget install o2sh.onefetch'}), 503)
+    if not os.path.isdir(os.path.join(path, '.git')) and not os.path.isfile(os.path.join(path, '.git')):
+        return (jsonify({'error': f'not a git repository: {path}'}), 400)
+    fmt = str(body.get('output') or 'json').strip().lower()
+    if fmt not in ('json', 'yaml'):
+        fmt = 'json'
+    try:
+        r = subprocess.run([exe, '--output', fmt, path], capture_output=True, text=True, errors='replace', timeout=60)
+        if r.returncode != 0:
+            _log(f'[onefetch repo] rc={r.returncode}: {r.stderr[:300]}')
+            return (jsonify({'error': r.stderr.strip() or 'onefetch failed'}), 500)
+        out = r.stdout.strip()
+        data = out
+        if fmt == 'json':
+            try:
+                data = json_lib.loads(out)
+            except Exception:
+                pass
+        return jsonify({'ok': True, 'path': path, 'output': fmt, 'repo': data})
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': 'onefetch timed out'}), 504)
+    except Exception as e:
+        _log(f'[onefetch repo] {str(e)}')
+        return (jsonify({'error': str(e)}), 500)
+
+
+def _h_onefetch_328():
+    """Return the language breakdown of a Git repository.
+
+        Body (JSON):
+            path (str, required): path to the repository (a directory containing .git).
+    """
+    def _walk_langs(node):
+        if isinstance(node, dict):
+            for k, v in node.items():
+                if isinstance(v, list) and 'lang' in k.lower():
+                    if v and all(isinstance(x, dict) for x in v):
+                        return v
+                found = _walk_langs(v)
+                if found is not None:
+                    return found
+        elif isinstance(node, list):
+            for x in node:
+                found = _walk_langs(x)
+                if found is not None:
+                    return found
+        return None
+
+    body = _json_body()
+    path = str(body.get('path') or '').strip()
+    if not path:
+        return _missing_field(body, 'path')
+    exe = _find_tool('onefetch')
+    if not exe:
+        return (jsonify({'error': 'onefetch is not installed', 'hint': 'scoop install onefetch  OR  winget install o2sh.onefetch'}), 503)
+    if not os.path.isdir(os.path.join(path, '.git')) and not os.path.isfile(os.path.join(path, '.git')):
+        return (jsonify({'error': f'not a git repository: {path}'}), 400)
+    try:
+        r = subprocess.run([exe, '--output', 'json', path], capture_output=True, text=True, errors='replace', timeout=60)
+        if r.returncode != 0:
+            _log(f'[onefetch languages] rc={r.returncode}: {r.stderr[:300]}')
+            return (jsonify({'error': r.stderr.strip() or 'onefetch failed'}), 500)
+        out = r.stdout.strip()
+        try:
+            data = json_lib.loads(out)
+        except Exception:
+            data = out
+        langs = _walk_langs(data)
+        return jsonify({'ok': True, 'path': path, 'languages': langs if langs is not None else data})
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': 'onefetch timed out'}), 504)
+    except Exception as e:
+        _log(f'[onefetch languages] {str(e)}')
+        return (jsonify({'error': str(e)}), 500)
+
+
 def register_routes(app, state, require_auth):
     global _STATE
     _STATE = state
@@ -13216,6 +13435,10 @@ def register_routes(app, state, require_auth):
         ('/auto/mise/run', ['POST'], _h_mise_322),
         ('/auto/shellcheck/check', ['POST'], _h_shellcheck_323),
         ('/auto/shellcheck/file', ['POST'], _h_shellcheck_324),
+        ('/auto/dust/usage', ['POST'], _h_dust_325),
+        ('/auto/dust/largest', ['POST'], _h_dust_326),
+        ('/auto/onefetch/repo', ['POST'], _h_onefetch_327),
+        ('/auto/onefetch/languages', ['POST'], _h_onefetch_328),
     ]
     for _path, _methods, _fn in _ACTIONS:
         app.add_url_rule(_path, endpoint=_fn.__name__, view_func=require_auth(_fn), methods=_methods)
