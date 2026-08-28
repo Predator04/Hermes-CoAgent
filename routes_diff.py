@@ -42,8 +42,7 @@ def _capture_image():
                 _sct_img = _sct.grab(_mon)
                 image = _PILImage.frombytes("RGB", _sct_img.size, _sct_img.rgb)
         except Exception:
-            from PIL import ImageGrab
-            image = ImageGrab.grab()
+            pass
     except Exception:
         pass
     if image is None:
