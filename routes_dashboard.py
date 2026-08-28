@@ -3,7 +3,7 @@
 from flask import Response
 
 
-CSP = "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'"
+CSP = "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
 
 TOKEN_PLACEHOLDER = "__HERMES_TOKEN_PLACEHOLDER__"
 
@@ -12,7 +12,7 @@ DASHBOARD_HTML = r"""<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'">
 <title>Hermes CoAgent Dashboard</title>
 <style>
 :root{color-scheme:dark;--bg:#111318;--panel:#181c24;--panel2:#202632;--text:#f2f5f8;--muted:#9aa5b1;--ok:#42d392;--bad:#ff6b6b;--line:#303846}
@@ -40,11 +40,11 @@ pre{white-space:pre-wrap;overflow:auto;max-height:390px;margin:0;background:#090
 </main>
 <!-- sessionStorage keeps URL-provided tokens scoped to the current tab. -->
 <script>
-const params=new URLSearchParams(location.search);const queryToken=params.get("token")||"";if(queryToken){sessionStorage.setItem("hermes_token",queryToken);params.delete("token");const cleanUrl=location.pathname+(params.toString()?"?"+params.toString():"")+location.hash;history.replaceState(null,document.title,cleanUrl)}const token="__HERMES_TOKEN_PLACEHOLDER__"||queryToken||sessionStorage.getItem("hermes_token")||"";
+const token="__HERMES_TOKEN_PLACEHOLDER__";
 function headers(json=false){const h={};if(token)h.Authorization="Bearer "+token;if(json)h["Content-Type"]="application/json";return h}
 async function getJson(path){const r=await fetch(path,{headers:headers(false)});if(!r.ok)throw new Error(path+" "+r.status);return await r.json()}
 function setSummary(ok,text){document.getElementById("dot").className="dot"+(ok?" ok":"");document.getElementById("summary").textContent=text}
-async function loadVersion(){const v=await getJson("/version");document.title="Hermes "+v.version;const el=document.getElementById("modules");el.innerHTML="";(v.modules||[]).forEach(m=>{const d=document.createElement("div");d.className="card";d.innerHTML="<strong>"+m+"</strong><span>loaded</span>";el.appendChild(d)});setSummary(true,"v"+v.version+" ready")}
+async function loadVersion(){const v=await getJson("/version");document.title="Hermes "+v.version;const el=document.getElementById("modules");el.innerHTML="";(v.modules||[]).forEach(m=>{const d=document.createElement("div");d.className="card";const s=document.createElement("strong");s.textContent=m;const sp=document.createElement("span");sp.textContent="loaded";d.appendChild(s);d.appendChild(sp);el.appendChild(d)});setSummary(true,"v"+v.version+" ready")}
 async function loadScreen(){const r=await fetch("/screen/jpeg?ts="+Date.now(),{headers:headers(false)});if(!r.ok)throw new Error("screen "+r.status);const blob=await r.blob();const url=URL.createObjectURL(blob);const img=document.getElementById("screen");const old=img.src;img.src=url;if(old)URL.revokeObjectURL(old)}
 async function loadHealth(){const h=await getJson("/health/endpoints");const host=document.getElementById("health");const rows=Object.entries(h.endpoints||{}).sort((a,b)=>String(a[0]).localeCompare(String(b[0])));if(!rows.length){host.textContent="No endpoint samples yet";return}host.innerHTML="";rows.forEach(([path,row])=>{const safePath=path.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));const rate=Number(row.last_5min_success_rate_pct??row.success_rate_pct??100);const wrap=document.createElement("div");wrap.className="health-row";wrap.innerHTML="<div><div>"+safePath+"</div><div class='bar'><div class='fill "+(rate<80?"bad":"")+"' style='width:"+Math.max(0,Math.min(100,rate))+"%'></div></div></div><div>"+rate+"%</div>";host.appendChild(wrap)})}
 async function loadLogs(){const data=await getJson("/logs?format=json&lines=250");const q=document.getElementById("filter").value.toLowerCase();const lines=(data.lines||[]).filter(l=>!q||l.toLowerCase().includes(q));document.getElementById("logs").textContent=lines.join("\n")}
@@ -62,7 +62,7 @@ def register_routes(app, state, require_auth):
         # Inject Bearer token into the HTML so the JS can use it directly
         import json as _json
         import auth
-        token = auth.AUTH_TOKEN or ""
+        token = getattr(auth, "AUTH_TOKEN", "") or ""
         escaped_token = _json.dumps(token)[1:-1].replace("<", "\\u003c")
         html = DASHBOARD_HTML.replace(TOKEN_PLACEHOLDER, escaped_token)
         response = Response(html, mimetype="text/html")
@@ -70,5 +70,6 @@ def register_routes(app, state, require_auth):
         response.headers["Cache-Control"] = "no-store"
         response.headers["Pragma"] = "no-cache"
         response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "no-referrer"
         return response
