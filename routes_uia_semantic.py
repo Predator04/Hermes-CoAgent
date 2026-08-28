@@ -28,7 +28,7 @@ def score_element(el, role=None, name=None):
         weight += 0.4
         if _norm(el.get("role")) == _norm(role):
             score += 0.4
-        elif _norm(role) in _norm(el.get("role")):
+        elif _norm(role) and _norm(role) in _norm(el.get("role")):
             score += 0.25
     if name:
         weight += 0.6
@@ -94,7 +94,7 @@ def register_routes(app, state, require_auth):
             "matched": best["element"],
             "score": best["score"],
             "candidates": ranked,
-            "executed": False if not live else bool(best["element"].get("bbox")),
+            "executed": False,  # discovery-only endpoint — no action is performed
             "dry_run": not live,
         })
 
