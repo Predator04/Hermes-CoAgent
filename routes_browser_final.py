@@ -411,7 +411,7 @@ def _browser_worker(browser_id, options, ready_queue):
                     if not isinstance(url, str) or not url:
                         raise ValueError("url is required")
                     url = url.strip()
-                    url_error = _navigation_url_error(url)
+                    url_error = _navigation_url_error(url, allow_blank=True)
                     if url_error:
                         raise ValueError(url_error)
                     page.goto(
