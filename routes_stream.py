@@ -67,9 +67,17 @@ def _broadcast_loop(key, monitor_index, quality):
                 consecutive_errors += 1
                 _log(f"Screen stream capture error ({consecutive_errors}): {type(exc).__name__}: {exc}")
                 if consecutive_errors > 30:
-                    _log(f"Screen stream aborting after {consecutive_errors} consecutive capture failures")
                     with _STREAM_LOCK:
-                        _STREAMS.pop(key, None)
+                        entry = _STREAMS.get(key)
+                        if entry and entry["clients"]:
+                            # a new subscriber arrived during the failing capture;
+                            # keep the loop alive instead of orphaning their queue
+                            consecutive_errors = 0
+                        else:
+                            _STREAMS.pop(key, None)
+                    if consecutive_errors == 0:
+                        continue
+                    _log(f"Screen stream aborting after 30 consecutive capture failures")
                     return
                 time.sleep(1.0)
                 continue
@@ -90,10 +98,14 @@ def _broadcast_loop(key, monitor_index, quality):
     finally:
         with _STREAM_LOCK:
             entry = _STREAMS.get(key)
-            if entry and entry.get("thread") is threading.current_thread():
+            owns = entry is not None and entry.get("thread") is threading.current_thread()
+            if owns:
                 _STREAMS.pop(key, None)
-        with _LATEST_FRAMES_LOCK:
-            _LATEST_FRAMES.pop(key, None)
+        # Clear the cached frame only if no other loop now owns this key. An
+        # unsubscribe-then-resubscribe race must not clobber the new loop's frames.
+        if owns or entry is None:
+            with _LATEST_FRAMES_LOCK:
+                _LATEST_FRAMES.pop(key, None)
         _log(f"Screen stream stopped monitor={monitor_index} quality={quality}")
 
 
@@ -140,7 +152,12 @@ def register_routes(app, state, require_auth):
             key, client_queue = _subscribe(monitor_index, quality)
             try:
                 while True:
-                    frame = client_queue.get(timeout=10)
+                    try:
+                        frame = client_queue.get(timeout=10)
+                    except queue.Empty:
+                        # the broadcast loop tolerates capture errors longer than
+                        # this timeout; keep the socket open instead of kicking the client
+                        continue
                     jpeg = frame.get("jpeg", b"")
                     if jpeg:
                         ws.send(jpeg)
