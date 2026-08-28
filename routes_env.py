@@ -120,6 +120,8 @@ def register_routes(app, state, require_auth):
         name = (request.args.get("name") or "").strip()
         if not name:
             return jsonify({"error": "name is required"}), 400
+        if "=" in name or "\x00" in name:
+            return jsonify({"error": "invalid environment variable name"}), 400
         result, stderr, code = _ps_json(_GET_SCRIPT, timeout=30, env={"COAGENT_ENV_NAME": name})
         if code != 0 and "raw" in result:
             return jsonify({"error": stderr or result["raw"]}), 500
@@ -157,6 +159,8 @@ def register_routes(app, state, require_auth):
         scope = str(data.get("scope") or "user").lower()
         if not name:
             return jsonify({"error": "name is required"}), 400
+        if "=" in name or "\x00" in name:
+            return jsonify({"error": "invalid environment variable name"}), 400
         if scope not in _SCOPE_MAP:
             return jsonify({"error": "scope must be 'user' or 'system'"}), 400
         result, stderr, code = _ps_json(_DELETE_SCRIPT, timeout=30, env={
