@@ -124,6 +124,12 @@ def _capture_loop(recording_id, fps, max_seconds, bbox):
                 _console(f"[recorder_gif] auto-saved recording_id={recording_id} frames={len(frames)} path={path}")
             except Exception as exc:
                 _console(f"[recorder_gif] auto-save failed: {type(exc).__name__}: {exc}")
+        if natural_stop:
+            with _LOCK:
+                if _ACTIVE and _ACTIVE.get("recording_id") == recording_id:
+                    _ACTIVE = None
+                    _THREAD = None
+                    _FRAMES = []
 
 
 def _save_gif(recording_id, frames, fps):
