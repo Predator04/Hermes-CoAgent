@@ -530,9 +530,9 @@ def route_browser_open():
         "width": _clamp_int(data.get("width"), 1280, 320, 7680),
         "height": _clamp_int(data.get("height"), 720, 240, 4320),
         "timeout_ms": _clamp_int(data.get("timeout"), 30000, 1000, 180000),
-        "executable_path": data.get("executable"),
+        "executable_path": data.get("executable") if _as_bool(os.environ.get("COAGENT_ENABLE_JS_EVAL"), False) else None,
         "channel": data.get("channel"),
-        "browser_args": data.get("args") or [],
+        "browser_args": data.get("args") if _as_bool(os.environ.get("COAGENT_ENABLE_JS_EVAL"), False) else [],
         "queue": command_queue,
     }
     ready_queue = queue.Queue(maxsize=1)
