@@ -200,6 +200,18 @@ def _source_kind(source):
     return _SOURCES[source]["kind"]
 
 
+def _validate_name(name):
+    """Reject startup-entry names that could escape their target folder or
+    inject registry subkeys/control characters. Returns an error string or None."""
+    if len(name) > 255:
+        return "name too long (max 255)"
+    if ".." in name or any(ch in name for ch in ("\\", "/", ":", "\x00")):
+        return "name contains invalid characters"
+    if any(ord(ch) < 32 for ch in name):
+        return "name contains control characters"
+    return None
+
+
 def register_routes(app, state, require_auth):
     @app.route("/startup/list", methods=["GET"])
     @require_auth
@@ -220,6 +232,9 @@ def register_routes(app, state, require_auth):
             return jsonify({"error": "source must be run_hkcu, run_hklm, startup_user, or startup_all"}), 400
         if not name:
             return jsonify({"error": "name is required"}), 400
+        err = _validate_name(name)
+        if err:
+            return jsonify({"error": err}), 400
         if not command:
             return jsonify({"error": "command is required"}), 400
         kind = _source_kind(source)
@@ -252,6 +267,9 @@ def register_routes(app, state, require_auth):
             return jsonify({"error": "source must be run_hkcu, run_hklm, startup_user, or startup_all"}), 400
         if not name:
             return jsonify({"error": "name is required"}), 400
+        err = _validate_name(name)
+        if err:
+            return jsonify({"error": err}), 400
         kind = _source_kind(source)
         if kind == "run":
             result, stderr, code = _ps_json(_REMOVE_RUN_SCRIPT, timeout=60, env={
@@ -290,6 +308,9 @@ def register_routes(app, state, require_auth):
             return jsonify({"error": "source must be run_hkcu, run_hklm, startup_user, or startup_all"}), 400
         if not name:
             return jsonify({"error": "name is required"}), 400
+        err = _validate_name(name)
+        if err:
+            return jsonify({"error": err}), 400
         result, stderr, code = _set_approved(source, name, 3)
         if code != 0 and "raw" in result:
             return jsonify({"error": stderr or result["raw"]}), 500
@@ -306,6 +327,9 @@ def register_routes(app, state, require_auth):
             return jsonify({"error": "source must be run_hkcu, run_hklm, startup_user, or startup_all"}), 400
         if not name:
             return jsonify({"error": "name is required"}), 400
+        err = _validate_name(name)
+        if err:
+            return jsonify({"error": err}), 400
         result, stderr, code = _set_approved(source, name, 2)
         if code != 0 and "raw" in result:
             return jsonify({"error": stderr or result["raw"]}), 500
