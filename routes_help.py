@@ -2,7 +2,7 @@
 
 import json
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, Response, jsonify, request
 
 from shared import VERSION
 
@@ -125,7 +125,7 @@ def route_help():
                 parts.append(f"          {info['desc']}")
                 lines.append("\n".join(parts))
             lines.append("")
-        return "\n".join(lines)
+        return Response("\n".join(lines), mimetype="text/plain; charset=utf-8")
 
     return jsonify(help_data)
 
