@@ -63,7 +63,6 @@ def _write_status(**updates):
 
 
 def _render_hud_bitmap(text, color_name):
-    from io import BytesIO
     from PIL import Image, ImageDraw, ImageFont
 
     fg = COLOR_MAP.get(color_name, COLOR_MAP["cyan"])
@@ -79,8 +78,6 @@ def _render_hud_bitmap(text, color_name):
     bbox = draw.textbbox((0, 0), clean, font=font)
     text_h = bbox[3] - bbox[1]
     draw.text((38, max(8, (HUD_HEIGHT - text_h) // 2 - 1)), clean, fill=(245, 250, 255, 245), font=font)
-    buf = BytesIO()
-    image.save(buf, format="PNG")
     return image
 
 
