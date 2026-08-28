@@ -58,13 +58,19 @@ def _windows_only():
 
 
 def _is_url(value):
-    if not isinstance(value, str) or "://" not in value and not value.startswith("mailto:"):
+    if not isinstance(value, str):
         return False
     try:
         parsed = urlparse(value)
     except Exception:
         return False
-    return parsed.scheme.lower() in _URL_SCHEMES
+    scheme = parsed.scheme.lower()
+    if scheme not in _URL_SCHEMES:
+        return False
+    # Reject Windows drive-letter paths ("C:\\foo" parses scheme "c").
+    if len(scheme) == 1 and "://" not in value:
+        return False
+    return True
 
 
 def _normalize_args(raw):
