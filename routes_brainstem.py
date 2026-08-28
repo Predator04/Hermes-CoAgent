@@ -64,7 +64,7 @@ def _call_llm(provider_key, prompt, model, timeout=60):
         return result.get("content", "")
     except Exception as exc:
         _debug_failure(f"call_llm {provider_key}", exc)
-        return f"[Error: {exc}]"
+        return None
 
 
 @brainstem_bp.route("/brainstem/route", methods=["POST"])
@@ -83,6 +83,8 @@ def _brainstem_route():
         model = _ROUTER_STATE["neocortex_model"]
         provider = model.split(":")[0]
         response = _call_llm(provider, task, model.split(":", 1)[1] if ":" in model else None)
+        if response is None:
+            return jsonify({"ok": False, "error": "LLM call failed", "router": "neocortex"}), 502
         latency = time.time() - start
         with _ROUTER_LOCK:
             _ROUTER_STATE["neocortex_calls"] += 1
@@ -103,6 +105,8 @@ def _brainstem_route():
         model = _ROUTER_STATE["brainstem_model"]
         provider = model.split(":")[0]
         response = _call_llm(provider, task, model.split(":", 1)[1] if ":" in model else None)
+        if response is None:
+            return jsonify({"ok": False, "error": "LLM call failed", "router": "brainstem"}), 502
         latency = time.time() - start
         with _ROUTER_LOCK:
             _ROUTER_STATE["brainstem_calls"] += 1
@@ -136,6 +140,8 @@ def _brainstem_query():
         model = _ROUTER_STATE["neocortex_model"]
         provider = model.split(":")[0]
         response = _call_llm(provider, prompt, model.split(":", 1)[1] if ":" in model else None)
+        if response is None:
+            return jsonify({"ok": False, "error": "LLM call failed", "router": "neocortex"}), 502
         latency = time.time() - start
         with _ROUTER_LOCK:
             _ROUTER_STATE["neocortex_calls"] += 1
@@ -155,6 +161,8 @@ def _brainstem_query():
         model = _ROUTER_STATE["brainstem_model"]
         provider = model.split(":")[0]
         response = _call_llm(provider, prompt, model.split(":", 1)[1] if ":" in model else None)
+        if response is None:
+            return jsonify({"ok": False, "error": "LLM call failed", "router": "brainstem"}), 502
         latency = time.time() - start
         with _ROUTER_LOCK:
             _ROUTER_STATE["brainstem_calls"] += 1
@@ -197,24 +205,34 @@ def _brainstem_status():
 def _brainstem_configure():
     body = request.get_json(force=True, silent=True) or {}
     errors = []
-    with _ROUTER_LOCK:
-        if "complexity_threshold" in body:
-            try:
-                thresh = float(body["complexity_threshold"])
-                if not 0.0 <= thresh <= 1.0:
-                    raise ValueError("out of range")
-                _ROUTER_STATE["complexity_threshold"] = thresh
-            except (TypeError, ValueError):
-                errors.append("complexity_threshold must be a number in [0,1]")
-        for key in ("brainstem_model", "neocortex_model"):
-            if key in body:
-                val = body[key]
-                if not isinstance(val, str) or ":" not in val or not val.split(":", 1)[1].strip():
-                    errors.append(f"{key} must be a 'provider:model' string")
-                else:
-                    _ROUTER_STATE[key] = val
+    new_threshold = None
+    new_models = {}
+    # Validate all fields into locals first; only mutate _ROUTER_STATE once
+    # every provided field is valid, so a partial request can't leave a
+    # half-applied config while returning an error.
+    if "complexity_threshold" in body:
+        try:
+            thresh = float(body["complexity_threshold"])
+            if not 0.0 <= thresh <= 1.0:
+                raise ValueError("out of range")
+            new_threshold = thresh
+        except (TypeError, ValueError):
+            errors.append("complexity_threshold must be a number in [0,1]")
+    for key in ("brainstem_model", "neocortex_model"):
+        if key in body:
+            val = body[key]
+            if (not isinstance(val, str) or ":" not in val
+                    or not val.split(":", 1)[0].strip()
+                    or not val.split(":", 1)[1].strip()):
+                errors.append(f"{key} must be a 'provider:model' string")
+            else:
+                new_models[key] = val
     if errors:
         return jsonify({"ok": False, "error": "; ".join(errors)}), 400
+    with _ROUTER_LOCK:
+        if new_threshold is not None:
+            _ROUTER_STATE["complexity_threshold"] = new_threshold
+        _ROUTER_STATE.update(new_models)
     return jsonify({"ok": True, "config": {
         "brainstem_model": _ROUTER_STATE["brainstem_model"],
         "neocortex_model": _ROUTER_STATE["neocortex_model"],
