@@ -5,33 +5,30 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent  # scripts/ → repo root
 errors = []
 
-# Check root .py files
-for f in sorted(ROOT.glob("*.py")):
-    try:
-        ast.parse(f.read_text(encoding="utf-8"))
-    except (SyntaxError, ValueError, OSError) as e:
-        print(f"FAIL: {f.name}: {e}")
-        errors.append(f)
+# Directories that must never be descended into during the recursive scan.
+EXCLUDE_DIRS = {".git", "__pycache__", "node_modules", ".venv", "venv", "dist", "build"}
 
-# Check scripts/ .py files
-for f in sorted((ROOT / "scripts").glob("*.py")):
-    try:
-        ast.parse(f.read_text(encoding="utf-8"))
-    except (SyntaxError, ValueError, OSError) as e:
-        print(f"FAIL: scripts/{f.name}: {e}")
-        errors.append(f)
 
-# Check tests/ .py files
-for f in sorted((ROOT / "tests").glob("*.py")):
+def _iter_py_files():
+    """Yield every .py file under ROOT, skipping excluded directories."""
+    for path in sorted(ROOT.rglob("*.py")):
+        parts = path.relative_to(ROOT).parts
+        if any(part in EXCLUDE_DIRS for part in parts):
+            continue
+        yield path
+
+
+checked = 0
+for f in _iter_py_files():
+    checked += 1
     try:
-        ast.parse(f.read_text(encoding="utf-8"))
+        ast.parse(f.read_text(encoding="utf-8"), filename=str(f))
     except (SyntaxError, ValueError, OSError) as e:
-        print(f"FAIL: tests/{f.name}: {e}")
+        print(f"FAIL: {f.relative_to(ROOT)}: {e}")
         errors.append(f)
 
 if errors:
     print(f"\n{len(errors)} file(s) failed syntax check.")
     sys.exit(1)
 
-total = len(list(ROOT.glob("*.py"))) + len(list((ROOT / "scripts").glob("*.py"))) + len(list((ROOT / "tests").glob("*.py")))
-print(f"ALL OK — {total} files parsed cleanly.")
+print(f"ALL OK — {checked} files parsed cleanly.")
