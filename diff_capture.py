@@ -100,7 +100,7 @@ def capture():
     with _state_lock:
         _frame_count += 1
 
-        if _prev_frame is None or _prev_hash is None:
+        if _prev_frame is None or _prev_hash is None or _prev_frame.size != curr.size:
             # Key frame
             _prev_frame = curr.copy()
             _prev_hash = curr_hash
