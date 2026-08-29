@@ -229,7 +229,7 @@ def register_routes(app, state, require_auth):
             })
 
         if "delta" in d:
-            current = _ps_get_brightness() or 50
+            current = 50 if (_b := _ps_get_brightness()) is None else _b
             delta = _coerce_int(d["delta"], 0, -100, 100)
             level = _coerce_int(current + delta, 50, 0, 100)
         else:
@@ -242,7 +242,7 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_system_brightness_up():
         delta = _coerce_int(_json_body().get("delta", 10) if _json_body() else 10, 10, 1, 100)
-        current = _ps_get_brightness() or 50
+        current = 50 if (_b := _ps_get_brightness()) is None else _b
         level = _coerce_int(current + delta, 50, 0, 100)
         _ps_set_brightness(level)
         return jsonify({"status": "ok", "brightness": level, "delta": delta})
@@ -251,7 +251,7 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_system_brightness_down():
         delta = _coerce_int(_json_body().get("delta", 10) if _json_body() else 10, 10, 1, 100)
-        current = _ps_get_brightness() or 50
+        current = 50 if (_b := _ps_get_brightness()) is None else _b
         level = _coerce_int(current - delta, 50, 0, 100)
         _ps_set_brightness(level)
         return jsonify({"status": "ok", "brightness": level, "delta": delta})
