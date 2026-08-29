@@ -262,7 +262,9 @@ def register_routes(app, state, require_auth):
             return _missing_field("secret")
         username = d.get("username", "")
         type_name = str(d.get("type", "generic")).lower()
-        ctype = CRED_TYPE_MAP.get(type_name, CRED_TYPE_GENERIC)
+        if type_name not in CRED_TYPE_MAP:
+            return jsonify({"error": f"unknown credential type '{type_name}' (use 'generic' or 'domain_password')"}), 400
+        ctype = CRED_TYPE_MAP[type_name]
         try:
             _set_credential(advapi32, CREDENTIAL, target, username, str(secret), ctype)
         except Exception as exc:
