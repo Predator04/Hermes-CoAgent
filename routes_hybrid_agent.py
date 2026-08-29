@@ -379,8 +379,8 @@ def _agent_act():
             "method_used": method,
         }), 500
 
-    if not payload and not target:
-        _bump_stat("misses")
+    if not target:
+        _bump_stat(f"{action}_hits")
     elif method:
         _bump_stat(f"{method}_hits")
 
