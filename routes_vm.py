@@ -89,15 +89,13 @@ def _vm_info_script():
 
 def _parse_vm_json(out):
     import json as _json
+    text = (out or "").strip()
+    if not text:
+        return []
     try:
-        data = _json.loads(out) if out.strip() else None
+        return _json.loads(text)
     except Exception:  # noqa: BLE001
-        return out
-    if data is None:
         return None
-    if isinstance(data, dict):
-        return data
-    return data  # list
 
 
 def _run_vm_action(script, extra_env=None, timeout=90):
@@ -125,6 +123,9 @@ def register_routes(app, state, require_auth):
         if rc != 0:
             return jsonify({"error": (err or out).strip()[:400]}), 500
         data = _parse_vm_json(out)
+        if data is None:
+            return jsonify({"error": "unexpected VM list output",
+                            "detail": (out or "").strip()[:400]}), 500
         vms = []
         if isinstance(data, dict):
             vms = [data]
@@ -145,7 +146,11 @@ def register_routes(app, state, require_auth):
         rc, out, err = _run_ps(_vm_info_script(), extra_env={"COAGENT_VM": name})
         if rc != 0:
             return jsonify({"error": (err or out).strip()[:400]}), 500
-        return jsonify({"vm": _parse_vm_json(out)})
+        data = _parse_vm_json(out)
+        if data is None:
+            return jsonify({"error": "unexpected VM status output",
+                            "detail": (out or "").strip()[:400]}), 500
+        return jsonify({"vm": data})
 
     @app.route("/vm/start", methods=["POST"])
     @require_auth
@@ -258,7 +263,9 @@ def register_routes(app, state, require_auth):
             return jsonify({"error": "invalid snapshot name"}), 400
         if not snap:
             import time as _time
-            snap = "CoAgent " + _time.strftime("%Y-%m-%d %H-%M-%S")
+            import secrets as _secrets
+            snap = ("CoAgent " + _time.strftime("%Y-%m-%d %H-%M-%S")
+                    + "-" + _secrets.token_hex(2))
         script = ("Checkpoint-VM -Name $env:COAGENT_VM -SnapshotName $env:COAGENT_CP "
                   "-Confirm:$false")
         ok2, detail = _run_vm_action(
@@ -313,6 +320,9 @@ def register_routes(app, state, require_auth):
         if rc != 0:
             return jsonify({"error": (err or out).strip()[:400]}), 500
         data = _parse_vm_json(out)
+        if data is None:
+            return jsonify({"error": "unexpected checkpoint list output",
+                            "detail": (out or "").strip()[:400]}), 500
         cps = []
         if isinstance(data, dict):
             cps = [data]
