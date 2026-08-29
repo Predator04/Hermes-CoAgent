@@ -400,7 +400,8 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_supervise_stop():
         d = _json_body()
-        job_id = (d.get("id") or "").strip() if isinstance(d, dict) else ""
+        raw_id = d.get("id") if isinstance(d, dict) else None
+        job_id = raw_id.strip() if isinstance(raw_id, str) else ""
         if not job_id:
             return _missing_field("id")
         with _JOBS_LOCK:
