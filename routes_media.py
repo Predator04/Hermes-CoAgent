@@ -336,7 +336,7 @@ def _macro_path(name):
 def _load_scheduler():
     if SCHEDULER_FILE.exists():
         try:
-            data = json.loads(SCHEDULER_FILE.read_text())
+            data = json.loads(SCHEDULER_FILE.read_text(encoding="utf-8"))
         except Exception:
             return {"actions": []}
         if isinstance(data, dict) and isinstance(data.get("actions"), list):
@@ -347,7 +347,10 @@ def _load_scheduler():
 def _save_scheduler(data):
     backup_file(SCHEDULER_FILE)
     tmp = SCHEDULER_FILE.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(data, fh, indent=2)
+        fh.flush()
+        os.fsync(fh.fileno())
     tmp.replace(SCHEDULER_FILE)
 
 def _scheduler_busy_response():
@@ -395,7 +398,8 @@ def _clipboard_set_image(b64):
         raise ValueError("data must be a non-empty base64 string")
     if len(raw) > 50 * 1024 * 1024:
         raise ValueError("image exceeds 50MB limit")
-    tmp = tempfile.mkstemp(suffix=".png")[1]
+    fd, tmp = tempfile.mkstemp(suffix=".png")
+    os.close(fd)
     try:
         with open(tmp, "wb") as fh:
             fh.write(raw)
