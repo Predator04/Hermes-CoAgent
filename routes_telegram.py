@@ -270,15 +270,15 @@ def route_agent_exec_and_send():
         target_chat = _resolve_target_chat(config)
         ok, resp_data = _send_telegram(config["bot_token"], target_chat, msg)
         all_errors = [str(resp_data)] if not ok else []
-        sent_count = 1
+        sent_count = 1 if ok else 0
+        overall_ok = ok
     else:
         # Send each finding as a separate message
         sent_count = 0
         errors = []
         target_chat = _resolve_target_chat(config)
-        for i, finding in enumerate(findings):
-            msg = finding[:4096]
-            ok, resp_data = _send_telegram(config["bot_token"], target_chat, msg)
+        for finding in findings:
+            ok, resp_data = _send_telegram(config["bot_token"], target_chat, finding[:4096])
             if ok:
                 sent_count += 1
             else:
@@ -292,6 +292,9 @@ def route_agent_exec_and_send():
             summary += f"\n❌ {len(errors)} send errors"
         ok, resp_data = _send_telegram(config["bot_token"], target_chat, summary)
         all_errors = errors
+        if not ok:
+            all_errors.append(f"summary: {resp_data}")
+        overall_ok = sent_count == len(findings)
 
     # Update config with last send info
     config["last_send"] = time.time()
@@ -299,9 +302,9 @@ def route_agent_exec_and_send():
     _save_config(config)
 
     return jsonify({
-        "status": "sent" if ok else "send_failed",
+        "status": "sent" if overall_ok else "send_failed",
         "findings_count": len(findings),
-        "sent_count": sent_count if findings else 1,
+        "sent_count": sent_count,
         "exit_code": result.get("exit_code"),
         "duration_seconds": result.get("duration_seconds"),
         "errors": all_errors if all_errors else None,
