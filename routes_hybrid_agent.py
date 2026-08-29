@@ -63,7 +63,7 @@ def _get_uia_tree():
         return None
 
     cache_key = "__global_uia__"
-    now = time.time()
+    now = time.monotonic()
     with _UIA_CACHE_LOCK:
         entry = _UIA_CACHE.get(cache_key)
         if entry and (now - entry["ts"]) < _UIA_CACHE_TTL_SECONDS:
@@ -611,7 +611,7 @@ def _agent_hybrid_status():
         cache_age_ms = None
         if _UIA_CACHE:
             newest = max(entry["ts"] for entry in _UIA_CACHE.values())
-            cache_age_ms = int((time.time() - newest) * 1000)
+            cache_age_ms = int((time.monotonic() - newest) * 1000)
     return jsonify({
         "ok": True,
         "resolution_order": ["uia", "ocr", "som"],
