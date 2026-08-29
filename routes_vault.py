@@ -233,7 +233,8 @@ def register_routes(app, state, require_auth):
         if advapi32 is None:
             return _windows_only()
         d = _json_body()
-        target = (d.get("target") or "").strip() if isinstance(d, dict) else ""
+        raw = d.get("target") if isinstance(d, dict) else None
+        target = raw.strip() if isinstance(raw, str) else ""
         if not target:
             return _missing_field("target")
         result = _get_credential(advapi32, CREDENTIAL, target)
@@ -252,7 +253,8 @@ def register_routes(app, state, require_auth):
         d = _json_body()
         if not isinstance(d, dict):
             d = {}
-        target = (d.get("target") or "").strip()
+        raw = d.get("target")
+        target = raw.strip() if isinstance(raw, str) else ""
         if not target:
             return _missing_field("target")
         secret = d.get("secret")
@@ -277,7 +279,8 @@ def register_routes(app, state, require_auth):
         if advapi32 is None:
             return _windows_only()
         d = _json_body()
-        target = (d.get("target") or "").strip() if isinstance(d, dict) else ""
+        raw = d.get("target") if isinstance(d, dict) else None
+        target = raw.strip() if isinstance(raw, str) else ""
         if not target:
             return _missing_field("target")
         ok = _delete_credential(advapi32, target)
