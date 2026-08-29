@@ -921,7 +921,7 @@ $form.Add_Shown({
         fwd_py = py.replace("\\", "/")
         fwd_argv = argv_str.replace("\\", "/")
         fwd_cwd = cwd.replace("\\", "/")
-        with open(script_path, "w") as f:
+        with open(script_path, "w", encoding="utf-8") as f:
             f.write(f'''import subprocess, time, os
 time.sleep(2)
 subprocess.run(["taskkill","/f","/pid","{pid}"], capture_output=True)
