@@ -303,10 +303,18 @@ def register_routes(app, state, require_auth):
         except (TypeError, ValueError):
             backoff = 5.0
 
+        raw_cmd = d.get("command")
+        if isinstance(raw_cmd, list):
+            command_display = " ".join(str(p) for p in raw_cmd)
+        elif isinstance(raw_cmd, str) and raw_cmd.strip():
+            command_display = raw_cmd
+        else:
+            command_display = " ".join(args)
+
         job_id = uuid.uuid4().hex[:12]
         job = {
             "id": job_id,
-            "command": d.get("command") or (" ".join(args)),
+            "command": command_display,
             "args": args,
             "cwd": d.get("cwd") or None,
             "expected_patterns": expected,
