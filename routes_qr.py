@@ -102,7 +102,7 @@ def _decode_barcode_cv2(cv2, arr):
                 btype = btype.decode("utf-8", errors="replace")
             pts = None
             try:
-                pts = [[int(float(c[0])), int(float(c[1]))] for c in pt_lists[i][0]]
+                pts = [[int(float(c[0])), int(float(c[1]))] for c in pt_lists[i]]
             except Exception:
                 pts = None
             detections.append({
