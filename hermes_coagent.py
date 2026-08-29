@@ -1000,6 +1000,11 @@ except ImportError:
     reg_services = None
     features["services_and_tasks"] = False
 try:
+    from routes_vm import register_routes as reg_vm
+except ImportError:
+    reg_vm = None
+    features["hyperv_vm"] = False
+try:
     from routes_fused_map import register_routes as reg_fused_map
 except ImportError:
     reg_fused_map = None
@@ -1332,6 +1337,9 @@ if reg_services:
 if reg_fused_map:
     reg_fused_map(app, state, require_auth)
     features["fused_map"] = True
+if reg_vm:
+    reg_vm(app, state, require_auth)
+    features["hyperv_vm"] = True
 if reg_som:
     reg_som(app, state, require_auth)
     features["som"] = True
@@ -1587,7 +1595,8 @@ def route_version():
                                  "safety_checkpoint", "perception_snapshot",
                                  "session_state", "file_organizer",
                                  "office_authoring", "task_persistence",
-                                 "qr_decode", "credential_vault", "task_supervisor"],
+                                 "qr_decode", "credential_vault", "task_supervisor",
+                                 "humanized_typing", "rich_clipboard", "hyperv_vm"],
                     "modules": ["mouse", "ocr", "uia", "file", "media", "v63",
                                 "stream", "process", "voice", "cua", "copilot",
                                 "bypass", "toast", "deps", "config", "browser",
@@ -1601,7 +1610,7 @@ def route_version():
                                 "browser_v2", "mobile", "memory", "batching", "speculative_batching",
                                 "reminders", "hud", "perception", "session",
                                 "organize", "office", "scheduler_tasks",
-                                "qr", "vault", "supervisor"],
+                                "qr", "vault", "supervisor", "vm"],
                     "memory": memory_stats(),
                     "security": ["auth_token", "rate_limit", "input_sanitization",
                                  "cors_restricted", "security_headers"]})
