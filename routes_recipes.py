@@ -1,6 +1,7 @@
 """Scheduled multi-step automation recipes."""
 
 import json
+import os
 import re
 import threading
 import time
@@ -212,9 +213,9 @@ def _prev_from_result(result):
         x = center.get("x")
         y = center.get("y")
         if x is None and bounds:
-            x = int(bounds.get("x", 0)) + int(bounds.get("width", 0)) // 2
+            x = _coerce_int(bounds.get("x"), 0) + _coerce_int(bounds.get("width"), 0) // 2
         if y is None and bounds:
-            y = int(bounds.get("y", 0)) + int(bounds.get("height", 0)) // 2
+            y = _coerce_int(bounds.get("y"), 0) + _coerce_int(bounds.get("height"), 0) // 2
         return {"x": x, "y": y, "match": first, "result": result}
     at = result.get("at") if isinstance(result.get("at"), dict) else {}
     if at:
@@ -364,7 +365,10 @@ def _load_recipes():
 def _save_recipes():
     tmp = RECIPES_FILE.with_suffix(".tmp")
     payload = {"recipes": _RECIPES, "updated_at": datetime.now().isoformat(timespec="seconds")}
-    tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(json.dumps(payload, indent=2))
+        f.flush()
+        os.fsync(f.fileno())
     tmp.replace(RECIPES_FILE)
 
 
@@ -656,7 +660,7 @@ def _execute_steps_with_verification(steps, auth_header, timeout=300):
                 "actual": "verify-run timeout exceeded",
                 "steps": step_records,
             }
-        screenshot_before = _screen_base64(auth_header)
+        screenshot_before = ""
         attempts = []
         verified = False
         latest_after = ""
@@ -664,6 +668,7 @@ def _execute_steps_with_verification(steps, auth_header, timeout=300):
         latest_verify = {}
         for attempt in (1, 2):
             started = time.time()
+            screenshot_before = _screen_base64(auth_header)
             outcome = _run_one_step(step, previous, auth_header)
             latest_result = outcome.get("result", {})
             time.sleep(1.0)
