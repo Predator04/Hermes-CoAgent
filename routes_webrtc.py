@@ -93,10 +93,17 @@ def register_routes(app, state, require_auth):
         # require_auth endpoints also pass through.
         import json as _json
         import auth as _auth
-        safe_token = _json.dumps(getattr(_auth, "AUTH_TOKEN", "") or "")
+        safe_token = (
+            _json.dumps(getattr(_auth, "AUTH_TOKEN", "") or "")
+            .replace("<", "\\u003c")
+            .replace(">", "\\u003e")
+            .replace("&", "\\u0026")
+        )
         html = REMOTE_HTML.replace('"__HERMES_TOKEN__"', safe_token)
         response = Response(html, mimetype="text/html")
         response.headers["Content-Security-Policy"] = CSP
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
         return response
 
     @app.route("/remote/stream", methods=["GET"])
@@ -113,6 +120,11 @@ def register_routes(app, state, require_auth):
         return Response(
             stream_with_context(_mjpeg_generator(interval=1.0 / fps, quality=quality)),
             mimetype="multipart/x-mixed-replace; boundary=frame",
+            headers={
+                "Cache-Control": "no-cache, no-store, must-revalidate",
+                "Pragma": "no-cache",
+                "X-Accel-Buffering": "no",
+            },
         )
 
     @app.route("/remote/ws", methods=["GET"])
