@@ -196,7 +196,9 @@ def _ensure_registered_route_auth():
         rules = [rule for rule in app.url_map.iter_rules() if rule.endpoint == endpoint]
         if rules and all(_is_auth_exempt(rule.rule) for rule in rules):
             continue
-        app.view_functions[endpoint] = require_auth(view_func)
+        wrapped = require_auth(view_func)
+        wrapped._hermes_auth_wrapped = True
+        app.view_functions[endpoint] = wrapped
 
 @app.before_request
 def _cors_preflight():
@@ -1621,12 +1623,12 @@ def route_dashboard2():
     try:
         html = Path(COAGENT_DIR / "dashboard.html").read_text(encoding="utf-8")
         # Inject token into the HTML JS scope so screen/metrics calls work
-        import urllib.parse
+        import json as _json
         import auth
-        safe_token = urllib.parse.quote(auth.AUTH_TOKEN or "", safe='')
+        safe_token = _json.dumps(auth.AUTH_TOKEN or "")
         html = html.replace(
-            'let token = (queryToken || sessionStorage.getItem("hermes_token") || sessionStorage.getItem("coagent_token") || "").replace(/^Bearer\\s+/i, "");',
-            f'let token = "{safe_token}" || queryToken || sessionStorage.getItem("hermes_token") || sessionStorage.getItem("coagent_token") || "";'
+            'let token = (queryToken || sessionStorage.getItem("hermes_token") || sessionStorage.getItem("coagent_token") || "").replace(/^Bearer\s+/i, "");',
+            f'let token = {safe_token} || queryToken || sessionStorage.getItem("hermes_token") || sessionStorage.getItem("coagent_token") || "";'
         )
         return Response(html, mimetype="text/html")
     except Exception: return jsonify({"error": "dashboard.html not found"}), 404
