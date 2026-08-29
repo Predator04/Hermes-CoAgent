@@ -234,24 +234,23 @@ def _telegram_get_updates(token, offset, timeout=25):
 
 
 def _handle_telegram_command(token, chat_id, text):
-    match = re.match(r"^(approve|reject)(?:\s+([A-Za-z0-9_-]{1,40}))?$",
-                     text.strip(), re.IGNORECASE)
+    stripped = text.strip()
+    match = re.match(r"^(approve|reject)\s+([A-Za-z0-9_-]{1,40})$",
+                     stripped, re.IGNORECASE)
     if not match:
+        # Refuse bare "approve"/"reject" (no id) — implicitly deciding the first
+        # pending approval is dangerous, especially in a group chat.
+        if re.match(r"^(approve|reject)$", stripped, re.IGNORECASE):
+            _ack_telegram(token, chat_id,
+                          f"Specify an approval id: {stripped} <id>.")
         return
     decision = match.group(1).lower()
     explicit_id = match.group(2)
-    if explicit_id:
-        item = _QUEUE.get(explicit_id) or _find_pending_by_prefix(explicit_id)
-        if not item:
-            _ack_telegram(token, chat_id, f"Approval '{explicit_id}' not found.")
-            return
-        aid = item["id"]
-    else:
-        pending = _QUEUE.pending()
-        if not pending:
-            _ack_telegram(token, chat_id, "No pending approvals.")
-            return
-        aid = pending[0]["id"]
+    item = _QUEUE.get(explicit_id) or _find_pending_by_prefix(explicit_id)
+    if not item:
+        _ack_telegram(token, chat_id, f"Approval '{explicit_id}' not found.")
+        return
+    aid = item["id"]
     result = _QUEUE.decide(aid, decision == "approve", by=f"telegram:{chat_id}")
     if result:
         _ack_telegram(token, chat_id,
