@@ -66,6 +66,8 @@ def _run_ps(script, timeout=20):
         return "", "timed out", -1
     except FileNotFoundError as exc:
         return "", str(exc), -1
+    except (OSError, subprocess.SubprocessError) as exc:
+        return "", str(exc), -1
 
 
 def _parse_json_output(text):
@@ -237,16 +239,22 @@ def register_routes(app, state, require_auth):
         devices = _parse_json_output(out)
 
         hubs = []
+        hubs_error = None
         if include_hubs:
             h_out, _h_err, h_rc = _run_ps(_LIST_HUBS_PS, timeout=20)
             if h_rc == 0:
                 hubs = _parse_json_output(h_out)
+            else:
+                hubs_error = (_h_err or "hubs query failed").strip() or f"hubs query failed (rc={h_rc})"
 
         volumes = []
+        volumes_error = None
         if include_volumes:
             v_out, _v_err, v_rc = _run_ps(_LIST_VOLUMES_PS, timeout=20)
             if v_rc == 0:
                 volumes = _parse_json_output(v_out)
+            else:
+                volumes_error = (_v_err or "volumes query failed").strip() or f"volumes query failed (rc={v_rc})"
 
         return jsonify({
             "devices": devices,
@@ -255,6 +263,8 @@ def register_routes(app, state, require_auth):
             "hub_count": len(hubs),
             "volumes": volumes,
             "volume_count": len(volumes),
+            "hubs_error": hubs_error,
+            "volumes_error": volumes_error,
         })
 
     @app.route("/usb/eject", methods=["POST"])
