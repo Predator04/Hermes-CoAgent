@@ -199,7 +199,7 @@ def register_routes(app, state, require_auth):
         for pt in path:
             if _move_to(pt["x"], pt["y"]):
                 moved += 1
-                time.sleep(min(pt["delay_ms"], 100) / 1000.0)
+            time.sleep(min(pt["delay_ms"], 100) / 1000.0)
         return jsonify({
             "ok": True,
             "target": {"x": tx, "y": ty},
@@ -267,8 +267,10 @@ def register_routes(app, state, require_auth):
             pass
 
         sent = 0
+        aborted = False
         for step in plan:
             if state is not None and getattr(state, "emergency_stop", False):
+                aborted = True
                 break
             try:
                 if step["key"] == "backspace":
@@ -276,9 +278,22 @@ def register_routes(app, state, require_auth):
                 else:
                     _pa.write(step["key"])
                 sent += 1
-            except Exception:
-                pass
+            except Exception as exc:
+                _LOGGER.warning("humanized_type keystroke failed: %s", exc)
             _time.sleep(min(step["delay_ms"], 500) / 1000.0)
+
+        if aborted:
+            return jsonify({
+                "ok": False,
+                "error": "Emergency stop engaged mid-typing",
+                "code": "EMERGENCY_STOP",
+                "chars": len(text),
+                "steps": len(plan),
+                "sent": sent,
+                "wpm": wpm,
+                "mistake_rate": mistake_rate,
+                "estimated_ms": estimated_ms,
+            }), 503
 
         return jsonify({
             "ok": True,
