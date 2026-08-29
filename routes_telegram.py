@@ -12,6 +12,7 @@ Endpoints:
 """
 
 import json
+import os
 import time
 import urllib.request
 from flask import Blueprint, jsonify
@@ -36,8 +37,10 @@ def _load_config():
 
 
 def _save_config(data):
-    """Save config, write atomically."""
-    tmp = CONFIG_FILE.with_suffix(".tmp")
+    """Save config atomically via a unique temp file (avoids shared-path race)."""
+    tmp = CONFIG_FILE.with_name(
+        f".{CONFIG_FILE.name}.{os.getpid()}.{time.time_ns()}.tmp"
+    )
     tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
     tmp.replace(CONFIG_FILE)
     _console("[telegram] config saved")
