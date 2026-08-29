@@ -86,6 +86,59 @@ def humanized_path(start, end, steps=40, duration_ms=600, curve=0.18,
     return points
 
 
+_SHIFT_CHARS = frozenset("~!@#$%^&*()_+{}|:\"<>?")
+
+_KEY_NEIGHBOURS = {
+    "a": "s", "s": "a", "d": "f", "f": "d", "g": "f", "h": "g", "j": "k",
+    "k": "j", "l": "k", "q": "w", "w": "q", "e": "r", "r": "e", "t": "r",
+    "y": "t", "u": "y", "i": "o", "o": "i", "p": "o", "z": "x", "x": "z",
+    "c": "v", "v": "c", "b": "v", "n": "m", "m": "n",
+}
+
+
+def humanized_keystrokes(text, wpm=45.0, mistake_rate=0.0, seed=None):
+    """Plan a human-like keystroke cadence for ``text``.
+
+    Returns a list of steps: {"key", "delay_ms", "shift", "correction"}.
+    Corrections are a mistyped neighbour key followed by a backspace step.
+    Deterministic when ``seed`` is given. Per-key delay is Gaussian jitter
+    around a base rate derived from ``wpm`` (chars/min ~= 5 * wpm), with
+    longer pauses on whitespace/punctuation and a press-hold penalty on shift
+    chords.
+    """
+    rng = random.Random(seed)
+    wpm = max(10.0, min(float(wpm), 300.0))
+    mistake_rate = max(0.0, min(float(mistake_rate), 0.25))
+    chars_per_sec = wpm * 5.0 / 60.0
+    base_ms = 1000.0 / max(0.1, chars_per_sec)
+
+    steps = []
+    for ch in text:
+        delay = max(15.0, base_ms + rng.gauss(0.0, base_ms * 0.30))
+        if ch in " \t":
+            delay *= 1.8
+        elif ch in ",.;:!?\n":
+            delay *= 2.2
+        shift = ch.isupper() or ch in _SHIFT_CHARS
+        if shift:
+            delay += rng.uniform(30.0, 90.0)
+
+        lowered = ch.lower()
+        if (mistake_rate > 0 and ch.isalnum() and lowered in _KEY_NEIGHBOURS
+                and rng.random() < mistake_rate):
+            wrong = _KEY_NEIGHBOURS[lowered]
+            wrong = wrong.upper() if ch.isupper() else wrong
+            steps.append({"key": wrong, "delay_ms": round(delay, 2),
+                          "shift": shift, "correction": False})
+            steps.append({"key": "backspace",
+                          "delay_ms": round(rng.uniform(120.0, 320.0), 2),
+                          "shift": False, "correction": True})
+
+        steps.append({"key": ch, "delay_ms": round(delay, 2),
+                      "shift": shift, "correction": False})
+    return steps
+
+
 def _current_cursor():
     try:
         import ctypes
@@ -95,8 +148,6 @@ def _current_cursor():
         return (pt.x, pt.y)
     except Exception:
         return None
-
-
 def _move_to(x, y):
     try:
         import ctypes
@@ -156,6 +207,87 @@ def register_routes(app, state, require_auth):
             "moved": moved,
             "dry_run": moved == 0,
             "path": path if body.get("return_path") else path[:1] + path[-1:],
+        })
+
+    @app.route("/keyboard/humanized_type", methods=["POST"])
+    @require_auth
+    def route_humanized_type():
+        body = _json_body()
+        text = body.get("text")
+        if text is None:
+            return jsonify({"ok": False, "error": "Missing required field: text"}), 400
+        if not isinstance(text, str):
+            return jsonify({"ok": False, "error": "text must be a string"}), 400
+        if len(text) > 10000:
+            return jsonify({"ok": False, "error": "text too long (max 10000 chars)"}), 400
+
+        try:
+            wpm = float(body.get("wpm", 45))
+        except (TypeError, ValueError):
+            return jsonify({"ok": False, "error": "wpm must be numeric"}), 400
+        wpm = max(10.0, min(wpm, 300.0))
+
+        try:
+            mistake_rate = float(body.get("mistake_rate", 0.0))
+        except (TypeError, ValueError):
+            return jsonify({"ok": False, "error": "mistake_rate must be numeric"}), 400
+        mistake_rate = max(0.0, min(mistake_rate, 0.25))
+
+        seed = body.get("seed")
+        if seed is not None and not isinstance(seed, (int, str, type(None))):
+            return jsonify({"ok": False, "error": "seed must be int, str, or null"}), 400
+
+        plan = humanized_keystrokes(text, wpm=wpm, mistake_rate=mistake_rate, seed=seed)
+        estimated_ms = round(sum(s["delay_ms"] for s in plan), 1)
+
+        if body.get("dry_run"):
+            return jsonify({
+                "ok": True,
+                "dry_run": True,
+                "chars": len(text),
+                "steps": len(plan),
+                "wpm": wpm,
+                "mistake_rate": mistake_rate,
+                "estimated_ms": estimated_ms,
+                "plan": plan,
+            })
+
+        if state is not None and getattr(state, "emergency_stop", False):
+            return jsonify({"ok": False, "error": "Emergency stop is engaged",
+                            "code": "EMERGENCY_STOP"}), 503
+
+        import time as _time
+        try:
+            import pyautogui as _pa
+        except ImportError:
+            return jsonify({"ok": False, "error": "pyautogui unavailable"}), 501
+        try:
+            _pa.FAILSAFE = False
+        except Exception:
+            pass
+
+        sent = 0
+        for step in plan:
+            if state is not None and getattr(state, "emergency_stop", False):
+                break
+            try:
+                if step["key"] == "backspace":
+                    _pa.press("backspace")
+                else:
+                    _pa.write(step["key"])
+                sent += 1
+            except Exception:
+                pass
+            _time.sleep(min(step["delay_ms"], 500) / 1000.0)
+
+        return jsonify({
+            "ok": True,
+            "chars": len(text),
+            "steps": len(plan),
+            "sent": sent,
+            "wpm": wpm,
+            "mistake_rate": mistake_rate,
+            "estimated_ms": estimated_ms,
         })
 
     _LOGGER.info("Humanized mouse routes registered")
