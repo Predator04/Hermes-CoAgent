@@ -1399,6 +1399,45 @@ TOOLS = {
     "repo": "o2sh/onefetch",
     "stars": 12035,
     "url": "https://github.com/o2sh/onefetch"
+  },
+  "nushell": {
+    "added": "2026-08-29",
+    "command": "nu -c \"<script>\"",
+    "desc": "Nushell is a modern structured-data shell. Every command emits typed values (tables, records, lists) rather than plain text, so pipelines transform structured data natively and can dump machine-readable JSON via `to json`. Ideal for parsing logs, querying CSV/JSON/YAML, and subprocess-driven data wrangling.",
+    "endpoints": {
+      "/auto/nushell/info": "Feature metadata, install status, version",
+      "/auto/nushell/ping": "Health check",
+      "/auto/nushell/eval": "POST - run a Nu script string via nu -c",
+      "/auto/nushell/script": "POST - run a .nu script file by path",
+      "/auto/nushell/query": "POST - run a Nu expression and return JSON"
+    },
+    "exe": "nu",
+    "install": {
+      "scoop": "scoop install nu",
+      "winget": "winget install nushell.nushell"
+    },
+    "repo": "nushell/nushell",
+    "stars": 40365,
+    "url": "https://github.com/nushell/nushell"
+  },
+  "glow": {
+    "added": "2026-08-29",
+    "command": "glow -w <width> <file.md>",
+    "desc": "glow renders Markdown directly in the terminal with themes, word-wrap, and pager support. It is fully non-interactive when output is piped or a file argument is given, making it a clean way to pretty-print READMEs, release notes, and issue bodies to styled terminal text from a subprocess.",
+    "endpoints": {
+      "/auto/glow/info": "Feature metadata, install status, version",
+      "/auto/glow/ping": "Health check",
+      "/auto/glow/render": "POST - render a Markdown string or file to styled terminal text",
+      "/auto/glow/render_file": "POST - render a Markdown file by path"
+    },
+    "exe": "glow",
+    "install": {
+      "scoop": "scoop install glow",
+      "winget": "winget install charmbracelet.glow"
+    },
+    "repo": "charmbracelet/glow",
+    "stars": 27109,
+    "url": "https://github.com/charmbracelet/glow"
   }
 }
 
@@ -13104,6 +13143,223 @@ def _h_onefetch_328():
         return (jsonify({'error': str(e)}), 500)
 
 
+def _strip_ansi(text):
+    """Remove ANSI escape sequences from terminal output."""
+    return re.sub(r'\x1b\[[0-9;?]*[ -/]*[@-~]', '', text or '')
+
+
+def _h_nushell_329():
+    """Run a Nushell script string via `nu -c`.
+
+        Body (JSON):
+            code (str, required): the Nushell script/expression to evaluate.
+            timeout (int, optional): seconds (default 30, max 120).
+    """
+    body = _json_body()
+    code = str(body.get('code') or '').strip()
+    if not code:
+        return _missing_field(body, 'code')
+    exe = _find_tool('nushell')
+    if not exe:
+        return (jsonify({'error': 'nushell is not installed', 'hint': 'winget install nushell.nushell  OR  scoop install nu'}), 503)
+    timeout = int(body.get('timeout') or 30)
+    timeout = max(1, min(timeout, 120))
+    try:
+        r = subprocess.run([exe, '-c', code], capture_output=True, text=True, errors='replace', timeout=timeout)
+        return jsonify({
+            'ok': r.returncode == 0,
+            'code': code,
+            'exit_code': r.returncode,
+            'stdout': r.stdout,
+            'stderr': r.stderr,
+        })
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': f'nushell timed out after {timeout}s'}), 504)
+    except Exception as e:
+        _log(f'[nushell eval] {str(e)}')
+        return (jsonify({'error': str(e)}), 500)
+
+
+def _h_nushell_330():
+    """Run a .nu script file.
+
+        Body (JSON):
+            path (str, required): path to a .nu script.
+            timeout (int, optional): seconds (default 30, max 120).
+    """
+    body = _json_body()
+    path = str(body.get('path') or '').strip()
+    if not path:
+        return _missing_field(body, 'path')
+    exe = _find_tool('nushell')
+    if not exe:
+        return (jsonify({'error': 'nushell is not installed', 'hint': 'winget install nushell.nushell  OR  scoop install nu'}), 503)
+    if not os.path.isfile(path):
+        return (jsonify({'error': f'script not found: {path}'}), 404)
+    timeout = int(body.get('timeout') or 30)
+    timeout = max(1, min(timeout, 120))
+    try:
+        r = subprocess.run([exe, path], capture_output=True, text=True, errors='replace', timeout=timeout)
+        return jsonify({
+            'ok': r.returncode == 0,
+            'path': path,
+            'exit_code': r.returncode,
+            'stdout': r.stdout,
+            'stderr': r.stderr,
+        })
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': f'nushell timed out after {timeout}s'}), 504)
+    except Exception as e:
+        _log(f'[nushell script] {str(e)}')
+        return (jsonify({'error': str(e)}), 500)
+
+
+def _h_nushell_331():
+    """Run a Nushell expression and return the result as JSON.
+
+        Appends `| to json` automatically unless the code already produces
+        JSON, so the result is machine-readable.
+
+        Body (JSON):
+            code (str, required): the Nushell expression to evaluate.
+            timeout (int, optional): seconds (default 30, max 120).
+    """
+    body = _json_body()
+    code = str(body.get('code') or '').strip()
+    if not code:
+        return _missing_field(body, 'code')
+    exe = _find_tool('nushell')
+    if not exe:
+        return (jsonify({'error': 'nushell is not installed', 'hint': 'winget install nushell.nushell  OR  scoop install nu'}), 503)
+    timeout = int(body.get('timeout') or 30)
+    timeout = max(1, min(timeout, 120))
+    if 'to json' not in code and 'to nuon' not in code and 'to jsonl' not in code:
+        code = f'{code} | to json'
+    try:
+        r = subprocess.run([exe, '-c', code], capture_output=True, text=True, errors='replace', timeout=timeout)
+        if r.returncode != 0:
+            _log(f'[nushell query] rc={r.returncode}: {r.stderr[:300]}')
+            return (jsonify({'error': r.stderr.strip() or 'nushell failed'}), 500)
+        out = r.stdout.strip()
+        try:
+            data = json_lib.loads(out)
+        except Exception:
+            data = out
+        return jsonify({'ok': True, 'code': code, 'result': data})
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': f'nushell timed out after {timeout}s'}), 504)
+    except Exception as e:
+        _log(f'[nushell query] {str(e)}')
+        return (jsonify({'error': str(e)}), 500)
+
+
+def _glow_render_file(path, width, style):
+    """Render a Markdown file with glow; returns (styled_text, plain_text)."""
+    exe = _find_tool('glow')
+    if not exe:
+        return None, None
+    args = [exe]
+    if width:
+        args += ['-w', str(int(width))]
+    if style:
+        args += ['-s', str(style)]
+    args.append(path)
+    r = subprocess.run(args, capture_output=True, text=True, errors='replace', timeout=60)
+    if r.returncode != 0:
+        raise RuntimeError(r.stderr.strip() or 'glow failed')
+    return r.stdout, _strip_ansi(r.stdout)
+
+
+def _h_glow_332():
+    """Render Markdown (string or file) to styled terminal text.
+
+        Body (JSON):
+            text (str, optional): raw Markdown string to render.
+            path (str, optional): path to a Markdown file.
+            width (int, optional): word-wrap width (default 80).
+            style (str, optional): dark|light|auto (default auto).
+            strip_ansi (bool, optional): strip ANSI color codes (default false).
+
+        One of `text` or `path` is required.
+    """
+    body = _json_body()
+    text = str(body.get('text') or '').strip()
+    path = str(body.get('path') or '').strip()
+    if not text and not path:
+        return (jsonify({'error': 'provide either `text` or `path`'}), 400)
+    width = int(body.get('width') or 80)
+    style = str(body.get('style') or 'auto').strip().lower()
+    if style not in ('dark', 'light', 'auto'):
+        style = 'auto'
+    strip_ansi = bool(body.get('strip_ansi', False))
+    tmp = None
+    try:
+        if text:
+            fd, tmp = tempfile.mkstemp(suffix='.md')
+            with os.fdopen(fd, 'w', encoding='utf-8') as fh:
+                fh.write(text)
+            path = tmp
+        styled, plain = _glow_render_file(path, width, style)
+        if styled is None:
+            return (jsonify({'error': 'glow is not installed', 'hint': 'winget install charmbracelet.glow  OR  scoop install glow'}), 503)
+        return jsonify({
+            'ok': True,
+            'markdown_len': len(text),
+            'width': width,
+            'style': style,
+            'output': plain if strip_ansi else styled,
+        })
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': 'glow timed out'}), 504)
+    except Exception as e:
+        _log(f'[glow render] {str(e)}')
+        return (jsonify({'error': str(e)}), 500)
+    finally:
+        if tmp and os.path.exists(tmp):
+            try:
+                os.remove(tmp)
+            except Exception:
+                pass
+
+
+def _h_glow_333():
+    """Render a Markdown file by path to styled terminal text.
+
+        Body (JSON):
+            path (str, required): path to a Markdown file.
+            width (int, optional): word-wrap width (default 80).
+            style (str, optional): dark|light|auto (default auto).
+            strip_ansi (bool, optional): strip ANSI color codes (default false).
+    """
+    body = _json_body()
+    path = str(body.get('path') or '').strip()
+    if not path:
+        return _missing_field(body, 'path')
+    if not os.path.isfile(path):
+        return (jsonify({'error': f'file not found: {path}'}), 404)
+    width = int(body.get('width') or 80)
+    style = str(body.get('style') or 'auto').strip().lower()
+    if style not in ('dark', 'light', 'auto'):
+        style = 'auto'
+    strip_ansi = bool(body.get('strip_ansi', False))
+    try:
+        styled, plain = _glow_render_file(path, width, style)
+        if styled is None:
+            return (jsonify({'error': 'glow is not installed', 'hint': 'winget install charmbracelet.glow  OR  scoop install glow'}), 503)
+        return jsonify({
+            'ok': True,
+            'path': path,
+            'width': width,
+            'style': style,
+            'output': plain if strip_ansi else styled,
+        })
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': 'glow timed out'}), 504)
+    except Exception as e:
+        _log(f'[glow render_file] {str(e)}')
+        return (jsonify({'error': str(e)}), 500)
+
+
 def register_routes(app, state, require_auth):
     global _STATE
     _STATE = state
@@ -13439,6 +13695,11 @@ def register_routes(app, state, require_auth):
         ('/auto/dust/largest', ['POST'], _h_dust_326),
         ('/auto/onefetch/repo', ['POST'], _h_onefetch_327),
         ('/auto/onefetch/languages', ['POST'], _h_onefetch_328),
+        ('/auto/nushell/eval', ['POST'], _h_nushell_329),
+        ('/auto/nushell/script', ['POST'], _h_nushell_330),
+        ('/auto/nushell/query', ['POST'], _h_nushell_331),
+        ('/auto/glow/render', ['POST'], _h_glow_332),
+        ('/auto/glow/render_file', ['POST'], _h_glow_333),
     ]
     for _path, _methods, _fn in _ACTIONS:
         app.add_url_rule(_path, endpoint=_fn.__name__, view_func=require_auth(_fn), methods=_methods)
