@@ -101,6 +101,7 @@ def _extract_findings(text):
     findings = []
     current = []
     in_finding = False
+    truncated = False
 
     for line in lines:
         stripped = line.strip()
@@ -109,16 +110,22 @@ def _extract_findings(text):
                 findings.append("\n".join(current))
             current = [stripped]
             in_finding = True
+            truncated = False
         elif in_finding:
             if stripped == "---":
                 if current:
                     findings.append("\n".join(current))
                 current = []
                 in_finding = False
+                truncated = False
             elif any(stripped.startswith(p) for p in FINDING_PREFIXES):
                 current.append(stripped)
-            elif current and len(current) < 15:
-                current.append(stripped)
+            elif current:
+                if len(current) < 15:
+                    current.append(stripped)
+                elif not truncated:
+                    current.append("[truncated]")
+                    truncated = True
 
     if current:
         findings.append("\n".join(current))
