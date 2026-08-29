@@ -1,5 +1,5 @@
 """Wallpaper, windows, clipboard, scheduler, macro, tunnel, voice, and misc routes."""
-import os, json, subprocess, time, ctypes, re, threading, webbrowser, tempfile, shutil, sys, types, urllib.parse
+import os, json, subprocess, time, ctypes, re, threading, webbrowser, tempfile, shutil, sys, types, urllib.parse, base64
 from pathlib import Path
 from flask import jsonify, request
 from shared import _json_body, _log, _missing_field, COAGENT_DIR, MACROS_DIR, SCREENSHOTS_DIR, \
@@ -352,6 +352,127 @@ def _save_scheduler(data):
 
 def _scheduler_busy_response():
     return jsonify({"error": "Scheduler file is busy"}), 409
+
+
+# ---------------------------------------------------------------------------
+# Rich clipboard helpers (issue #1184) — text / image / files / HTML round-trip
+# via PowerShell System.Windows.Forms.Clipboard (Windows-only; falls back to
+# pyperclip text on non-Windows or when the helper fails).
+# ---------------------------------------------------------------------------
+def _run_powershell(script, sta=False, timeout=30, extra_env=None):
+    args = ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass"]
+    if sta:
+        args.append("-STA")
+    args += ["-Command", script]
+    env = None
+    if extra_env:
+        env = dict(os.environ)
+        env.update(extra_env)
+    try:
+        r = subprocess.run(
+            args,
+            capture_output=True,
+            text=True,
+            errors="replace",
+            timeout=timeout,
+            env=env,
+            creationflags=(subprocess.CREATE_NO_WINDOW
+                           if hasattr(subprocess, "CREATE_NO_WINDOW") else 0),
+        )
+        return r.returncode, (r.stdout or ""), (r.stderr or "")
+    except subprocess.TimeoutExpired:
+        return -1, "", "timed out"
+    except Exception as exc:  # noqa: BLE001
+        return -1, "", str(exc)
+
+
+def _clipboard_set_image(b64):
+    """Put a base64 image (PNG/JPEG/GIF) on the clipboard as a bitmap."""
+    if isinstance(b64, str) and b64.startswith("data:") and "," in b64:
+        b64 = b64.split(",", 1)[1]
+    raw = base64.b64decode(b64, validate=False) if isinstance(b64, str) else b""
+    if not raw:
+        raise ValueError("data must be a non-empty base64 string")
+    if len(raw) > 50 * 1024 * 1024:
+        raise ValueError("image exceeds 50MB limit")
+    tmp = tempfile.mkstemp(suffix=".png")[1]
+    try:
+        with open(tmp, "wb") as fh:
+            fh.write(raw)
+        script = (
+            "Add-Type -AssemblyName System.Windows.Forms;"
+            "Add-Type -AssemblyName System.Drawing;"
+            "$i=[System.Drawing.Image]::FromFile($env:COAGENT_IMG);"
+            "[System.Windows.Forms.Clipboard]::SetImage($i);"
+            "$i.Dispose()"
+        )
+        rc, out, err = _run_powershell(script, sta=True, extra_env={"COAGENT_IMG": tmp})
+        if rc != 0:
+            raise OSError((err or out or f"SetImage failed (exit {rc})").strip()[:300])
+    finally:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+
+
+def _clipboard_set_files(paths):
+    """Put a list of filesystem paths on the clipboard as a file drop (CF_HDROP)."""
+    clean = [os.path.abspath(p) for p in paths if isinstance(p, str) and p]
+    if not clean:
+        raise ValueError("paths must be a non-empty list of strings")
+    for p in clean:
+        if not os.path.exists(p):
+            raise ValueError(f"path does not exist: {p}")
+    arg_list = ",".join("'" + p.replace("'", "''") + "'" for p in clean)
+    script = f"Set-Clipboard -Path {arg_list}"
+    rc, out, err = _run_powershell(script)
+    if rc != 0:
+        raise OSError((err or out or f"Set-Clipboard failed (exit {rc})").strip()[:300])
+
+
+def _clipboard_set_html(html):
+    """Put an HTML fragment on the clipboard as CF_HTML."""
+    if not isinstance(html, str) or not html:
+        raise ValueError("html must be a non-empty string")
+    b64 = base64.b64encode(html.encode("utf-8")).decode("ascii")
+    script = (
+        "Add-Type -AssemblyName System.Windows.Forms;"
+        "$h=[System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('" + b64 + "'));"
+        "[System.Windows.Forms.Clipboard]::SetText($h,[System.Windows.Forms.TextDataFormat]::Html)"
+    )
+    rc, out, err = _run_powershell(script, sta=True)
+    if rc != 0:
+        raise OSError((err or out or f"SetText failed (exit {rc})").strip()[:300])
+
+
+def _clipboard_get_rich():
+    """Return the richest available clipboard content as a dict.
+
+    Keys may include text (always present), html, files, image (base64 PNG).
+    """
+    script = (
+        "Add-Type -AssemblyName System.Windows.Forms;"
+        "Add-Type -AssemblyName System.Drawing;"
+        "$o=[ordered]@{};"
+        "if([System.Windows.Forms.Clipboard]::ContainsText()){$o.text=[System.Windows.Forms.Clipboard]::GetText()};"
+        "if([System.Windows.Forms.Clipboard]::ContainsText([System.Windows.Forms.TextDataFormat]::Html)){$o.html=[System.Windows.Forms.Clipboard]::GetText([System.Windows.Forms.TextDataFormat]::Html)};"
+        "if([System.Windows.Forms.Clipboard]::ContainsFileDropList()){$o.files=@([System.Windows.Forms.Clipboard]::GetFileDropList())};"
+        "if([System.Windows.Forms.Clipboard]::ContainsImage()){$i=[System.Windows.Forms.Clipboard]::GetImage();$ms=New-Object System.IO.MemoryStream;$i.Save($ms,[System.Drawing.Imaging.ImageFormat]::Png);$o.image=[Convert]::ToBase64String($ms.ToArray());$ms.Dispose();$i.Dispose()};"
+        "$o | ConvertTo-Json -Compress"
+    )
+    rc, out, err = _run_powershell(script, sta=True)
+    if rc != 0:
+        raise OSError((err or out or f"clipboard read failed (exit {rc})").strip()[:300])
+    try:
+        data = json.loads(out)
+    except Exception:  # noqa: BLE001
+        data = {"text": out}
+    if not isinstance(data, dict):
+        data = {"text": out}
+    data.setdefault("text", "")
+    return data
+
 
 def register_routes(app, state, require_auth):
     # ── Windows ─────────────────────────────────────────
@@ -751,21 +872,58 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_clipboard_get():
         try:
-            import pyperclip
-            return jsonify({"text": pyperclip.paste()})
-        except Exception:
-            return jsonify({"text": ""})
+            return jsonify(_clipboard_get_rich())
+        except Exception as exc:  # noqa: BLE001
+            _log(f"clipboard/get rich read failed ({exc}); falling back to text")
+            try:
+                import pyperclip
+                return jsonify({"text": pyperclip.paste()})
+            except Exception:  # noqa: BLE001
+                return jsonify({"text": ""})
 
     @app.route("/clipboard/set", methods=["POST"])
     @require_auth
     def route_clipboard_set():
         d = _json_body()
+        ctype = (d.get("type") or "text").lower()
+
+        if ctype == "image":
+            data = d.get("data") or d.get("base64")
+            if not data:
+                return _missing_field("data")
+            try:
+                _clipboard_set_image(data)
+                return jsonify({"status": "ok", "type": "image"})
+            except Exception as e:  # noqa: BLE001
+                return jsonify({"error": str(e)}), 400
+
+        if ctype == "files":
+            paths = d.get("paths")
+            if not paths:
+                return _missing_field("paths")
+            try:
+                _clipboard_set_files(paths)
+                return jsonify({"status": "ok", "type": "files", "count": len(paths)})
+            except Exception as e:  # noqa: BLE001
+                return jsonify({"error": str(e)}), 400
+
+        if ctype == "html":
+            html = d.get("html") if "html" in d else d.get("data")
+            if html is None:
+                return _missing_field("html")
+            try:
+                _clipboard_set_html(html)
+                return jsonify({"status": "ok", "type": "html"})
+            except Exception as e:  # noqa: BLE001
+                return jsonify({"error": str(e)}), 400
+
+        # default: plain text
         text = d.get("text", "")
         try:
             import pyperclip
             pyperclip.copy(text)
-            return jsonify({"status": "ok", "chars": len(text)})
-        except Exception as e:
+            return jsonify({"status": "ok", "chars": len(text), "type": "text"})
+        except Exception as e:  # noqa: BLE001
             return jsonify({"error": str(e)}), 500
 
     # ── TTS ─────────────────────────────────────────────
