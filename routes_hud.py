@@ -50,6 +50,7 @@ def _write_status(**updates):
         _HUD_STATE.update(updates)
         _HUD_STATE["updated_at"] = _now_text()
         payload = dict(_HUD_STATE)
+        tmp = None
         try:
             tmp = HUD_STATUS_FILE.with_name(
                 f"{HUD_STATUS_FILE.name}.tmp.{os.getpid()}.{threading.get_ident()}"
@@ -59,6 +60,14 @@ def _write_status(**updates):
             tmp.replace(HUD_STATUS_FILE)
         except Exception as exc:
             _console(f"[hud] status write failed: {type(exc).__name__}: {exc}")
+        finally:
+            # Clean up the temp file if the write/chmod/replace failed before
+            # the atomic rename completed (unlink is a no-op after replace).
+            if tmp is not None:
+                try:
+                    tmp.unlink(missing_ok=True)
+                except OSError:
+                    pass
     return payload
 
 
@@ -386,6 +395,7 @@ def _fallback_show(config, error=None):
 def _start_hud(config):
     global _HUD_STOP_EVENT, _HUD_THREAD, _HUD_TOKEN
     with _HUD_LOCK:
+        prev_thread = _HUD_THREAD
         if _HUD_STOP_EVENT:
             _HUD_STOP_EVENT.set()
         _HUD_TOKEN += 1
@@ -393,6 +403,11 @@ def _start_hud(config):
         stop_event = threading.Event()
         ready_event = threading.Event()
         _HUD_STOP_EVENT = stop_event
+
+    # Give any prior overlay thread a moment to tear down its window before we
+    # create a replacement, so two native windows can't overlap briefly.
+    if prev_thread is not None and prev_thread.is_alive():
+        prev_thread.join(timeout=0.3)
 
     try:
         import ctypes
@@ -419,7 +434,12 @@ def _native_hud_thread_wrapper(config, stop_event, token, ready_event):
     try:
         _run_native_hud(config, stop_event, token, ready_event)
     except Exception as exc:
-        _fallback_show(config, error=f"{type(exc).__name__}: {exc}")
+        # Only fall back to a status-only marker if the native HUD never
+        # actually displayed. If it reached ready (window shown) and then
+        # crashed in the message loop, _run_native_hud's finally already
+        # marked it hidden — don't overwrite that with a phantom "fallback".
+        if not ready_event.is_set():
+            _fallback_show(config, error=f"{type(exc).__name__}: {exc}")
         ready_event.set()
 
 
