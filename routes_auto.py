@@ -12717,6 +12717,8 @@ def _h_ruff_317():
         code = str(_json_body().get('code') or '').strip()
     if not code:
         return _missing_field({'code': ''}, 'code')
+    if not re.fullmatch(r"[A-Z]+\d+", code):
+        return (jsonify({"error": f"invalid ruff rule code: {code}"}), 400)
     exe = _find_tool('ruff')
     if not exe:
         return (jsonify({'error': 'ruff is not installed', 'hint': 'pip install ruff  OR  winget install astral-sh.ruff'}), 503)
