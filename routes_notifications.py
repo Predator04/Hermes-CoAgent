@@ -21,7 +21,6 @@ import os
 import socket
 import threading
 import time
-import urllib.error
 import urllib.request
 import uuid
 from collections import deque
@@ -106,7 +105,7 @@ def _await(async_op, timeout=5.0):
 def _request_access():
     """Request UserNotificationListener access. Returns access-status string."""
     global _ACCESS_STATUS
-    if _ACCESS_STATUS is not None:
+    if _ACCESS_STATUS in ("allowed", "unavailable"):
         return _ACCESS_STATUS
     if not _winrt_available():
         _ACCESS_STATUS = "unavailable"
@@ -126,7 +125,7 @@ def _request_access():
 
 def _has_access():
     status = _request_access()
-    return status in ("allowed",)
+    return status in ("allowed", "unrestricted")
 
 
 def _read_text_from_binding(binding):
@@ -248,7 +247,11 @@ _OPENER = urllib.request.build_opener(_NoRedirectHandler())
 def _dispatch_webhooks(subscribers, entries):
     """POST each new entry to every subscriber URL in a background thread."""
     def _worker():
-        payload = _json.dumps({"notifications": entries}).encode("utf-8")
+        try:
+            payload = _json.dumps({"notifications": entries}).encode("utf-8")
+        except Exception as exc:  # noqa: BLE001
+            _log(f"notify: failed to serialize webhook payload: {exc}")
+            return
         for sub in subscribers:
             url = sub.get("url")
             if not url:
@@ -262,7 +265,7 @@ def _dispatch_webhooks(subscribers, entries):
                 )
                 with _OPENER.open(req, timeout=_WEBHOOK_TIMEOUT):
                     pass
-            except (urllib.error.URLError, OSError, ValueError) as exc:
+            except Exception as exc:  # noqa: BLE001
                 _log(f"notify: webhook {url} failed: {exc}")
     threading.Thread(target=_worker, name="notify-webhook", daemon=True).start()
 
@@ -307,6 +310,15 @@ def _valid_webhook_url(url):
     return _host_is_public(host)
 
 
+# Networks not covered by the built-in flags on all supported Python versions
+# (notably carrier-grade NAT, which `is_global` treated as public before 3.11).
+_NON_PUBLIC_NETWORKS = (
+    ipaddress.ip_network("100.64.0.0/10"),   # CGNAT (RFC 6598)
+    ipaddress.ip_network("64:ff9b::/96"),    # NAT64 well-known prefix (RFC 6052)
+    ipaddress.ip_network("2002::/16"),       # 6to4 (RFC 3056)
+)
+
+
 def _ip_is_public(ip):
     """True only for public unicast addresses (unwraps IPv4-mapped IPv6)."""
     if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
@@ -319,6 +331,8 @@ def _ip_is_public(ip):
         or ip.is_multicast
         or ip.is_unspecified
     ):
+        return False
+    if any(ip in net for net in _NON_PUBLIC_NETWORKS):
         return False
     return ip.is_global
 
@@ -437,6 +451,8 @@ def register_routes(app, state, require_auth):
             body = {}
         sub_id = body.get("subscription_id") or body.get("id")
         if not sub_id:
+            return _missing_field("subscription_id")
+        if not isinstance(sub_id, str):
             return _missing_field("subscription_id")
 
         with _STATE_LOCK:
