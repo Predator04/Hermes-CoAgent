@@ -12862,6 +12862,8 @@ def _h_mise_322():
     task = str(body.get('task') or '').strip()
     if not task:
         return _missing_field(body, 'task')
+    if task.startswith('-'):
+        return (jsonify({"error": f"invalid task name: {task}"}), 400)
     exe = _find_tool('mise')
     if not exe:
         return (jsonify({'error': 'mise is not installed', 'hint': 'scoop install mise  OR  winget install jdx.mise'}), 503)
