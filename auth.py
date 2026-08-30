@@ -420,7 +420,8 @@ def register_auth_routes(app):
             # already swapped in a newer token, and rolling back to `provided`
             # would desynchronize memory from disk.
             with _AUTH_LOCK:
-                AUTH_TOKEN = previous
+                if AUTH_TOKEN == new_token:
+                    AUTH_TOKEN = previous
             return jsonify({"error": "Failed to persist new token"}), 500
 
         pre = new_token[:16]
