@@ -442,6 +442,9 @@ def get_host_ip():
         return HOST_IP
 
 
+_CONSOLE_LOCK = threading.Lock()
+
+
 def _console(msg=""):
     text = str(msg) + "\n"
     stream = getattr(sys, "stderr", None)
@@ -452,17 +455,18 @@ def _console(msg=""):
         except Exception:
             pass
     try:
-        if SERVER_LOG.exists() and SERVER_LOG.stat().st_size > 5 * 1024 * 1024:
-            oldest = SERVER_LOG.with_suffix(".log.5")
-            if oldest.exists():
-                oldest.unlink()
-            for i in range(4, 0, -1):
-                old = SERVER_LOG.with_suffix(f".log.{i}")
-                if old.exists():
-                    old.rename(SERVER_LOG.with_suffix(f".log.{i+1}"))
-            SERVER_LOG.rename(SERVER_LOG.with_suffix(".log.1"))
-        with SERVER_LOG.open("a", encoding="utf-8") as f:
-            f.write(text)
+        with _CONSOLE_LOCK:
+            if SERVER_LOG.exists() and SERVER_LOG.stat().st_size > 5 * 1024 * 1024:
+                oldest = SERVER_LOG.with_suffix(".log.5")
+                if oldest.exists():
+                    oldest.unlink()
+                for i in range(4, 0, -1):
+                    old = SERVER_LOG.with_suffix(f".log.{i}")
+                    if old.exists():
+                        old.rename(SERVER_LOG.with_suffix(f".log.{i+1}"))
+                SERVER_LOG.rename(SERVER_LOG.with_suffix(".log.1"))
+            with SERVER_LOG.open("a", encoding="utf-8") as f:
+                f.write(text)
     except Exception:
         pass
 
@@ -536,9 +540,13 @@ def _missing_field(payload_or_name, field=None):
 
 
 def _result_response(result, default_error_status=400):
-    if isinstance(result, tuple) and len(result) == 2:
-        payload, status = result
-        return jsonify(payload), status
+    if isinstance(result, tuple):
+        if len(result) == 2:
+            payload, status = result
+            return jsonify(payload), status
+        if len(result) == 3:
+            payload, status, headers = result
+            return jsonify(payload), status, headers
     status = default_error_status if isinstance(result, dict) and result.get("error") else 200
     return jsonify(result), status
 
