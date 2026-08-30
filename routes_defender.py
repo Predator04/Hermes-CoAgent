@@ -17,6 +17,7 @@ layer, so this is a controlled, auditable surface -- not a disable-switch.
 
 import json
 import os
+import re
 import subprocess
 
 from flask import jsonify
@@ -25,6 +26,36 @@ from shared import _json_body, _log
 
 
 _EXCL_TYPES = ("path", "process", "extension")
+
+_DANGEROUS_EXCLUSIONS = ("*", "**", "*.*")
+
+
+def _reject_exclusion_reason(etype, value):
+    """Return a reason to reject an exclusion, or None if acceptable.
+
+    Broad exclusions (drive roots, whole-system directories, bare wildcards)
+    would effectively disable Defender protection for everything, which this
+    endpoint is explicitly *not* intended to allow.
+    """
+    v = value.strip()
+    if v in _DANGEROUS_EXCLUSIONS:
+        return "wildcard-only exclusions are not allowed"
+    if etype == "path":
+        if v in ("\\", "/"):
+            return "drive-root exclusions are not allowed"
+        norm = v.rstrip("\\/")
+        if re.match(r"^[a-zA-Z]:[\\/]?$", norm):
+            return "drive-root exclusions are not allowed"
+        protected = {
+            "c:\\windows",
+            "c:\\program files",
+            "c:\\program files (x86)",
+            "c:\\users",
+            "c:\\programdata",
+        }
+        if norm.lower() in protected:
+            return "system-directory exclusions are not allowed"
+    return None
 
 
 def _ps(script, timeout=60, env=None):
@@ -155,6 +186,8 @@ def register_routes(app, state, require_auth):
         result, stderr, code = _ps_json(_STATUS_SCRIPT, timeout=60)
         if code != 0 and "raw" in result:
             return jsonify({"error": stderr or result["raw"]}), 500
+        if isinstance(result, dict) and result.get("error"):
+            return jsonify({"error": result["error"]}), 500
         return jsonify(result)
 
     @app.route("/defender/threats", methods=["GET"])
@@ -163,6 +196,8 @@ def register_routes(app, state, require_auth):
         result, stderr, code = _ps_json(_THREATS_SCRIPT, timeout=60)
         if code != 0 and "raw" in result:
             return jsonify({"error": stderr or result["raw"]}), 500
+        if isinstance(result, dict) and result.get("error"):
+            return jsonify({"error": result["error"]}), 500
         return jsonify(result)
 
     @app.route("/defender/exclusions/list", methods=["GET"])
@@ -171,6 +206,8 @@ def register_routes(app, state, require_auth):
         result, stderr, code = _ps_json(_EXCL_LIST_SCRIPT, timeout=60)
         if code != 0 and "raw" in result:
             return jsonify({"error": stderr or result["raw"]}), 500
+        if isinstance(result, dict) and result.get("error"):
+            return jsonify({"error": result["error"]}), 500
         return jsonify(result)
 
     @app.route("/defender/exclusions/add", methods=["POST"])
@@ -183,6 +220,9 @@ def register_routes(app, state, require_auth):
             return jsonify({"error": "type must be 'path', 'process', or 'extension'"}), 400
         if not value:
             return jsonify({"error": "value is required"}), 400
+        reject = _reject_exclusion_reason(etype, value)
+        if reject:
+            return jsonify({"error": reject}), 400
         result, stderr, code = _ps_json(_EXCL_ADD_SCRIPT, timeout=60, env={
             "COAGENT_DEF_TYPE": etype,
             "COAGENT_DEF_VALUE": value,
@@ -228,5 +268,7 @@ def register_routes(app, state, require_auth):
             return jsonify({"error": "type must be 'quick' or 'full'"}), 400
         if code != 0 and "raw" in result:
             return jsonify({"error": stderr or result["raw"]}), 500
+        if isinstance(result, dict) and result.get("completed") is False:
+            return jsonify({"error": result.get("error") or "scan failed"}), 500
         _log(f"defender: scan {scan_type}")
         return jsonify(result)
