@@ -18,6 +18,13 @@ def read_requirements():
         line = line.strip()
         if not line or line.startswith("#"):
             continue
+        # Strip inline comments (e.g. "qrcode>=7.4  # optional")
+        line = line.split("#", 1)[0].strip()
+        if not line:
+            continue
+        # Skip pip directive lines (-r, -e, --index-url, etc.)
+        if line.startswith("-"):
+            continue
         requirements.append(line)
     return requirements
 
