@@ -56,9 +56,14 @@ def _peer_url_blocked(url):
     if not host:
         return "peer URL has no host"
     try:
+        port = parsed.port
+    except ValueError:
+        return "invalid peer URL port"
+    port = port or (443 if parsed.scheme.lower() == "https" else 80)
+    try:
         infos = socket.getaddrinfo(
             host,
-            parsed.port or (443 if parsed.scheme.lower() == "https" else 80),
+            port,
             type=socket.SOCK_STREAM,
         )
     except socket.gaierror:
@@ -109,7 +114,13 @@ def _load():
             loaded = json.loads(_PEERS_FILE.read_text(encoding="utf-8"))
             if not isinstance(loaded, dict):
                 raise ValueError("fleet peers file must be a JSON object")
-            _peers = loaded
+            # Drop malformed entries (non-dict or missing a string url) so a
+            # tampered/legacy file can't crash every peer-touching route later.
+            _peers = {
+                name: entry
+                for name, entry in loaded.items()
+                if isinstance(entry, dict) and isinstance(entry.get("url"), str)
+            }
     except Exception as exc:
         _log(f"fleet: failed to load peers: {exc}")
 
@@ -201,6 +212,9 @@ def register_routes(app, state, require_auth):
             return jsonify({"error": "name must not contain control characters"}), 400
         if any(ord(c) < 32 for c in token):
             return jsonify({"error": "token must not contain control characters"}), 400
+        blocked = _peer_url_blocked(url)
+        if blocked:
+            return jsonify({"error": blocked}), 400
         with _lock:
             _peers[name] = {"url": url, "token": token, "added": int(time.time())}
             _save()
