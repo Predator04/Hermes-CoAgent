@@ -754,6 +754,20 @@ from routes_hud import register_routes as reg_hud
 from routes_idle import register_routes as reg_idle
 
 try:
+    from routes_pixel import register_routes as reg_pixel
+    PIXEL_AVAILABLE = True
+except ImportError:
+    PIXEL_AVAILABLE = False
+    _console("[WARN] routes_pixel.py not found")
+
+try:
+    from routes_display import register_routes as reg_display
+    DISPLAY_AVAILABLE = True
+except ImportError:
+    DISPLAY_AVAILABLE = False
+    _console("[WARN] routes_display.py not found")
+
+try:
     from routes_recorder_gif import register_routes as reg_recorder_gif
     RECORDER_GIF_AVAILABLE = True
 except ImportError:
@@ -1221,6 +1235,12 @@ reg_telegram(app, state, require_auth)
 reg_mcp(app, state, require_auth)
 reg_mcp_client(app, state, require_auth)
 reg_idle(app, state, require_auth)
+if PIXEL_AVAILABLE:
+    reg_pixel(app, state, require_auth)
+    features["screen_pixel"] = True
+if DISPLAY_AVAILABLE:
+    reg_display(app, state, require_auth)
+    features["display_topology"] = True
 reg_memory(app, state, require_auth)
 features["memory"] = True
 reg_reminders(app, state, require_auth)
