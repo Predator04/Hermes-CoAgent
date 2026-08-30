@@ -110,8 +110,8 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_env_list():
         result, stderr, code = _ps_json(_LIST_SCRIPT, timeout=30)
-        if code != 0 and "raw" in result:
-            return jsonify({"error": stderr or result["raw"]}), 500
+        if code != 0:
+            return jsonify({"error": stderr or "PowerShell command failed"}), 500
         return jsonify(result)
 
     @app.route("/env/get", methods=["GET"])
@@ -123,8 +123,8 @@ def register_routes(app, state, require_auth):
         if "=" in name or "\x00" in name:
             return jsonify({"error": "invalid environment variable name"}), 400
         result, stderr, code = _ps_json(_GET_SCRIPT, timeout=30, env={"COAGENT_ENV_NAME": name})
-        if code != 0 and "raw" in result:
-            return jsonify({"error": stderr or result["raw"]}), 500
+        if code != 0:
+            return jsonify({"error": stderr or "PowerShell command failed"}), 500
         return jsonify(result)
 
     @app.route("/env/set", methods=["POST"])
@@ -140,14 +140,16 @@ def register_routes(app, state, require_auth):
         if scope not in _SCOPE_MAP:
             return jsonify({"error": "scope must be 'user' or 'system'"}), 400
         value = "" if data.get("value") is None else str(data.get("value"))
+        if value == "":
+            return jsonify({"error": "value must not be empty (use /env/delete to remove a variable)"}), 400
         result, stderr, code = _ps_json(_SET_SCRIPT, timeout=30, env={
             "COAGENT_ENV_NAME": name,
             "COAGENT_ENV_VALUE": value,
             "COAGENT_ENV_SCOPE": _SCOPE_MAP[scope],
         })
-        if code != 0 and "raw" in result:
+        if code != 0:
             hint = " (system scope requires elevation)" if scope == "system" else ""
-            return jsonify({"error": (stderr or result["raw"]) + hint}), 500
+            return jsonify({"error": (stderr or "PowerShell command failed") + hint}), 500
         _log(f"env: set {scope} {name}")
         return jsonify(result)
 
@@ -167,9 +169,9 @@ def register_routes(app, state, require_auth):
             "COAGENT_ENV_NAME": name,
             "COAGENT_ENV_SCOPE": _SCOPE_MAP[scope],
         })
-        if code != 0 and "raw" in result:
+        if code != 0:
             hint = " (system scope requires elevation)" if scope == "system" else ""
-            return jsonify({"error": (stderr or result["raw"]) + hint}), 500
+            return jsonify({"error": (stderr or "PowerShell command failed") + hint}), 500
         _log(f"env: delete {scope} {name}")
         return jsonify(result)
 
@@ -177,6 +179,6 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_env_broadcast():
         result, stderr, code = _ps_json(_BROADCAST_SCRIPT, timeout=30)
-        if code != 0 and "raw" in result:
-            return jsonify({"error": stderr or result["raw"]}), 500
+        if code != 0:
+            return jsonify({"error": stderr or "PowerShell command failed"}), 500
         return jsonify(result)
