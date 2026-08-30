@@ -53,7 +53,7 @@ def _find_coagent_pid():
     try:
         result = subprocess.run(
             ["powershell", "-NoProfile", "-Command",
-             "Get-CimInstance Win32_Process -Filter \"Name='python.exe' or Name='pythonw.exe'\" | "
+             "Get-CimInstance Win32_Process | "
              "Where-Object { $_.CommandLine -like '*hermes_coagent*' } | "
              "Select-Object -ExpandProperty ProcessId"],
             capture_output=True, text=True, timeout=15,
@@ -87,16 +87,22 @@ def _kill_coagent(pid):
     except (OSError, subprocess.SubprocessError):
         pass
     finally:
-        try:
-            os.remove(COAGENT_PID_FILE)
-        except OSError:
-            pass
+        # Only drop the PID file once the process is actually gone. If the
+        # kill failed, keeping it lets the next restart find the still-alive
+        # process instead of spawning a duplicate.
+        if not _pid_is_coagent(pid):
+            try:
+                os.remove(COAGENT_PID_FILE)
+            except OSError:
+                pass
 
 
 def _launch_via_scheduled_task():
     """Launch CoAgent via a one-shot Scheduled Task (runs as admin desktop user)."""
     arg_string = f'"{COAGENT_SCRIPT}" --secure --allow-external'
     ps_cmd = (
+        "$ErrorActionPreference='Stop';"
+        "try {"
         f"$a=New-ScheduledTaskAction -Execute {_ps_quote(PYTHON_EXE)} "
         f"-Argument {_ps_quote(arg_string)} "
         f"-WorkingDirectory {_ps_quote(os.path.dirname(COAGENT_SCRIPT))};"
@@ -104,6 +110,7 @@ def _launch_via_scheduled_task():
         f"$p=New-ScheduledTaskPrincipal -UserId {_ps_quote(getpass.getuser())} -LogonType Interactive -RunLevel Highest;"
         "Register-ScheduledTask -TaskName CoAgentLaunch -Action $a -Trigger $t -Principal $p -Force|Out-Null;"
         "Start-ScheduledTask -TaskName CoAgentLaunch"
+        "} catch { Write-Error $_; exit 1 }"
     )
     result = subprocess.run(
         ["powershell", "-NoProfile", "-Command", ps_cmd],
