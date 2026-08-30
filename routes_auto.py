@@ -1438,6 +1438,44 @@ TOOLS = {
     "repo": "charmbracelet/glow",
     "stars": 27109,
     "url": "https://github.com/charmbracelet/glow"
+  },
+  "gum": {
+    "added": "2026-08-30",
+    "command": "gum style --foreground 212 'Hello'",
+    "desc": "gum is Charm's toolkit for building glamorous shell scripts: style, format, join, choose, and more. Its style and format commands are fully non-interactive and subprocess-callable, making it ideal for rendering styled terminal text, Go templates, Markdown, and named emojis from a server process.",
+    "endpoints": {
+      "/auto/gum/info": "Feature metadata, install status, version",
+      "/auto/gum/ping": "Health check",
+      "/auto/gum/style": "POST - render styled text (colors, borders, alignment)",
+      "/auto/gum/format": "POST - render text via template/markdown/emoji/code"
+    },
+    "exe": "gum",
+    "install": {
+      "scoop": "scoop install charm-gum",
+      "winget": "winget install charmbracelet.gum"
+    },
+    "repo": "charmbracelet/gum",
+    "stars": 24308,
+    "url": "https://github.com/charmbracelet/gum"
+  },
+  "lsd": {
+    "added": "2026-08-30",
+    "command": "lsd --tree --depth 3 .",
+    "desc": "lsd (LSDeluxe) is a modern, colorized, icon-rich replacement for the Unix ls command, written in Rust. It adds --tree recursive views, git status indicators, and grouped directory listings, all of which are non-interactive and produce clean subprocess output.",
+    "endpoints": {
+      "/auto/lsd/info": "Feature metadata, install status, version",
+      "/auto/lsd/ping": "Health check",
+      "/auto/lsd/list": "POST - list a directory (long/hidden/icon/git options)",
+      "/auto/lsd/tree": "POST - recursive tree view with depth limit"
+    },
+    "exe": "lsd",
+    "install": {
+      "scoop": "scoop install lsd",
+      "winget": "winget install lsd-rs.lsd"
+    },
+    "repo": "lsd-rs/lsd",
+    "stars": 16202,
+    "url": "https://github.com/lsd-rs/lsd"
   }
 }
 
@@ -13381,6 +13419,198 @@ def _h_glow_333():
         return (jsonify({'error': str(e)}), 500)
 
 
+def _h_lsd_334():
+    """List a directory with lsd (modern, icon-rich ls replacement).
+
+        Body (JSON):
+            path (str, optional): directory to list (default: current dir).
+            long (bool, optional): long listing format (default true).
+            all (bool, optional): show hidden files / -a (default false).
+            icon (str, optional): always|auto|never (default never).
+            color (str, optional): always|auto|never (default never).
+            git (bool, optional): show git status indicators (default false).
+            header (bool, optional): print column headers with --long (default false).
+    """
+    exe = _find_tool('lsd')
+    if not exe:
+        return (jsonify({'error': 'lsd is not installed', 'hint': 'winget install lsd-rs.lsd  OR  scoop install lsd'}), 503)
+    body = _json_body() or {}
+    path = str(body.get('path') or '').strip() or '.'
+    long = bool(body.get('long', True))
+    all_ = bool(body.get('all', False))
+    icon = str(body.get('icon') or 'never').strip().lower()
+    color = str(body.get('color') or 'never').strip().lower()
+    git = bool(body.get('git', False))
+    header = bool(body.get('header', False))
+    if icon not in ('always', 'auto', 'never'):
+        icon = 'never'
+    if color not in ('always', 'auto', 'never'):
+        color = 'never'
+    cmd = [exe, '--color', color, '--icon', icon]
+    if long:
+        cmd.append('--long')
+    if header:
+        cmd.append('--header')
+    if all_:
+        cmd.append('--all')
+    if git:
+        cmd.append('--git')
+    cmd.append(path)
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+        if r.returncode != 0:
+            return (jsonify({'error': r.stderr.strip() or f'lsd exited with code {r.returncode}'}), 500)
+        return jsonify({'ok': True, 'path': path, 'long': long, 'output': r.stdout})
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': 'lsd timed out'}), 504)
+    except Exception as e:
+        _log(f'[lsd list] {str(e)}')
+        return (jsonify({'error': str(e)}), 500)
+
+
+def _h_lsd_335():
+    """Render a directory tree with lsd --tree.
+
+        Body (JSON):
+            path (str, optional): directory to render (default: current dir).
+            depth (int, optional): recursion depth, 1-20 (default 3).
+            all (bool, optional): show hidden files (default false).
+            icon (str, optional): always|auto|never (default never).
+            color (str, optional): always|auto|never (default never).
+    """
+    exe = _find_tool('lsd')
+    if not exe:
+        return (jsonify({'error': 'lsd is not installed', 'hint': 'winget install lsd-rs.lsd  OR  scoop install lsd'}), 503)
+    body = _json_body() or {}
+    path = str(body.get('path') or '').strip() or '.'
+    try:
+        depth = int(body.get('depth') or 3)
+    except (TypeError, ValueError):
+        return (jsonify({'error': 'depth must be an integer'}), 400)
+    depth = max(1, min(depth, 20))
+    all_ = bool(body.get('all', False))
+    icon = str(body.get('icon') or 'never').strip().lower()
+    color = str(body.get('color') or 'never').strip().lower()
+    if icon not in ('always', 'auto', 'never'):
+        icon = 'never'
+    if color not in ('always', 'auto', 'never'):
+        color = 'never'
+    cmd = [exe, '--tree', '--depth', str(depth), '--color', color, '--icon', icon]
+    if all_:
+        cmd.append('--all')
+    cmd.append(path)
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+        if r.returncode != 0:
+            return (jsonify({'error': r.stderr.strip() or f'lsd exited with code {r.returncode}'}), 500)
+        return jsonify({'ok': True, 'path': path, 'depth': depth, 'output': r.stdout})
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': 'lsd timed out'}), 504)
+    except Exception as e:
+        _log(f'[lsd tree] {str(e)}')
+        return (jsonify({'error': str(e)}), 500)
+
+
+def _h_gum_336():
+    """Render styled text with gum style (colors, borders, alignment).
+
+        Body (JSON):
+            text (str | list[str], required): text to style. A list renders
+                each item on its own line.
+            foreground (str, optional): color name / number (0-255) / hex.
+            background (str, optional): background color.
+            border (str, optional): none|hidden|normal|rounded|thick|double.
+            border_foreground (str, optional): border color.
+            align (str, optional): left|center|right|bottom|middle|top.
+            width (int, optional): fixed width.
+            margin (str, optional): e.g. "1 2".
+            padding (str, optional): e.g. "2 4".
+            bold / italic / underline / strikethrough (bool, optional).
+            strip_ansi (bool, optional): also return a plain-text copy (default true).
+    """
+    exe = _find_tool('gum')
+    if not exe:
+        return (jsonify({'error': 'gum is not installed', 'hint': 'winget install charmbracelet.gum  OR  scoop install charm-gum'}), 503)
+    body = _json_body() or {}
+    text = body.get('text')
+    if text is None:
+        return (jsonify({'error': "Missing 'text' field"}), 400)
+    if isinstance(text, str):
+        text = [text]
+    if not isinstance(text, list) or not all(isinstance(t, str) for t in text):
+        return (jsonify({'error': "'text' must be a string or a list of strings"}), 400)
+    cmd = [exe, 'style']
+    for flag, val in (
+        ('--foreground', body.get('foreground')),
+        ('--background', body.get('background')),
+        ('--border', body.get('border')),
+        ('--border-foreground', body.get('border_foreground')),
+        ('--align', body.get('align')),
+        ('--width', body.get('width')),
+        ('--margin', body.get('margin')),
+        ('--padding', body.get('padding')),
+    ):
+        if val not in (None, ''):
+            cmd += [flag, str(val)]
+    for flag, key in (
+        ('--bold', 'bold'),
+        ('--italic', 'italic'),
+        ('--underline', 'underline'),
+        ('--strikethrough', 'strikethrough'),
+    ):
+        if body.get(key):
+            cmd.append(flag)
+    cmd += text
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+        if r.returncode != 0:
+            return (jsonify({'error': r.stderr.strip() or f'gum exited with code {r.returncode}'}), 500)
+        styled = r.stdout
+        plain = _strip_ansi(styled) if body.get('strip_ansi', True) else None
+        return jsonify({'ok': True, 'output': styled, 'plain': plain})
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': 'gum timed out'}), 504)
+    except Exception as e:
+        _log(f'[gum style] {str(e)}')
+        return (jsonify({'error': str(e)}), 500)
+
+
+def _h_gum_337():
+    """Render text with gum format (template / markdown / emoji / code).
+
+        Body (JSON):
+            text (str, required): the input to format.
+            type (str, optional): markdown|template|emoji|code (default markdown).
+            strip_ansi (bool, optional): also return a plain-text copy (default true).
+
+        For type=template the input is a Go template (see termenv template
+        helpers: Bold, Italic, Color, Foreground, Background, ...). For
+        type=emoji the input is text with named emoji shortcodes like :heart:.
+    """
+    exe = _find_tool('gum')
+    if not exe:
+        return (jsonify({'error': 'gum is not installed', 'hint': 'winget install charmbracelet.gum  OR  scoop install charm-gum'}), 503)
+    body = _json_body() or {}
+    text = body.get('text')
+    if text is None or not isinstance(text, str):
+        return (jsonify({'error': "Missing 'text' field (string required)"}), 400)
+    type_ = str(body.get('type') or 'markdown').strip().lower()
+    if type_ not in ('markdown', 'template', 'emoji', 'code'):
+        return (jsonify({'error': "type must be one of markdown|template|emoji|code"}), 400)
+    try:
+        r = subprocess.run([exe, 'format', '-t', type_], input=text, capture_output=True, text=True, timeout=10)
+        if r.returncode != 0:
+            return (jsonify({'error': r.stderr.strip() or f'gum exited with code {r.returncode}'}), 500)
+        styled = r.stdout
+        plain = _strip_ansi(styled) if body.get('strip_ansi', True) else None
+        return jsonify({'ok': True, 'type': type_, 'output': styled, 'plain': plain})
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': 'gum timed out'}), 504)
+    except Exception as e:
+        _log(f'[gum format] {str(e)}')
+        return (jsonify({'error': str(e)}), 500)
+
+
 def register_routes(app, state, require_auth):
     global _STATE
     _STATE = state
@@ -13721,6 +13951,10 @@ def register_routes(app, state, require_auth):
         ('/auto/nushell/query', ['POST'], _h_nushell_331),
         ('/auto/glow/render', ['POST'], _h_glow_332),
         ('/auto/glow/render_file', ['POST'], _h_glow_333),
+        ('/auto/lsd/list', ['POST'], _h_lsd_334),
+        ('/auto/lsd/tree', ['POST'], _h_lsd_335),
+        ('/auto/gum/style', ['POST'], _h_gum_336),
+        ('/auto/gum/format', ['POST'], _h_gum_337),
     ]
     for _path, _methods, _fn in _ACTIONS:
         app.add_url_rule(_path, endpoint=_fn.__name__, view_func=require_auth(_fn), methods=_methods)
