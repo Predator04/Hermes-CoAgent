@@ -12588,7 +12588,9 @@ def _h_jc_313():
     if yaml:
         cmd.append('-y')
     if parser:
-        cmd.append('--' + parser)
+        if not re.fullmatch(r"[a-z][a-z0-9_]*", parser):
+            return (jsonify({"error": f"invalid jc parser: {parser}"}), 400)
+        cmd.append(parser)
     if command:
         cmd += shlex.split(command)
     try:
