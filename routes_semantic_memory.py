@@ -50,7 +50,15 @@ def _load():
                     _MEMORY_CACHE["events"] = events[-_MAX_EVENTS:] if isinstance(events, list) else []
                     _MEMORY_CACHE["patterns"] = patterns if isinstance(patterns, list) else []
         except Exception as exc:
-            _debug_failure("load", exc)
+            _LOGGER.warning("semantic_memory load failed (%s: %s); preserving corrupt file", type(exc).__name__, exc)
+            try:
+                backup = _MEMORY_FILE.with_name(
+                    _MEMORY_FILE.name + f".corrupt.{datetime.now().strftime('%Y%m%d%H%M%S')}"
+                )
+                _MEMORY_FILE.rename(backup)
+                _LOGGER.warning("semantic_memory corrupt file moved to %s", backup)
+            except Exception:
+                pass
 
 
 def _save():
@@ -149,7 +157,7 @@ def _memory_query():
     body = request.get_json(force=True, silent=True) or {}
     if not isinstance(body, dict):
         body = {}
-    query = (body.get("query") or "").strip().lower()
+    query = str(body.get("query") or "").strip().lower()
     with _MEMORY_LOCK:
         events = _MEMORY_CACHE.get("events", [])
         if query:
