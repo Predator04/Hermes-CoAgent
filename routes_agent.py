@@ -54,6 +54,8 @@ PROVIDER_CONFIG_LOCK = threading.Lock()
 _streams_lock = threading.Lock()
 EXECUTION_LOCKS = {}
 ACTIVE_STREAMS = {}
+_FINALIZED_STREAM_IDS = set()
+_MAX_FINALIZED_STREAM_IDS = 4096
 AGENT_CACHE = {}
 
 
@@ -257,6 +259,11 @@ def _save_provider_config(config):
         tmp_path = PROVIDER_CONFIG_FILE.with_suffix(".json.tmp")
         # Production deployments should encrypt this file before writing API keys.
         tmp_path.write_text(json.dumps(config, indent=2, ensure_ascii=False), encoding="utf-8")
+        if os.name != "nt":
+            try:
+                os.chmod(tmp_path, 0o600)
+            except OSError:
+                pass
         tmp_path.replace(PROVIDER_CONFIG_FILE)
 
 
@@ -418,9 +425,10 @@ def _provider_deepseek(prompt, model, api_key, base_url, timeout):
     )
 
 
-def _provider_anthropic(prompt, model, api_key, timeout):
+def _provider_anthropic(prompt, model, api_key, timeout, base_url=None):
     if not api_key:
         raise ValueError("api_key is required for anthropic provider")
+    endpoint = base_url or PROVIDER_DEFAULTS["anthropic"]["base_url"]
     headers = {
         "Content-Type": "application/json",
         "Accept": "application/json",
@@ -432,7 +440,7 @@ def _provider_anthropic(prompt, model, api_key, timeout):
         "max_tokens": 4096,
         "messages": [{"role": "user", "content": prompt}],
     }
-    data = _post_json(f"{PROVIDER_DEFAULTS['anthropic']['base_url']}/messages", headers, payload, timeout)
+    data = _post_json(f"{endpoint}/messages", headers, payload, timeout)
     content = data.get("content") if isinstance(data, dict) else None
     if isinstance(content, list):
         text = "\n".join(str(item.get("text", "")) for item in content if isinstance(item, dict) and item.get("text"))
@@ -472,7 +480,7 @@ def _call_provider(provider, prompt, settings, timeout):
     if provider == "openai":
         return _provider_openai(prompt, model, api_key, base_url, timeout)
     if provider == "anthropic":
-        return _provider_anthropic(prompt, model, api_key, timeout)
+        return _provider_anthropic(prompt, model, api_key, timeout, base_url)
     if provider == "deepseek":
         return _provider_deepseek(prompt, model, api_key, base_url, timeout)
     if provider == "ollama":
@@ -555,6 +563,12 @@ def _new_stream_state():
     }
 
 
+def _mark_stream_finalized(log_id):
+    _FINALIZED_STREAM_IDS.add(log_id)
+    if len(_FINALIZED_STREAM_IDS) > _MAX_FINALIZED_STREAM_IDS:
+        _FINALIZED_STREAM_IDS.clear()
+
+
 def _schedule_stream_cleanup(log_id, delay=STREAM_IDLE_CLEANUP_SECONDS):
     timer = threading.Timer(delay, _cleanup_stream_if_idle, args=(log_id,))
     timer.daemon = True
@@ -574,6 +588,7 @@ def _cleanup_stream_if_idle(log_id):
             age = time.time() - finished_at
             if age >= STREAM_IDLE_CLEANUP_SECONDS:
                 ACTIVE_STREAMS.pop(log_id, None)
+                _mark_stream_finalized(log_id)
                 return
             delay = max(1, STREAM_IDLE_CLEANUP_SECONDS - age)
     if delay is not None:
@@ -598,6 +613,8 @@ def _write_stream_event(log_id, event):
     event = _redact_for_log(event)
     event_json = json.dumps(event, ensure_ascii=False)
     with _streams_lock:
+        if log_id in _FINALIZED_STREAM_IDS:
+            return
         state = ACTIVE_STREAMS.get(log_id)
         if state is None:
             state = _new_stream_state()
@@ -891,7 +908,10 @@ def _detect_agents_unlocked():
 def refresh_agent_cache():
     global AGENT_CACHE, DEFAULT_AGENT
     with AGENT_DETECTION_LOCK:
-        AGENT_CACHE, DEFAULT_AGENT = _detect_agents_unlocked()
+        new_agents, new_default = _detect_agents_unlocked()
+        AGENT_CACHE.clear()
+        AGENT_CACHE.update(new_agents)
+        DEFAULT_AGENT = new_default
         return AGENT_CACHE.copy(), DEFAULT_AGENT
 
 
@@ -899,7 +919,10 @@ def _agent_status(refresh=False):
     global AGENT_CACHE, DEFAULT_AGENT
     with AGENT_DETECTION_LOCK:
         if refresh or not AGENT_CACHE:
-            AGENT_CACHE, DEFAULT_AGENT = _detect_agents_unlocked()
+            new_agents, new_default = _detect_agents_unlocked()
+            AGENT_CACHE.clear()
+            AGENT_CACHE.update(new_agents)
+            DEFAULT_AGENT = new_default
         return json.loads(json.dumps(AGENT_CACHE)), DEFAULT_AGENT
 
 
