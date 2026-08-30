@@ -46,6 +46,8 @@ def _normalize_region(region):
         raise ValueError("region x, y, w, h must be integers") from exc
     if w <= 0 or h <= 0:
         raise ValueError("region w and h must be positive")
+    if x < 0 or y < 0:
+        raise ValueError("region x and y must be non-negative")
     return (x, y, x + w, y + h)
 
 
@@ -66,7 +68,7 @@ def _cleanup_old_recordings():
 
 
 def _capture_loop(recording_id, fps, max_seconds, bbox):
-    global _LAST_RECORDING
+    global _ACTIVE, _THREAD, _FRAMES, _LAST_RECORDING
     frame_interval = 1.0 / max(1, fps)
     start = time.perf_counter()
     next_capture = start
@@ -133,6 +135,8 @@ def _capture_loop(recording_id, fps, max_seconds, bbox):
 
 
 def _save_gif(recording_id, frames, fps):
+    if not frames:
+        raise ValueError("no frames captured; nothing to save")
     RECORDINGS_DIR.mkdir(parents=True, exist_ok=True)
     path = RECORDINGS_DIR / f"rec_{recording_id}.gif"
     duration_ms = max(1, int(1000 / max(1, fps)))
@@ -171,19 +175,18 @@ def _status_payload():
 
 
 def _latest_gif_path():
+    from pathlib import Path
+
     with _LOCK:
         if _LAST_RECORDING and _LAST_RECORDING.get("gif_path"):
-            path = COAGENT_DIR / _LAST_RECORDING["gif_path"] if not str(_LAST_RECORDING["gif_path"]).startswith(str(COAGENT_DIR)) else None
-            direct = _LAST_RECORDING["gif_path"]
-            candidate = path or direct
             try:
-                from pathlib import Path
-
-                candidate = Path(candidate)
-                if candidate.exists():
-                    return candidate
-            except Exception:
-                pass
+                candidate = Path(_LAST_RECORDING["gif_path"]).resolve()
+                # Confine the served file to RECORDINGS_DIR to prevent path traversal.
+                candidate.relative_to(RECORDINGS_DIR.resolve())
+            except (ValueError, OSError):
+                candidate = None
+            if candidate is not None and candidate.exists():
+                return candidate
     try:
         paths = sorted(RECORDINGS_DIR.glob("rec_*.gif"), key=lambda p: p.stat().st_mtime, reverse=True)
         return paths[0] if paths else None
