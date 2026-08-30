@@ -132,7 +132,9 @@ class _CDPSocket:
             if not chunk:
                 raise ConnectionError("WebSocket handshake failed — connection closed")
             resp += chunk
-        status_line = resp.split(b"\r\n", 1)[0]
+        header_block, _, leftover = resp.partition(b"\r\n\r\n")
+        self._buf = leftover
+        status_line = header_block.split(b"\r\n", 1)[0]
         try:
             status_code = int(status_line.split(b" ")[1])
         except (IndexError, ValueError):
@@ -168,6 +170,10 @@ class _CDPSocket:
 
         def recv_exact(n):
             buf = b""
+            if self._buf:
+                take = self._buf[:n]
+                self._buf = self._buf[len(take):]
+                buf = take
             while len(buf) < n:
                 chunk = self._sock.recv(n - len(buf))
                 if not chunk:
@@ -223,6 +229,9 @@ class _CDPSocket:
                     if slot:
                         slot["result"] = msg
                         slot["event"].set()
+            except socket.timeout:
+                # Idle read timeout — the connection is still alive; keep reading.
+                continue
             except Exception as exc:
                 self._running = False
                 # Connection lost — wake every in-flight caller immediately so
@@ -240,10 +249,9 @@ class _CDPSocket:
 
     def send(self, method: str, params: dict | None = None, timeout: float = 10.0) -> dict:
         """Send a CDP command and return the response (blocks until reply)."""
-        if not self._running:
-            raise ConnectionError("CDP connection is closed")
-
         with self._lock:
+            if not self._running:
+                raise ConnectionError("CDP connection is closed")
             self._cmd_id += 1
             cmd_id = self._cmd_id
             ev = threading.Event()
@@ -272,6 +280,11 @@ class _CDPSocket:
 
     def close(self) -> None:
         self._running = False
+        with self._lock:
+            for slot in self._pending.values():
+                slot["error"] = ConnectionError("CDP connection closed")
+                slot["event"].set()
+            self._pending.clear()
         try:
             self._sock.close()
         except Exception:
@@ -660,6 +673,7 @@ def register_routes(app, state, require_auth):
         # Resolve port from pid / window name when not given directly
         if port is None:
             apps = _scan_cef_processes() or _probe_fallback_ports()
+            requested = pid is not None or bool(window_hint)
             if pid is not None:
                 try:
                     pid_i = int(pid)
@@ -676,8 +690,15 @@ def register_routes(app, state, require_auth):
                     if hint in a["name"].lower() or hint in a["window_title"].lower():
                         port = a["debug_port"]
                         break
-            if port is None and apps:
-                port = apps[0]["debug_port"]
+            if port is None:
+                if requested:
+                    if pid is not None:
+                        detail = f"pid {pid!r}"
+                    else:
+                        detail = f"window {window_hint!r}"
+                    return jsonify({"error": f"No CEF app matched {detail}"}), 404
+                if apps:
+                    port = apps[0]["debug_port"]
 
         if port is None:
             return jsonify({"error": "No port resolved — pass 'port', 'pid', or 'window'"}), 400
@@ -982,10 +1003,12 @@ def register_routes(app, state, require_auth):
                         if hint in a["name"].lower() or hint in a["window_title"].lower():
                             port = a["debug_port"]
                             break
-                if port is None and apps:
+                    if port is None:
+                        return jsonify({"error": f"Could not find a CEF process for '{window_name}'"}), 404
+                elif apps:
                     port = apps[0]["debug_port"]
             if port is None:
-                return jsonify({"error": f"Could not find a CEF process for '{window_name}'"}), 404
+                return jsonify({"error": "Could not find a CEF process"}), 404
 
             # Connect (or reuse)
             with _sessions_lock:
