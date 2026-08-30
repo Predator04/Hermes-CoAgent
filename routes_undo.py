@@ -10,7 +10,9 @@ from shared import _console, _json_body
 
 MAX_HISTORY = 100
 MAX_SCREENSHOT_CHARS = 5 * 1024 * 1024  # ~5 MB cap per screenshot to bound _HISTORY memory
+MAX_TOTAL_SCREENSHOT_CHARS = 50 * 1024 * 1024  # ~50 MB cumulative cap across all history entries
 _LOCK = threading.RLock()
+_UNDO_EXEC_LOCK = threading.Lock()  # serializes actual undo execution (mouse/keyboard side effects)
 _HISTORY = []
 
 
@@ -34,11 +36,23 @@ def _normalize_action_type(action_type):
     return aliases.get(action_type, action_type)
 
 
+def _total_screenshot_chars():
+    total = 0
+    for e in _HISTORY:
+        total += len(e.get("screenshot_before") or "")
+        total += len(e.get("screenshot_after") or "")
+    return total
+
+
 def _append_history(entry):
     with _LOCK:
         _HISTORY.append(entry)
         if len(_HISTORY) > MAX_HISTORY:
             del _HISTORY[:len(_HISTORY) - MAX_HISTORY]
+        # Enforce a cumulative screenshot budget so an authenticated client
+        # spamming /undo/track with large base64 images cannot exhaust memory.
+        while len(_HISTORY) > 1 and _total_screenshot_chars() > MAX_TOTAL_SCREENSHOT_CHARS:
+            _HISTORY.pop(0)
 
 
 def _bounded_screenshot(value):
@@ -208,10 +222,14 @@ def register_routes(app, state, require_auth):
                 return jsonify({"error": "No actions to undo"}), 404
             entry = dict(_HISTORY.pop())
 
-        payload, status = _undo_action(app, entry)
-        if status >= 400:
-            with _LOCK:
-                _HISTORY.append(entry)  # re-insert on failure
+        # Serialize undo execution: mouse/keyboard side effects must not interleave
+        # across concurrent /undo/last requests (e.g. two concurrent 'type' undos
+        # would interleave clipboard restores and Ctrl+A/Ctrl+V sequences).
+        with _UNDO_EXEC_LOCK:
+            payload, status = _undo_action(app, entry)
+            if status >= 400:
+                with _LOCK:
+                    _HISTORY.append(entry)  # re-insert on failure
         return jsonify(payload), status
 
     @bp.route("/undo/history", methods=["GET"])

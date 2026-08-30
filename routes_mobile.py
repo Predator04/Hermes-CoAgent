@@ -168,7 +168,7 @@ def _auth_header():
     header = request.headers.get("Authorization", "")
     if header:
         return header
-    token = request.args.get("token") or (_json_body().get("token") if request.method == "POST" else "")
+    token = _json_body().get("token") if request.method == "POST" else ""
     if token:
         token = str(token).strip()
         if token.lower().startswith("bearer "):

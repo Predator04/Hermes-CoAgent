@@ -422,7 +422,7 @@ def trace_action(name):
                     span_obj.set_attribute("http.status_code", status)
                     summary = _summarize_response_body(body)
                     if summary is not None:
-                        span_obj.set_result(summary)
+                        span_obj.set_result(_scrub(summary))
                     if status >= 400 and span_obj.get("status") == "running":
                         span_obj["status"] = "error"
                         span_obj["error"] = span_obj.get("error") or f"HTTP {status}"
