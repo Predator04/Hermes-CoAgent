@@ -13166,7 +13166,10 @@ def _h_nushell_329():
     exe = _find_tool('nushell')
     if not exe:
         return (jsonify({'error': 'nushell is not installed', 'hint': 'winget install nushell.nushell  OR  scoop install nu'}), 503)
-    timeout = int(body.get('timeout') or 30)
+    try:
+        timeout = int(body.get('timeout') or 30)
+    except (TypeError, ValueError):
+        return (jsonify({"error": "timeout must be an integer"}), 400)
     timeout = max(1, min(timeout, 120))
     try:
         r = subprocess.run([exe, '-c', code], capture_output=True, text=True, errors='replace', timeout=timeout)
@@ -13200,7 +13203,10 @@ def _h_nushell_330():
         return (jsonify({'error': 'nushell is not installed', 'hint': 'winget install nushell.nushell  OR  scoop install nu'}), 503)
     if not os.path.isfile(path):
         return (jsonify({'error': f'script not found: {path}'}), 404)
-    timeout = int(body.get('timeout') or 30)
+    try:
+        timeout = int(body.get('timeout') or 30)
+    except (TypeError, ValueError):
+        return (jsonify({"error": "timeout must be an integer"}), 400)
     timeout = max(1, min(timeout, 120))
     try:
         r = subprocess.run([exe, path], capture_output=True, text=True, errors='replace', timeout=timeout)
@@ -13235,7 +13241,10 @@ def _h_nushell_331():
     exe = _find_tool('nushell')
     if not exe:
         return (jsonify({'error': 'nushell is not installed', 'hint': 'winget install nushell.nushell  OR  scoop install nu'}), 503)
-    timeout = int(body.get('timeout') or 30)
+    try:
+        timeout = int(body.get('timeout') or 30)
+    except (TypeError, ValueError):
+        return (jsonify({"error": "timeout must be an integer"}), 400)
     timeout = max(1, min(timeout, 120))
     if 'to json' not in code and 'to nuon' not in code and 'to jsonl' not in code:
         code = f'{code} | to json'
@@ -13291,7 +13300,10 @@ def _h_glow_332():
     path = str(body.get('path') or '').strip()
     if not text and not path:
         return (jsonify({'error': 'provide either `text` or `path`'}), 400)
-    width = int(body.get('width') or 80)
+    try:
+        width = int(body.get('width') or 80)
+    except (TypeError, ValueError):
+        return (jsonify({"error": "width must be an integer"}), 400)
     style = str(body.get('style') or 'auto').strip().lower()
     if style not in ('dark', 'light', 'auto'):
         style = 'auto'
@@ -13341,7 +13353,10 @@ def _h_glow_333():
         return _missing_field(body, 'path')
     if not os.path.isfile(path):
         return (jsonify({'error': f'file not found: {path}'}), 404)
-    width = int(body.get('width') or 80)
+    try:
+        width = int(body.get('width') or 80)
+    except (TypeError, ValueError):
+        return (jsonify({"error": "width must be an integer"}), 400)
     style = str(body.get('style') or 'auto').strip().lower()
     if style not in ('dark', 'light', 'auto'):
         style = 'auto'
