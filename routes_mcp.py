@@ -179,6 +179,17 @@ def _jsonrpc_result(request_id, result):
     return {"jsonrpc": "2.0", "id": request_id, "result": result}
 
 
+def _respond(request_id, result):
+    """Return a result, or None for a notification (JSON-RPC 2.0 §4.1).
+
+    Notifications (requests without an ``id``) MUST NOT receive a reply;
+    returning None makes the HTTP/stdio dispatchers skip writing a response.
+    """
+    if request_id is None:
+        return None
+    return _jsonrpc_result(request_id, result)
+
+
 def _jsonrpc_error(request_id, code, message, data=None):
     payload = {"jsonrpc": "2.0", "id": request_id, "error": {"code": code, "message": message}}
     if data is not None:
@@ -683,9 +694,9 @@ def _handle_rpc(app, message):
             _broadcast("initialized", {"time": time.time()})
             return None
         if method == "ping":
-            return _jsonrpc_result(request_id, {})
+            return _respond(request_id, {})
         if method == "tools/list":
-            return _jsonrpc_result(request_id, {"tools": _tools_list(app)})
+            return _respond(request_id, {"tools": _tools_list(app)})
         if method == "tools/call":
             result = _call_tool(app, params)
             _broadcast("tool_call", {
@@ -693,23 +704,23 @@ def _handle_rpc(app, message):
                 "name": params.get("name") if isinstance(params, dict) else None,
                 "isError": result.get("isError"),
             })
-            return _jsonrpc_result(request_id, result)
+            return _respond(request_id, result)
         if method == "resources/list":
-            return _jsonrpc_result(request_id, _resources_list(app))
+            return _respond(request_id, _resources_list(app))
         if method == "resources/templates/list":
-            return _jsonrpc_result(request_id, _resource_templates_list())
+            return _respond(request_id, _resource_templates_list())
         if method == "resources/read":
             result = _read_resource(app, params)
             if result is None:
                 return _jsonrpc_error(request_id, -32002, "Resource not found", {"uri": params.get("uri")})
-            return _jsonrpc_result(request_id, result)
+            return _respond(request_id, result)
         if method == "prompts/list":
-            return _jsonrpc_result(request_id, _prompts_list(_STATE))
+            return _respond(request_id, _prompts_list(_STATE))
         if method == "prompts/get":
             result = _get_prompt(_STATE, params)
             if result is None:
                 return _jsonrpc_error(request_id, -32602, "Prompt not found", {"name": params.get("name") if isinstance(params, dict) else None})
-            return _jsonrpc_result(request_id, result)
+            return _respond(request_id, result)
         return None if is_notification else _jsonrpc_error(request_id, -32601, f"Method not found: {method}")
     except Exception as exc:
         import logging
