@@ -137,24 +137,18 @@ def _recovery_loop():
 @recovery_bp.route("/recovery/start", methods=["POST"])
 def _recovery_start():
     global _RECOVERY_THREAD
+    # The check-and-start sequence must be atomic. Previously the first lock
+    # block was released before the second, so two concurrent /recovery/start
+    # calls (or a start racing a stop) could observe running=False, signal the
+    # shared stop event, and kill the freshly-started thread — leaving the
+    # daemon dead while "running" stayed True. Holding the lock for the whole
+    # sequence (and checking thread liveness rather than just the boolean)
+    # closes that race.
     with _RECOVERY_LOCK:
-        if _RECOVERY_STATE["running"]:
+        if _RECOVERY_THREAD is not None and _RECOVERY_THREAD.is_alive():
+            # A live worker already exists (even if a stop was just requested and
+            # it is still winding down) — never start a second OCR/click loop.
             return jsonify({"ok": True, "already_running": True})
-    # Ensure any previous thread has fully exited before starting a new one,
-    # so a rapid stop→start can't leave two OCR/click loops running at once.
-    # Join OUTSIDE the lock so the old loop can acquire it and exit cleanly.
-    prev = _RECOVERY_THREAD
-    if prev is not None and prev.is_alive():
-        _RECOVERY_STOP.set()
-        prev.join(timeout=_RECOVERY_STATE.get("check_interval_secs", 5) + 1)
-    with _RECOVERY_LOCK:
-        if _RECOVERY_STATE["running"]:
-            return jsonify({"ok": True, "already_running": True})
-        if prev is not None and prev.is_alive():
-            # Previous loop is still winding down; refuse to start a second
-            # concurrent OCR/click loop.
-            return jsonify({"ok": False, "started": False,
-                            "error": "previous daemon still shutting down, retry shortly"}), 409
         _RECOVERY_STOP.clear()
         _RECOVERY_THREAD = threading.Thread(target=_recovery_loop, daemon=True)
         _RECOVERY_THREAD.start()
