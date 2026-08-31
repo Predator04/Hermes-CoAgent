@@ -70,7 +70,7 @@ def _ps(script, timeout=60, env=None):
 
 def _ps_json(script, timeout=60, env=None):
     stdout, stderr, code = _ps(script, timeout=timeout, env=env)
-    if stdout:
+    if code == 0 and stdout:
         try:
             parsed = json.loads(stdout)
         except (ValueError, TypeError):
@@ -134,22 +134,30 @@ foreach ($f in $folders) {
   }
 }
 
-[ordered]@{ count=$results.Count; entries=$results } | ConvertTo-Json -Compress
+[ordered]@{ count=$results.Count; entries=@($results) } | ConvertTo-Json -Compress
 """
 
 # Folder resolution: user Startup folder vs all-user (ProgramData) Startup folder.
 _FOLDER_EXPR = r"""if ($env:COAGENT_STARTUP_SOURCE -eq 'startup_all') { "$env:ProgramData\Microsoft\Windows\Start Menu\Programs\Startup" } else { "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup" }"""
 
 _ADD_RUN_SCRIPT = r"""
+$ErrorActionPreference = 'Stop'
+try {
 $key = $env:COAGENT_STARTUP_KEY
 $name = $env:COAGENT_STARTUP_NAME
 $value = $env:COAGENT_STARTUP_COMMAND
 if (-not (Test-Path $key)) { New-Item -Path $key -Force | Out-Null }
 Set-ItemProperty -Path $key -Name $name -Value $value
 [ordered]@{ source=$env:COAGENT_STARTUP_SOURCE; name=$name; command=$value; added=$true } | ConvertTo-Json -Compress
+} catch {
+  [Console]::Error.WriteLine($_.Exception.Message)
+  exit 1
+}
 """
 
 _ADD_FOLDER_SCRIPT = r"""
+$ErrorActionPreference = 'Stop'
+try {
 $folder = """ + _FOLDER_EXPR + r"""
 $name = $env:COAGENT_STARTUP_NAME
 $command = $env:COAGENT_STARTUP_COMMAND
@@ -161,6 +169,10 @@ $lnk.TargetPath = $command
 if ($arguments) { $lnk.Arguments = $arguments }
 $lnk.Save()
 [ordered]@{ source=$env:COAGENT_STARTUP_SOURCE; name=$name; command=$command; added=$true } | ConvertTo-Json -Compress
+} catch {
+  [Console]::Error.WriteLine($_.Exception.Message)
+  exit 1
+}
 """
 
 _REMOVE_RUN_SCRIPT = r"""
@@ -184,6 +196,8 @@ Remove-ItemProperty -Path $approve -Name $name -ErrorAction SilentlyContinue
 """
 
 _SET_APPROVED_SCRIPT = r"""
+$ErrorActionPreference = 'Stop'
+try {
 $key = $env:COAGENT_STARTUP_APPROVE
 $name = $env:COAGENT_STARTUP_NAME
 $flag = [int]$env:COAGENT_STARTUP_FLAG
@@ -193,6 +207,10 @@ $bytes[0] = [byte]$flag
 if (-not (Test-Path $key)) { New-Item -Path $key -Force | Out-Null }
 Set-ItemProperty -Path $key -Name $name -Value $bytes -Type Binary
 [ordered]@{ name=$name; flag=$flag; done=$true } | ConvertTo-Json -Compress
+} catch {
+  [Console]::Error.WriteLine($_.Exception.Message)
+  exit 1
+}
 """
 
 
@@ -205,10 +223,12 @@ def _validate_name(name):
     inject registry subkeys/control characters. Returns an error string or None."""
     if len(name) > 255:
         return "name too long (max 255)"
-    if ".." in name or any(ch in name for ch in ("\\", "/", ":", "\x00")):
+    if ".." in name or any(ch in name for ch in ("\\", "/", ":", "\x00", "*", "?", "<", ">", "|", '"')):
         return "name contains invalid characters"
     if any(ord(ch) < 32 for ch in name):
         return "name contains control characters"
+    if name != name.rstrip(". "):
+        return "name must not end with a dot or space"
     return None
 
 
