@@ -1476,6 +1476,44 @@ TOOLS = {
     "repo": "lsd-rs/lsd",
     "stars": 16202,
     "url": "https://github.com/lsd-rs/lsd"
+  },
+  "gitleaks": {
+    "added": "2026-08-31",
+    "command": "gitleaks dir <path> --report-format json --no-banner",
+    "desc": "gitleaks is a SAST tool for detecting hardcoded secrets (passwords, API keys, tokens) in git repositories, directories, files, or stdin. It scans present and past commits, archives, and nested files, emitting JSON, CSV, SARIF or JUnit reports.",
+    "endpoints": {
+      "/auto/gitleaks/info": "Feature metadata, install status, version",
+      "/auto/gitleaks/ping": "Health check",
+      "/auto/gitleaks/scan": "POST - scan a directory or git repo for secrets (JSON report)",
+      "/auto/gitleaks/stdin": "POST - scan a raw string for secrets"
+    },
+    "exe": "gitleaks",
+    "install": {
+      "scoop": "scoop install gitleaks",
+      "winget": "winget install Gitleaks.Gitleaks"
+    },
+    "repo": "gitleaks/gitleaks",
+    "stars": 29033,
+    "url": "https://github.com/gitleaks/gitleaks"
+  },
+  "duckdb": {
+    "added": "2026-08-31",
+    "command": "duckdb -c \"<sql>\" [database]",
+    "desc": "DuckDB is an in-process analytical SQL database management system ('SQLite for analytics'). The CLI runs SQL directly against CSV, Parquet, JSON and DuckDB files and emits JSON or CSV results, ideal for scripted data analysis.",
+    "endpoints": {
+      "/auto/duckdb/info": "Feature metadata, install status, version",
+      "/auto/duckdb/ping": "Health check",
+      "/auto/duckdb/query": "POST - run a SQL query and return JSON/CSV rows",
+      "/auto/duckdb/tables": "POST - list tables/views and columns in a DuckDB file"
+    },
+    "exe": "duckdb",
+    "install": {
+      "scoop": "scoop install duckdb",
+      "winget": "winget install DuckDB.cli"
+    },
+    "repo": "duckdb/duckdb",
+    "stars": 40852,
+    "url": "https://github.com/duckdb/duckdb"
   }
 }
 
@@ -13611,6 +13649,177 @@ def _h_gum_337():
         return (jsonify({'error': str(e)}), 500)
 
 
+def _h_gitleaks_338():
+    """Scan a directory or git repo for hardcoded secrets with gitleaks.
+
+        Body (JSON):
+            path (str, required): directory or git repo path to scan.
+            mode (str, optional): 'dir' (default) scans files directly;
+                'git' scans a git repository including its history.
+            redact (int, optional): 0-100 percent of each secret to redact in
+                the report (default: no redaction, full secret shown).
+            verbose (bool, optional): include the verbose scan log (default false).
+    """
+    exe = _find_tool('gitleaks')
+    if not exe:
+        return (jsonify({'error': 'gitleaks is not installed', 'hint': 'winget install Gitleaks.Gitleaks  OR  scoop install gitleaks'}), 503)
+    body = _json_body() or {}
+    path = str(body.get('path') or '').strip()
+    if not path:
+        return (jsonify({'error': "Missing 'path' field"}), 400)
+    mode = str(body.get('mode') or 'dir').strip().lower()
+    if mode not in ('dir', 'git'):
+        return (jsonify({'error': "mode must be 'dir' or 'git'"}), 400)
+    cmd = [exe, mode, path, '--report-format', 'json', '--no-banner', '--no-color', '--exit-code', '0']
+    redact = body.get('redact')
+    if redact is not None:
+        try:
+            pct = int(redact)
+            cmd += ['--redact', str(max(0, min(pct, 100)))]
+        except (TypeError, ValueError):
+            pass
+    if bool(body.get('verbose', False)):
+        cmd.append('-v')
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        if r.returncode != 0:
+            return (jsonify({'error': r.stderr.strip() or f'gitleaks exited with code {r.returncode}'}), 500)
+        report = None
+        raw = r.stdout.strip()
+        if raw:
+            try:
+                report = json_lib.loads(raw)
+            except Exception:
+                report = None
+        findings = report if isinstance(report, list) else []
+        return jsonify({'ok': True, 'path': path, 'mode': mode, 'leaks': len(findings),
+                        'findings': findings[:500], 'truncated': len(findings) > 500})
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': 'gitleaks timed out'}), 504)
+    except Exception as e:
+        _log(f'[gitleaks scan] {str(e)}')
+        return (jsonify({'error': str(e)}), 500)
+
+
+def _h_gitleaks_339():
+    """Scan a raw string for secrets via gitleaks stdin.
+
+        Body (JSON):
+            text (str, required): the text to scan for secrets.
+    """
+    exe = _find_tool('gitleaks')
+    if not exe:
+        return (jsonify({'error': 'gitleaks is not installed', 'hint': 'winget install Gitleaks.Gitleaks  OR  scoop install gitleaks'}), 503)
+    body = _json_body() or {}
+    text = body.get('text')
+    if not isinstance(text, str) or not text.strip():
+        return (jsonify({'error': "Missing 'text' field (non-empty string required)"}), 400)
+    try:
+        r = subprocess.run([exe, 'stdin', '--report-format', 'json', '--no-banner', '--no-color', '--exit-code', '0'],
+                           input=text, capture_output=True, text=True, timeout=30)
+        if r.returncode != 0:
+            return (jsonify({'error': r.stderr.strip() or f'gitleaks exited with code {r.returncode}'}), 500)
+        report = None
+        raw = r.stdout.strip()
+        if raw:
+            try:
+                report = json_lib.loads(raw)
+            except Exception:
+                report = None
+        findings = report if isinstance(report, list) else []
+        return jsonify({'ok': True, 'leaks': len(findings), 'findings': findings[:200],
+                        'truncated': len(findings) > 200})
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': 'gitleaks timed out'}), 504)
+    except Exception as e:
+        _log(f'[gitleaks stdin] {str(e)}')
+        return (jsonify({'error': str(e)}), 500)
+
+
+def _h_duckdb_340():
+    """Run a SQL query with the DuckDB CLI and return the result as JSON/CSV.
+
+        Body (JSON):
+            sql (str, required): the SQL query to run. May reference file
+                functions such as read_csv_auto('data.csv') or
+                read_parquet('data.parquet').
+            database (str, optional): path to a DuckDB database file to open
+                (default: transient in-memory database).
+            format (str, optional): 'json' (default) or 'csv'.
+    """
+    exe = _find_tool('duckdb')
+    if not exe:
+        return (jsonify({'error': 'duckdb is not installed', 'hint': 'winget install DuckDB.cli  OR  scoop install duckdb'}), 503)
+    body = _json_body() or {}
+    sql = str(body.get('sql') or '').strip()
+    if not sql:
+        return (jsonify({'error': "Missing 'sql' field"}), 400)
+    fmt = str(body.get('format') or 'json').strip().lower()
+    if fmt not in ('json', 'csv'):
+        return (jsonify({'error': "format must be 'json' or 'csv'"}), 400)
+    db = str(body.get('database') or '').strip()
+    cmd = [exe, '-json' if fmt == 'json' else '-csv', '-c', sql]
+    if db:
+        cmd.append(db)
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        if r.returncode != 0:
+            return (jsonify({'error': r.stderr.strip() or f'duckdb exited with code {r.returncode}'}), 500)
+        out = r.stdout.strip()
+        if fmt == 'csv':
+            return jsonify({'ok': True, 'sql': sql, 'format': fmt, 'output': out})
+        try:
+            parsed = json_lib.loads(out) if out else None
+        except Exception:
+            return jsonify({'ok': True, 'sql': sql, 'format': fmt, 'raw': out})
+        if isinstance(parsed, list):
+            return jsonify({'ok': True, 'sql': sql, 'format': fmt, 'row_count': len(parsed),
+                            'rows': parsed[:1000], 'truncated': len(parsed) > 1000})
+        return jsonify({'ok': True, 'sql': sql, 'format': fmt, 'result': parsed})
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': 'duckdb timed out'}), 504)
+    except Exception as e:
+        _log(f'[duckdb query] {str(e)}')
+        return (jsonify({'error': str(e)}), 500)
+
+
+def _h_duckdb_341():
+    """List tables/views and their columns in a DuckDB database file.
+
+        Body (JSON):
+            database (str, optional): path to a DuckDB (.duckdb/.db) file to
+                introspect. For CSV/Parquet/JSON files use the query endpoint
+                with read_csv_auto / read_parquet / read_json_auto instead.
+    """
+    exe = _find_tool('duckdb')
+    if not exe:
+        return (jsonify({'error': 'duckdb is not installed', 'hint': 'winget install DuckDB.cli  OR  scoop install duckdb'}), 503)
+    body = _json_body() or {}
+    db = str(body.get('database') or '').strip()
+    sql = "SELECT table_name, column_name, data_type FROM information_schema.columns ORDER BY table_name, ordinal_position;"
+    cmd = [exe, '-json', '-c', sql]
+    if db:
+        cmd.append(db)
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        if r.returncode != 0:
+            return (jsonify({'error': r.stderr.strip() or f'duckdb exited with code {r.returncode}'}), 500)
+        try:
+            rows = json_lib.loads(r.stdout.strip() or '[]')
+        except Exception:
+            rows = []
+        tables = {}
+        for row in rows:
+            t = row.get('table_name', '?')
+            tables.setdefault(t, []).append({'column': row.get('column_name'), 'type': row.get('data_type')})
+        return jsonify({'ok': True, 'database': db or '(memory)', 'tables': tables, 'table_count': len(tables)})
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': 'duckdb timed out'}), 504)
+    except Exception as e:
+        _log(f'[duckdb tables] {str(e)}')
+        return (jsonify({'error': str(e)}), 500)
+
+
 def register_routes(app, state, require_auth):
     global _STATE
     _STATE = state
@@ -13955,6 +14164,10 @@ def register_routes(app, state, require_auth):
         ('/auto/lsd/tree', ['POST'], _h_lsd_335),
         ('/auto/gum/style', ['POST'], _h_gum_336),
         ('/auto/gum/format', ['POST'], _h_gum_337),
+        ('/auto/gitleaks/scan', ['POST'], _h_gitleaks_338),
+        ('/auto/gitleaks/stdin', ['POST'], _h_gitleaks_339),
+        ('/auto/duckdb/query', ['POST'], _h_duckdb_340),
+        ('/auto/duckdb/tables', ['POST'], _h_duckdb_341),
     ]
     for _path, _methods, _fn in _ACTIONS:
         app.add_url_rule(_path, endpoint=_fn.__name__, view_func=require_auth(_fn), methods=_methods)
