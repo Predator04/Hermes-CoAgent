@@ -100,6 +100,145 @@ def _set_cursor_pos(x, y):
         return
     pyautogui.moveTo(int(x), int(y))
 
+# ── Input preflight guard (opt-in target verification) ───────────────────
+# The #1 silent failure in unattended desktop automation is input landing in
+# the wrong window: a focus change, stray popup, or stale coordinate turns a
+# "click OK" into typing into the wrong app. This guard, when a caller supplies
+# a `target` object, verifies the foreground window matches (by hwnd / pid /
+# title / process) and that any supplied coordinates fall inside that window's
+# screen rect BEFORE any input is injected. Without `target` it is a no-op.
+
+def _process_name(pid):
+    """Resolve a PID to its executable basename (lowercase) via Win32."""
+    try:
+        if not hasattr(ctypes, "windll"):
+            return ""
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        h = ctypes.windll.kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, int(pid))
+        if not h:
+            return ""
+        try:
+            import os
+            buf = ctypes.create_unicode_buffer(1024)
+            size = ctypes.wintypes.DWORD(1024)
+            if ctypes.windll.kernel32.QueryFullProcessImageNameW(h, 0, buf, ctypes.byref(size)):
+                return os.path.basename(buf.value).lower()
+            return ""
+        finally:
+            ctypes.windll.kernel32.CloseHandle(h)
+    except Exception:
+        return ""
+
+
+def _fg_window_info():
+    """Return {hwnd, title, pid, proc, rect} for the foreground window, or None."""
+    try:
+        if not hasattr(ctypes, "windll"):
+            return None
+        hwnd = ctypes.windll.user32.GetForegroundWindow()
+        if not hwnd:
+            return None
+        title = ""
+        length = ctypes.windll.user32.GetWindowTextLengthW(hwnd)
+        if length > 0:
+            buff = ctypes.create_unicode_buffer(length + 1)
+            ctypes.windll.user32.GetWindowTextW(hwnd, buff, length + 1)
+            title = buff.value
+        pid = ctypes.c_ulong()
+        ctypes.windll.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        rect = ctypes.wintypes.RECT()
+        ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(rect))
+        return {
+            "hwnd": int(hwnd),
+            "title": title,
+            "pid": int(pid.value),
+            "proc": _process_name(pid.value),
+            "rect": {"left": rect.left, "top": rect.top, "right": rect.right, "bottom": rect.bottom},
+        }
+    except Exception:
+        return None
+
+
+def _preflight_guard(body):
+    """Verify foreground window + coordinate bounds before input lands.
+
+    Returns (ok: bool, error_response_or_None). Opt-in: only active when the
+    request body carries a non-empty `target` object, so existing callers are
+    unaffected. On mismatch returns a structured 409 so the agent can react
+    instead of mis-clicking/typing into the wrong window.
+    """
+    if not isinstance(body, dict):
+        return True, None
+    target = body.get("target")
+    if not isinstance(target, dict) or not target:
+        return True, None
+
+    fg = _fg_window_info()
+    if fg is None:
+        return False, (jsonify({
+            "error": "input preflight: cannot resolve foreground window",
+            "reason": "fg_window_unavailable",
+            "target": target,
+        }), 409)
+
+    failed = None
+    if target.get("hwnd") is not None:
+        want = int(target["hwnd"])
+        if want != fg["hwnd"]:
+            failed = {"reason": "hwnd_mismatch", "expected": want, "actual": fg["hwnd"]}
+    if failed is None and target.get("pid") is not None:
+        want = int(target["pid"])
+        if want != fg["pid"]:
+            failed = {"reason": "pid_mismatch", "expected": want, "actual": fg["pid"]}
+    if failed is None and target.get("title"):
+        want = str(target["title"]).lower()
+        if want not in fg["title"].lower():
+            failed = {"reason": "title_mismatch", "expected": target["title"], "actual": fg["title"]}
+    if failed is None and target.get("process"):
+        want = str(target["process"]).lower()
+        if want not in fg["proc"] and want not in fg["title"].lower():
+            failed = {"reason": "process_mismatch", "expected": target["process"], "actual": fg["proc"]}
+
+    if failed is not None:
+        return False, (jsonify({
+            "error": "input preflight: foreground window does not match target",
+            "reason": failed["reason"],
+            "expected": failed.get("expected"),
+            "foreground": {
+                "hwnd": fg["hwnd"], "pid": fg["pid"],
+                "title": fg["title"][:200], "process": fg["proc"],
+            },
+            "target": target,
+        }), 409)
+
+    # Coordinate bounds check — collect every (x, y) pair the action may use.
+    points = []
+    if body.get("x") is not None and body.get("y") is not None:
+        points.append((body.get("x"), body.get("y")))
+    for key in ("x1", "x2"):
+        if body.get(key) is not None and body.get(key.replace("x", "y")) is not None:
+            points.append((body.get(key), body.get(key.replace("x", "y"))))
+    for key in ("from", "to"):
+        sub = body.get(key)
+        if isinstance(sub, dict) and sub.get("x") is not None and sub.get("y") is not None:
+            points.append((sub.get("x"), sub.get("y")))
+
+    r = fg["rect"]
+    for sx, sy in points:
+        try:
+            px, py = int(sx), int(sy)
+        except (TypeError, ValueError):
+            return False, (jsonify({"error": "input preflight: coordinates must be integers"}), 400)
+        if not (r["left"] <= px <= r["right"] and r["top"] <= py <= r["bottom"]):
+            return False, (jsonify({
+                "error": "input preflight: coordinates outside target window",
+                "reason": "coord_out_of_bounds",
+                "point": {"x": px, "y": py},
+                "rect": r,
+            }), 409)
+
+    return True, None
+
 def _mouse_click_with_retry(x, y, button="left", background=True, state=None):
     offsets = [(0, 0), (10, 10), (-10, -10), (20, 20), (-20, -20), (0, 15), (0, -15)]
     attempts = []
@@ -231,6 +370,9 @@ def _mouse_action(action, x, y, button="left", background=True, state=None):
 
 def _execute_action_wrapper(action, state=None):
     """Execute a stored action dict."""
+    _ok, _err = _preflight_guard(action)
+    if not _ok:
+        return _err
     typ = action.get("type", "")
     if typ == "click":
         return _mouse_action("click", action.get("x", 0), action.get("y", 0),
@@ -317,6 +459,9 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_mouse_move():
         d = _json_body()
+        _ok, _err = _preflight_guard(d)
+        if not _ok:
+            return _err
         return _mouse_action("move", int(d.get("x", 0)), int(d.get("y", 0)),
                              "left", d.get("background", True), state)
 
@@ -324,6 +469,9 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_mouse_click():
         d = _json_body()
+        _ok, _err = _preflight_guard(d)
+        if not _ok:
+            return _err
         x = int(d.get("x", 0))
         y = int(d.get("y", 0))
         # Guard: block (0,0) clicks — likely a rogue automation call
@@ -345,6 +493,9 @@ def register_routes(app, state, require_auth):
         NOTE: MOUSEEVENTF_ABSOLUTE via ctypes requires normalized 0-65535 coordinates, not raw pixels.
         pyautogui handles this correctly internally, so we use it directly."""
         d = _json_body()
+        _ok, _err = _preflight_guard(d)
+        if not _ok:
+            return _err
         x = int(d.get("x", 0))
         y = int(d.get("y", 0))
         button = d.get("button", "left")
@@ -487,6 +638,9 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_mouse_click_smart():
         d = _json_body()
+        _ok, _err = _preflight_guard(d)
+        if not _ok:
+            return _err
         x = int(d.get("x", 0))
         y = int(d.get("y", 0))
         if x == 0 and y == 0:
@@ -498,6 +652,9 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_mouse_dblclick():
         d = _json_body()
+        _ok, _err = _preflight_guard(d)
+        if not _ok:
+            return _err
         return _mouse_action("doubleclick", int(d.get("x", 0)), int(d.get("y", 0)),
                              d.get("button", "left"), d.get("background", True), state)
 
@@ -505,6 +662,9 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_mouse_rclick():
         d = _json_body()
+        _ok, _err = _preflight_guard(d)
+        if not _ok:
+            return _err
         return _mouse_action("rightclick", int(d.get("x", 0)), int(d.get("y", 0)),
                              "right", d.get("background", True), state)
 
@@ -522,6 +682,9 @@ def register_routes(app, state, require_auth):
                   duration_ms (default 500), background (bool).
         """
         d = _json_body()
+        _ok, _err = _preflight_guard(d)
+        if not _ok:
+            return _err
         btn = d.get("button", "left")
         steps = max(5, min(200, int(d.get("steps", 20))))
         duration_ms = max(50, min(10000, int(d.get("duration_ms", 500))))
@@ -613,12 +776,18 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_mouse_scroll():
         d = _json_body()
+        _ok, _err = _preflight_guard(d)
+        if not _ok:
+            return _err
         return _scroll_action(d.get("clicks", -3), state)
 
     @app.route("/key/type", methods=["POST"])
     @require_auth
     def route_key_type():
         d = _json_body()
+        _ok, _err = _preflight_guard(d)
+        if not _ok:
+            return _err
         text = d.get("text", "")
         if len(text) <= 5:
             _log(f"[GUARD] Blocked short/trivial keystroke: '{text}'")
@@ -629,6 +798,9 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_key_press():
         d = _json_body()
+        _ok, _err = _preflight_guard(d)
+        if not _ok:
+            return _err
         return _key_action("hotkey", d.get("keys", []), state)
 
     @app.route("/chain", methods=["POST"])
@@ -684,7 +856,24 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_input_send():
         d = _json_body()
+        _ok, _err = _preflight_guard(d)
+        if not _ok:
+            return _err
         return _key_action("type", d.get("keys", ""), state)
+
+    @app.route("/input/preflight", methods=["GET"])
+    @require_auth
+    def route_input_preflight():
+        """Describe the opt-in input preflight guard."""
+        return jsonify({
+            "status": "ok",
+            "feature": "input_preflight_guard",
+            "opt_in": True,
+            "usage": "include a 'target' object in /mouse/* or /key/* requests to verify "
+                     "foreground window (hwnd/pid/title/process) and coordinate bounds "
+                     "before injection; on mismatch returns 409.",
+            "target_fields": ["hwnd", "pid", "title", "process"],
+        })
 
     @app.route("/emergency/stop", methods=["POST"])
     @require_auth
