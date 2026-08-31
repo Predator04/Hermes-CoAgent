@@ -177,7 +177,7 @@ def register_routes(app, state, require_auth):
 
         try:
             launcher = _write_launcher(recipe_id)
-        except OSError as exc:
+        except (OSError, UnicodeError) as exc:
             return jsonify({"error": f"failed to write launcher: {exc}"}), 500
 
         args = _build_create_args(recipe_id, trigger, time_value, str(launcher))
