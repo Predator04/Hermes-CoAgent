@@ -294,7 +294,7 @@ def route_agent_exec_and_send():
         all_errors = errors
         if not ok:
             all_errors.append(f"summary: {resp_data}")
-        overall_ok = sent_count == len(findings)
+        overall_ok = (sent_count == len(findings)) and ok
 
     # Update config with last send info
     config["last_send"] = time.time()
