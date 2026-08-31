@@ -37,6 +37,9 @@ _PII_STATS = {
 # Refuse to decode/redact images larger than 50 megapixels — a small compressed
 # PNG can decompress to a gigantic bitmap and exhaust memory (decompression bomb).
 _MAX_IMAGE_PIXELS = 50_000_000
+# Cap the base64 payload before decoding — b64decode runs ahead of the pixel
+# guard, so a huge string would be expanded into memory (OOM) before any check.
+_MAX_B64_CHARS = 100 * 1024 * 1024
 
 
 def _debug_failure(context, exc):
@@ -85,6 +88,9 @@ def _redact_text(text):
 
 def _redact_image(base64_str):
     """Redact PII in an image by OCR-ing text and drawing black rectangles."""
+    if not isinstance(base64_str, str) or len(base64_str) > _MAX_B64_CHARS:
+        _LOGGER.warning("pii_redact: refusing oversized or non-string image payload")
+        return None, [], -1
     try:
         from PIL import Image, ImageDraw
         img_data = base64.b64decode(base64_str)
