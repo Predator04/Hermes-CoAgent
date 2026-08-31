@@ -126,7 +126,8 @@ def _first_run_or_authed() -> bool:
         return False
     import secrets as _secrets
     provided = header[7:]
-    return bool(_auth.AUTH_TOKEN) and _secrets.compare_digest(provided, _auth.AUTH_TOKEN or "")
+    effective = _auth.AUTH_TOKEN or _auth._load_token()
+    return bool(effective) and _secrets.compare_digest(provided, effective)
 
 
 def _current_token(create_if_missing: bool = False) -> str | None:
