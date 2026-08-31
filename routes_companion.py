@@ -39,6 +39,11 @@ KNOWN_COMMAND_TYPES = {
     "tabs",
 }
 
+# Keys that belong to the server, not the extension. A caller-supplied value for
+# any of these must not be forwarded in the extension's command payload (it would
+# shadow the server-generated field of the same name).
+_SERVER_ONLY_KEYS = {"timeout", "command_id", "ok", "error", "data"}
+
 DEFAULT_COMMAND_TIMEOUT = 60.0
 MAX_COMMAND_TIMEOUT = 300.0
 POLL_HOLD_SECONDS = 20.0
@@ -71,7 +76,9 @@ _pending = deque()
 _results = {}
 
 # Last time the extension successfully polled or posted a result.
-_last_seen = {"ts": None}
+# "mono" is monotonic (for the connected window check); "ts" is wall-clock
+# (for human-readable status output).
+_last_seen = {"ts": None, "mono": None}
 
 # Most recent tab metadata reported by the extension (best-effort).
 _active_tab = {"info": None}
@@ -83,11 +90,30 @@ _active_tab = {"info": None}
 
 
 def _now():
-    return time.time()
+    """Monotonic clock for all deadline/GC math.
+
+    time.time() (wall clock) is subject to NTP steps, DST transitions, and
+    manual clock changes — a backwards jump makes timeouts never expire, a
+    forwards jump makes them expire early. time.monotonic() is immune.
+    """
+    return time.monotonic()
+
+
+def _mark_seen_locked():
+    """Record a poll/result touch (must be called while holding _cond)."""
+    _last_seen["mono"] = _now()
+    _last_seen["ts"] = time.time()
 
 
 def _gc_results_locked():
-    """Drop delivered result records older than RESULT_RETENTION_SECONDS."""
+    """Drop stale result records so they can't leak memory.
+
+    Two classes are reaped:
+      * delivered records older than RESULT_RETENTION_SECONDS (normal path);
+      * undelivered records whose /command waiter must have given up long ago
+        (timeout is capped at MAX_COMMAND_TIMEOUT) — this covers the case where
+        a waiter thread died before running its own cleanup.
+    """
     if not _results:
         return
     cutoff = _now() - RESULT_RETENTION_SECONDS
@@ -98,12 +124,26 @@ def _gc_results_locked():
         and rec.get("posted_at") is not None
         and rec["posted_at"] < cutoff
     ]
+    undelivered_cutoff = _now() - (MAX_COMMAND_TIMEOUT + 60.0)
+    stale.extend(
+        cid
+        for cid, rec in _results.items()
+        if not rec.get("delivered")
+        and rec.get("created_at") is not None
+        and rec["created_at"] < undelivered_cutoff
+    )
     for cid in stale:
         _results.pop(cid, None)
+        # Also drop any still-queued pending entry so the extension won't
+        # execute a command nobody is waiting on.
+        for i, entry in enumerate(_pending):
+            if entry["command_id"] == cid:
+                del _pending[i]
+                break
 
 
 def _connected_locked():
-    ts = _last_seen["ts"]
+    ts = _last_seen["mono"]
     return ts is not None and (_now() - ts) <= CONNECTED_WINDOW_SECONDS
 
 
@@ -156,8 +196,14 @@ def register_routes(app, state, require_auth):
         if timeout > MAX_COMMAND_TIMEOUT:
             timeout = MAX_COMMAND_TIMEOUT
 
-        # Build the command payload for the extension (drop server-only keys).
-        command = {k: v for k, v in body.items() if k != "timeout"}
+        # Build the command payload for the extension, dropping server-only
+        # keys so a caller-supplied command_id/ok/error/data can't shadow the
+        # server-generated fields the extension relies on.
+        command = {
+            k: v
+            for k, v in body.items()
+            if k not in _SERVER_ONLY_KEYS
+        }
 
         command_id = uuid.uuid4().hex
 
@@ -279,9 +325,11 @@ def register_routes(app, state, require_auth):
             tab_hint = None
 
         with _cond:
-            _last_seen["ts"] = _now()
+            _mark_seen_locked()
             if tab_hint:
-                _active_tab["info"] = tab_hint
+                # Cap the stored tab hint so a misbehaving extension can't wedge
+                # unbounded data into the module-global status state.
+                _active_tab["info"] = tab_hint[:512]
             _gc_results_locked()
 
             deadline = _now() + POLL_HOLD_SECONDS
@@ -293,11 +341,11 @@ def register_routes(app, state, require_auth):
 
             if not _pending:
                 # Still nothing after the hold window.
-                _last_seen["ts"] = _now()
+                _mark_seen_locked()
                 return jsonify({"command": None})
 
             entry = _pending.popleft()
-            _last_seen["ts"] = _now()
+            _mark_seen_locked()
 
         return jsonify(
             {
@@ -325,7 +373,7 @@ def register_routes(app, state, require_auth):
         }
 
         with _cond:
-            _last_seen["ts"] = _now()
+            _mark_seen_locked()
             rec = _results.get(command_id)
             if rec is None:
                 # Unknown or already-cleaned-up id. This most often means the
