@@ -103,13 +103,13 @@ def _dispatch_one(webhook_id, record, event_type, data, timestamp):
             def redirect_request(self, req, fp, code, msg, headers, newurl):
                 return None
         opener = urllib.request.build_opener(NoRedirectHandler)
-        request = urllib.request.Request(
+        req = urllib.request.Request(
             record["url"],
             data=body,
             headers=headers,
             method="POST",
         )
-        with opener.open(request, timeout=15) as response:
+        with opener.open(req, timeout=15) as response:
             response_body = response.read(4096).decode("utf-8", errors="replace")
             response_info.update(
                 {
