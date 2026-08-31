@@ -137,7 +137,7 @@ def _extract_findings(text):
 def route_telegram_configure():
     data = _json_body()
     bot_token = (data.get("bot_token") or "").strip()
-    chat_id = (data.get("chat_id") or data.get("target_chat_id") or "").strip()
+    chat_id = str(data.get("chat_id") or data.get("target_chat_id") or "").strip()
 
     if not bot_token or not chat_id:
         return jsonify({"error": "bot_token and chat_id are required"}), 400
@@ -168,7 +168,7 @@ def route_telegram_configure():
 def route_telegram_register_chat():
     """Register this chat as the target for Codex findings."""
     data = _json_body()
-    chat_id = (data.get("chat_id") or "").strip()
+    chat_id = str(data.get("chat_id") or "").strip()
     if not chat_id:
         return jsonify({"error": "chat_id is required"}), 400
 
@@ -399,7 +399,7 @@ def route_agent_exec_to_telegram():
 
     bot_token = (config.get("bot_token") or "").strip()
     data = _json_body()
-    target_chat = (data.get("target") or data.get("chat_id") or _resolve_target_chat(config) or "").strip()
+    target_chat = str(data.get("target") or data.get("chat_id") or _resolve_target_chat(config) or "").strip()
     if not bot_token or not target_chat:
         return jsonify({"error": "Telegram bot_token and chat_id are required"}), 400
 
