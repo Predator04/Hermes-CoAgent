@@ -863,6 +863,27 @@ tr:hover td { background: rgba(45, 212, 191, .04); }
             <pre id="settingsOutput" class="output">No settings output yet.</pre>
           </div>
         </section>
+        <section class="panel">
+          <div class="panel-head"><h2>Tunnel</h2><div class="panel-tools"><button id="tunnelRefresh">Refresh</button></div></div>
+          <div class="panel-body stack">
+            <div id="tunnelStatus" class="muted">Loading...</div>
+            <div class="form-grid">
+              <select id="tunnelMethod">
+                <option value="cloudflare">Cloudflare (no account)</option>
+                <option value="ngrok">ngrok (needs authtoken)</option>
+              </select>
+              <input id="tunnelToken" type="password" placeholder="ngrok authtoken">
+              <input id="tunnelDomain" type="text" placeholder="Custom domain (optional)">
+            </div>
+            <div class="muted" style="font-size:12px">Get an ngrok authtoken at <a href="https://dashboard.ngrok.com/get-started/your-authtoken" target="_blank" rel="noopener">dashboard.ngrok.com</a>.</div>
+            <div class="row">
+              <button id="tunnelStart" class="primary">Start</button>
+              <button id="tunnelStop" class="danger">Stop</button>
+              <button id="tunnelCopy">Copy URL</button>
+            </div>
+            <div id="tunnelUrl" class="output" style="display:none"></div>
+          </div>
+        </section>
       </div>
     </section>
   </main>
@@ -1603,6 +1624,66 @@ tr:hover td { background: rgba(45, 212, 191, .04); }
     const data = await api("/update/check");
     setJson("settingsOutput", data);
   }
+  async function loadTunnel() {
+    try {
+      const data = await api("/tunnel/status");
+      if (data.active) {
+        setText("tunnelStatus", "Active (" + (data.method || "?") + ", port " + (data.port ?? "?") + ")");
+        const urlEl = $("tunnelUrl");
+        urlEl.style.display = "block";
+        urlEl.textContent = data.url || "(url pending)";
+        $("tunnelCopy").style.display = data.url ? "" : "none";
+        if (data.method) $("tunnelMethod").value = data.method;
+      } else {
+        setText("tunnelStatus", "Not running");
+        $("tunnelUrl").style.display = "none";
+        $("tunnelCopy").style.display = "none";
+      }
+    } catch (err) {
+      setText("tunnelStatus", err.message);
+    }
+  }
+  async function startTunnel() {
+    const method = $("tunnelMethod").value;
+    const body = { method };
+    const tok = $("tunnelToken").value.trim();
+    const domain = $("tunnelDomain").value.trim();
+    if (method === "ngrok" && tok) body.ngrok_authtoken = tok;
+    if (domain) body.domain = domain;
+    setText("tunnelStatus", "Starting " + method + "...");
+    try {
+      const data = await api("/tunnel/start", { method: "POST", body });
+      if (data.url) {
+        setText("tunnelStatus", "Active: " + data.url);
+        const urlEl = $("tunnelUrl");
+        urlEl.style.display = "block";
+        urlEl.textContent = data.url;
+        $("tunnelCopy").style.display = "";
+      }
+      await loadTunnel();
+    } catch (err) {
+      setText("tunnelStatus", "Start failed: " + err.message);
+    }
+  }
+  async function stopTunnel() {
+    try {
+      await api("/tunnel/stop", { method: "POST", body: {} });
+      setText("tunnelStatus", "Stopped");
+      await loadTunnel();
+    } catch (err) {
+      setText("tunnelStatus", "Stop failed: " + err.message);
+    }
+  }
+  async function copyTunnelUrl() {
+    const url = $("tunnelUrl").textContent || "";
+    if (!url || url === "(url pending)") { toast("No tunnel URL yet"); return; }
+    try {
+      await navigator.clipboard.writeText(url);
+      toast("URL copied");
+    } catch (_e) {
+      toast("Copy blocked - select the URL manually");
+    }
+  }
   // ---------------- Workflow builder ----------------
   const WF_NODE_TYPES = [
     { group: "triggers", type: "trigger.manual", title: "Manual Trigger", fields: [] },
@@ -2146,6 +2227,10 @@ tr:hover td { background: rgba(45, 212, 191, .04); }
     $("tgClear").addEventListener("click", () => clearTelegram().catch(err => toast(err.message)));
     $("webhooksLoad").addEventListener("click", () => listWebhooks().catch(err => toast(err.message)));
     $("updateCheck").addEventListener("click", () => checkUpdate().catch(err => toast(err.message)));
+    $("tunnelRefresh").addEventListener("click", () => loadTunnel().catch(err => toast(err.message)));
+    $("tunnelStart").addEventListener("click", () => startTunnel().catch(err => toast("Start failed: " + err.message)));
+    $("tunnelStop").addEventListener("click", () => stopTunnel().catch(err => toast("Stop failed: " + err.message)));
+    $("tunnelCopy").addEventListener("click", copyTunnelUrl);
     $("wfNew").addEventListener("click", wfNew);
     $("wfSave").addEventListener("click", () => wfSave().catch(err => toast("Save failed: " + err.message)));
     $("wfCompile").addEventListener("click", () => wfCompile().catch(err => toast("Compile failed: " + err.message)));
@@ -2174,7 +2259,7 @@ tr:hover td { background: rgba(45, 212, 191, .04); }
     bindEvents();
     wfInit();
     updateRegionText();
-    await Promise.allSettled([loadVersion(), ping(), refreshScreen(), loadTelegram(), loadFiles()]);
+    await Promise.allSettled([loadVersion(), ping(), refreshScreen(), loadTelegram(), loadFiles(), loadTunnel()]);
     refreshMetrics();
     state.screenTimer = setInterval(refreshScreen, 750);
     state.metricTimer = setInterval(refreshMetrics, 5000);

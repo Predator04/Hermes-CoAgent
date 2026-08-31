@@ -272,59 +272,69 @@ def _extract_tarball(tarball_path, extract_dir):
 # ── atomic swap ──────────────────────────────────────────────────────────────
 
 def _atomic_update(source_dir, dest_dir, preserve):
-    """Stage to sibling dir, then atomic rename."""
+    """Overlay new files onto dest in place (no directory rename).
+
+    Renaming the live install directory fails on Windows while the server is
+    running from it — its CWD and open files (e.g. memory.db) hold a lock and
+    os.rename raises WinError 32. Individual files are not locked, so we copy
+    files in place and keep a file-level backup for rollback instead.
+    """
     dest = Path(dest_dir).resolve()
-    staging = dest.with_name(dest.name + ".staging")
     backup = dest.with_name(dest.name + ".bak")
 
-    # Clean leftover staging/backup
-    if staging.exists():
-        shutil.rmtree(staging, ignore_errors=True)
+    # Clean any leftover backup from a prior interrupted update
     if backup.exists():
         shutil.rmtree(backup, ignore_errors=True)
 
-    # Copy new files to staging
-    staging.mkdir(parents=True, exist_ok=True)
+    # Determine which dest files will be overwritten, so we can back them up.
+    overwrite = []
     for item in Path(source_dir).rglob("*"):
         rel = item.relative_to(source_dir)
         if rel.parts and rel.parts[0] in SKIP_DIRS:
             continue
-        # Only skip top-level preserve files
         if len(rel.parts) == 1 and rel.parts[0] in preserve:
             continue
-        target = staging / rel
-        if item.is_dir():
-            target.mkdir(parents=True, exist_ok=True)
-        else:
-            target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(item, target)
+        if item.is_file():
+            overwrite.append(rel)
 
-    # Copy preserved files from dest into staging BEFORE the swap
-    # (these files are intentionally excluded from the tarball and must survive)
-    if dest.exists():
-        for p in preserve:
-            src = dest / p
-            if src.is_file():
-                dst = staging / p
+    # Back up dest files we are about to overwrite (file-level, not a dir rename)
+    backup.mkdir(parents=True, exist_ok=True)
+    backed_up = []
+    for rel in overwrite:
+        src = dest / rel
+        if src.is_file():
+            dst = backup / rel
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(str(src), str(dst))
+            backed_up.append(rel)
+
+    # Overlay new files in place (skipping preserve files so .token/config survive)
+    try:
+        for item in Path(source_dir).rglob("*"):
+            rel = item.relative_to(source_dir)
+            if rel.parts and rel.parts[0] in SKIP_DIRS:
+                continue
+            if len(rel.parts) == 1 and rel.parts[0] in preserve:
+                continue
+            target = dest / rel
+            if item.is_dir():
+                target.mkdir(parents=True, exist_ok=True)
+            else:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(str(item), str(target))
+    except Exception:
+        # Rollback: restore the files we overwrote from the backup
+        for rel in backed_up:
+            try:
+                src = backup / rel
+                dst = dest / rel
                 dst.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(str(src), str(dst))
-            elif src.is_dir():
-                dst = staging / p
-                if not dst.exists():
-                    shutil.copytree(str(src), str(dst))
-
-    # Atomic swap with rollback
-    if dest.exists():
-        dest.rename(backup)
-    try:
-        staging.rename(dest)
-    except Exception:
-        # Rollback: restore backup to dest
-        if backup.exists():
-            backup.rename(dest)
+            except Exception:
+                pass
         raise
 
-    # Clean up
+    # Clean up on success
     if backup.exists():
         shutil.rmtree(backup, ignore_errors=True)
     return True

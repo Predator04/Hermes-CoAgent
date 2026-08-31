@@ -380,20 +380,20 @@ pause
     if START_MENU:
         START_MENU.mkdir(parents=True, exist_ok=True)
         vbs_shortcut = START_MENU / "CoAgent.lnk"
-        if not vbs_shortcut.exists():
-            vbs_script = install_dir / "_create_shortcut.vbs"
-            vbs_script.write_text(f"""
+        vbs_script = install_dir / "_create_shortcut.vbs"
+        vbs_script.write_text(f"""
 Set WshShell = WScript.CreateObject("WScript.Shell")
 Set Shortcut = WshShell.CreateShortcut("{vbs_shortcut}")
 Shortcut.TargetPath = "{bat_path}"
 Shortcut.WorkingDirectory = "{install_dir}"
 Shortcut.Description = "Hermes CoAgent Desktop Control Server"
 Shortcut.WindowStyle = 7
+Shortcut.IconLocation = "{install_dir}\\coagent_icon.ico"
 Shortcut.Save
 """, encoding="utf-8")
-            run(["cscript", "//nologo", str(vbs_script)], timeout=10, check=False)
-            if vbs_script.exists():
-                vbs_script.unlink()
+        run(["cscript", "//nologo", str(vbs_script)], timeout=10, check=False)
+        if vbs_script.exists():
+            vbs_script.unlink()
 
         # Uninstall shortcut
         uninstall_lnk = START_MENU / "Uninstall CoAgent.lnk"
