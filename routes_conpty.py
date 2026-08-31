@@ -51,6 +51,32 @@ _MAX_WRITE_BYTES = 64 * 1024
 _MAX_READ_BYTES = 1024 * 1024
 
 
+def _utf8_safe_head(buf, n):
+    """Return a cut index >= n that lands on a UTF-8 codepoint boundary.
+
+    When dropping the oldest bytes from the head of the output buffer, advance
+    past any continuation bytes (0x80..0xBF) so we don't split a multi-byte
+    character and leave a dangling continuation byte at the new head.
+    """
+    cut = n
+    while cut < len(buf) and (buf[cut] & 0xC0) == 0x80:
+        cut += 1
+    return cut
+
+
+def _utf8_safe_cut(buf, n):
+    """Return a cut index <= n that lands on a UTF-8 codepoint boundary.
+
+    When returning the newest n bytes, back up past any continuation bytes so
+    the returned slice doesn't end mid-character. The partial character stays
+    in the buffer for the next read.
+    """
+    cut = n
+    while cut > 0 and (buf[cut - 1] & 0xC0) == 0x80:
+        cut -= 1
+    return cut
+
+
 def _windows_only(detail=None):
     payload = {"error": "Windows-only endpoint (ConPTY unavailable)"}
     if detail:
@@ -128,8 +154,11 @@ class _Session:
                     self.buffer.extend(data)
                     overflow = len(self.buffer) - _MAX_BUFFER_BYTES
                     if overflow > 0:
-                        # Drop from the head so recent output survives.
-                        del self.buffer[:overflow]
+                        # Drop from the head so recent output survives, but only
+                        # up to a UTF-8 boundary — a naive byte cut can split a
+                        # multi-byte character and corrupt the remainder.
+                        cut = _utf8_safe_head(self.buffer, overflow)
+                        del self.buffer[:cut]
         finally:
             self.closed = True
             try:
@@ -150,8 +179,10 @@ class _Session:
                 out = bytes(self.buffer)
                 self.buffer.clear()
             else:
-                out = bytes(self.buffer[:max_bytes])
-                del self.buffer[:max_bytes]
+                # Return up to max_bytes without splitting a UTF-8 character.
+                cut = _utf8_safe_cut(self.buffer, max_bytes)
+                out = bytes(self.buffer[:cut])
+                del self.buffer[:cut]
         return out
 
     def resize(self, cols, rows):
