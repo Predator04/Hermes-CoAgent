@@ -123,6 +123,14 @@ def _unique_target(target: Path) -> Path:
         counter += 1
 
 
+def _mtime_safe(path: Path) -> float:
+    """Return a path's mtime, or 0.0 if it vanished/raised (mid-scan delete)."""
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return 0.0
+
+
 def _format_rename(template: str, path: Path, mtime: float) -> str:
     """Apply a rename template. Supports {name}, {ext}, {date}, {ts}."""
     dt = datetime.fromtimestamp(mtime)
@@ -208,13 +216,15 @@ def _scan(directory: Path, rename_template: str = "", sort_by_category: bool = T
                         h.update(chunk)
                 digest = h.hexdigest()
             except (OSError, MemoryError):
-                # Huge/unreadable file: fall back to (size, name) identity.
-                digest = f"size:{size}:{path.name.lower()}"
+                # Huge/unreadable file: use a unique per-file sentinel so two
+                # *different* unreadable files can never be grouped as duplicates
+                # (which would otherwise move one and cause data loss).
+                digest = f"unhashable:{size}:{path.name.lower()}:{str(path)}"
             by_hash[digest].append(path)
         for digest, dupes in by_hash.items():
             if len(dupes) < 2:
                 continue
-            keep = sorted(dupes, key=lambda p: (p.stat().st_mtime, str(p)))[0]
+            keep = sorted(dupes, key=lambda p: (_mtime_safe(p), str(p)))[0]
             for dup in dupes:
                 if dup.resolve() == keep.resolve():
                     continue
