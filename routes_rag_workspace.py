@@ -101,7 +101,7 @@ def _index_directory(path):
     if not any(path == root or str(path).startswith(str(root) + os.sep) for root in allowed_roots):
         _LOGGER.warning("rag_workspace: blocked indexing outside allowed roots: %s", path)
         return 0
-    count = 0
+    new_docs = []
     for _root, _dirs, files in os.walk(path, followlinks=False):
         for name in files:
             filepath = Path(_root) / name
@@ -129,12 +129,16 @@ def _index_directory(path):
                     "chunks": chunks,
                     "indexed_at": datetime.now().isoformat(),
                 }
-                with _RAG_LOCK:
-                    _INDEX["documents"].append(doc)
-                count += 1
+                new_docs.append(doc)
             except Exception as exc:
                 _debug_failure(f"index {filepath}", exc)
-    return count
+    # Merge into the index under a single lock, replacing any existing doc with
+    # the same id so re-indexing refreshes rather than duplicating the corpus.
+    with _RAG_LOCK:
+        by_id = {d["id"]: d for d in _INDEX["documents"]}
+        by_id.update({d["id"]: d for d in new_docs})
+        _INDEX["documents"] = list(by_id.values())
+    return len(new_docs)
 
 
 def _rebuild_index():
