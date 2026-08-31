@@ -164,8 +164,8 @@ def _pii_redact():
 def _pii_redact_text():
     body = request.get_json(force=True, silent=True) or {}
     text = body.get("text", "")
-    if not text:
-        return jsonify({"ok": False, "error": "missing text"}), 400
+    if not isinstance(text, str):
+        return jsonify({"ok": False, "error": "text must be a string"}), 400
 
     redacted, count = _redact_text(text)
     with _PII_LOCK:
