@@ -48,6 +48,7 @@ NON_JSON_ROUTE_PREFIXES = (
     "/stream",
 )
 MIN_HEALTHY_PROBES = 3
+MAX_RESTARTS_PER_DAY = 10
 
 _CONFIG_LOCK = threading.RLock()
 _LOG_LOCK = threading.RLock()
@@ -401,7 +402,12 @@ def _perform_check(reason="scheduled"):
     if memory_status == "warning":
         _log_action("memory_warning", "warning", {"rss_mb": rss_mb, "limit_mb": config["memory_limit_mb"]})
     if overall == "critical" and config.get("auto_restart"):
-        if memory_status == "critical":
+        if _restart_count_today() >= MAX_RESTARTS_PER_DAY:
+            _log_action("restart_capped", "warning", {
+                "restarts_today": _restart_count_today(),
+                "limit": MAX_RESTARTS_PER_DAY,
+            })
+        elif memory_status == "critical":
             _spawn_restart(f"memory {rss_mb}MB exceeded {config['memory_limit_mb'] * 2}MB")
         elif errors > config["max_errors_before_restart"]:
             _spawn_restart(f"{errors} server errors in last hour")
