@@ -58,21 +58,45 @@ def _ocr_screen():
 
 
 def _dismiss_popup(match):
-    """Click the dismiss button for a detected popup."""
+    """Click the actual dismiss button for a detected popup, or do nothing.
+
+    Clicking a blind pixel offset from the popup keyword's text match can land
+    on a destructive button (e.g. "Delete", "Confirm"). Instead we OCR the
+    screen for the configured dismiss_keywords and click the center of that
+    match; if none is found we fail safe and click nothing.
+    """
     try:
-        import urllib.request, json
-        center = match.get("center", {})
-        x, y = center.get("x"), center.get("y")
-        if x is not None and y is not None:
-            # Click dismiss location (usually bottom-right of popup)
-            dismiss_x = x + 50
-            dismiss_y = y + 50
-            url = f"http://127.0.0.1:{_self_port()}/mouse/click"
-            data = json.dumps({"x": dismiss_x, "y": dismiss_y}).encode("utf-8")
-            req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
-            with urllib.request.urlopen(req, timeout=5):
-                pass
-            return True
+        import json
+        import urllib.request
+        from routes_ocr import _fullpage_auth_headers, ocr_find_text
+        with _RECOVERY_LOCK:
+            dismiss_keywords = list(_RECOVERY_STATE.get("dismiss_keywords", []))
+        x = y = None
+        for keyword in dismiss_keywords:
+            found = ocr_find_text(keyword)
+            if not found:
+                continue
+            first = found[0]
+            center = first.get("center", {}) if isinstance(first, dict) else {}
+            x, y = center.get("x"), center.get("y")
+            if x is not None and y is not None:
+                break
+        if x is None or y is None:
+            _LOGGER.debug("recovery: no dismiss button located; skipping click to avoid misclick")
+            return False
+        url = f"http://127.0.0.1:{_self_port()}/mouse/click"
+        data = json.dumps({"x": x, "y": y}).encode("utf-8")
+        headers = {"Content-Type": "application/json"}
+        # Attach the same auth token the rest of the service uses so the click
+        # is authorized even when auth is enabled (otherwise it silently 401s).
+        try:
+            headers.update(_fullpage_auth_headers() or {})
+        except Exception:
+            pass
+        req = urllib.request.Request(url, data=data, headers=headers)
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            resp.read(256)
+        return True
     except Exception as exc:
         _debug_failure("dismiss_popup", exc)
     return False
