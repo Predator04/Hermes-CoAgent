@@ -41,8 +41,13 @@ def _save_config(data):
     tmp = CONFIG_FILE.with_name(
         f".{CONFIG_FILE.name}.{os.getpid()}.{time.time_ns()}.tmp"
     )
-    tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
-    tmp.replace(CONFIG_FILE)
+    try:
+        tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        os.chmod(tmp, 0o600)
+        tmp.replace(CONFIG_FILE)
+    except Exception:
+        tmp.unlink(missing_ok=True)
+        raise
     _console("[telegram] config saved")
 
 
