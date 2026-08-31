@@ -123,15 +123,23 @@ def _should_filter(width=0, height=0, radius=0):
     )
 
 
+def _safe_int(value):
+    """Coerce a value to int, defaulting to 0 on non-numeric input."""
+    try:
+        return int(value)
+    except (ValueError, TypeError):
+        return 0
+
+
 def _filter_sample_events(events):
     global _FILTERED_EVENTS
     filtered = []
     for event in events:
         if not isinstance(event, dict):
             continue
-        width = int(event.get("width", event.get("cx", 0)) or 0)
-        height = int(event.get("height", event.get("cy", 0)) or 0)
-        radius = int(event.get("radius", 0) or 0)
+        width = _safe_int(event.get("width", event.get("cx", 0)) or 0)
+        height = _safe_int(event.get("height", event.get("cy", 0)) or 0)
+        radius = _safe_int(event.get("radius", 0) or 0)
         rejected = _should_filter(width=width, height=height, radius=radius)
         row = dict(event)
         row["rejected"] = rejected
