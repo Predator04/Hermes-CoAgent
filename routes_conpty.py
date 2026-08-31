@@ -233,6 +233,26 @@ def _drop(session_id):
         return _SESSIONS.pop(session_id, None)
 
 
+def fill_session(session_id, text, append_newline=True):
+    """Write text into a running terminal session (cross-module helper).
+
+    Used by the vault key-locker to inject a DPAPI-stored secret at an
+    interactive password prompt without the secret ever appearing in the
+    caller's request or response. Returns (ok: bool, err: str|None).
+    """
+    session = _lookup(session_id)
+    if session is None:
+        return False, "unknown session_id"
+    payload = text
+    if append_newline:
+        payload += "\r"
+    try:
+        session.write(payload.encode("utf-8"))
+        return True, None
+    except OSError as exc:
+        return False, f"write failed: {exc}"
+
+
 def register_routes(app, state, require_auth):
 
     @app.route("/term/start", methods=["POST"])

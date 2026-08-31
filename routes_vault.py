@@ -5,6 +5,7 @@ Endpoints:
   POST /vault/get    - read a credential {target} -> username + secret
   POST /vault/set    - write/update {target, username, secret, type}
   POST /vault/delete - remove a credential {target}
+  POST /vault/fill   - inject a credential secret into a terminal session (key locker)
 
 Backed by the Windows Credential Manager (advapi32 CredReadW/CredWriteW/
 CredEnumerateW/CredDeleteW), which stores secrets encrypted at rest via DPAPI.
@@ -290,3 +291,45 @@ def register_routes(app, state, require_auth):
             return jsonify({"error": f"credential '{target}' not found or delete failed"}), 404
         _log(f"vault/delete target={target}")
         return jsonify({"status": "ok", "deleted": target})
+
+    @app.route("/vault/fill", methods=["POST"])
+    @require_auth
+    def route_vault_fill():
+        """Inject a stored credential's secret into a running terminal session.
+
+        Body: {target, session_id}. Reads the DPAPI-stored secret server-side and
+        writes it to the ConPTY session stdin with a trailing Enter. The secret is
+        NEVER returned in the response — only an acknowledgement — so it never
+        transits the REST API or the agent/LLM context.
+        """
+        if not _WINDOWS:
+            return _windows_only()
+        advapi32, CREDENTIAL, _ = _cred_api()
+        if advapi32 is None:
+            return _windows_only()
+        d = _json_body()
+        if not isinstance(d, dict):
+            d = {}
+        target = d.get("target")
+        target = target.strip() if isinstance(target, str) else ""
+        session_id = d.get("session_id") or d.get("id")
+        if not target:
+            return _missing_field("target")
+        if not session_id:
+            return _missing_field("session_id")
+        result = _get_credential(advapi32, CREDENTIAL, target)
+        if result is None:
+            return jsonify({"error": f"credential '{target}' not found"}), 404
+        secret = result.get("secret", "")
+        if not secret:
+            return jsonify({"error": f"credential '{target}' has no stored secret"}), 400
+        try:
+            from routes_conpty import fill_session
+        except ImportError:
+            return jsonify({"error": "terminal module unavailable"}), 501
+        ok, err = fill_session(session_id, secret, append_newline=True)
+        if not ok:
+            status = 404 if "unknown session_id" in str(err) else 500
+            return jsonify({"error": err}), status
+        _log(f"vault/fill target={target} session={session_id} (secret not logged)")
+        return jsonify({"status": "ok", "filled": True, "session_id": session_id, "target": target})
