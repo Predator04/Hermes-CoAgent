@@ -277,7 +277,8 @@ def _poll_loop(key, log_name, level, interval, stop_evt):
         if stop_evt.wait(interval):
             break
     with _POLLERS_LOCK:
-        _POLLERS.pop(key, None)
+        if _POLLERS.get(key, {}).get("thread") is threading.current_thread():
+            _POLLERS.pop(key, None)
     _log(f"eventlog poller stop {key}")
 
 
