@@ -1020,6 +1020,102 @@ def send_keys(text: str):
         time.sleep(0.005)
     return {"success": True, "sent": sent, "injected": injected}
 
+
+def send_keys_scancode(text: str, hold_ms: int = 10):
+    """Type text using hardware scan-code injection (KEYEVENTF_SCANCODE).
+
+    Unicode SendInput (KEYEVENTF_UNICODE) is silently dropped by many
+    remote-desktop clients (RDP / Windows App, Citrix), DirectInput games, and
+    elevated or secure-desktop contexts. Scan-code injection survives those
+    because it injects hardware-level scan codes that the raw-input path
+    honours. Each character is translated to a virtual key via VkKeyScanW and
+    then to a scan code via MapVirtualKeyW; shifted characters hold Shift.
+
+    Windows-only: on non-Windows hosts this returns an error dict rather than
+    raising, so the Linux syntax-check CI stays green.
+    """
+    try:
+        if not hasattr(ctypes, "windll"):
+            return {"success": False, "error": "scancode typing is Windows-only"}
+        user32 = ctypes.windll.user32
+        KEYEVENTF_SCANCODE = 0x0008
+        KEYEVENTF_KEYUP = 0x0002
+        VK_SHIFT = 0x10
+        VK_RETURN = 0x0D
+
+        class KEYBDINPUT(ctypes.Structure):
+            _fields_ = [("wVk", wintypes.WORD),
+                        ("wScan", wintypes.WORD),
+                        ("dwFlags", wintypes.DWORD),
+                        ("time", wintypes.DWORD),
+                        ("dwExtraInfo", ctypes.c_void_p)]
+
+        class MOUSEINPUT(ctypes.Structure):
+            _fields_ = [("dx", wintypes.LONG),
+                        ("dy", wintypes.LONG),
+                        ("mouseData", wintypes.DWORD),
+                        ("dwFlags", wintypes.DWORD),
+                        ("time", wintypes.DWORD),
+                        ("dwExtraInfo", ctypes.c_void_p)]
+
+        class HARDWAREINPUT(ctypes.Structure):
+            _fields_ = [("uMsg", wintypes.DWORD),
+                        ("wParamL", wintypes.WORD),
+                        ("wParamH", wintypes.WORD)]
+
+        class INPUT_UNION(ctypes.Union):
+            _fields_ = [("ki", KEYBDINPUT), ("mi", MOUSEINPUT), ("hi", HARDWAREINPUT)]
+
+        class INPUT(ctypes.Structure):
+            _fields_ = [("type", wintypes.DWORD), ("u", INPUT_UNION)]
+
+        INPUT_KEYBOARD = 1
+
+        def _key(vk, scan, flags):
+            inp = INPUT(INPUT_KEYBOARD)
+            inp.u.ki = KEYBDINPUT(vk, scan, flags, 0, 0)
+            return inp
+
+        def _send(events):
+            arr = (INPUT * len(events))(*events)
+            return user32.SendInput(len(events), arr, ctypes.sizeof(INPUT))
+
+        sent = 0
+        injected = 0
+        for ch in str(text):
+            if ch in ("\n", "\r"):
+                scan = user32.MapVirtualKeyW(VK_RETURN, 0)
+                n = _send([_key(VK_RETURN, scan, KEYEVENTF_SCANCODE),
+                           _key(VK_RETURN, scan, KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP)])
+                injected += n
+                sent += 1
+                continue
+
+            vk_word = user32.VkKeyScanW(ord(ch))
+            if vk_word == -1 or vk_word == 0xFFFF:
+                # Unmappable character — skip rather than inject garbage.
+                continue
+            vk_code = vk_word & 0xFF
+            need_shift = bool(vk_word & 0x100)
+            scan = user32.MapVirtualKeyW(vk_code, 0)  # MAPVK_VK_TO_VSC
+            events = []
+            if need_shift:
+                shift_scan = user32.MapVirtualKeyW(VK_SHIFT, 0)
+                events.append(_key(VK_SHIFT, shift_scan, KEYEVENTF_SCANCODE))
+            events.append(_key(vk_code, scan, KEYEVENTF_SCANCODE))
+            events.append(_key(vk_code, scan, KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP))
+            if need_shift:
+                shift_scan = user32.MapVirtualKeyW(VK_SHIFT, 0)
+                events.append(_key(VK_SHIFT, shift_scan, KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP))
+            n = _send(events)
+            injected += n
+            sent += 1
+            if hold_ms:
+                time.sleep(hold_ms / 1000.0)
+        return {"success": True, "mode": "scancode", "sent": sent, "injected": injected}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
 # ── Test / Diag ────────────────────────────────────────────────────────────
 def diag():
     """Check UIA availability and basic functionality."""

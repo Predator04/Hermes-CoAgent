@@ -789,10 +789,38 @@ def register_routes(app, state, require_auth):
         if not _ok:
             return _err
         text = d.get("text", "")
+        mode = str(d.get("mode", "unicode")).lower()
         if len(text) <= 5:
             _log(f"[GUARD] Blocked short/trivial keystroke: '{text}'")
             return jsonify({"status": "blocked", "reason": "trivial_keystroke_blocked"})
+        if mode == "scancode":
+            try:
+                from uia_engine import send_keys_scancode
+            except ImportError:
+                return jsonify({"error": "uia_engine unavailable for scancode typing"}), 501
+            try:
+                hold_ms = int(d.get("hold_ms", 10))
+            except (TypeError, ValueError):
+                hold_ms = 10
+            result = send_keys_scancode(text, hold_ms=hold_ms)
+            if not result.get("success"):
+                return jsonify(result), 500
+            _log(f"Key type (scancode): {len(text)} chars")
+            _record_action("type", {"text": text, "mode": "scancode"}, result)
+            return jsonify({"status": "ok", "action": "type", "mode": "scancode", **result})
         return _key_action("type", text, state)
+
+    @app.route("/key/method", methods=["GET"])
+    @require_auth
+    def route_key_method():
+        """Report supported keyboard injection modes."""
+        return jsonify({
+            "status": "ok",
+            "default": "unicode",
+            "supported": ["unicode", "scancode"],
+            "usage": "POST /key/type with {\"mode\": \"scancode\"} for hardware scan-code "
+                     "injection (RDP / games / elevated windows); unicode is the default.",
+        })
 
     @app.route("/key/press", methods=["POST"])
     @require_auth
