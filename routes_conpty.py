@@ -20,6 +20,7 @@ Any subprocess / shell command strings are pure ASCII per project rules.
 """
 
 import os
+import subprocess
 import threading
 import time
 import uuid
@@ -206,15 +207,14 @@ class _Session:
 
 
 def subprocess_join(parts):
-    """Join a command list using shlex-style quoting for Windows shells."""
-    quoted = []
-    for p in parts:
-        s = str(p)
-        if not s or any(c in s for c in ' \t"'):
-            quoted.append('"' + s.replace('"', '\\"') + '"')
-        else:
-            quoted.append(s)
-    return " ".join(quoted)
+    """Join a command list using Windows MSVCRT quoting rules.
+
+    subprocess.list2cmdline implements the exact quoting Windows uses when
+    spawning a process (backslashes preceding quotes are doubled, trailing
+    backslashes escaped). A naive `"` -> `\"` replacement corrupts arguments
+    containing Windows paths (e.g. "C:\\path\\").
+    """
+    return subprocess.list2cmdline([str(p) for p in parts])
 
 
 def _resolve_default_command():
