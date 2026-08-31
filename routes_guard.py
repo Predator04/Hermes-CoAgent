@@ -51,6 +51,8 @@ _MAX_MATCHES = 500
 
 def _scan(text):
     """Return (matches, score, risk)."""
+    if isinstance(text, bytes):
+        text = text.decode("utf-8", errors="replace")
     if not isinstance(text, str) or not text:
         return [], 0, "none"
     truncated = len(text) > _MAX_INPUT
