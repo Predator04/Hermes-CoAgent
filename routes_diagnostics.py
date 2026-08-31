@@ -47,7 +47,7 @@ def _check_ocr():
         return {"status": "warning", "pytesseract": False,
                 "fix": "pip install pytesseract  (also install Tesseract-OCR binary)"}
 
-    path = getattr(pytesseract.pytesseract, "tesseract_cmd", "tesseract")
+    path = getattr(pytesseract.pytesseract, "tesseract_cmd", None) or "tesseract"
     try:
         r = subprocess.run([path, "--version"], capture_output=True, text=True, timeout=5)
         raw = (r.stdout or r.stderr).strip()
@@ -61,29 +61,41 @@ def _check_ocr():
 
 
 def _check_uia():
+    exc_com = None
     try:
         import comtypes
         import comtypes.client
-        comtypes.CoInitialize()
-        uia = comtypes.client.CreateObject(
-            "{FF48DBA4-60EF-4201-AA87-54103EEF594E}",
-            interface=comtypes.IUnknown,
-        )
-        del uia
-        return {"status": "ok", "backend": "comtypes", "detail": "UIA COM initialized"}
-    except Exception as exc_com:
+    except Exception as exc:
+        exc_com = exc
+    if exc_com is None:
         try:
-            import pywinauto
-            d = pywinauto.Desktop(backend="uia")
-            count = len(d.windows())
-            return {"status": "ok", "backend": "pywinauto",
-                    "detail": f"UIA via pywinauto ({count} desktop windows)"}
-        except Exception as exc_pw:
-            return {
-                "status": "warning",
-                "detail": f"comtypes: {exc_com}; pywinauto: {exc_pw}",
-                "fix": "pip install comtypes pywinauto",
-            }
+            comtypes.CoInitialize()
+            try:
+                uia = comtypes.client.CreateObject(
+                    "{FF48DBA4-60EF-4201-AA87-54103EEF594E}",
+                    interface=comtypes.IUnknown,
+                )
+                del uia
+                return {"status": "ok", "backend": "comtypes", "detail": "UIA COM initialized"}
+            finally:
+                try:
+                    comtypes.CoUninitialize()
+                except Exception:
+                    pass
+        except Exception as exc:
+            exc_com = exc
+    try:
+        import pywinauto
+        d = pywinauto.Desktop(backend="uia")
+        count = len(d.windows())
+        return {"status": "ok", "backend": "pywinauto",
+                "detail": f"UIA via pywinauto ({count} desktop windows)"}
+    except Exception as exc_pw:
+        return {
+            "status": "warning",
+            "detail": f"comtypes: {exc_com}; pywinauto: {exc_pw}",
+            "fix": "pip install comtypes pywinauto",
+        }
 
 
 def _check_mouse_keyboard():
@@ -234,8 +246,9 @@ def _check_coagent():
     uptime = None  # None means unknown/unavailable
     mem_mb = None
     cpu_pct = None
-    if _STATE_REF:
-        uptime = int(time.time() - getattr(_STATE_REF, "start_time", time.time()))
+    if _STATE_REF is not None:
+        _st = getattr(_STATE_REF, "start_time", None)
+        uptime = int(time.time() - _st) if _st else None
     try:
         import psutil
         proc = psutil.Process()
