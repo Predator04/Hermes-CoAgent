@@ -30,11 +30,11 @@ LOG = logging.getLogger("coagent.updates")
 updates_bp = Blueprint("updates", __name__)
 
 GITHUB_API_LATEST = "https://api.github.com/repos/Predator04/Hermes-CoAgent/releases/latest"
-PRESERVE_FILES = {".token", "telegram_config.json", "config.json"}
+PRESERVE_FILES = {".token", "telegram_config.json", "config.json", "memory.db"}
 SKIP_DIRS = {"__pycache__", ".pytest_cache", ".git"}
 RESTART_FLAG = COAGENT_DIR / ".restart_requested"
-# Lock must live OUTSIDE COAGENT_DIR: _atomic_update renames COAGENT_DIR → .bak,
-# and an open lock file inside would block the rename (Windows) or be deleted (POSIX).
+# Lock lives OUTSIDE COAGENT_DIR so the in-place overlay never touches it and it
+# survives across the self-restart.
 LOCK_PATH = Path(tempfile.gettempdir()) / "hermes-coagent.update.lock"
 
 _RESTART_LOCK = threading.Lock()
@@ -277,7 +277,8 @@ def _atomic_update(source_dir, dest_dir, preserve):
     Renaming the live install directory fails on Windows while the server is
     running from it — its CWD and open files (e.g. memory.db) hold a lock and
     os.rename raises WinError 32. Individual files are not locked, so we copy
-    files in place and keep a file-level backup for rollback instead.
+    files in place with per-file atomic replace and keep a file-level backup
+    for rollback.
     """
     dest = Path(dest_dir).resolve()
     backup = dest.with_name(dest.name + ".bak")
@@ -286,8 +287,9 @@ def _atomic_update(source_dir, dest_dir, preserve):
     if backup.exists():
         shutil.rmtree(backup, ignore_errors=True)
 
-    # Determine which dest files will be overwritten, so we can back them up.
+    # Plan: which dest files we will overwrite (back these up) vs. create new.
     overwrite = []
+    created = []
     for item in Path(source_dir).rglob("*"):
         rel = item.relative_to(source_dir)
         if rel.parts and rel.parts[0] in SKIP_DIRS:
@@ -295,9 +297,12 @@ def _atomic_update(source_dir, dest_dir, preserve):
         if len(rel.parts) == 1 and rel.parts[0] in preserve:
             continue
         if item.is_file():
-            overwrite.append(rel)
+            if (dest / rel).exists():
+                overwrite.append(rel)
+            else:
+                created.append(rel)
 
-    # Back up dest files we are about to overwrite (file-level, not a dir rename)
+    # Back up the dest files we are about to overwrite (file-level, not a dir rename)
     backup.mkdir(parents=True, exist_ok=True)
     backed_up = []
     for rel in overwrite:
@@ -307,6 +312,13 @@ def _atomic_update(source_dir, dest_dir, preserve):
             dst.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(str(src), str(dst))
             backed_up.append(rel)
+
+    def _atomic_copy(src: Path, dst: Path) -> None:
+        """Copy to a temp sibling then os.replace — a failed copy never leaves
+        a truncated destination."""
+        tmp = dst.with_name(dst.name + ".coagent-tmp")
+        shutil.copy2(str(src), str(tmp))
+        os.replace(str(tmp), str(dst))
 
     # Overlay new files in place (skipping preserve files so .token/config survive)
     try:
@@ -320,18 +332,32 @@ def _atomic_update(source_dir, dest_dir, preserve):
             if item.is_dir():
                 target.mkdir(parents=True, exist_ok=True)
             else:
+                if target.is_dir():
+                    raise RuntimeError(
+                        f"update layout conflict: source file vs dest dir at {rel}"
+                    )
                 target.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(str(item), str(target))
-    except Exception:
-        # Rollback: restore the files we overwrote from the backup
+                _atomic_copy(item, target)
+    except Exception as exc:
+        # Rollback: restore overwritten files and remove newly created files.
+        failures = []
         for rel in backed_up:
             try:
-                src = backup / rel
-                dst = dest / rel
-                dst.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(str(src), str(dst))
+                _atomic_copy(backup / rel, dest / rel)
+            except Exception as rerr:
+                failures.append(f"{rel}: {type(rerr).__name__}: {rerr}")
+        for rel in created:
+            try:
+                p = dest / rel
+                if p.is_file():
+                    p.unlink()
             except Exception:
                 pass
+        if failures:
+            LOG.error("update: rollback incomplete: %s", "; ".join(failures))
+            raise RuntimeError(
+                "update failed and rollback was incomplete: " + "; ".join(failures)
+            ) from exc
         raise
 
     # Clean up on success
