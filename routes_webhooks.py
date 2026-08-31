@@ -57,7 +57,11 @@ def _public_webhook(webhook_id, record):
 
 def _valid_url(url):
     parsed = urllib.parse.urlparse(url)
-    return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return False
+    if parsed.username or parsed.password:
+        return False
+    return True
 
 
 def _normalize_events(events):
