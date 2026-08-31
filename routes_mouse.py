@@ -182,14 +182,17 @@ def _preflight_guard(body):
         }), 409)
 
     failed = None
-    if target.get("hwnd") is not None:
-        want = int(target["hwnd"])
-        if want != fg["hwnd"]:
-            failed = {"reason": "hwnd_mismatch", "expected": want, "actual": fg["hwnd"]}
-    if failed is None and target.get("pid") is not None:
-        want = int(target["pid"])
-        if want != fg["pid"]:
-            failed = {"reason": "pid_mismatch", "expected": want, "actual": fg["pid"]}
+    try:
+        if target.get("hwnd") is not None:
+            want = int(target["hwnd"])
+            if want != fg["hwnd"]:
+                failed = {"reason": "hwnd_mismatch", "expected": want, "actual": fg["hwnd"]}
+        if failed is None and target.get("pid") is not None:
+            want = int(target["pid"])
+            if want != fg["pid"]:
+                failed = {"reason": "pid_mismatch", "expected": want, "actual": fg["pid"]}
+    except (TypeError, ValueError):
+        return False, (jsonify({"error": "input preflight: hwnd/pid must be integers"}), 400)
     if failed is None and target.get("title"):
         want = str(target["title"]).lower()
         if want not in fg["title"].lower():
