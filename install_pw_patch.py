@@ -60,19 +60,40 @@ def apply_patch(filepath):
     else:
         print("  WARNING: Expected code not found. Playwright may have changed.")
         print("  Trying alternative pattern...")
-        # Match the WHOLE `raise Error(...)` statement (whatever the message)
-        # and replace it with `pass`, so we never leave a dangling string literal
-        # or closing paren behind (which previously produced a SyntaxError).
-        alt_re = re.compile(r"raise Error\(.*?\)", re.DOTALL)
+        # Match the WHOLE `raise Error(...)` statement (whatever the message),
+        # anchored to the `if self._loop.is_running():` guard so we can never
+        # match an unrelated `raise Error(...)` elsewhere in the file. Replace
+        # the guard body with `pass` so we never leave a dangling string
+        # literal or closing paren behind (which previously produced a
+        # SyntaxError).
+        alt_re = re.compile(
+            r"(if self\._loop\.is_running\(\):\s*)raise Error\(.*?\)\n",
+            re.DOTALL,
+        )
         if alt_re.search(content):
-            content = alt_re.sub("pass  # Patched by CoAgent", content, count=1)
+            content = alt_re.sub(r"\1pass  # Patched by CoAgent\n", content, count=1)
         else:
             print("  Could not patch. Please manually edit:")
             print(f"  {filepath}")
             return
 
-    with open(filepath, "w", encoding="utf-8") as f:
-        f.write(content)
+    tmp_path = filepath + ".coagent_tmp"
+    try:
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            f.write(content)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, filepath)
+    except PermissionError:
+        print("  ERROR: permission denied - re-run as administrator or from the correct venv.")
+        print(f"  {filepath}")
+        sys.exit(1)
+    finally:
+        if os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
     print("  Patched successfully.")
 
 
