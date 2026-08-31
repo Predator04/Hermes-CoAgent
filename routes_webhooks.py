@@ -194,9 +194,9 @@ def _inbound_public(hook_id, record, include_secret=False):
 
 
 def _verify_inbound_signature(raw_body, secret, signature_header):
-    """Constant-time HMAC check. A hook without a secret accepts any payload."""
+    """Constant-time HMAC check. Fails closed when no secret is configured."""
     if not secret:
-        return True
+        return False
     if not signature_header:
         return False
     expected = hmac.new(secret.encode("utf-8"), raw_body, hashlib.sha256).hexdigest()
