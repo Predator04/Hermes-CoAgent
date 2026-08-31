@@ -3,6 +3,7 @@
 import threading
 import time
 import uuid
+import re
 from collections import deque
 from datetime import datetime
 from pathlib import Path
@@ -23,6 +24,9 @@ _RESULTS = []
 
 def _new_id():
     return f"{time.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
+
+
+_ID_RE = re.compile(r"^[0-9]{8}_[0-9]{6}_[0-9a-f]{8}$")
 
 
 def _capture_image():
@@ -189,6 +193,7 @@ def register_routes(app, state, require_auth):
             regions = _find_regions(mask)
 
             diff_id = _new_id()
+            DIFFS_DIR.mkdir(parents=True, exist_ok=True)
             diff_path = DIFFS_DIR / f"diff_{diff_id}.png"
             white = Image.new("RGB", mask.size, "white")
             red = Image.new("RGB", mask.size, (255, 0, 0))
@@ -237,6 +242,8 @@ def register_routes(app, state, require_auth):
     @bp.route("/diff/image/<diff_id>", methods=["GET"])
     @require_auth
     def route_diff_image(diff_id):
+        if not _ID_RE.fullmatch(diff_id):
+            return jsonify({"error": "invalid diff_id"}), 404
         with _LOCK:
             result = next((dict(item) for item in _RESULTS if item.get("diff_id") == diff_id), None)
         path = result.get("diff_image_path") if result else str(DIFFS_DIR / f"diff_{diff_id}.png")
