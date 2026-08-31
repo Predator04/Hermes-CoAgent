@@ -360,7 +360,12 @@ def register_routes(app, state, require_auth):
 
         # Optional convenience: append_newline appends "\r" (Enter key) so the
         # caller does not need to embed control chars in JSON.
-        if bool(body.get("append_newline")):
+        _append = body.get("append_newline")
+        if isinstance(_append, str):
+            # A JSON string like "false" is truthy to Python's bool(); parse it
+            # so only explicit true-ish values trigger the newline.
+            _append = _append.strip().lower() in ("1", "true", "yes", "on")
+        if _append:
             payload += "\r"
 
         if len(payload.encode("utf-8", errors="replace")) > _MAX_WRITE_BYTES:
