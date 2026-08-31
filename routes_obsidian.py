@@ -99,7 +99,11 @@ def _rest_request(method, path, body=None, timeout=3):
                 parsed = raw
             return {"ok": 200 <= resp.status < 300, "status": resp.status, "body": parsed}
     except urllib.error.HTTPError as e:
-        return {"ok": False, "status": e.code, "body": e.read().decode("utf-8", errors="replace")}
+        try:
+            error_body = e.read().decode("utf-8", errors="replace")
+        except Exception:
+            error_body = ""
+        return {"ok": False, "status": e.code, "body": error_body}
     except Exception as e:
         return {"ok": False, "status": None, "error": f"{type(e).__name__}: {e}"}
 
