@@ -107,6 +107,9 @@ def _undo_type(params):
         return {"error": f"pyautogui unavailable: {exc}"}, 500
 
     if previous_text is not None:
+        prev_text = str(previous_text)
+        if len(prev_text) > 4096:
+            return {"error": "previous text too long to restore safely (max 4096 chars)"}, 400
         try:
             import pyperclip
 
@@ -115,18 +118,20 @@ def _undo_type(params):
             except Exception:
                 previous_clipboard = None
             try:
-                pyperclip.copy(str(previous_text))
+                pyperclip.copy(prev_text)
                 pyautogui.hotkey("ctrl", "a")
                 time.sleep(0.02)
                 pyautogui.hotkey("ctrl", "v")
             finally:
-                if previous_clipboard is not None:
-                    try:
-                        time.sleep(0.05)
-                        pyperclip.copy(previous_clipboard)
-                    except Exception:
-                        pass
-            return {"undone": "type", "strategy": "restore_previous_text", "chars": len(str(previous_text))}, 200
+                # Always restore (or clear) the clipboard so a secret
+                # `previous_text` never lingers on the OS clipboard, even if the
+                # original read failed or the paste raised.
+                try:
+                    time.sleep(0.05)
+                    pyperclip.copy(previous_clipboard if previous_clipboard is not None else "")
+                except Exception:
+                    pass
+            return {"undone": "type", "strategy": "restore_previous_text", "chars": len(prev_text)}, 200
         except Exception as exc:
             return {"error": f"failed to restore previous text: {exc}"}, 500
 
