@@ -99,6 +99,7 @@ class _Session:
         self.started_at = time.time()
         self.buffer = bytearray()
         self.buffer_lock = threading.Lock()
+        self.write_lock = threading.Lock()
         self.closed = False
         self.exit_status = None
         self.read_error = None
@@ -171,7 +172,10 @@ class _Session:
             raise OSError("session closed")
         # pywinpty write() takes str.
         text = data.decode("utf-8", errors="replace") if isinstance(data, (bytes, bytearray)) else str(data)
-        return self.pty.write(text)
+        # pywinpty's underlying ConPTY handle is not documented thread-safe;
+        # serialize writes so concurrent /term/write calls can't interleave.
+        with self.write_lock:
+            return self.pty.write(text)
 
     def drain(self, max_bytes):
         with self.buffer_lock:
