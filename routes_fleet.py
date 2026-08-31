@@ -52,6 +52,10 @@ def _peer_url_blocked(url):
         return "invalid peer URL"
     if parsed.scheme.lower() not in ("http", "https"):
         return "peer URL scheme must be http or https"
+    # Query strings and fragments would corrupt the `url + path` concatenation
+    # in _peer_request; userinfo embeds credentials that leak into errors/logs.
+    if parsed.query or parsed.fragment or parsed.username or parsed.password:
+        return "peer URL must not contain query, fragment, or credentials"
     host = parsed.hostname
     if not host:
         return "peer URL has no host"
@@ -96,9 +100,16 @@ class _SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
             return None
         if _peer_url_blocked(newurl):
             return None
-        old_host = urllib.parse.urlsplit(req.full_url).hostname
-        new_host = urllib.parse.urlsplit(newurl).hostname
-        if old_host and new_host and old_host.lower() != new_host.lower():
+        old = urllib.parse.urlsplit(req.full_url)
+        new = urllib.parse.urlsplit(newurl)
+
+        def _origin(u):
+            scheme = (u.scheme or "").lower()
+            host = (u.hostname or "").lower()
+            port = u.port or (443 if scheme == "https" else 80)
+            return (scheme, host, port)
+
+        if old.hostname and new.hostname and _origin(old) != _origin(new):
             if "Authorization" in new_req.headers:
                 del new_req.headers["Authorization"]
         return new_req
@@ -119,7 +130,9 @@ def _load():
             _peers = {
                 name: entry
                 for name, entry in loaded.items()
-                if isinstance(entry, dict) and isinstance(entry.get("url"), str)
+                if isinstance(entry, dict)
+                and isinstance(entry.get("url"), str)
+                and isinstance(entry.get("token", ""), str)
             }
     except Exception as exc:
         _log(f"fleet: failed to load peers: {exc}")
