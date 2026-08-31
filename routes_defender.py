@@ -29,32 +29,82 @@ _EXCL_TYPES = ("path", "process", "extension")
 
 _DANGEROUS_EXCLUSIONS = ("*", "**", "*.*")
 
+# Extensions that, if excluded, would effectively disable scanning for the
+# overwhelming majority of executable/payload content.
+_DANGEROUS_EXTENSIONS = (
+    "exe", "dll", "com", "bat", "cmd", "ps1", "psm1", "js", "jse",
+    "vbs", "vbe", "scr", "sys", "msi", "jar", "hta", "cpl", "wsf",
+)
+
+# Core system processes that must never be excluded -- excluding them
+# neutralizes Defender's ability to inspect critical OS components.
+_DANGEROUS_PROCESSES = (
+    "cmd.exe", "powershell.exe", "pwsh.exe", "explorer.exe", "svchost.exe",
+    "lsass.exe", "winlogon.exe", "csrss.exe", "services.exe", "smss.exe",
+    "taskmgr.exe", "regsvr32.exe", "rundll32.exe", "mshta.exe",
+    "cscript.exe", "wscript.exe", "conhost.exe",
+)
+
+
+def _scrub_log_value(v):
+    """Strip control characters so untrusted values can't forge log lines."""
+    return "".join(c if c >= " " else " " for c in v)
+
 
 def _reject_exclusion_reason(etype, value):
     """Return a reason to reject an exclusion, or None if acceptable.
 
-    Broad exclusions (drive roots, whole-system directories, bare wildcards)
-    would effectively disable Defender protection for everything, which this
-    endpoint is explicitly *not* intended to allow.
+    Broad exclusions (drive roots, whole-system directories, bare wildcards,
+    dangerous extensions/processes) would effectively disable Defender
+    protection for everything, which this endpoint is explicitly *not*
+    intended to allow.
     """
     v = value.strip()
+    if not v:
+        return "value is required"
+    # Control characters would break the log lines and the PowerShell env-var
+    # handoff (a NUL byte makes subprocess.run raise) and can inject log text.
+    if any(ord(c) < 32 for c in v):
+        return "value must not contain control characters"
     if v in _DANGEROUS_EXCLUSIONS:
         return "wildcard-only exclusions are not allowed"
+    # Wildcards anywhere can broaden an exclusion to whole trees / families.
+    if "*" in v or "?" in v:
+        return "wildcards are not allowed in exclusions"
     if etype == "path":
         if v in ("\\", "/"):
             return "drive-root exclusions are not allowed"
-        norm = v.rstrip("\\/")
+        # Normalize separators and resolve `..` so path tricks can't evade the
+        # protected-set comparison below.
+        norm = os.path.normpath(v)
         if re.match(r"^[a-zA-Z]:[\\/]?$", norm):
             return "drive-root exclusions are not allowed"
-        protected = {
+        # UNC roots (\\server\share) can map anywhere; reject them outright.
+        if norm.startswith("\\\\"):
+            return "UNC exclusions are not allowed"
+        protected = (
             "c:\\windows",
             "c:\\program files",
             "c:\\program files (x86)",
             "c:\\users",
             "c:\\programdata",
-        }
-        if norm.lower() in protected:
-            return "system-directory exclusions are not allowed"
+        )
+        low = norm.lower()
+        for p in protected:
+            if low == p or low.startswith(p + "\\"):
+                return "system-directory exclusions are not allowed"
+    elif etype == "process":
+        # Process exclusions must be bare file names, not paths or wildcards.
+        if "\\" in v or "/" in v:
+            return "process exclusions must be file names, not paths"
+        if v.lower() in _DANGEROUS_PROCESSES:
+            return "system-process exclusions are not allowed"
+    elif etype == "extension":
+        ext = v.lstrip(".")
+        if "\\" in ext or "/" in ext or "." in ext or " " in ext:
+            return "invalid extension exclusion"
+        if ext.lower() in _DANGEROUS_EXTENSIONS:
+            return "this extension cannot be excluded"
     return None
 
 
@@ -174,8 +224,12 @@ try {
 """
 
 _SCAN_FULL_SCRIPT = r"""
-Start-Process -FilePath 'powershell.exe' -ArgumentList '-NoProfile','-NonInteractive','-Command','Start-MpScan -ScanType FullScan' -WindowStyle Hidden
-[ordered]@{ scan_type='full'; started=$true; note='Full scan running in background; poll /defender/status' } | ConvertTo-Json -Compress
+try {
+  $null = Start-Process -FilePath 'powershell.exe' -ArgumentList '-NoProfile','-NonInteractive','-Command','Start-MpScan -ScanType FullScan' -WindowStyle Hidden -ErrorAction Stop
+  [ordered]@{ scan_type='full'; started=$true; note='Full scan running in background; poll /defender/status' } | ConvertTo-Json -Compress
+} catch {
+  [ordered]@{ scan_type='full'; started=$false; error=$_.Exception.Message } | ConvertTo-Json -Compress
+}
 """
 
 
@@ -227,11 +281,11 @@ def register_routes(app, state, require_auth):
             "COAGENT_DEF_TYPE": etype,
             "COAGENT_DEF_VALUE": value,
         })
-        if code != 0 and "raw" in result:
+        if "raw" in result:
             return jsonify({"error": stderr or result["raw"]}), 500
-        if result.get("added") is False:
+        if not result.get("added"):
             return jsonify({"error": result.get("error") or "failed to add exclusion"}), 500
-        _log(f"defender: add {etype} exclusion {value}")
+        _log(f"defender: add {etype} exclusion {_scrub_log_value(value)}")
         return jsonify(result)
 
     @app.route("/defender/exclusions/remove", methods=["POST"])
@@ -248,11 +302,11 @@ def register_routes(app, state, require_auth):
             "COAGENT_DEF_TYPE": etype,
             "COAGENT_DEF_VALUE": value,
         })
-        if code != 0 and "raw" in result:
+        if "raw" in result:
             return jsonify({"error": stderr or result["raw"]}), 500
-        if result.get("removed") is False:
+        if not result.get("removed"):
             return jsonify({"error": result.get("error") or "failed to remove exclusion"}), 500
-        _log(f"defender: remove {etype} exclusion {value}")
+        _log(f"defender: remove {etype} exclusion {_scrub_log_value(value)}")
         return jsonify(result)
 
     @app.route("/defender/scan", methods=["POST"])
@@ -262,13 +316,15 @@ def register_routes(app, state, require_auth):
         scan_type = str(data.get("type") or "quick").lower()
         if scan_type == "full":
             result, stderr, code = _ps_json(_SCAN_FULL_SCRIPT, timeout=30)
+            success_key = "started"
         elif scan_type == "quick":
             result, stderr, code = _ps_json(_SCAN_QUICK_SCRIPT, timeout=600)
+            success_key = "completed"
         else:
             return jsonify({"error": "type must be 'quick' or 'full'"}), 400
-        if code != 0 and "raw" in result:
+        if "raw" in result:
             return jsonify({"error": stderr or result["raw"]}), 500
-        if isinstance(result, dict) and result.get("completed") is False:
+        if isinstance(result, dict) and result.get(success_key) is False:
             return jsonify({"error": result.get("error") or "scan failed"}), 500
         _log(f"defender: scan {scan_type}")
         return jsonify(result)
