@@ -126,9 +126,11 @@ def _resolve_hwnd(step, context):
     hwnd = step.get("hwnd") or context.get("hwnd")
     if hwnd:
         try:
-            return int(hwnd)
+            resolved = int(hwnd)
         except (TypeError, ValueError):
-            return 0
+            resolved = 0
+        if resolved:
+            return resolved
     title = step.get("window") or step.get("title") or context.get("window", "")
     if title and _HAS_BG_PRIMS:
         found = _find_window_by_title(str(title))
@@ -312,6 +314,12 @@ def register_routes(app, state, require_auth):
             return jsonify({"error": "loop_delay and step_delay must be numeric"}), 400
 
         run_id = uuid.uuid4().hex[:12]
+        worker = threading.Thread(
+            target=_worker_loop,
+            args=(run_id, task, steps, loop, loop_delay, step_delay),
+            name=f"bg-agent-{run_id}",
+            daemon=True,
+        )
         with _STATE_LOCK:
             if _STATE["active"]:
                 return jsonify({
@@ -320,14 +328,7 @@ def register_routes(app, state, require_auth):
                 }), 409
             _STOP_EVENT.clear()
             _reset_state(run_id, task, len(steps))
-
-        worker = threading.Thread(
-            target=_worker_loop,
-            args=(run_id, task, steps, loop, loop_delay, step_delay),
-            name=f"bg-agent-{run_id}",
-            daemon=True,
-        )
-        _WORKER["thread"] = worker
+            _WORKER["thread"] = worker
         worker.start()
 
         _log(f"bg/run started run={run_id} task={task!r} steps={len(steps)} loop={loop}")
@@ -361,10 +362,9 @@ def register_routes(app, state, require_auth):
         _STOP_EVENT.set()
         _set_status("stopping")
         worker = _WORKER.get("thread")
-        joined = False
         if worker and worker.is_alive():
             worker.join(timeout=2.0)
-            joined = not worker.is_alive()
+        joined = not (worker and worker.is_alive())
         _log(f"bg/stop signalled run={run_id} joined={joined}")
         return jsonify({
             "status": "stopping",
