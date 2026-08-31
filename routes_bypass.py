@@ -479,8 +479,18 @@ def _auto_clean(text: str) -> dict:
             for c in orig
         )
 
-        # Pick randomly between encoded, mixed-case, or encoded+mixed
-        choice = random.choice([encoded, mixed, encoded.upper(), encoded.lower()])
+        # Pick randomly between encoded, mixed-case, or encoded+mixed — but
+        # NEVER leave the original trigger intact, or the "cleaned" text would
+        # still trip the filter. mixed == orig when orig is already all-caps,
+        # and leet encoding can be a no-op for chars with no substitution, so
+        # filter out any candidate equal to the trigger before choosing.
+        candidates = [encoded, mixed, encoded.upper(), encoded.lower()]
+        candidates = [c for c in candidates if c.casefold() != orig.casefold()]
+        if not candidates:
+            # Every candidate collapsed back to the original — force a change
+            # by interleaving a zero-width character between each char.
+            candidates = ["".join(ch + random.choice(ZERO_WIDTH) for ch in orig)]
+        choice = random.choice(candidates)
         replacements.append({
             "original": orig,
             "replacement": choice,
