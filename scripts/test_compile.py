@@ -31,4 +31,8 @@ if errors:
     print(f"\n{len(errors)} file(s) failed syntax check.")
     sys.exit(1)
 
+if checked == 0:
+    print(f"ERROR: no Python files found under {ROOT}", file=sys.stderr)
+    sys.exit(1)
+
 print(f"ALL OK — {checked} files parsed cleanly.")
