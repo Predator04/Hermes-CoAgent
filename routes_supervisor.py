@@ -20,6 +20,7 @@ import shlex
 import subprocess
 import threading
 import time
+import urllib.parse
 import urllib.request
 import uuid
 
@@ -32,6 +33,7 @@ _JOBS = {}
 _JOBS_LOCK = threading.Lock()
 _MAX_JOBS = 64
 _MAX_TAIL_LINES = 500
+_MAX_BACKOFF_SEC = 300  # cap exponential backoff between retries
 _CLEANUP_AGE_SEC = 6 * 3600  # drop finished job records after 6 hours
 
 
@@ -76,6 +78,10 @@ def _compile_patterns(raw):
 
 def _post_webhook(url, payload):
     try:
+        parsed = urllib.parse.urlparse(url)
+        if parsed.scheme not in ("http", "https"):
+            _log(f"supervise: webhook rejected (unsupported scheme): {url}")
+            return None
         req = urllib.request.Request(
             url,
             data=json.dumps(payload).encode("utf-8"),
@@ -92,6 +98,10 @@ def _post_webhook(url, payload):
 def _kill(proc):
     try:
         proc.kill()
+    except Exception:
+        pass
+    try:
+        proc.wait(timeout=2)
     except Exception:
         pass
 
@@ -112,6 +122,7 @@ def _run_job(job):
         job["tail"] = []
         job["matched_expected"] = []
         job["matched_errors"] = []
+        job["error_hit"] = False
 
         try:
             proc = subprocess.Popen(
@@ -188,7 +199,7 @@ def _run_job(job):
             _log(f"supervise {job['id']}: {('hang' if hang_hit else 'error-pattern')} "
                  f"attempt {attempt}, retrying in {backoff}s")
             time.sleep(backoff)
-            backoff = backoff * 2 if backoff else backoff
+            backoff = min(backoff * 2, _MAX_BACKOFF_SEC)
             continue
 
         # Terminal.
