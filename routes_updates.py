@@ -163,9 +163,12 @@ def _version_tuple(value: str) -> tuple:
         from packaging.version import Version
         return tuple(Version(_normalize_version(value)).release)
     except ImportError:
-        # Fallback: simple numeric split
+        # Fallback: simple numeric split. Strip pre-release/build metadata
+        # ("1.2.3-rc1" → "1.2.3") so a pre-release is never ranked as newer
+        # than the corresponding stable release.
+        clean = re.split(r"[-+]", _normalize_version(value))[0]
         parts = []
-        for part in re.split(r"[^0-9]+", _normalize_version(value)):
+        for part in re.split(r"[^0-9]+", clean):
             if part:
                 parts.append(int(part))
         return tuple(parts or [0])
