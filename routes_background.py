@@ -239,9 +239,12 @@ def uia_invoke_element(find_method: str, find_value: str) -> dict:
                     wrapper.invoke()
                     method = "pywinauto_InvokePattern"
                 except Exception:
-                    # LegacyIAccessible fallback
-                    wrapper.legacy_properties['DefaultAction']
-                    method = "pywinauto_LegacyIAccessible"
+                    # LegacyIAccessible fallback — actually invoke the default action.
+                    try:
+                        wrapper.iface_action.DoDefaultAction()
+                        method = "pywinauto_LegacyIAccessible"
+                    except Exception as e_invoke:
+                        return {"success": False, "error": f"Cannot invoke element: {e_invoke}"}
 
                 return {
                     "success": True,
@@ -460,13 +463,17 @@ def route_background_window_move():
     """Move/resize a window WITHOUT activation or z-order change."""
     payload = _json_body()
     hwnd = payload.get("hwnd")
-    x = payload.get("x", 0)
-    y = payload.get("y", 0)
-    w = payload.get("width", 800)
-    h = payload.get("height", 600)
 
     if not hwnd:
         return jsonify({"success": False, "error": "Missing hwnd"}), 400
+
+    try:
+        x = int(payload.get("x", 0))
+        y = int(payload.get("y", 0))
+        w = int(payload.get("width", 800))
+        h = int(payload.get("height", 600))
+    except (TypeError, ValueError):
+        return jsonify({"success": False, "error": "x, y, width, height must be integers"}), 400
 
     ok = focus_safe_set_pos(hwnd, x, y, w, h)
     _bg_tick(f"move window {hwnd}")
@@ -565,7 +572,7 @@ def route_background_hotkey():
 
     # Press modifiers
     for mod in modifiers:
-        vk = vk_map.get(mod.lower())
+        vk = vk_map.get(mod.lower()) if isinstance(mod, str) else None
         if vk:
             user32.PostMessageW(hwnd, WM_KEYDOWN, vk, 0)
 
@@ -579,7 +586,7 @@ def route_background_hotkey():
 
     # Release modifiers (reverse order)
     for mod in reversed(modifiers):
-        vk = vk_map.get(mod.lower())
+        vk = vk_map.get(mod.lower()) if isinstance(mod, str) else None
         if vk:
             user32.PostMessageW(hwnd, WM_KEYUP, vk, 0)
 
@@ -678,7 +685,7 @@ def route_background_automate():
                     mods = action.get("modifiers", [])
                     if current_hwnd:
                         for mod in mods:
-                            vk = {"ctrl": 0x11, "alt": 0x12, "shift": 0x10, "win": 0x5B}.get(mod.lower())
+                            vk = {"ctrl": 0x11, "alt": 0x12, "shift": 0x10, "win": 0x5B}.get(mod.lower()) if isinstance(mod, str) else None
                             if vk:
                                 user32.PostMessageW(current_hwnd, WM_KEYDOWN, vk, 0)
                         for key in keys:
@@ -688,7 +695,7 @@ def route_background_automate():
                                 time.sleep(0.03)
                                 user32.PostMessageW(current_hwnd, WM_KEYUP, vk, 0)
                         for mod in reversed(mods):
-                            vk = {"ctrl": 0x11, "alt": 0x12, "shift": 0x10, "win": 0x5B}.get(mod.lower())
+                            vk = {"ctrl": 0x11, "alt": 0x12, "shift": 0x10, "win": 0x5B}.get(mod.lower()) if isinstance(mod, str) else None
                             if vk:
                                 user32.PostMessageW(current_hwnd, WM_KEYUP, vk, 0)
                         result["success"] = True
@@ -879,7 +886,10 @@ def route_screen_capture_window():
     if not hwnd:
         return jsonify({"ok": False, "error": "Provide hwnd or title"}), 400
 
-    hwnd = int(hwnd)
+    try:
+        hwnd = int(hwnd)
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "hwnd must be an integer"}), 400
     data, method = _capture_window_bytes(hwnd, client_only=client_only)
     if not data:
         return jsonify({"ok": False, "hwnd": hwnd, "error": method}), 500
