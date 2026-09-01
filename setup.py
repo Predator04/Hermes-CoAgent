@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Setuptools metadata for Hermes CoAgent — pip-installable package definition."""
 
+import re
 from pathlib import Path
 
 from setuptools import setup
@@ -18,8 +19,10 @@ def read_requirements():
         line = line.strip()
         if not line or line.startswith("#"):
             continue
-        # Strip inline comments (e.g. "qrcode>=7.4  # optional")
-        line = line.split("#", 1)[0].strip()
+        # Strip inline comments (e.g. "qrcode>=7.4  # optional"). Split only on
+        # a whitespace-preceded '#' so VCS/URL fragments such as
+        # "git+https://github.com/u/r.git#egg=name" keep their egg fragment.
+        line = re.split(r"\s+#", line, 1)[0].strip()
         if not line:
             continue
         # Skip pip directive lines (-r, -e, --index-url, etc.)
