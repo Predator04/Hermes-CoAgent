@@ -25,6 +25,10 @@ def _ps_quote(value):
 def _pid_is_coagent(pid):
     """Return True if the given PID is a Python process running hermes_coagent."""
     try:
+        pid = int(pid)
+    except (TypeError, ValueError):
+        return False
+    try:
         result = subprocess.run(
             ["powershell", "-NoProfile", "-Command",
              f"(Get-CimInstance Win32_Process -Filter \"ProcessId={pid}\").CommandLine"],
@@ -69,7 +73,10 @@ def _find_coagent_pid():
 
 
 def _kill_coagent(pid):
-    """Kill the CoAgent process by PID, force-killing if it survives."""
+    """Kill the CoAgent process by PID, force-killing if it survives.
+
+    Returns True if the process is confirmed gone, False if it is still alive.
+    """
     try:
         subprocess.run(
             ["taskkill", "/PID", str(pid)],
@@ -95,6 +102,7 @@ def _kill_coagent(pid):
                 os.remove(COAGENT_PID_FILE)
             except OSError:
                 pass
+    return not _pid_is_coagent(pid)
 
 
 def _launch_via_scheduled_task():
@@ -108,8 +116,7 @@ def _launch_via_scheduled_task():
         f"-WorkingDirectory {_ps_quote(os.path.dirname(COAGENT_SCRIPT))};"
         "$t=New-ScheduledTaskTrigger -Once -At (Get-Date).AddSeconds(2);"
         f"$p=New-ScheduledTaskPrincipal -UserId {_ps_quote(getpass.getuser())} -LogonType Interactive -RunLevel Highest;"
-        "Register-ScheduledTask -TaskName CoAgentLaunch -Action $a -Trigger $t -Principal $p -Force|Out-Null;"
-        "Start-ScheduledTask -TaskName CoAgentLaunch"
+        "Register-ScheduledTask -TaskName CoAgentLaunch -Action $a -Trigger $t -Principal $p -Force|Out-Null"
         "} catch { Write-Error $_; exit 1 }"
     )
     result = subprocess.run(
@@ -128,7 +135,9 @@ def main():
     pid = _find_coagent_pid()
     if pid:
         print(f"Found CoAgent PID: {pid}")
-        _kill_coagent(pid)
+        if not _kill_coagent(pid):
+            print("Failed to kill existing CoAgent process; aborting to avoid a duplicate.", file=sys.stderr)
+            sys.exit(1)
     else:
         print("No running CoAgent found, launching fresh...")
 
