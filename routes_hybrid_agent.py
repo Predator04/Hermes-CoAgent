@@ -280,8 +280,8 @@ def _agent_act():
     action = body.get("action") or "click"
     target = body.get("target") or body.get("query") or body.get("text")
 
-    # Actions like scroll/snap may not need a textual target.
-    targetless_actions = {"scroll", "snap", "press_enter", "escape", "tab"}
+    # Actions like scroll may not need a textual target.
+    targetless_actions = {"scroll", "press_enter", "escape", "tab"}
     if not target and action not in targetless_actions:
         return jsonify({"ok": False, "error": "missing 'target'"}), 400
 
