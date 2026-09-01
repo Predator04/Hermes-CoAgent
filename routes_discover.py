@@ -51,7 +51,10 @@ _GROUP_REQUIREMENTS = {
 def _dep_present(module_name):
     try:
         return importlib.util.find_spec(module_name) is not None
-    except (ImportError, ValueError):
+    except Exception:
+        # Broken installs / missing parent packages (AttributeError on a missing
+        # __path__, ModuleNotFoundError during parent import) should report
+        # "not present" rather than crash the whole /discover request.
         return False
 
 
