@@ -116,7 +116,11 @@ def _token_path():
 def _load_token():
     tp = _token_path()
     if tp and tp.exists():
-        return tp.read_text(encoding="utf-8").strip()
+        try:
+            return tp.read_text(encoding="utf-8").strip()
+        except OSError as e:
+            print(f"[Auth] WARNING: cannot read token file {tp}: {e}", file=sys.stderr)
+            return None
     return None
 
 
