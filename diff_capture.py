@@ -24,7 +24,7 @@ diff_bp = Blueprint("diff_capture", __name__)
 _prev_frame = None
 _prev_hash = None
 _frame_count = 0
-_stats = {"key_frames": 0, "diff_frames": 0, "total_bytes_saved": 0}
+_stats = {"key_frames": 0, "diff_frames": 0, "total_bytes_saved": 0, "total_key_frame_bytes": 0}
 _state_lock = threading.Lock()
 
 
@@ -105,6 +105,7 @@ def capture():
             _prev_frame = curr.copy()
             _prev_hash = curr_hash
             _stats["key_frames"] += 1
+            _stats["total_key_frame_bytes"] += curr.width * curr.height * 3
             return {
                 "full": True,
                 "frame": _frame_count,
@@ -137,10 +138,12 @@ def capture():
 
         if is_full:
             _stats["key_frames"] += 1
+            _stats["total_key_frame_bytes"] += curr.width * curr.height * 3
             result = {"full": True}
         else:
             _stats["diff_frames"] += 1
-            saved = total_pixels - changed_pixels
+            # Store actual bytes (RGB = 3 bytes/pixel), not pixel counts.
+            saved = (total_pixels - changed_pixels) * 3
             _stats["total_bytes_saved"] += saved
             result = {"full": False}
 
@@ -182,7 +185,7 @@ def get_stats():
         "total_frames": total_frames,
         "avg_bytes_saved_per_frame": int(ratio),
         "compression_ratio": round(
-            stats["total_bytes_saved"] / max(1, stats["key_frames"] * 1920 * 1080 * 3), 4
+            stats["total_bytes_saved"] / max(1, stats["total_key_frame_bytes"]), 4
         ),
     }
 
