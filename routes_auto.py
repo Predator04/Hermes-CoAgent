@@ -1514,6 +1514,48 @@ TOOLS = {
     "repo": "duckdb/duckdb",
     "stars": 40852,
     "url": "https://github.com/duckdb/duckdb"
+  },
+  "dasel": {
+    "added": "2026-09-01",
+    "command": "dasel -i json '<query>'",
+    "desc": "dasel (Data-Select) is a unified query, transform and modify tool for structured data. It reads and writes JSON, YAML, TOML, XML, CSV, INI, HCL and KDL with one selector syntax, so it can extract values, edit config files in place, and convert between formats from a single CLI.",
+    "endpoints": {
+      "/auto/dasel/info": "Feature metadata, install status, version",
+      "/auto/dasel/ping": "Health check",
+      "/auto/dasel/query": "POST - select a value or node from structured data",
+      "/auto/dasel/modify": "POST - modify a value in place and return the full document",
+      "/auto/dasel/convert": "POST - convert data between supported formats"
+    },
+    "exe": "dasel",
+    "install": {
+      "scoop": "scoop install dasel",
+      "choco": "choco install dasel",
+      "go": "go install github.com/tomwright/dasel/v3/cmd/dasel@latest"
+    },
+    "repo": "TomWright/dasel",
+    "stars": 8030,
+    "url": "https://github.com/TomWright/dasel"
+  },
+  "age": {
+    "added": "2026-09-01",
+    "command": "age -r <recipient> -o out.age in.txt",
+    "desc": "age is a simple, modern and secure file encryption tool (X25519 + ChaCha20-Poly1305). It encrypts and decrypts files and streams to recipient public keys, and age-keygen generates identities. Ideal for secure file transfer and secret handling in automation pipelines.",
+    "endpoints": {
+      "/auto/age/info": "Feature metadata, install status, version",
+      "/auto/age/ping": "Health check",
+      "/auto/age/keygen": "POST - generate a new X25519 identity (public + secret key)",
+      "/auto/age/encrypt": "POST - encrypt data to one or more recipient public keys",
+      "/auto/age/decrypt": "POST - decrypt data with a secret key identity",
+      "/auto/age/pubkey": "POST - derive the public key from a secret key identity"
+    },
+    "exe": "age",
+    "install": {
+      "winget": "winget install FiloSottile.age",
+      "choco": "choco install age"
+    },
+    "repo": "FiloSottile/age",
+    "stars": 23388,
+    "url": "https://github.com/FiloSottile/age"
   }
 }
 
@@ -13820,6 +13862,396 @@ def _h_duckdb_341():
         return (jsonify({'error': str(e)}), 500)
 
 
+def _auto_text_source(body):
+    """Resolve 'input' (raw string) or 'file' (path, read as text) to a string.
+
+    Returns (text, None) on success or (None, (response, status)) on error.
+    """
+    data = body.get('input')
+    path = str(body.get('file') or '').strip()
+    if data is not None and path:
+        return None, (jsonify({'error': "provide 'input' or 'file', not both"}), 400)
+    if data is None and not path:
+        return None, (jsonify({'error': "missing 'input' or 'file'"}), 400)
+    if path:
+        try:
+            with open(path, 'r', encoding='utf-8', errors='replace') as fh:
+                return fh.read(), None
+        except Exception as e:
+            return None, (jsonify({'error': f'cannot read file: {str(e)}'}), 400)
+    return str(data), None
+
+
+def _auto_bin_source(body):
+    """Resolve 'input' (string -> stdin) or 'file' (path -> positional arg).
+
+    Returns (stdin_str_or_None, file_arg_or_None, error_tuple_or_None).
+    """
+    data = body.get('input')
+    path = str(body.get('file') or '').strip()
+    if data is not None and path:
+        return None, None, (jsonify({'error': "provide 'input' or 'file', not both"}), 400)
+    if data is None and not path:
+        return None, None, (jsonify({'error': "missing 'input' or 'file'"}), 400)
+    if path:
+        if not os.path.isfile(path):
+            return None, None, (jsonify({'error': f'file not found: {path}'}), 400)
+        return None, path, None
+    return str(data), None, None
+
+
+def _age__find_keygen(age_exe):
+    """Locate age-keygen on PATH or next to the age binary."""
+    k = shutil.which('age-keygen')
+    if k:
+        return k
+    d = os.path.dirname(age_exe)
+    for name in ('age-keygen', 'age-keygen.exe'):
+        cand = os.path.join(d, name)
+        if os.path.isfile(cand):
+            return cand
+    return None
+
+
+def _age__extract_public(text):
+    for line in (text or '').splitlines():
+        line = line.strip()
+        if line.startswith('age1'):
+            return line
+        if line.startswith('Public key: age1'):
+            return line.split(':', 1)[1].strip()
+    return None
+
+
+def _age__extract_secret(text):
+    for line in (text or '').splitlines():
+        line = line.strip()
+        if line.startswith('AGE-SECRET-KEY-'):
+            return line
+    return None
+
+
+def _h_dasel_342():
+    """Select a value or node from structured data using dasel's query language.
+
+        Body (JSON):
+            query (str, required): the dasel query, e.g. 'foo.bar',
+                'users[0].name', '..name', 'search(bar == "x")'.
+            input (str, optional): raw data string (use this OR file).
+            file (str, optional): path to the data file to query.
+            format (str, optional): input format: json (default), yaml, toml,
+                xml, csv, ini, hcl, kdl.
+            out_format (str, optional): output format for the selected value.
+            compact (bool, optional): compact single-line output.
+    """
+    exe = _find_tool('dasel')
+    if not exe:
+        return (jsonify({'error': 'dasel is not installed', 'hint': 'scoop install dasel  OR  choco install dasel'}), 503)
+    body = _json_body() or {}
+    query = str(body.get('query') or '').strip()
+    if not query:
+        return (jsonify({'error': "missing 'query' field"}), 400)
+    data, err = _auto_text_source(body)
+    if err:
+        return err
+    fmt = str(body.get('format') or 'json').strip().lower()
+    out_fmt = str(body.get('out_format') or '').strip().lower()
+    cmd = [exe, '-i', fmt]
+    if out_fmt:
+        cmd += ['-o', out_fmt]
+    if body.get('compact'):
+        cmd.append('--compact')
+    cmd.append(query)
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, input=data, timeout=30)
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': 'dasel timed out'}), 504)
+    except Exception as e:
+        _log(f'[dasel query] {str(e)}')
+        return (jsonify({'error': str(e)}), 500)
+    if r.returncode != 0:
+        return (jsonify({'error': (r.stderr or r.stdout).strip() or f'dasel exited with code {r.returncode}'}), 500)
+    out = r.stdout.strip()
+    try:
+        parsed = json_lib.loads(out)
+    except Exception:
+        parsed = None
+    if parsed is not None:
+        return jsonify({'ok': True, 'query': query, 'format': fmt, 'result': parsed})
+    return jsonify({'ok': True, 'query': query, 'format': fmt, 'raw': out})
+
+
+def _h_dasel_343():
+    """Modify structured data in place and return the full document.
+
+        Body (JSON):
+            query (str, required): a dasel assignment query, e.g.
+                'foo.bar = "bong"' or 'each($this = $this * 2)'.
+            input (str, optional) / file (str, optional): source data.
+            format (str, optional): input format (default json).
+            out_format (str, optional): output format for the result.
+    """
+    exe = _find_tool('dasel')
+    if not exe:
+        return (jsonify({'error': 'dasel is not installed', 'hint': 'scoop install dasel  OR  choco install dasel'}), 503)
+    body = _json_body() or {}
+    query = str(body.get('query') or '').strip()
+    if not query:
+        return (jsonify({'error': "missing 'query' field"}), 400)
+    data, err = _auto_text_source(body)
+    if err:
+        return err
+    fmt = str(body.get('format') or 'json').strip().lower()
+    out_fmt = str(body.get('out_format') or '').strip().lower()
+    cmd = [exe, '-i', fmt, '--root']
+    if out_fmt:
+        cmd += ['-o', out_fmt]
+    cmd.append(query)
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, input=data, timeout=30)
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': 'dasel timed out'}), 504)
+    except Exception as e:
+        _log(f'[dasel modify] {str(e)}')
+        return (jsonify({'error': str(e)}), 500)
+    if r.returncode != 0:
+        return (jsonify({'error': (r.stderr or r.stdout).strip() or f'dasel exited with code {r.returncode}'}), 500)
+    out = r.stdout.strip()
+    try:
+        parsed = json_lib.loads(out)
+    except Exception:
+        parsed = None
+    if parsed is not None:
+        return jsonify({'ok': True, 'query': query, 'format': fmt, 'document': parsed})
+    return jsonify({'ok': True, 'query': query, 'format': fmt, 'raw': out})
+
+
+def _h_dasel_344():
+    """Convert structured data between formats (JSON, YAML, TOML, XML, CSV, INI, HCL, KDL).
+
+        Body (JSON):
+            input (str, optional) / file (str, optional): source data.
+            from (str, optional): source format (default json).
+            to (str, required): target format (e.g. yaml).
+            compact (bool, optional): compact output.
+    """
+    exe = _find_tool('dasel')
+    if not exe:
+        return (jsonify({'error': 'dasel is not installed', 'hint': 'scoop install dasel  OR  choco install dasel'}), 503)
+    body = _json_body() or {}
+    data, err = _auto_text_source(body)
+    if err:
+        return err
+    src = str(body.get('from') or body.get('format') or 'json').strip().lower()
+    dst = str(body.get('to') or '').strip().lower()
+    if not dst:
+        return (jsonify({'error': "missing 'to' field (target format)"}), 400)
+    cmd = [exe, '-i', src, '-o', dst]
+    if body.get('compact'):
+        cmd.append('--compact')
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, input=data, timeout=30)
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': 'dasel timed out'}), 504)
+    except Exception as e:
+        _log(f'[dasel convert] {str(e)}')
+        return (jsonify({'error': str(e)}), 500)
+    if r.returncode != 0:
+        return (jsonify({'error': (r.stderr or r.stdout).strip() or f'dasel exited with code {r.returncode}'}), 500)
+    return jsonify({'ok': True, 'from': src, 'to': dst, 'output': r.stdout})
+
+
+def _h_age_345():
+    """Generate a new age (X25519) identity.
+
+        Body (JSON):
+            output (str, optional): path to write the secret key file. If
+                omitted the secret key is returned in the response.
+        Returns the public key (recipient) and either the secret key or the
+        path it was written to.
+    """
+    age = _find_tool('age')
+    if not age:
+        return (jsonify({'error': 'age is not installed', 'hint': 'winget install FiloSottile.age  OR  choco install age'}), 503)
+    keygen = _age__find_keygen(age)
+    if not keygen:
+        return (jsonify({'error': 'age-keygen not found'}), 503)
+    body = _json_body() or {}
+    output = str(body.get('output') or '').strip()
+    cmd = [keygen]
+    if output:
+        cmd += ['-o', output]
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+    except Exception as e:
+        _log(f'[age keygen] {str(e)}')
+        return (jsonify({'error': str(e)}), 500)
+    if r.returncode != 0:
+        return (jsonify({'error': (r.stderr or r.stdout).strip()}), 500)
+    pub = _age__extract_public(r.stderr) or _age__extract_public(r.stdout)
+    secret = _age__extract_secret(r.stdout)
+    res = {'ok': True, 'public_key': pub}
+    if output:
+        res['secret_file'] = output
+        res['note'] = 'secret key written to file; keep it private and do not commit it'
+    else:
+        res['secret_key'] = secret
+    return jsonify(res)
+
+
+def _h_age_346():
+    """Encrypt data to one or more age recipient public keys.
+
+        Body (JSON):
+            input (str, optional) / file (str, optional): plaintext to encrypt.
+            recipients (list[str], optional): recipient public keys (age1...).
+            recipient (str, optional): a single recipient (use this OR recipients).
+            output (str, optional): path to write the binary ciphertext file.
+                If omitted, armored ciphertext is returned in the response.
+    """
+    age = _find_tool('age')
+    if not age:
+        return (jsonify({'error': 'age is not installed', 'hint': 'winget install FiloSottile.age  OR  choco install age'}), 503)
+    body = _json_body() or {}
+    stdin_data, file_arg, err = _auto_bin_source(body)
+    if err:
+        return err
+    recips = body.get('recipients')
+    if recips is None and body.get('recipient'):
+        recips = [body.get('recipient')]
+    if not recips:
+        return (jsonify({'error': "missing 'recipients' or 'recipient'"}), 400)
+    if not isinstance(recips, list):
+        recips = [recips]
+    recips = [str(x) for x in recips if str(x).strip()]
+    if not recips:
+        return (jsonify({'error': "missing 'recipients' or 'recipient'"}), 400)
+    cmd = [age]
+    for r_ in recips:
+        cmd += ['-r', r_]
+    output = str(body.get('output') or '').strip()
+    if output:
+        cmd += ['-o', output]
+    else:
+        cmd += ['-a']
+    if file_arg:
+        cmd.append(file_arg)
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, input=stdin_data, timeout=120)
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': 'age timed out'}), 504)
+    except Exception as e:
+        _log(f'[age encrypt] {str(e)}')
+        return (jsonify({'error': str(e)}), 500)
+    if r.returncode != 0:
+        return (jsonify({'error': (r.stderr or r.stdout).strip()}), 500)
+    res = {'ok': True, 'recipients': recips}
+    if output:
+        res['ciphertext_file'] = output
+    else:
+        res['ciphertext'] = r.stdout
+    return jsonify(res)
+
+
+def _h_age_347():
+    """Decrypt age-encrypted data with a secret key identity.
+
+        Body (JSON):
+            input (str, optional) / file (str, optional): ciphertext to decrypt
+                (armored text or binary).
+            identity (str, optional): the AGE-SECRET-KEY-1... identity string.
+            identity_file (str, optional): path to the identity file.
+                Provide ONE of identity or identity_file.
+            output (str, optional): path to write the plaintext to. If omitted,
+                plaintext is returned in the response.
+    """
+    age = _find_tool('age')
+    if not age:
+        return (jsonify({'error': 'age is not installed', 'hint': 'winget install FiloSottile.age  OR  choco install age'}), 503)
+    body = _json_body() or {}
+    stdin_data, file_arg, err = _auto_bin_source(body)
+    if err:
+        return err
+    ident = str(body.get('identity') or '').strip()
+    ident_file = str(body.get('identity_file') or '').strip()
+    if not ident and not ident_file:
+        return (jsonify({'error': "provide 'identity' or 'identity_file'"}), 400)
+    if ident and ident_file:
+        return (jsonify({'error': "provide 'identity' or 'identity_file', not both"}), 400)
+    tmp = None
+    keyfile = ident_file
+    if ident:
+        tmp = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8')
+        tmp.write(ident + '\n')
+        tmp.close()
+        keyfile = tmp.name
+    cmd = [age, '-d', '-i', keyfile]
+    output = str(body.get('output') or '').strip()
+    if output:
+        cmd += ['-o', output]
+    if file_arg:
+        cmd.append(file_arg)
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, input=stdin_data, timeout=120)
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': 'age timed out'}), 504)
+    except Exception as e:
+        _log(f'[age decrypt] {str(e)}')
+        return (jsonify({'error': str(e)}), 500)
+    finally:
+        if tmp:
+            try:
+                os.unlink(tmp.name)
+            except Exception:
+                pass
+    if r.returncode != 0:
+        return (jsonify({'error': (r.stderr or r.stdout).strip()}), 500)
+    res = {'ok': True}
+    if output:
+        res['plaintext_file'] = output
+    else:
+        res['plaintext'] = r.stdout
+    return jsonify(res)
+
+
+def _h_age_348():
+    """Derive the public key (recipient) from an age secret key identity.
+
+        Body (JSON):
+            identity (str, optional): the AGE-SECRET-KEY-1... identity string.
+            identity_file (str, optional): path to the identity file.
+    """
+    age = _find_tool('age')
+    if not age:
+        return (jsonify({'error': 'age is not installed', 'hint': 'winget install FiloSottile.age  OR  choco install age'}), 503)
+    keygen = _age__find_keygen(age)
+    if not keygen:
+        return (jsonify({'error': 'age-keygen not found'}), 503)
+    body = _json_body() or {}
+    ident = str(body.get('identity') or '').strip()
+    ident_file = str(body.get('identity_file') or '').strip()
+    if not ident and not ident_file:
+        return (jsonify({'error': "provide 'identity' or 'identity_file'"}), 400)
+    if ident and ident_file:
+        return (jsonify({'error': "provide 'identity' or 'identity_file', not both"}), 400)
+    cmd = [keygen, '-y']
+    stdin_data = None
+    if ident_file:
+        if not os.path.isfile(ident_file):
+            return (jsonify({'error': f'identity file not found: {ident_file}'}), 400)
+        cmd.append(ident_file)
+    else:
+        stdin_data = ident
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, input=stdin_data, timeout=15)
+    except Exception as e:
+        _log(f'[age pubkey] {str(e)}')
+        return (jsonify({'error': str(e)}), 500)
+    if r.returncode != 0:
+        return (jsonify({'error': (r.stderr or r.stdout).strip()}), 500)
+    return jsonify({'ok': True, 'public_key': r.stdout.strip()})
+
+
 def register_routes(app, state, require_auth):
     global _STATE
     _STATE = state
@@ -14168,6 +14600,13 @@ def register_routes(app, state, require_auth):
         ('/auto/gitleaks/stdin', ['POST'], _h_gitleaks_339),
         ('/auto/duckdb/query', ['POST'], _h_duckdb_340),
         ('/auto/duckdb/tables', ['POST'], _h_duckdb_341),
+        ('/auto/dasel/query', ['POST'], _h_dasel_342),
+        ('/auto/dasel/modify', ['POST'], _h_dasel_343),
+        ('/auto/dasel/convert', ['POST'], _h_dasel_344),
+        ('/auto/age/keygen', ['POST'], _h_age_345),
+        ('/auto/age/encrypt', ['POST'], _h_age_346),
+        ('/auto/age/decrypt', ['POST'], _h_age_347),
+        ('/auto/age/pubkey', ['POST'], _h_age_348),
     ]
     for _path, _methods, _fn in _ACTIONS:
         app.add_url_rule(_path, endpoint=_fn.__name__, view_func=require_auth(_fn), methods=_methods)
