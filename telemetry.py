@@ -84,6 +84,9 @@ def init_telem(db_dir=None):
         return True
     except Exception as e:
         _LOGGER.error("Telemetry DB init failed: %s", e)
+        # Don't leave a half-initialized DB path set — otherwise every later
+        # log_action/endpoint call queries a schema that was never created.
+        TELEMETRY_DB_PATH = None
         return False
     finally:
         db.close()
