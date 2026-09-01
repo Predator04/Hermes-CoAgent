@@ -153,6 +153,19 @@ _TG_LAST_UPDATE_ID = 0
 _TG_POLL_INTERVAL = 3.0
 
 
+def _coerce_bool(value):
+    """Coerce a JSON value to bool without the str-truthiness trap
+    (``bool("false")`` is True). Accepts real booleans, 0/1 numerics, and
+    the strings true/false/1/0/yes/no/on/off (case-insensitive)."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        return value.strip().lower() in ("true", "1", "yes", "on")
+    return bool(value)
+
+
 def _delivery_config():
     with _DELIVERY_LOCK:
         return dict(_DELIVERY)
@@ -162,7 +175,7 @@ def _set_delivery_config(data):
     with _DELIVERY_LOCK:
         for key in ("enabled", "telegram", "toast"):
             if key in data:
-                _DELIVERY[key] = bool(data[key])
+                _DELIVERY[key] = _coerce_bool(data[key])
 
 
 def _format_approval_summary(item):
@@ -337,7 +350,7 @@ def register_routes(app, state, require_auth):
     def route_approvals_config():
         body = _json_body() or {}
         if isinstance(body, dict) and "enabled" in body:
-            _QUEUE.enabled = bool(body["enabled"])
+            _QUEUE.enabled = _coerce_bool(body["enabled"])
         if isinstance(body, dict) and "default_ttl" in body:
             try:
                 _QUEUE.default_ttl = max(1.0, float(body["default_ttl"]))
@@ -359,7 +372,7 @@ def register_routes(app, state, require_auth):
     @app.route("/approvals/request", methods=["POST"])
     @require_auth
     def route_approvals_request():
-        body = _json_body()
+        body = _json_body() or {}
         action = (body.get("action") or "").strip()
         if not action:
             return jsonify({"ok": False, "error": "Missing required field: action"}), 400
