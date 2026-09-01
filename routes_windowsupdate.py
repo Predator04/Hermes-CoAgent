@@ -99,26 +99,38 @@ def _pause_script(days):
     days = max(1, min(int(days), 365))
     d = str(days)
     return r"""
+$ErrorActionPreference = 'Stop'
 $days = """ + d + r"""
 $start = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
 $end = (Get-Date).AddDays($days).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
 $p = 'HKLM:\SOFTWARE\Microsoft\WindowsUpdate\UX\Settings'
-New-Item -Path $p -Force | Out-Null
-Set-ItemProperty -Path $p -Name PauseUpdatesExpiryTime -Value $end
-Set-ItemProperty -Path $p -Name PauseFeatureUpdatesStartTime -Value $start
-Set-ItemProperty -Path $p -Name PauseFeatureUpdatesEndTime -Value $end
-Set-ItemProperty -Path $p -Name PauseQualityUpdatesStartTime -Value $start
-Set-ItemProperty -Path $p -Name PauseQualityUpdatesEndTime -Value $end
-[ordered]@{ paused = $true; days = $days; pause_expiry = $end } | ConvertTo-Json -Compress
+try {
+  New-Item -Path $p -Force | Out-Null
+  Set-ItemProperty -Path $p -Name PauseUpdatesExpiryTime -Value $end
+  Set-ItemProperty -Path $p -Name PauseFeatureUpdatesStartTime -Value $start
+  Set-ItemProperty -Path $p -Name PauseFeatureUpdatesEndTime -Value $end
+  Set-ItemProperty -Path $p -Name PauseQualityUpdatesStartTime -Value $start
+  Set-ItemProperty -Path $p -Name PauseQualityUpdatesEndTime -Value $end
+  [ordered]@{ paused = $true; days = $days; pause_expiry = $end } | ConvertTo-Json -Compress
+} catch {
+  Write-Error $_.Exception.Message
+  exit 1
+}
 """
 
 
 _RESUME_SCRIPT = r"""
+$ErrorActionPreference = 'Stop'
 $p = 'HKLM:\SOFTWARE\Microsoft\WindowsUpdate\UX\Settings'
-foreach ($n in @('PauseUpdatesExpiryTime','PauseFeatureUpdatesStartTime','PauseFeatureUpdatesEndTime','PauseQualityUpdatesStartTime','PauseQualityUpdatesEndTime')) {
-  Remove-ItemProperty -Path $p -Name $n -ErrorAction SilentlyContinue
+try {
+  foreach ($n in @('PauseUpdatesExpiryTime','PauseFeatureUpdatesStartTime','PauseFeatureUpdatesEndTime','PauseQualityUpdatesStartTime','PauseQualityUpdatesEndTime')) {
+    Remove-ItemProperty -Path $p -Name $n -ErrorAction SilentlyContinue
+  }
+  [ordered]@{ paused = $false } | ConvertTo-Json -Compress
+} catch {
+  Write-Error $_.Exception.Message
+  exit 1
 }
-[ordered]@{ paused = $false } | ConvertTo-Json -Compress
 """
 
 
