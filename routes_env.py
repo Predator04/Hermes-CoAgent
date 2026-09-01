@@ -70,10 +70,11 @@ foreach ($k in $m.Keys) { $rows += [ordered]@{ scope='system'; name=[string]$k; 
 
 _GET_SCRIPT = r"""
 $name = $env:COAGENT_ENV_NAME
-$scope = 'process'
+$scope = $null
 $v = [Environment]::GetEnvironmentVariable($name, 'Process')
-if ($null -eq $v) { $v = [Environment]::GetEnvironmentVariable($name, 'User'); $scope = 'user' }
-if ($null -eq $v) { $v = [Environment]::GetEnvironmentVariable($name, 'Machine'); $scope = 'system' }
+if ($null -ne $v) { $scope = 'process' }
+if ($null -eq $v) { $v = [Environment]::GetEnvironmentVariable($name, 'User'); if ($null -ne $v) { $scope = 'user' } }
+if ($null -eq $v) { $v = [Environment]::GetEnvironmentVariable($name, 'Machine'); if ($null -ne $v) { $scope = 'system' } }
 [ordered]@{ name=$name; value=$v; scope=$scope; exists=($null -ne $v) } | ConvertTo-Json -Compress
 """
 
@@ -82,14 +83,16 @@ $name = $env:COAGENT_ENV_NAME
 $value = $env:COAGENT_ENV_VALUE
 $scope = $env:COAGENT_ENV_SCOPE
 [Environment]::SetEnvironmentVariable($name, $value, $scope)
-[ordered]@{ name=$name; scope=$scope.ToLower(); set=$true } | ConvertTo-Json -Compress
+$scopeName = if ($scope -eq 'Machine') { 'system' } else { 'user' }
+[ordered]@{ name=$name; scope=$scopeName; set=$true } | ConvertTo-Json -Compress
 """
 
 _DELETE_SCRIPT = r"""
 $name = $env:COAGENT_ENV_NAME
 $scope = $env:COAGENT_ENV_SCOPE
 [Environment]::SetEnvironmentVariable($name, $null, $scope)
-[ordered]@{ name=$name; scope=$scope.ToLower(); deleted=$true } | ConvertTo-Json -Compress
+$scopeName = if ($scope -eq 'Machine') { 'system' } else { 'user' }
+[ordered]@{ name=$name; scope=$scopeName; deleted=$true } | ConvertTo-Json -Compress
 """
 
 _BROADCAST_SCRIPT = r"""
