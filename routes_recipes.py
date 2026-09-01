@@ -427,7 +427,11 @@ def _simple_schedule_matches(schedule, now):
     match = re.fullmatch(r"every\s+(\d+)\s+minutes?", schedule)
     if match:
         minutes = max(1, int(match.group(1)))
-        return now.minute % minutes == 0
+        if minutes <= 60:
+            return now.minute % minutes == 0
+        # N > 60: minute-of-hour alignment is wrong (would fire hourly). Use an
+        # epoch-based window so the schedule fires once every N minutes.
+        return int(now.timestamp()) % (minutes * 60) < 60
     if schedule == "hourly":
         return now.minute == 0
     match = re.fullmatch(r"daily\s+at\s+(\d{1,2}):(\d{2})", schedule)
