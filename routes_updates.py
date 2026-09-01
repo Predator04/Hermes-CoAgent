@@ -202,7 +202,9 @@ def _latest_release():
                     headers={"User-Agent": "Hermes-CoAgent-Updater/3.0"},
                 )
                 with urllib.request.urlopen(req, timeout=10) as sha_resp:
-                    sha_text = sha_resp.read().decode("utf-8").strip()
+                    # Cap the read: a SHA-256 digest is 64 hex chars; never
+                    # let a huge/malicious sidecar exhaust memory.
+                    sha_text = sha_resp.read(4096).decode("utf-8").strip()
                     # Format: "<hex>  <filename>" or just "<hex>"
                     sha256 = sha_text.split()[0] if sha_text else ""
             except Exception:
