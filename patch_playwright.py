@@ -54,10 +54,21 @@ content = content.replace(old, new, 1)
 
 # Atomic write: write to a temp file then replace, so an interruption can't
 # leave Playwright's file empty or half-written.
-tmp_path = filepath + ".tmp"
-with open(tmp_path, 'w', encoding='utf-8', newline='') as f:
-    f.write(content)
-os.replace(tmp_path, filepath)
+tmp_path = filepath + f".tmp.{os.getpid()}"
+try:
+    with open(tmp_path, 'w', encoding='utf-8', newline='') as f:
+        f.write(content)
+        f.flush()
+        os.fsync(f.fileno())
+    # Carry the original file's mode/attributes over (os.replace would drop them).
+    shutil.copystat(filepath, tmp_path)
+    os.replace(tmp_path, filepath)
+finally:
+    if os.path.exists(tmp_path):
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
 
 print(f"Patched: {filepath}")
 print("Lines 45-49 replaced to skip asyncio check")
