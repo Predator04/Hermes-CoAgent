@@ -440,7 +440,7 @@ def step_verify(install_dir):
     # Check key files exist
     required = ["hermes_coagent.py", "shared.py", "routes_system.py",
                  "routes_mouse.py", "routes_ocr.py", "routes_file.py",
-                 "routes_media.py", "routes_system.py", "routes_updates.py",
+                 "routes_media.py", "routes_updates.py",
                  "launch_all.ps1", "start_coagent.bat"]
     for f in required:
         p = install_dir / f
