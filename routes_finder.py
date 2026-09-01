@@ -164,13 +164,17 @@ def _ocr_candidates_from_image(image):
 
     candidates = []
     lines = {}
-    n_texts = len(ocr.get("text", []))
-    for index, text in enumerate(ocr.get("text", [])):
+    texts = ocr.get("text", [])
+    confs = ocr.get("conf") or []
+    blk = ocr.get("block_num") or []
+    par = ocr.get("par_num") or []
+    lin = ocr.get("line_num") or []
+    for index, text in enumerate(texts):
         text = str(text or "").strip()
         if not text:
             continue
         try:
-            confidence = float(ocr.get("conf", [0] * n_texts)[index])
+            confidence = float(confs[index]) if index < len(confs) else 0.0
         except (TypeError, ValueError, IndexError):
             confidence = 0.0
         try:
@@ -183,9 +187,6 @@ def _ocr_candidates_from_image(image):
         if w <= 0 or h <= 0:
             continue
         candidates.append({"text": text, "x": x, "y": y, "w": w, "h": h, "confidence": max(0.0, confidence), "ocr_conf": max(0.0, confidence)})
-        blk = ocr.get("block_num", [0] * n_texts)
-        par = ocr.get("par_num", [0] * n_texts)
-        lin = ocr.get("line_num", [0] * n_texts)
         line_key = (
             blk[index] if index < len(blk) else 0,
             par[index] if index < len(par) else 0,
