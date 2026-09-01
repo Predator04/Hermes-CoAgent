@@ -246,6 +246,12 @@ def _safe_tar_members(tar, destination):
         if member.issym() or member.islnk() or not (member.isfile() or member.isdir()):
             LOG.warning("update: skipping non-regular entry %s", member.name)
             continue
+        # Reject Windows drive-relative / ADS / backslash paths BEFORE
+        # normalizing: "C:evil" is not absolute, and "\\" separators would
+        # otherwise slip past the traversal checks.
+        if "\\" in member.name or ":" in member.name:
+            LOG.warning("update: skipping unsafe path %s", member.name)
+            continue
         # Reject absolute / relative traversal
         name = os.path.normpath(member.name)
         if os.path.isabs(name) or name.startswith(".."):
