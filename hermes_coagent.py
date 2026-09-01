@@ -1076,6 +1076,11 @@ except ImportError:
     reg_doc_intel = None
     features["doc_intel"] = False
 try:
+    from routes_pdf import register_routes as reg_pdf
+except ImportError:
+    reg_pdf = None
+    features["pdf_form_fill"] = False
+try:
     from routes_qr import register_routes as reg_qr
 except ImportError:
     reg_qr = None
@@ -1392,6 +1397,9 @@ if reg_virtual_desktop:
 if reg_doc_intel:
     reg_doc_intel(app, state, require_auth)
     features["doc_intel"] = True
+if reg_pdf:
+    reg_pdf(app, state, require_auth)
+    features["pdf_form_fill"] = True
 if reg_qr:
     reg_qr(app, state, require_auth)
     features["qr_decode"] = True
@@ -1618,7 +1626,8 @@ def route_version():
                                  "session_state", "file_organizer",
                                  "office_authoring", "task_persistence",
                                  "qr_decode", "credential_vault", "task_supervisor",
-                                 "humanized_typing", "rich_clipboard", "hyperv_vm"],
+                                 "humanized_typing", "rich_clipboard", "hyperv_vm",
+                                 "pdf_form_fill"],
                     "modules": ["mouse", "ocr", "uia", "file", "media", "v63",
                                 "stream", "process", "voice", "cua", "copilot",
                                 "bypass", "toast", "deps", "config", "browser",
@@ -1632,7 +1641,7 @@ def route_version():
                                 "browser_v2", "mobile", "memory", "batching", "speculative_batching",
                                 "reminders", "hud", "perception", "session",
                                 "organize", "office", "scheduler_tasks",
-                                "qr", "vault", "supervisor", "vm"],
+                                "qr", "vault", "supervisor", "vm", "pdf"],
                     "memory": memory_stats(),
                     "security": ["auth_token", "rate_limit", "input_sanitization",
                                  "cors_restricted", "security_headers"]})
