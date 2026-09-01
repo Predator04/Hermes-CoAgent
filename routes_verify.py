@@ -239,7 +239,7 @@ def _resolve_retry_action(request_body):
     prefer_last = (
         bool(request_body.get("use_last_action"))
         or bool(retry_cfg.get("use_last_action"))
-        or bool(retry_cfg)  # retry block present but no inline action -> try last
+        or isinstance(request_body.get("retry"), dict)  # retry block present but no inline action -> try last
     )
     if prefer_last:
         with _LOCK:
@@ -312,7 +312,8 @@ def register_routes(app, state, require_auth):
             keywords_override = [str(k) for k in keywords_override if str(k).strip()]
 
         retry_cfg = body.get("retry") if isinstance(body.get("retry"), dict) else {}
-        retry_enabled = bool(retry_cfg) or bool(body.get("action")) or bool(body.get("use_last_action"))
+        retry_present = isinstance(body.get("retry"), dict)
+        retry_enabled = retry_present or bool(body.get("action")) or bool(body.get("use_last_action"))
         if "enabled" in retry_cfg:
             retry_enabled = bool(retry_cfg.get("enabled"))
         max_attempts = _clamp(retry_cfg.get("max_attempts", 1), 1, 5, 1)
