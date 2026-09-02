@@ -19,6 +19,14 @@ _PROTECTED_DELETE_DIRS = {
     Path(_sanitize_path(str(COAGENT_DIR))).resolve(),
 }
 
+# Extensions that os.startfile() hands to a script/installer handler, turning
+# "open a file" into arbitrary code execution. Refuse these outright.
+_DANGEROUS_OPEN_EXTENSIONS = {
+    ".hta", ".js", ".jse", ".vbs", ".vbe", ".wsf", ".wsh",
+    ".ps1", ".psm1", ".bat", ".cmd", ".com", ".pif", ".scr",
+    ".cpl", ".msi", ".msp", ".reg", ".inf", ".scf", ".url",
+}
+
 
 def _is_protected_delete_path(path):
     resolved = os.path.normcase(str(Path(path).resolve()))
@@ -89,7 +97,11 @@ def register_routes(app, state, require_auth):
                 # file grows past the 50MB limit between getsize() and read().
                 if os.fstat(f.fileno()).st_size > 50 * 1024 * 1024:
                     return jsonify({"error": "File too large (>50MB)"}), 413
-                content = f.read()
+                # Bound the actual read too: a file that grows between the
+                # fstat check and read() would otherwise balloon memory.
+                content = f.read(50 * 1024 * 1024 + 1)
+                if len(content) > 50 * 1024 * 1024:
+                    return jsonify({"error": "File too large (>50MB)"}), 413
             return jsonify({"path": path, "content": content, "size": len(content)})
         except Exception as e:
             return jsonify({"error": str(e)}), 500
@@ -180,7 +192,11 @@ def register_routes(app, state, require_auth):
                 safe_path = _sanitize_path(app_path)
                 subprocess.Popen([safe_path], shell=False)
             else:
-                os.startfile(_sanitize_path(app_path))
+                safe_path = _sanitize_path(app_path)
+                if os.path.splitext(safe_path)[1].lower() in _DANGEROUS_OPEN_EXTENSIONS:
+                    return jsonify({"error": "Refusing to open script/executable file via shell handler",
+                                    "path": safe_path}), 403
+                os.startfile(safe_path)
             _log(f"App launched: {app_path}")
             return jsonify({"status": "launched", "app": app_path})
         except Exception as e:
