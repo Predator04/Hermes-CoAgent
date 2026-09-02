@@ -1,5 +1,5 @@
 """Process listing, control, and resource routes."""
-import csv, io, json, os, shlex, subprocess, time
+import csv, io, json, os, re, shlex, subprocess, time
 from flask import jsonify
 from shared import _json_body, _sanitize_path
 from routes_governance import get_governor
@@ -20,6 +20,17 @@ try:
 except ImportError:
     psutil = None
     HAS_PSUTIL = False
+
+
+_PYTHON_EXACT = {"python", "pythonw", "python3", "python3w", "py", "pyw"}
+_PYTHON_VERSIONED_RE = re.compile(r"^py(?:thon)?w?\d[\d._-]*$")
+
+
+def _is_python_interpreter(name):
+    """True if `name` (lowercased, .exe stripped) names a Python interpreter."""
+    if name in _PYTHON_EXACT:
+        return True
+    return bool(_PYTHON_VERSIONED_RE.match(name))
 
 
 _WINDOW_TITLES_CACHE = {"ts": 0.0, "value": {}}
@@ -107,9 +118,13 @@ def _process_list_wmic(limit=None):
                     memory_mb = round(int(row.get("WorkingSetSize") or 0) / (1024 * 1024), 2)
                 except ValueError:
                     memory_mb = 0.0
+                try:
+                    pid = int(row.get("ProcessId"))
+                except (ValueError, TypeError):
+                    continue
                 rows.append({
                     "name": row.get("Name") or "",
-                    "pid": int(row.get("ProcessId")),
+                    "pid": pid,
                     "cpu_percent": None,
                     "memory_mb": memory_mb,
                     "window_title": "",
@@ -143,13 +158,18 @@ def _process_list_powershell(limit=None):
     if isinstance(data, dict):
         data = [data]
     for item in data:
-        rows.append({
-            "name": (item.get("ProcessName") or "") + ".exe",
-            "pid": int(item.get("Id") or 0),
-            "cpu_percent": None,
-            "memory_mb": round(int(item.get("WorkingSet64") or 0) / (1024 * 1024), 2),
-            "window_title": item.get("MainWindowTitle") or "",
-        })
+        if not isinstance(item, dict):
+            continue
+        try:
+            rows.append({
+                "name": (item.get("ProcessName") or "") + ".exe",
+                "pid": int(item.get("Id") or 0),
+                "cpu_percent": None,
+                "memory_mb": round(int(item.get("WorkingSet64") or 0) / (1024 * 1024), 2),
+                "window_title": item.get("MainWindowTitle") or "",
+            })
+        except (ValueError, TypeError):
+            continue
     rows.sort(key=lambda p: p.get("memory_mb", 0), reverse=True)
     return rows[:limit] if limit else rows
 
@@ -187,12 +207,16 @@ def _kill_with_psutil(data):
     targets = []
     current_pid = os.getpid()
     if data.get("pid") is not None:
-        targets.append(psutil.Process(int(data["pid"])))
+        pid = int(data["pid"])
+        if pid <= 4:
+            raise ValueError("Refusing to kill a system-critical PID (<= 4)")
+        targets.append(psutil.Process(pid))
     elif data.get("name"):
         wanted = str(data["name"]).lower()
-        # Guard against killing Python processes by name
+        # Guard against killing Python processes by name (incl. versioned
+        # interpreters like python312 / python3.12 / pyw).
         wanted_base = wanted[:-4] if wanted.endswith(".exe") else wanted
-        if wanted_base in {"python", "pythonw", "python3", "python3w"}:
+        if _is_python_interpreter(wanted_base):
             raise ValueError("Use pid when killing Python processes")
         for proc in psutil.process_iter(["pid", "name"]):
             try:
@@ -221,6 +245,8 @@ def _kill_with_psutil(data):
 def _kill_fallback(data):
     if data.get("pid") is not None:
         pid = int(data["pid"])
+        if pid <= 4:
+            raise ValueError("Refusing to kill a system-critical PID (<= 4)")
         if pid == os.getpid():
             return []
         r = subprocess.run(["taskkill", "/PID", str(pid), "/F"],
@@ -234,7 +260,7 @@ def _kill_fallback(data):
     base_name = name.lower()
     if base_name.endswith(".exe"):
         base_name = base_name[:-4]
-    if base_name in {"python", "pythonw", "python3", "python3w"}:
+    if _is_python_interpreter(base_name):
         raise ValueError("Use pid when killing Python processes")
     if any(c in name for c in ("*", "?", "/", "\\")):
         raise ValueError("Process name contains invalid characters")
@@ -410,9 +436,15 @@ def register_routes(app, state, require_auth):
         if not data.get("priority"):
             return jsonify({"error": "Missing priority"}), 400
         try:
-            priority = (_set_priority_psutil(data["pid"], data["priority"])
-                        if HAS_PSUTIL else _set_priority_fallback(data["pid"], data["priority"]))
-            return jsonify({"status": "ok", "pid": int(data["pid"]), "priority": priority})
+            pid = int(data["pid"])
+        except (TypeError, ValueError):
+            return jsonify({"error": "pid must be an integer"}), 400
+        if pid == os.getpid():
+            return jsonify({"error": "Refusing to change priority of the CoAgent server process"}), 400
+        try:
+            priority = (_set_priority_psutil(pid, data["priority"])
+                        if HAS_PSUTIL else _set_priority_fallback(pid, data["priority"]))
+            return jsonify({"status": "ok", "pid": pid, "priority": priority})
         except Exception as e:
             return jsonify({"error": str(e)}), 400
 
