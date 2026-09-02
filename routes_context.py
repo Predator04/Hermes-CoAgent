@@ -317,8 +317,6 @@ def _detect_type(d):
         return "uia_wrapped"
     if isinstance(d.get("children"), list):
         return "uia"
-    if isinstance(d.get("windows"), list):
-        return "uia"
     return None
 
 
