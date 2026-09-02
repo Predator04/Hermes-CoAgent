@@ -447,7 +447,12 @@ def route_deploy_tunnel():
                 help="Install ngrok, then retry. Needed for cellular/NAT access."
             )
 
-        port = payload.get("port", _DEPLOY_STATE.get("port", 9123))
+        try:
+            port = int(payload.get("port", _DEPLOY_STATE.get("port", 9123)))
+        except (TypeError, ValueError):
+            return _error("port must be an integer", status=400)
+        if not (1 <= port <= 65535):
+            return _error("port must be between 1 and 65535", status=400)
         try:
             ngrok_proc = subprocess.Popen(
                 [ngrok, "http", str(port), "--log=stdout"],
