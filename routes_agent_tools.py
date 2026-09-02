@@ -266,7 +266,7 @@ def register_routes(app, state, require_auth):
             }), 404
 
         # Step 3: Click
-        center = found.get("center", {})
+        center = found.get("center") or {}
         cx_val = center.get("x")
         cy_val = center.get("y")
         cx = int(cx_val if cx_val is not None else (found.get("x", 0) + found.get("width", 0) // 2))
@@ -308,8 +308,8 @@ def register_routes(app, state, require_auth):
             "search_term": search_term_used,
             "method": method_used,
             "element": {
-                "text": found.get("element_info", {}).get("name") or found.get("element_info", {}).get("text", ""),
-                "type": found.get("element_info", {}).get("control_type", ""),
+                "text": (found.get("element_info") or {}).get("name") or (found.get("element_info") or {}).get("text", ""),
+                "type": (found.get("element_info") or {}).get("control_type", ""),
                 "bbox": {
                     "x": found.get("x", 0),
                     "y": found.get("y", 0),
