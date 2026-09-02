@@ -273,6 +273,26 @@ def _normalize_tasks(raw_tasks, max_tasks):
     valid_ids = {t["id"] for t in tasks}
     for t in tasks:
         t["depends_on"] = [d for d in t["depends_on"] if d in valid_ids and d != t["id"]]
+
+    # Reject dependency cycles (planner drift): a cycle leaves every task in it
+    # permanently "pending" and silently drops it from the result. Raising here
+    # makes _plan_via_agent fall back to the local (acyclic) plan.
+    indegree = {t["id"]: len(t["depends_on"]) for t in tasks}
+    dependents = {t["id"]: [] for t in tasks}
+    for t in tasks:
+        for d in t["depends_on"]:
+            dependents[d].append(t["id"])
+    frontier = [tid for tid, deg in indegree.items() if deg == 0]
+    visited = 0
+    while frontier:
+        tid = frontier.pop()
+        visited += 1
+        for nxt in dependents[tid]:
+            indegree[nxt] -= 1
+            if indegree[nxt] == 0:
+                frontier.append(nxt)
+    if visited != len(tasks):
+        raise ValueError("dependency cycle detected in task plan")
     return tasks
 
 
@@ -936,12 +956,6 @@ def route_swarm_run():
     max_tasks = _clamp_int(data.get("max_tasks"), MAX_TASKS, 1, 24)
     task_timeout = _clamp_int(data.get("task_timeout"), 180, 30, 900)
 
-    if _active_run_count() >= MAX_CONCURRENT_WORKERS:
-        return jsonify({
-            "error": "maximum concurrent swarm runs reached",
-            "limit": MAX_CONCURRENT_WORKERS,
-        }), 429
-
     run_id = uuid.uuid4().hex
     stop_event = threading.Event()
     auth = _auth_header(request.headers.get("Authorization", ""))
@@ -977,6 +991,17 @@ def route_swarm_run():
     )
     record["thread"] = thread
     with _RUNS_LOCK:
+        # Check-and-insert atomically so concurrent /swarm/run calls cannot
+        # both pass the active-count gate and exceed MAX_CONCURRENT_WORKERS.
+        active = sum(
+            1 for r in _RUNS.values()
+            if r.get("status") in {"queued", "planning", "running", "stopping"}
+        )
+        if active >= MAX_CONCURRENT_WORKERS:
+            return jsonify({
+                "error": "maximum concurrent swarm runs reached",
+                "limit": MAX_CONCURRENT_WORKERS,
+            }), 429
         _RUNS[run_id] = record
         _RUN_ORDER.append(run_id)
     _log(run_id, "info", f'Queued swarm goal: "{goal_text}"', "\U0001F7E2")
