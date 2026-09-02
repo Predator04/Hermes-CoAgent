@@ -87,6 +87,20 @@ public class AudioVol {
     _log(f"Volume set to {level}%")
     return level
 
+def _toggle_mute_key():
+    """Toggle speaker mute via the VK_VOLUME_MUTE media key (no nircmd needed)."""
+    script = r"""
+Add-Type -TypeDefinition @'
+using System.Runtime.InteropServices;
+public class KB {
+    [DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, uint flags, System.UIntPtr extra);
+}
+'@
+[KB]::keybd_event(0xAD, 0, 0, [System.UIntPtr]::Zero)
+[KB]::keybd_event(0xAD, 0, 2, [System.UIntPtr]::Zero)
+"""
+    _ps(script, timeout=5)
+
 def _has_nircmd():
     """Check if nircmd.exe is in PATH."""
     return any(
@@ -196,22 +210,28 @@ def register_routes(app, state, require_auth):
     def route_system_mute():
         d = _json_body() or {}
         target = d.get("mute")  # True=on, False=off, None=toggle
-        _, muted = _ps_get_volume()
 
         if target is None:
-            # Toggle
-            new_mute = not muted
-        elif isinstance(target, bool):
-            new_mute = target
-        else:
-            new_mute = not muted  # treat anything else as toggle
+            # Toggle. nircmd toggles when given no argument; otherwise use the
+            # VK_VOLUME_MUTE media key. (Do NOT read mute state from
+            # _ps_get_volume — it always returns False, which made the toggle
+            # stuck permanently ON.)
+            if _has_nircmd():
+                _ps("nircmd mutesysvolume", timeout=5)
+            else:
+                _toggle_mute_key()
+            _log("Mute toggled")
+            return jsonify({"status": "ok", "muted": "toggled"})
 
-        if new_mute:
-            _ps("nircmd mutesysvolume 1" if _has_nircmd()
-                else "$obj = (New-Object -ComObject Sapi.SpSharedRecognizer).AudioObject; $obj.Mute = $true", timeout=5)
+        new_mute = bool(target)
+        if _has_nircmd():
+            _ps(f"nircmd mutesysvolume {'1' if new_mute else '0'}", timeout=5)
         else:
-            _ps("nircmd mutesysvolume 0" if _has_nircmd()
-                else "$obj = (New-Object -ComObject Sapi.SpSharedRecognizer).AudioObject; $obj.Mute = $false", timeout=5)
+            # No nircmd: toggle via the media mute key. This only guarantees a
+            # *change*, not a specific state, but it never touches the
+            # microphone (the old Sapi.SpSharedRecognizer fallback muted the
+            # speech-recognizer mic, not the speakers).
+            _toggle_mute_key()
 
         _log(f"Mute set to {new_mute}")
         return jsonify({"status": "ok", "muted": new_mute})
@@ -301,10 +321,13 @@ def register_routes(app, state, require_auth):
         d = _json_body()
         action = d.get("action", "status") if d else "status"
         if action == "status":
-            out, _, _ = _ps("netsh wlan show interfaces | findstr /R \"SSID.*:$\" | findstr /V \"BSSID\"")
-            out2, _, _ = _ps("netsh wlan show interfaces | findstr /C:\"State\"")
-            connected = "connected" in out2.lower()
-            ssid = out.split(":")[-1].strip() if ":" in out else None
+            out, _, _ = _ps("netsh wlan show interfaces")
+            connected = "connected" in out.lower() and "disconnected" not in out.lower()
+            ssid = None
+            for line in out.splitlines():
+                if "SSID" in line and "BSSID" not in line and ":" in line:
+                    ssid = line.split(":", 1)[1].strip()
+                    break
             return jsonify({"status": "ok", "connected": connected, "ssid": ssid})
         elif action == "off":
             _ps("netsh wlan disconnect", timeout=5)
@@ -318,8 +341,8 @@ def register_routes(app, state, require_auth):
             _log(f"Wi-Fi connecting to {ssid or 'last network'}")
             return jsonify({"status": "ok", "wifi": "connecting", "ssid": d.get("ssid")})
         elif action == "list":
-            out, _, _ = _ps("netsh wlan show profiles | findstr /R \"^\\s*All User Profile\"")
-            networks = [l.split(":")[-1].strip() for l in out.splitlines() if ":" in l]
+            out, _, _ = _ps("netsh wlan show profiles | findstr /C:\"All User Profile\"")
+            networks = [l.split(":", 1)[1].strip() for l in out.splitlines() if ":" in l]
             return jsonify({"status": "ok", "networks": networks})
         return jsonify({"error": "Unknown action"}), 400
 
