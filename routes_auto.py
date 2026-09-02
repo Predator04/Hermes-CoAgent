@@ -1556,6 +1556,46 @@ TOOLS = {
     "repo": "FiloSottile/age",
     "stars": 23388,
     "url": "https://github.com/FiloSottile/age"
+  },
+  "aria2": {
+    "added": "2026-09-02",
+    "command": "aria2c [options] <url|torrent|metalink>",
+    "desc": "aria2 is a lightweight multi-protocol & multi-source command-line download utility (HTTP/HTTPS, FTP, SFTP, BitTorrent, Metalink). It maximizes download speed with segmented, parallel, multi-source transfers (up to 16 connections) and can be driven non-interactively or via JSON-RPC. Ideal for CoAgent to run high-speed downloads, resume interrupted transfers, and inspect torrent/metalink file listings.",
+    "endpoints": {
+      "/auto/aria2/info": "Feature metadata, install status, version",
+      "/auto/aria2/ping": "Health check",
+      "/auto/aria2/download": "POST - download URLs/torrent/metalink to a directory with segmented parallel connections",
+      "/auto/aria2/files": "POST - list files inside a torrent or metalink"
+    },
+    "exe": "aria2c",
+    "install": {
+      "winget": "winget install aria2.aria2",
+      "scoop": "scoop install aria2",
+      "choco": "choco install aria2"
+    },
+    "repo": "aria2/aria2",
+    "stars": 41898,
+    "url": "https://github.com/aria2/aria2"
+  },
+  "croc": {
+    "added": "2026-09-02",
+    "command": "croc send <file>  /  croc --yes <code>",
+    "desc": "croc is a tool for easily and securely transferring files and folders between computers via a relay server with end-to-end encryption (PAKE) and a human-friendly code phrase instead of IP addresses or port forwarding. Ideal for CoAgent to move files between machines (desktop, laptop, phone) without exposing ports.",
+    "endpoints": {
+      "/auto/croc/info": "Feature metadata, install status, version",
+      "/auto/croc/ping": "Health check",
+      "/auto/croc/send": "POST - send a file/folder or raw text, returning or accepting a code phrase",
+      "/auto/croc/receive": "POST - receive a transfer using a code phrase"
+    },
+    "exe": "croc",
+    "install": {
+      "winget": "winget install schollz.croc",
+      "scoop": "scoop install croc",
+      "choco": "choco install croc"
+    },
+    "repo": "schollz/croc",
+    "stars": 40200,
+    "url": "https://github.com/schollz/croc"
   }
 }
 
@@ -14252,6 +14292,233 @@ def _h_age_348():
     return jsonify({'ok': True, 'public_key': r.stdout.strip()})
 
 
+def _croc__extract_code(text):
+    """Pull the code phrase out of croc's 'Code is: ...' output."""
+    if not text:
+        return None
+    clean = re.sub(r'\x1b\[[0-9;]*m', '', text)
+    m = re.search(r'Code is:\s*([^\r\n]+)', clean)
+    if not m:
+        return None
+    phrase = re.sub(r'\s+', ' ', m.group(1)).strip()
+    return phrase.strip(' ."\'') or None
+
+
+def _h_aria2_349():
+    """Download URLs, torrents, or metalinks to a directory with segmented, parallel transfers.
+
+        Body (JSON):
+            urls (list[str]): HTTP(S)/FTP/SFTP URLs to download.
+            url (str): a single URL (use this OR urls).
+            torrent (str): path to a .torrent file (use this OR urls/url).
+            metalink (str): path to a .meta4/.metalink file.
+            dir (str, optional): destination directory (default: cwd).
+            out (str, optional): output filename (single URL only).
+            connections (int, optional): connections per server (-x, default 4).
+            splits (int, optional): split count (-s, default 5).
+            max_concurrent (int, optional): max concurrent downloads (-j, default 5).
+            timeout (int, optional): seconds before abort (default 600).
+
+        Blocks until the download completes or the timeout elapses.
+    """
+    exe = _find_tool('aria2')
+    if not exe:
+        return (jsonify({'error': 'aria2 is not installed', 'hint': 'winget install aria2.aria2  OR  scoop install aria2'}), 503)
+    body = _json_body() or {}
+    urls = body.get('urls')
+    if urls is None and body.get('url'):
+        urls = [body.get('url')]
+    torrent = str(body.get('torrent') or '').strip()
+    metalink = str(body.get('metalink') or '').strip()
+    if urls is None and not torrent and not metalink:
+        return (jsonify({'error': "provide 'urls', 'url', 'torrent', or 'metalink'"}), 400)
+    if urls is not None and not isinstance(urls, list):
+        urls = [urls]
+    urls = [str(u).strip() for u in (urls or []) if str(u).strip()]
+    if not urls and not torrent and not metalink:
+        return (jsonify({'error': "provide at least one non-empty URL/torrent/metalink"}), 400)
+    if torrent and not os.path.isfile(torrent):
+        return (jsonify({'error': f'torrent file not found: {torrent}'}), 400)
+    if metalink and not os.path.isfile(metalink):
+        return (jsonify({'error': f'metalink file not found: {metalink}'}), 400)
+    d = str(body.get('dir') or '').strip()
+    outname = str(body.get('out') or '').strip()
+    if outname and (torrent or metalink or len(urls) > 1):
+        return (jsonify({'error': "'out' is only valid for a single URL download"}), 400)
+
+    def _int(v, dflt, lo=1, hi=10000):
+        try:
+            n = int(v)
+        except (TypeError, ValueError):
+            return dflt
+        return max(lo, min(hi, n))
+
+    conn = _int(body.get('connections'), 4, 1, 64)
+    splits = _int(body.get('splits'), 5, 1, 64)
+    concurrent = _int(body.get('max_concurrent'), 5, 1, 100)
+    timeout = _int(body.get('timeout'), 600, 5, 7200)
+    cmd = [exe, '--console-log-level=warn', '--summary-interval=0',
+           f'-x{conn}', f'-s{splits}', f'-j{concurrent}', '--seed-time=0']
+    if d:
+        cmd += ['-d', d]
+    if outname:
+        cmd += ['-o', outname]
+    for u in urls:
+        cmd.append(u)
+    if torrent:
+        cmd.append(torrent)
+    if metalink:
+        cmd.append(metalink)
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': f'aria2 timed out after {timeout}s', 'hint': 'download still running or stalled; increase timeout'}), 504)
+    except Exception as e:
+        _log(f'[aria2 download] {str(e)}')
+        return (jsonify({'error': str(e)}), 500)
+    res = {'ok': r.returncode == 0, 'exit_code': r.returncode, 'dir': d or '.'}
+    if r.returncode != 0:
+        res['error'] = (r.stderr or r.stdout).strip()[-2000:]
+    else:
+        res['summary'] = (r.stdout or '').strip().splitlines()[-3:]
+    return jsonify(res)
+
+
+def _h_aria2_350():
+    """List the files inside a torrent or metalink without downloading them.
+
+        Body (JSON):
+            torrent (str): path to a .torrent file.
+            metalink (str): path to a .meta4/.metalink file.
+        Provide exactly one of torrent or metalink.
+    """
+    exe = _find_tool('aria2')
+    if not exe:
+        return (jsonify({'error': 'aria2 is not installed', 'hint': 'winget install aria2.aria2  OR  scoop install aria2'}), 503)
+    body = _json_body() or {}
+    torrent = str(body.get('torrent') or '').strip()
+    metalink = str(body.get('metalink') or '').strip()
+    if bool(torrent) == bool(metalink):
+        return (jsonify({'error': "provide exactly one of 'torrent' or 'metalink'"}), 400)
+    path = torrent or metalink
+    if not os.path.isfile(path):
+        return (jsonify({'error': f'file not found: {path}'}), 400)
+    try:
+        r = subprocess.run([exe, '--show-files', path], capture_output=True, text=True, timeout=30)
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': 'aria2 timed out'}), 504)
+    except Exception as e:
+        _log(f'[aria2 files] {str(e)}')
+        return (jsonify({'error': str(e)}), 500)
+    if r.returncode != 0:
+        return (jsonify({'error': (r.stderr or r.stdout).strip()}), 500)
+    return jsonify({'ok': True, 'kind': 'torrent' if torrent else 'metalink', 'listing': r.stdout})
+
+
+def _h_croc_351():
+    """Send a file, folder, or raw text to another computer via a relay, returning the code phrase.
+
+        Body (JSON):
+            path (str): file or folder to send (use this OR text).
+            text (str): raw text to send instead of a file.
+            code (str, optional): pre-shared code phrase. If omitted croc
+                generates one and it is returned in the response.
+            relay (str, optional): relay address (default: public relay).
+            timeout (int, optional): seconds to wait for a receiver (default 300).
+
+        Blocks until the transfer completes or the timeout elapses.
+    """
+    exe = _find_tool('croc')
+    if not exe:
+        return (jsonify({'error': 'croc is not installed', 'hint': 'winget install schollz.croc  OR  scoop install croc'}), 503)
+    body = _json_body() or {}
+    text = body.get('text')
+    path = str(body.get('path') or '').strip()
+    if text is None and not path:
+        return (jsonify({'error': "provide 'path' (file/folder) or 'text'"}), 400)
+    if text is not None and path:
+        return (jsonify({'error': "provide 'path' or 'text', not both"}), 400)
+    code = str(body.get('code') or '').strip()
+    relay = str(body.get('relay') or '').strip()
+    try:
+        timeout = max(10, min(1800, int(body.get('timeout') or 300)))
+    except (TypeError, ValueError):
+        timeout = 300
+    cmd = [exe, 'send', '--yes']
+    if code:
+        cmd += ['--code', code]
+    if relay:
+        cmd += ['--relay', relay]
+    if text is not None:
+        cmd += ['--text', str(text)]
+    else:
+        if not os.path.exists(path):
+            return (jsonify({'error': f'path not found: {path}'}), 400)
+        cmd.append(path)
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': f'croc timed out after {timeout}s (no receiver connected)'}), 504)
+    except Exception as e:
+        _log(f'[croc send] {str(e)}')
+        return (jsonify({'error': str(e)}), 500)
+    combined = (r.stdout or '') + '\n' + (r.stderr or '')
+    phrase = _croc__extract_code(combined)
+    res = {'ok': r.returncode == 0, 'code': phrase or code, 'sent': path or '(text)'}
+    if r.returncode != 0:
+        res['error'] = combined.strip()[-2000:]
+    return jsonify(res)
+
+
+def _h_croc_352():
+    """Receive a file/folder transfer using a code phrase.
+
+        Body (JSON):
+            code (str, required): the code phrase printed by the sender.
+            out (str, optional): destination directory (default: cwd).
+            overwrite (bool, optional): overwrite existing files (default false).
+            relay (str, optional): relay address (default: public relay).
+            timeout (int, optional): seconds to wait for a sender (default 300).
+    """
+    exe = _find_tool('croc')
+    if not exe:
+        return (jsonify({'error': 'croc is not installed', 'hint': 'winget install schollz.croc  OR  scoop install croc'}), 503)
+    body = _json_body() or {}
+    code = str(body.get('code') or '').strip()
+    if not code:
+        return (jsonify({'error': "missing 'code' field"}), 400)
+    outdir = str(body.get('out') or '').strip()
+    relay = str(body.get('relay') or '').strip()
+    _ov = body.get('overwrite')
+    overwrite = _ov is True or str(_ov).lower() in ('true', '1', 'yes', 'on')
+    try:
+        timeout = max(10, min(1800, int(body.get('timeout') or 300)))
+    except (TypeError, ValueError):
+        timeout = 300
+    cmd = [exe, '--yes']
+    if overwrite:
+        cmd.append('--overwrite')
+    if relay:
+        cmd += ['--relay', relay]
+    if outdir:
+        cmd += ['--out', outdir]
+    cmd.append(code)
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': f'croc timed out after {timeout}s (no sender connected)'}), 504)
+    except Exception as e:
+        _log(f'[croc receive] {str(e)}')
+        return (jsonify({'error': str(e)}), 500)
+    combined = (r.stdout or '') + '\n' + (r.stderr or '')
+    res = {'ok': r.returncode == 0, 'code': code}
+    if r.returncode != 0:
+        res['error'] = combined.strip()[-2000:]
+    else:
+        res['output'] = combined.strip()[-2000:]
+    return jsonify(res)
+
+
 def register_routes(app, state, require_auth):
     global _STATE
     _STATE = state
@@ -14607,6 +14874,10 @@ def register_routes(app, state, require_auth):
         ('/auto/age/encrypt', ['POST'], _h_age_346),
         ('/auto/age/decrypt', ['POST'], _h_age_347),
         ('/auto/age/pubkey', ['POST'], _h_age_348),
+        ('/auto/aria2/download', ['POST'], _h_aria2_349),
+        ('/auto/aria2/files', ['POST'], _h_aria2_350),
+        ('/auto/croc/send', ['POST'], _h_croc_351),
+        ('/auto/croc/receive', ['POST'], _h_croc_352),
     ]
     for _path, _methods, _fn in _ACTIONS:
         app.add_url_rule(_path, endpoint=_fn.__name__, view_func=require_auth(_fn), methods=_methods)
