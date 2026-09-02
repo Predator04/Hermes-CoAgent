@@ -84,8 +84,10 @@ def _load_sequence(name):
         return None
 
 
-def _http_json(method, url, data=None, timeout=15):
+def _http_json(method, url, data=None, timeout=15, extra_headers=None):
     headers = {"Accept": "application/json"}
+    if extra_headers:
+        headers.update(extra_headers)
     body = None
     if method.upper() != "GET":
         headers["Content-Type"] = "application/json"
@@ -131,8 +133,9 @@ def _relay_request(action, timeout=60):
     deadline = time.time() + max(1, timeout)
     while time.time() < deadline:
         res = _http_json("GET",
-                         f"{relay_url}/result?command_id={urllib.parse.quote(str(cid))}&token={urllib.parse.quote(token)}",
-                         timeout=10)
+                         f"{relay_url}/result?command_id={urllib.parse.quote(str(cid))}",
+                         timeout=10,
+                         extra_headers={"X-Hermes-Token": token})
         if isinstance(res, dict) and res.get("status") == "done":
             result = res.get("result")
             return result if result is not None else {"ok": True}
