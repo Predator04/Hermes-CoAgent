@@ -14,6 +14,7 @@ Task Scheduler's RunLevel=HighestAvailable, which executes without a consent pro
 the current user is already an administrator.
 """
 
+import math
 import os
 import shutil
 import subprocess
@@ -416,6 +417,10 @@ def register_routes(app, state, require_auth):
         try:
             wait_sec = float(d.get("timeout", 5))
         except (TypeError, ValueError):
+            wait_sec = 5.0
+        # Reject NaN/inf before clamping: min(nan, 30) is nan and max(0, nan)
+        # is 0, so a NaN timeout would silently produce zero click attempts.
+        if not math.isfinite(wait_sec):
             wait_sec = 5.0
         wait_sec = max(0.0, min(wait_sec, 30.0))
 
