@@ -90,6 +90,12 @@ def _read_pixel(x, y):
     """Read a single pixel via GDI GetPixel on the desktop DC. Returns (r, g, b)."""
     user32 = ctypes.windll.user32
     gdi32 = ctypes.windll.gdi32
+    user32.GetDC.restype = ctypes.c_void_p
+    user32.GetDC.argtypes = [ctypes.c_void_p]
+    user32.ReleaseDC.restype = ctypes.c_int
+    user32.ReleaseDC.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+    gdi32.GetPixel.restype = ctypes.c_uint32
+    gdi32.GetPixel.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_int]
     hdc = user32.GetDC(None)
     if not hdc:
         raise RuntimeError("GetDC failed — no interactive desktop access (Session 0?)")
