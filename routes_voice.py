@@ -169,7 +169,9 @@ def _click_payload(text):
     if len(nums) >= 2:
         return {"x": int(nums[0]), "y": int(nums[1])}
     pos = _api_call("/cursor/pos", method="GET", timeout=3)
-    payload = pos.get("response") if pos.get("ok") and isinstance(pos.get("response"), dict) else {}
+    if not (pos.get("ok") and isinstance(pos.get("response"), dict)):
+        return None
+    payload = pos.get("response")
     return {"x": int(payload.get("x", 0)), "y": int(payload.get("y", 0))}
 
 
@@ -217,8 +219,11 @@ def _match_command(text):
                 "data": {"clicks": clicks}}
 
     if _word(normalized, "click"):
+        coords = _click_payload(normalized)
+        if not coords:
+            return None
         return {"kind": "api", "label": "click", "method": "POST", "path": "/mouse/click",
-                "data": _click_payload(normalized)}
+                "data": coords}
 
     if _word(normalized, "type"):
         value = _after_keyword(text, "type")
