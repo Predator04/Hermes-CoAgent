@@ -291,9 +291,11 @@ def route_deploy_oneclick():
 
         # Verify it's up
         import urllib.request
+        server_up = False
         try:
             with urllib.request.urlopen(f"http://127.0.0.1:{port}/ping", timeout=10):
                 pass
+            server_up = True
             _log("CoAgent is running!")
         except Exception:
             _log("Waiting for CoAgent to start...")
@@ -301,9 +303,21 @@ def route_deploy_oneclick():
             try:
                 with urllib.request.urlopen(f"http://127.0.0.1:{port}/ping", timeout=10):
                     pass
+                server_up = True
                 _log("CoAgent is running!")
             except Exception as e2:
-                _log(f"CoAgent may still be starting: {e2}")
+                _log(f"CoAgent not responding yet: {e2}")
+
+        # If the child has already exited, don't hand back a URL/token for a
+        # server that will never come up — report a real failure instead.
+        if not server_up and proc.poll() is not None:
+            code = proc.returncode
+            _log(f"CoAgent exited during startup (code {code})")
+            with _DEPLOY_LOCK:
+                _DEPLOY_STATE["phase"] = "error"
+                _DEPLOY_STATE["error"] = f"CoAgent exited during startup (code {code})"
+                _DEPLOY_STATE["coagent_pid"] = None
+            return _error(f"CoAgent exited during startup (code {code})", status=500)
 
         lan_url = f"http://127.0.0.1:{port}"
         _DEPLOY_STATE["lan_url"] = lan_url
