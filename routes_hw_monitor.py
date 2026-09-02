@@ -62,7 +62,7 @@ def _run_ps(script, timeout=15):
         return r.stdout or "", r.stderr or "", r.returncode
     except subprocess.TimeoutExpired:
         return "", "timed out", -1
-    except FileNotFoundError as exc:
+    except OSError as exc:
         return "", str(exc), -1
 
 
@@ -357,6 +357,8 @@ def register_routes(app, state, require_auth):
         body = _json_body()
         sources = None
         if isinstance(body, dict):
+            if "sources" in body and not isinstance(body["sources"], list):
+                return jsonify({"error": "sources must be a list of source names"}), 400
             requested = body.get("sources")
             if isinstance(requested, list):
                 filtered = {str(s).lower() for s in requested if isinstance(s, str)}
