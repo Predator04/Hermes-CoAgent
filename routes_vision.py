@@ -74,10 +74,15 @@ def _grab_region(region=None, window=None):
         ry = int(region.get("y", 0))
         rw = int(region.get("w", 0) or region.get("width", 0))
         rh = int(region.get("h", 0) or region.get("height", 0))
-        if win_bbox:
-            rx += win_bbox[0]
-            ry += win_bbox[1]
-        bbox = (rx, ry, rx + rw, ry + rh) if (rw > 0 and rh > 0) else None
+        if rw > 0 and rh > 0:
+            if win_bbox:
+                rx += win_bbox[0]
+                ry += win_bbox[1]
+            bbox = (rx, ry, rx + rw, ry + rh)
+        elif win_bbox:
+            bbox = win_bbox
+        else:
+            bbox = None
     elif win_bbox:
         bbox = win_bbox
     else:
@@ -500,7 +505,9 @@ def _ocr_elem_text(pil_img, rel_x, rel_y, w, h):
 # ---------------------------------------------------------------------------
 
 def _hex_to_rgb(hex_color):
-    h = hex_color.lstrip("#")
+    h = (hex_color or "").lstrip("#")
+    if len(h) == 3:
+        h = "".join(c * 2 for c in h)
     try:
         return tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))
     except (ValueError, IndexError):
