@@ -83,8 +83,10 @@ def register_routes(app, state, require_auth):
     def route_checkpoint_create():
         data = _json_body() or {}
         description = data.get("description") or "CoAgent pre-run checkpoint"
-        do_shadow = bool(data.get("shadow", False))
+        do_shadow = data.get("shadow") is True
         volume = data.get("volume") or "C:"
+        if not isinstance(volume, str):
+            return jsonify({"error": "volume must be a string drive letter, e.g. 'C:'"}), 400
         ok, msg = _create_restore_point(description)
         result = {"restore_point": {"ok": ok, "detail": msg}}
         if do_shadow:
@@ -107,17 +109,17 @@ def register_routes(app, state, require_auth):
                 parsed = json.loads(raw)
                 if isinstance(parsed, dict):
                     parsed = [parsed]
-                elif parsed is None:
+                elif not isinstance(parsed, list):
                     parsed = []
             except Exception:
-                parsed = raw
+                parsed = []
         return jsonify({"restore_points": parsed, "raw": raw})
 
     @app.route("/checkpoint/rollback", methods=["POST"])
     @require_auth
     def route_checkpoint_rollback():
         data = _json_body() or {}
-        confirm = bool(data.get("confirm", False))
+        confirm = data.get("confirm") is True
         sequence = data.get("sequence")
         if not confirm:
             return jsonify({"error": "rollback requires confirm:true (system restart + irreversible)"}), 400
