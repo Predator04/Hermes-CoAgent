@@ -143,7 +143,7 @@ def _auto_loop():
             _commit()
         except Exception as e:
             with _LOCK:
-                globals()["_LAST_ERROR"] = f"{type(e).__name__}: {e}"
+                globals()["_LAST_ERROR"] = {"error": str(e), "type": type(e).__name__}
             _log(f"Git auto-commit failed: {type(e).__name__}: {e}")
         slept = 0
         while slept < interval:
@@ -366,9 +366,9 @@ def register_routes(app, state, require_auth):
             _status_result, dirty = _status_lines()
             if dirty and not data.get("allow_dirty"):
                 return jsonify({"error": "working tree is dirty; pass allow_dirty=true to revert anyway", "dirty_files": dirty}), 409
-            args = ["revert", hash_value]
-            if data.get("no_edit", True):
-                args.insert(1, "--no-edit")
+            # Always --no-edit: a headless revert with stdin=DEVNULL would hang
+            # (or error) waiting for an editor if the flag were omitted.
+            args = ["revert", "--no-edit", hash_value]
             result = _run_git(args, timeout=300)
             if result["ok"]:
                 return jsonify({"status": "reverted", "hash": hash_value, "result": result})
