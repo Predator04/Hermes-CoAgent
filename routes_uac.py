@@ -84,11 +84,25 @@ def _find_schtasks():
     return None
 
 
+def _unregister_task(task_name):
+    """Best-effort removal of a scheduled task (avoids Task Scheduler leaks)."""
+    try:
+        subprocess.run(
+            ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command",
+             f"Unregister-ScheduledTask -TaskName '{task_name}' -Confirm:$false "
+             "-ErrorAction SilentlyContinue"],
+            capture_output=True, text=True, timeout=15,
+        )
+    except Exception:
+        pass
+
+
 def _run_elevated_via_task(command, arguments="", working_dir=None):
     """Create an elevated scheduled task via PowerShell and run it.
 
     Uses Register-ScheduledTask with RunLevel=Highest, which bypasses the UAC
-    consent prompt when the current user has admin rights.
+    consent prompt when the current user has admin rights. On failure the task
+    is unregistered so it can't linger in Task Scheduler.
     Returns a dict; 'error' key present on failure.
     """
     task_name = f"CoAgent_Elevate_{uuid.uuid4().hex[:12]}"
@@ -120,6 +134,7 @@ def _run_elevated_via_task(command, arguments="", working_dir=None):
             capture_output=True, text=True, timeout=20,
         )
         if r.returncode != 0:
+            _unregister_task(task_name)
             return {
                 "error": "Failed to create/start elevated task",
                 "detail": (r.stderr or r.stdout).strip(),
@@ -458,9 +473,10 @@ def register_routes(app, state, require_auth):
     def route_elevated_exec():
         """Launch a command with highest privileges via Windows Task Scheduler.
 
-        Creates a one-shot task with RunLevel=HighestAvailable, runs it, then
-        deletes it. When the current user has admin rights this executes the
-        target process elevated WITHOUT showing a UAC consent prompt.
+        Creates a one-shot task with RunLevel=HighestAvailable, runs it, and the
+        task auto-expires via DeleteExpiredTaskAfter. When the current user has
+        admin rights this executes the target process elevated WITHOUT showing a
+        UAC consent prompt.
 
         Body:
           command     — full path to executable (required), e.g. "C:\\setup.exe"
