@@ -410,6 +410,161 @@ def _safe_icon_path(icon_path):
     return str(resolved)
 
 
+def _text_range_rect(rng):
+    """Bounding rectangle of a UIA text range → {left, top, width, height}."""
+    try:
+        rects = rng.GetBoundingRectangles()
+        if rects is not None and len(rects) >= 4:
+            return {
+                "left": int(rects[0]),
+                "top": int(rects[1]),
+                "width": int(rects[2]),
+                "height": int(rects[3]),
+            }
+    except Exception:
+        pass
+    return None
+
+
+def _read_focused_text_pattern(mode="caret"):
+    """Read caret/selection state of the focused control via UIA TextPattern.
+
+    Deterministic (no OCR/vision). Returns the caret position + surrounding
+    document text (mode='caret') or the selected text + bounding rect
+    (mode='selection'). Falls back to ValuePattern (whole value) when the
+    focused control doesn't support TextPattern. Windows UIAutomationCore only.
+    """
+    result = {"ok": False, "method": None}
+    try:
+        import comtypes
+        import comtypes.client
+
+        try:
+            comtypes.CoInitialize()
+        except Exception:
+            pass
+
+        try:
+            from comtypes.gen import UIAutomationClient as UIA
+        except Exception:
+            comtypes.client.GetModule("UIAutomationCore.dll")
+            from comtypes.gen import UIAutomationClient as UIA
+
+        iuia = comtypes.CoCreateInstance(
+            UIA.CUIAutomation._reg_clsid_,
+            interface=UIA.IUIAutomation,
+            clsctx=comtypes.CLSCTX_INPROC_SERVER,
+        )
+        focused = iuia.GetFocusedElement()
+        if not focused:
+            return {"ok": False, "error": "no focused element"}
+
+        name = focused.CurrentName or ""
+        control_type = getattr(focused, "CurrentControlType", 0)
+        class_name = focused.CurrentClassName or ""
+
+        doc_text = ""
+        selected_text = ""
+        caret = None
+
+        # 1) TextPattern (rich edit / document controls)
+        try:
+            tp_unk = focused.GetCurrentPattern(UIA.UIA_TextPatternId)
+            tp = tp_unk.QueryInterface(UIA.IUIAutomationTextPattern)
+            doc_range = tp.DocumentRange
+            doc_text = (doc_range.GetText(-1) or "") if doc_range else ""
+
+            sel_parts = []
+            try:
+                sel_elements = tp.GetSelection()
+                n = sel_elements.Length if sel_elements is not None else 0
+                for i in range(n):
+                    try:
+                        elem = sel_elements.GetElement(i)
+                        sub_unk = elem.GetCurrentPattern(UIA.UIA_TextPatternId)
+                        sub_tp = sub_unk.QueryInterface(UIA.IUIAutomationTextPattern)
+                        sub_text = (sub_tp.DocumentRange.GetText(-1) or "")
+                        if sub_text:
+                            sel_parts.append(sub_text)
+                    except Exception:
+                        continue
+            except Exception:
+                sel_parts = []
+            selected_text = "".join(sel_parts)
+
+            # Caret via TextPattern2.GetCaretRange (collapsed selection).
+            try:
+                tp2 = tp.QueryInterface(UIA.IUIAutomationTextPattern2)
+                got = tp2.GetCaretRange()
+                if isinstance(got, tuple):
+                    is_active = bool(got[0])
+                    caret_range = got[-1]
+                else:
+                    is_active = True
+                    caret_range = got
+                caret = {
+                    "active": is_active,
+                    "rect": _text_range_rect(caret_range) if caret_range else None,
+                    "text": (caret_range.GetText(256) or "") if caret_range else "",
+                }
+            except Exception:
+                caret = None
+
+            result["method"] = "textpattern"
+        except Exception:
+            result["method"] = None
+
+        # 2) ValuePattern fallback (plain edit fields expose the whole value)
+        if not result.get("method"):
+            try:
+                vp = focused.GetCurrentPattern(UIA.UIA_ValuePatternId).QueryInterface(
+                    UIA.IUIAutomationValuePattern
+                )
+                doc_text = vp.CurrentValue or ""
+                result["method"] = "valuepattern"
+            except Exception:
+                pass
+
+        caret_offset = -1
+        if selected_text and doc_text:
+            idx = doc_text.find(selected_text)
+            caret_offset = idx if idx >= 0 else -1
+
+        control = {
+            "name": name,
+            "control_type": int(control_type) if not isinstance(control_type, str) else control_type,
+            "class_name": class_name,
+        }
+
+        if mode == "selection":
+            return {
+                "ok": True,
+                "method": result["method"] or "none",
+                "control": control,
+                "selection": {
+                    "text": selected_text,
+                    "offset": caret_offset,
+                    "collapsed": selected_text == "",
+                    "rect": caret.get("rect") if caret else None,
+                },
+                "context": doc_text[:2000],
+                "context_length": len(doc_text),
+            }
+
+        return {
+            "ok": True,
+            "method": result["method"] or "none",
+            "control": control,
+            "caret": caret or {"active": None, "rect": None, "text": ""},
+            "selection_text": selected_text,
+            "caret_offset": caret_offset,
+            "context": doc_text[:2000],
+            "context_length": len(doc_text),
+        }
+    except Exception as exc:
+        return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+
+
 def register_routes(app, state, require_auth):
     ue = _get_uia_engine()
 
@@ -663,6 +818,19 @@ def register_routes(app, state, require_auth):
             "count": len(texts),
             "method": "uia",
         })
+
+    @app.route("/uia/text/caret", methods=["GET", "POST"])
+    @require_auth
+    def route_uia_text_caret():
+        """Caret position + surrounding text of the focused editable control via
+        UIA TextPattern — deterministic, no OCR. (#1242)"""
+        return jsonify(_read_focused_text_pattern(mode="caret"))
+
+    @app.route("/uia/text/selection", methods=["GET", "POST"])
+    @require_auth
+    def route_uia_text_selection():
+        """Selected text (and range rect) of the focused control via UIA TextPattern. (#1242)"""
+        return jsonify(_read_focused_text_pattern(mode="selection"))
 
     @app.route("/uia/click-hybrid", methods=["POST"])
     @require_auth
