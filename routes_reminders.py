@@ -10,6 +10,7 @@ import urllib.error
 import urllib.request
 from contextlib import closing
 from datetime import datetime, timedelta
+from urllib.parse import urlparse
 
 from flask import Blueprint, jsonify
 
@@ -93,6 +94,8 @@ def _parse_trigger_at(value):
     if match:
         amount = int(match.group(1))
         unit = match.group(2)
+        if amount > 10**6:  # guard against timedelta OverflowError on huge inputs
+            raise ValueError("interval too large (max ~1,000,000 units)")
         if unit == "s":
             return now + timedelta(seconds=amount)
         if unit == "m":
@@ -135,6 +138,12 @@ def _normalize_delivery(data):
             if env_url:
                 return f"webhook:{env_url}"
         raise ValueError("deliver_to must be telegram, telegram:<chat_id>, toast, webhook:<url>, or webhook_url")
+    if deliver_to.startswith("webhook:"):
+        url = deliver_to.split(":", 1)[1].strip()
+        if not url:
+            raise ValueError("webhook URL missing")
+        if urlparse(url).scheme.lower() not in ("http", "https"):
+            raise ValueError("webhook URL scheme must be http or https")
     return deliver_to
 
 
@@ -203,6 +212,8 @@ def _send_webhook(delivered_to, title, message, reminder):
     url = delivered_to.split(":", 1)[1] if ":" in delivered_to else ""
     if not url:
         return False, "webhook URL missing"
+    if urlparse(url).scheme.lower() not in ("http", "https"):
+        return False, "webhook URL scheme must be http or https"
     if _is_private_url(url):
         return False, "webhook URL resolves to a blocked private or internal address"
     payload = json.dumps({
@@ -414,13 +425,16 @@ def route_reminders_snooze(reminder_id):
             """
             UPDATE reminders
             SET trigger_at = ?, status = 'active', last_error = NULL, updated_at = ?
-            WHERE id = ?
+            WHERE id = ? AND status IN ('active', 'failed')
             """,
             (trigger_at, now_text, reminder_id),
         )
         conn.commit()
     if cur.rowcount == 0:
-        return jsonify({"error": "reminder not found", "id": reminder_id}), 404
+        existing = _load_reminder(reminder_id)
+        if existing is None:
+            return jsonify({"error": "reminder not found", "id": reminder_id}), 404
+        return jsonify({"error": f"reminder is {existing['status']} and cannot be snoozed", "id": reminder_id}), 409
     return jsonify({"status": "snoozed", "minutes": minutes, "reminder": _load_reminder(reminder_id)})
 
 
