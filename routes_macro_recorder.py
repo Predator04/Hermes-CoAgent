@@ -83,7 +83,7 @@ class _KBDLLHOOKSTRUCT(ctypes.Structure):
 
 
 LowLevelProc = ctypes.WINFUNCTYPE(
-    ctypes.c_long, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM
+    wintypes.LPARAM, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM
 )
 
 
