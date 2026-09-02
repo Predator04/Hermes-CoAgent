@@ -855,6 +855,13 @@ except ImportError:
     _console("[WARN] routes_recordings.py not found")
 
 try:
+    from routes_phone_memory import register_routes as reg_phone_memory
+    PHONE_MEMORY_AVAILABLE = True
+except ImportError:
+    PHONE_MEMORY_AVAILABLE = False
+    _console("[WARN] routes_phone_memory.py not found")
+
+try:
     from routes_healer import register_routes as reg_healer
     HEALER_AVAILABLE = True
 except ImportError:
@@ -1310,6 +1317,9 @@ if WORKFLOWS_AVAILABLE:
 if RECORDINGS_AVAILABLE:
     reg_recordings(app, state, require_auth)
     features["recordings"] = True
+if PHONE_MEMORY_AVAILABLE:
+    reg_phone_memory(app, state, require_auth)
+    features["phone_sequence_memory"] = True
 if HEALER_AVAILABLE:
     reg_healer(app, state, require_auth)
     features["self_healing_mode"] = True
@@ -1640,7 +1650,8 @@ def route_version():
                                  "qr_decode", "credential_vault", "task_supervisor",
                                  "humanized_typing", "rich_clipboard", "hyperv_vm",
                                  "pdf_form_fill",
-                                 "recordings", "workflow_variables", "telemetry_best_strategy"],
+                                 "recordings", "workflow_variables", "telemetry_best_strategy",
+                                 "phone_sequence_memory"],
                     "modules": ["mouse", "ocr", "uia", "file", "media", "v63",
                                 "stream", "process", "voice", "cua", "copilot",
                                 "bypass", "toast", "deps", "config", "browser",
@@ -1654,7 +1665,7 @@ def route_version():
                                 "browser_v2", "mobile", "memory", "batching", "speculative_batching",
                                 "reminders", "hud", "perception", "session",
                                 "organize", "office", "scheduler_tasks",
-                                "qr", "vault", "supervisor", "vm", "pdf", "recordings"],
+                                "qr", "vault", "supervisor", "vm", "pdf", "recordings", "phone_memory"],
                     "memory": memory_stats(),
                     "security": ["auth_token", "rate_limit", "input_sanitization",
                                  "cors_restricted", "security_headers"]})

@@ -59,6 +59,7 @@ curl http://127.0.0.1:9123/help
 | **Workflow Variables** | Cross-step data flow — `store_as` on any step + `$ref`/`$var`/`$store` references in later step params |
 | **Self-Improving Finder** | Telemetry-backed strategy selection — learns UIA vs OCR vs template per app (`/telemetry/best-strategy`) |
 | **Recorded Bug Reports** | Narrated screen-recording → timestamped transcript + keyframes + OCR index → GitHub issue draft (`/recordings/*`) |
+| **Phone Sequence Memory** | Android self-learning controller: relay bridge + named action-sequence record/replay + proxy to the phone's on-device `telemetry` (`/phone/*`) |
 | **Remote Access** | Web dashboard, mobile remote view, SSE screen stream, SMS bridge, phone bridge via ADB |
 | **Security** | Bearer auth, CSRF protection, rate limiting, CORS, secret file ignores, private URL blocking |
 
@@ -228,6 +229,7 @@ Hermes-CoAgent/
 | `routes_process.py` | Process listing and control |
 | `routes_recipes.py` | Scheduled automation recipes |
 | `routes_recordings.py` | Recorded bug-report pipeline (transcript + keyframes + issue draft) |
+| `routes_phone_memory.py` | Android phone sequence memory + relay bridge (`/phone/*`) |
 | `routes_recorder.py` | Macro recorder |
 | `routes_recorder_gif.py` | Animated GIF recorder |
 | `routes_reminders.py` | Timed reminders and alerts |
