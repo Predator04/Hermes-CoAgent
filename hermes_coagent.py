@@ -1189,6 +1189,16 @@ try:
 except ImportError:
     reg_scheduler_tasks = None
     features["task_persistence"] = False
+try:
+    from routes_email import register_routes as reg_email
+except ImportError:
+    reg_email = None
+    features["smtp_imap_email"] = False
+try:
+    from routes_bluetooth import register_routes as reg_bluetooth
+except ImportError:
+    reg_bluetooth = None
+    features["bluetooth_device_management"] = False
 
 reg_background(app, state, require_auth)
 features["background_control"] = True
@@ -1479,6 +1489,12 @@ if reg_guard:
 if reg_checkpoint:
     reg_checkpoint(app, state, require_auth)
     features["safety_checkpoint"] = True
+if reg_email:
+    reg_email(app, state, require_auth)
+    features["smtp_imap_email"] = True
+if reg_bluetooth:
+    reg_bluetooth(app, state, require_auth)
+    features["bluetooth_device_management"] = True
 reg_diagnostics(app, state, require_auth); features["diagnostics"] = True
 reg_layout(app, state, require_auth); features["layout_profiles"] = True
 if CEF_AVAILABLE:
@@ -1651,7 +1667,8 @@ def route_version():
                                  "humanized_typing", "rich_clipboard", "hyperv_vm",
                                  "pdf_form_fill",
                                  "recordings", "workflow_variables", "telemetry_best_strategy",
-                                 "phone_sequence_memory"],
+                                 "phone_sequence_memory", "uia_text_caret_selection",
+                                 "smtp_imap_email", "bluetooth_device_management"],
                     "modules": ["mouse", "ocr", "uia", "file", "media", "v63",
                                 "stream", "process", "voice", "cua", "copilot",
                                 "bypass", "toast", "deps", "config", "browser",
@@ -1665,7 +1682,8 @@ def route_version():
                                 "browser_v2", "mobile", "memory", "batching", "speculative_batching",
                                 "reminders", "hud", "perception", "session",
                                 "organize", "office", "scheduler_tasks",
-                                "qr", "vault", "supervisor", "vm", "pdf", "recordings", "phone_memory"],
+                                "qr", "vault", "supervisor", "vm", "pdf", "recordings", "phone_memory",
+                                "email", "bluetooth"],
                     "memory": memory_stats(),
                     "security": ["auth_token", "rate_limit", "input_sanitization",
                                  "cors_restricted", "security_headers"]})
