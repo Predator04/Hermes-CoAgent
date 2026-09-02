@@ -108,7 +108,7 @@ def register_routes(app, state, require_auth):
     def route_macro_build():
         body = _json_body()
         text = body.get("text")
-        if not text:
+        if not isinstance(text, str) or not text:
             return jsonify({"ok": False, "error": "Missing required field: text"}), 400
         result = build_macro(text)
         return jsonify({"ok": True, "step_count": len(result["steps"]), **result})
