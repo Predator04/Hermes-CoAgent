@@ -334,13 +334,26 @@ def _macro_path(name):
     return path
 
 def _load_scheduler():
+    def _quarantine():
+        try:
+            bad = SCHEDULER_FILE.with_name(
+                f"{SCHEDULER_FILE.name}.corrupt-{int(time.time())}")
+            SCHEDULER_FILE.replace(bad)
+            _log(f"Scheduler file corrupt — moved aside to {bad.name}")
+        except Exception:
+            pass
+
     if SCHEDULER_FILE.exists():
         try:
             data = json.loads(SCHEDULER_FILE.read_text(encoding="utf-8"))
         except Exception:
+            _quarantine()
             return {"actions": []}
         if isinstance(data, dict) and isinstance(data.get("actions"), list):
             return data
+        # Invalid structure — preserve the file instead of silently returning
+        # an empty schedule that _save_scheduler would overwrite.
+        _quarantine()
         return {"actions": []}
     return {"actions": []}
 
@@ -730,12 +743,18 @@ def register_routes(app, state, require_auth):
             cx, cy = pt.x, pt.y
 
             MONITOR_DEFAULTTONEAREST = 2
-            hmon = ctypes.windll.user32.MonitorFromPoint(
+            user32 = ctypes.windll.user32
+            # HMONITOR is a pointer-sized handle. ctypes' default c_int restype
+            # truncates the upper bits on x64, yielding a bogus handle to
+            # GetMonitorInfoW. Force a pointer-sized return and keep it wrapped
+            # so it isn't truncated again when passed onward.
+            user32.MonitorFromPoint.restype = ctypes.c_void_p
+            hmon = ctypes.c_void_p(user32.MonitorFromPoint(
                 ctypes.wintypes.POINT(cx, cy), MONITOR_DEFAULTTONEAREST
-            )
+            ))
             info = MONITORINFOEX()
             info.cbSize = ctypes.sizeof(MONITORINFOEX)
-            ctypes.windll.user32.GetMonitorInfoW(hmon, ctypes.byref(info))
+            user32.GetMonitorInfoW(hmon, ctypes.byref(info))
 
             r = info.rcMonitor
             MONITORINFOF_PRIMARY = 1
@@ -1139,8 +1158,11 @@ $s.Speak($text)
     @app.route("/replay", methods=["POST"])
     @require_auth
     def route_replay():
-        d = _json_body()
-        count = max(0, min(int(d.get("count", 5)), 100))
+        d = _json_body() or {}
+        try:
+            count = max(0, min(int(d.get("count", 5)), 100))
+        except (TypeError, ValueError):
+            count = 5
         from routes_mouse import _execute_action_wrapper
         with _ACTION_HISTORY_LOCK:
             actions = list(_action_history)[-count:]
