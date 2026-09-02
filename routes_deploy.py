@@ -274,7 +274,7 @@ def route_deploy_oneclick():
     _log(f"Token: {token[:8]}...")
 
     # Step 3: Start CoAgent
-    coagent_dir = Path.cwd()
+    coagent_dir = Path(__file__).resolve().parent
     _DEPLOY_STATE["phase"] = "launching"
     _log(f"Launching CoAgent from {coagent_dir}")
 
