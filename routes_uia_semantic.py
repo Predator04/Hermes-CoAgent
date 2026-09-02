@@ -58,10 +58,28 @@ def rank_candidates(tree, role=None, name=None, limit=5):
 
 
 def _live_tree():
-    """Best-effort live UIA element list. Returns None if unavailable."""
+    """Best-effort live UIA element list (flattened). Returns None if unavailable.
+
+    The live UIA snapshot is a nested tree whose nodes expose ``control_type``
+    (not ``role``). Flatten it and map ``control_type`` → ``role`` so the
+    role/name scorer matches what the tree actually contains.
+    """
     try:
-        from routes_uia import _snapshot_elements  # type: ignore
-        return _snapshot_elements()
+        from routes_uia import _get_uia_engine, _walk_uia_nodes
+        ue = _get_uia_engine()
+        if ue is None:
+            return None
+        snap = ue.uia_snapshot()
+        if not snap.get("success"):
+            return None
+        elements = []
+        for node in _walk_uia_nodes(snap.get("tree", {})):
+            if not isinstance(node, dict):
+                continue
+            node = dict(node)
+            node.setdefault("role", node.get("control_type", ""))
+            elements.append(node)
+        return elements or None
     except Exception:
         return None
 
