@@ -51,6 +51,15 @@ MAX_QUEUE_ITEMS = 100
 WATCH_INTERVAL = 1.0
 
 
+def _parse_bool(value):
+    """Coerce client-supplied booleans strictly; 'false'/'0'/'no' must be False."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in ("1", "true", "yes", "on")
+    return bool(value)
+
+
 # ---------------------------------------------------------------------------
 # System state probes
 # ---------------------------------------------------------------------------
@@ -114,7 +123,7 @@ class IdleGate:
             if threshold_seconds is not None:
                 self._config["threshold_seconds"] = max(0.0, float(threshold_seconds))
             if enabled is not None:
-                self._config["enabled"] = bool(enabled)
+                self._config["enabled"] = _parse_bool(enabled)
             if bypass_priority is not None:
                 self._config["bypass_priority"] = int(bypass_priority)
             return dict(self._config)
@@ -316,11 +325,14 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_idle_config():
         data = request.get_json(silent=True) or {}
-        cfg = gate.configure(
-            threshold_seconds=data.get("threshold_seconds"),
-            enabled=data.get("enabled"),
-            bypass_priority=data.get("bypass_priority"),
-        )
+        try:
+            cfg = gate.configure(
+                threshold_seconds=data.get("threshold_seconds"),
+                enabled=data.get("enabled"),
+                bypass_priority=data.get("bypass_priority"),
+            )
+        except (TypeError, ValueError):
+            return jsonify({"ok": False, "error": "threshold_seconds and bypass_priority must be numeric"}), 400
         return jsonify({"ok": True, "config": cfg})
 
     @app.route("/idle/queue", methods=["GET"])

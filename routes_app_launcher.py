@@ -10,6 +10,7 @@ OS resolves file associations and honors the requested nCmdShow flag. The
 ctypes import is guarded so the Linux syntax-check CI stays green.
 """
 
+import math
 import os
 import shlex
 import subprocess
@@ -159,6 +160,8 @@ def register_routes(app, state, require_auth):
             wait_timeout = float(timeout_raw) if timeout_raw is not None else None
         except (TypeError, ValueError):
             return jsonify({"error": "timeout must be numeric"}), 400
+        if wait_timeout is not None and (not math.isfinite(wait_timeout) or wait_timeout < 0):
+            return jsonify({"error": "timeout must be a finite non-negative number"}), 400
 
         response = {
             "status": "launched",
@@ -228,6 +231,10 @@ def register_routes(app, state, require_auth):
                     response["returncode"] = proc.wait(timeout=wait_timeout)
                 except subprocess.TimeoutExpired:
                     proc.kill()
+                    try:
+                        proc.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        pass
                     return jsonify({"error": "process timed out", "pid": proc.pid}), 504
 
             _log(f"launch/app popen {target} pid={proc.pid} show={show}")
