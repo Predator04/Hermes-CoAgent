@@ -20,6 +20,7 @@ from pathlib import Path
 from flask import Blueprint, jsonify, Response
 
 from routes_bypass import _json_payload
+from shared import _wrap_registered_blueprint_routes
 
 try:
     from routes_ngrok import ensure_ngrok as _ensure_ngrok
@@ -604,12 +605,13 @@ Write-Host "Token saved to: $CoAgentDir\.token" -ForegroundColor Cyan
 
 
 def register_routes(app, state, require_auth):
-    """Register deploy routes on the Flask app."""
-    for endpoint, view_func in list(deploy_bp.view_functions.items()):
-        if getattr(view_func, "_hermes_auth_wrapped", False):
-            continue
-        wrapped = require_auth(view_func)
-        wrapped._hermes_auth_wrapped = True
-        deploy_bp.view_functions[endpoint] = wrapped
+    """Register deploy routes on the Flask app, wrapped in auth.
 
+    Flask's Blueprint captures the original view functions in
+    ``deferred_functions`` at decoration time, so mutating
+    ``deploy_bp.view_functions`` afterwards has no effect on the routes that
+    actually get registered. Register first, then wrap the app-level view
+    functions (same pattern as every other blueprint).
+    """
     app.register_blueprint(deploy_bp)
+    _wrap_registered_blueprint_routes(app, deploy_bp.name, require_auth)
