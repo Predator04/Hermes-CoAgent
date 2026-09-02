@@ -3,6 +3,7 @@
 import os
 import re
 import shutil
+import tempfile
 import time
 from pathlib import Path
 
@@ -161,13 +162,20 @@ def route_config_rollback():
     if not safe_path.parent.exists():
         return _error("Target directory does not exist", 404)
     pre_rollback_backup = backup_file(safe_path)
-    # Write to a temp file in the same directory, then atomically replace the
-    # target so an interrupted rollback never leaves a truncated/corrupt file.
-    tmp_path = safe_path.with_name(safe_path.name + ".rollback.tmp")
+    # Write to a uniquely-named temp file in the same directory, then atomically
+    # replace the target so an interrupted rollback never leaves a truncated or
+    # corrupt file. mkstemp avoids two concurrent rollbacks racing on a single
+    # fixed temp name.
+    fd, tmp_path = tempfile.mkstemp(dir=str(safe_path.parent), prefix=safe_path.name + ".", suffix=".rollback.tmp")
+    os.close(fd)
     try:
         shutil.copy2(backup_path, tmp_path)
         os.replace(tmp_path, safe_path)
     except OSError as e:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
         return _error(f"Rollback failed: {e}", 500)
     return jsonify({
         "status": "rolled_back",
