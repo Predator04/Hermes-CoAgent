@@ -154,10 +154,15 @@ def register_routes(app, state, require_auth):
             return jsonify({"error": "Unknown condition '%s'" % condition,
                             "valid": list(_SUPPORTED_CONDITIONS)}), 400
 
-        tolerance = max(0, int(d.get("tolerance", 0) or 0))
-        timeout_ms = max(0, int(d.get("timeout_ms", 10000) or 0))
-        interval_ms = max(10, int(d.get("interval_ms", 50) or 50))
-        monitor = int(d.get("monitor", 0) or 0)
+        try:
+            tolerance = max(0, int(d.get("tolerance", 0) or 0))
+            interval_ms = max(10, int(d.get("interval_ms", 50) or 50))
+            monitor = int(d.get("monitor", 0) or 0)
+            timeout_ms = int(d.get("timeout_ms", 10000) or 10000)
+        except (TypeError, ValueError):
+            return jsonify({"error": "tolerance, timeout_ms, interval_ms, and monitor must be numeric"}), 400
+        # 0/negative must not disable the timeout (infinite loop); cap at 60s.
+        timeout_ms = max(1, min(60000, timeout_ms))
 
         target = None
         if condition in ("==", "!=", "near"):
