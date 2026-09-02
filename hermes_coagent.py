@@ -848,6 +848,13 @@ except ImportError:
     _console("[WARN] routes_workflows.py not found")
 
 try:
+    from routes_recordings import register_routes as reg_recordings
+    RECORDINGS_AVAILABLE = True
+except ImportError:
+    RECORDINGS_AVAILABLE = False
+    _console("[WARN] routes_recordings.py not found")
+
+try:
     from routes_healer import register_routes as reg_healer
     HEALER_AVAILABLE = True
 except ImportError:
@@ -1255,6 +1262,7 @@ features["hud_overlay"] = True
 if TELEMETRY_AVAILABLE:
     app.register_blueprint(telem_bp)
     features["telemetry"] = True
+    features["telemetry_best_strategy"] = True
     init_telem(str(COAGENT_DIR))
 if DIFF_CAPTURE_AVAILABLE:
     app.register_blueprint(diff_bp)
@@ -1298,6 +1306,10 @@ if RECIPES_AVAILABLE:
 if WORKFLOWS_AVAILABLE:
     reg_workflows(app, state, require_auth)
     features["visual_workflows"] = True
+    features["workflow_variables"] = True
+if RECORDINGS_AVAILABLE:
+    reg_recordings(app, state, require_auth)
+    features["recordings"] = True
 if HEALER_AVAILABLE:
     reg_healer(app, state, require_auth)
     features["self_healing_mode"] = True
@@ -1627,7 +1639,8 @@ def route_version():
                                  "office_authoring", "task_persistence",
                                  "qr_decode", "credential_vault", "task_supervisor",
                                  "humanized_typing", "rich_clipboard", "hyperv_vm",
-                                 "pdf_form_fill"],
+                                 "pdf_form_fill",
+                                 "recordings", "workflow_variables", "telemetry_best_strategy"],
                     "modules": ["mouse", "ocr", "uia", "file", "media", "v63",
                                 "stream", "process", "voice", "cua", "copilot",
                                 "bypass", "toast", "deps", "config", "browser",
@@ -1641,7 +1654,7 @@ def route_version():
                                 "browser_v2", "mobile", "memory", "batching", "speculative_batching",
                                 "reminders", "hud", "perception", "session",
                                 "organize", "office", "scheduler_tasks",
-                                "qr", "vault", "supervisor", "vm", "pdf"],
+                                "qr", "vault", "supervisor", "vm", "pdf", "recordings"],
                     "memory": memory_stats(),
                     "security": ["auth_token", "rate_limit", "input_sanitization",
                                  "cors_restricted", "security_headers"]})

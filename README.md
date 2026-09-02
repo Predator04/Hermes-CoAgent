@@ -56,6 +56,9 @@ curl http://127.0.0.1:9123/help
 | **One-Click Deploy** | Full pipeline: deps → token → launch. Optional ngrok tunnel for NAT/cellular |
 | **Reliability** | Watchdog, endpoint health tracking, self-healing checks, dependency helper, memory leak watchdog |
 | **Automation Kits** | Scheduled recipes, macro recording, GIF recording, undo/redo, visual diff, smart element finder |
+| **Workflow Variables** | Cross-step data flow — `store_as` on any step + `$ref`/`$var`/`$store` references in later step params |
+| **Self-Improving Finder** | Telemetry-backed strategy selection — learns UIA vs OCR vs template per app (`/telemetry/best-strategy`) |
+| **Recorded Bug Reports** | Narrated screen-recording → timestamped transcript + keyframes + OCR index → GitHub issue draft (`/recordings/*`) |
 | **Remote Access** | Web dashboard, mobile remote view, SSE screen stream, SMS bridge, phone bridge via ADB |
 | **Security** | Bearer auth, CSRF protection, rate limiting, CORS, secret file ignores, private URL blocking |
 
@@ -99,6 +102,11 @@ The `.token` file is gitignored. Do not expose port 9123 to untrusted networks w
 | `GET` | `/uia/tree` | UIA accessibility tree |
 | `POST` | `/uia/find` | Find UI element |
 | `POST` | `/uia/click` | Click UI element |
+| `POST` | `/uia/find-hybrid` | Find element (UIA → OCR fallback, telemetry-logged) |
+| `GET` | `/telemetry/best-strategy` | Best find strategy for app + element type |
+| `POST` | `/recordings/start` | Start screen+mic recording |
+| `POST` | `/recordings/index/<id>` | Build transcript + keyframe + OCR index |
+| `POST` | `/recordings/issue-draft` | Draft (or file) a GitHub issue from a recording |
 | `GET` | `/windows/list` | List all windows |
 | `POST` | `/windows/activate` | Focus a window |
 | `GET` | `/process/list` | List running processes |
@@ -219,6 +227,7 @@ Hermes-CoAgent/
 | `routes_plugins.py` | Hot-loadable plugin system |
 | `routes_process.py` | Process listing and control |
 | `routes_recipes.py` | Scheduled automation recipes |
+| `routes_recordings.py` | Recorded bug-report pipeline (transcript + keyframes + issue draft) |
 | `routes_recorder.py` | Macro recorder |
 | `routes_recorder_gif.py` | Animated GIF recorder |
 | `routes_reminders.py` | Timed reminders and alerts |

@@ -22,11 +22,20 @@ Endpoints:
 import base64
 import io
 import re
+import time
 import threading
 from pathlib import Path
 
 from flask import jsonify, request
 from shared import COAGENT_DIR, _json_body, _log
+
+
+def _log_find_template(app, element_type, strategy, success, duration_ms):
+    try:
+        from telemetry import log_find
+        log_find(app, element_type, strategy, success=success, duration_ms=duration_ms)
+    except Exception:
+        pass
 
 # ---------------------------------------------------------------------------
 # Template storage
@@ -557,6 +566,8 @@ def register_routes(app, state, require_auth):
             return jsonify({"error": str(exc)}), 500
 
         matches = matches[:max_results]
+        _log_find_template(body.get("app") or "", body.get("element_type") or "",
+                           "template", bool(matches), 0)
         return jsonify({
             "found": bool(matches),
             "count": len(matches),
@@ -742,6 +753,7 @@ def register_routes(app, state, require_auth):
             return jsonify({"error": str(exc)}), 500
 
         if not matches:
+            _log_find_template(body.get("app") or "", body.get("element_type") or "", "template", False, 0)
             return jsonify({
                 "clicked": False,
                 "error": "Template not found on screen",

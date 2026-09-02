@@ -141,25 +141,36 @@ def _lookup_path(data, path):
     return value
 
 
-def _resolve_refs(value, previous):
-    if isinstance(value, str) and value.startswith("$prev."):
-        resolved = _lookup_path(previous or {}, value[6:])
-        return value if resolved is None else resolved
-    if isinstance(value, str) and "$prev." in value:
-        def repl(match):
-            resolved = _lookup_path(previous or {}, match.group(1))
-            return match.group(0) if resolved is None else str(resolved)
-        return re.sub(r"\$prev\.([A-Za-z0-9_.]+)", repl, value)
+def _resolve_refs(value, previous, store=None):
+    store_ns = store if store is not None else previous
+    if isinstance(value, str):
+        namespaces = [
+            ("$prev.", previous or {}),
+            ("$ref.", store_ns or {}),
+            ("$var.", store_ns or {}),
+            ("$store.", store_ns or {}),
+        ]
+        for prefix, ns in namespaces:
+            if re.fullmatch(re.escape(prefix) + r"[A-Za-z0-9_.]+", value):
+                resolved = _lookup_path(ns, value[len(prefix):])
+                return value if resolved is None else resolved
+        for prefix, ns in namespaces:
+            if prefix in value:
+                def _repl(match, ns=ns):
+                    resolved = _lookup_path(ns, match.group(1))
+                    return match.group(0) if resolved is None else str(resolved)
+                value = re.sub(re.escape(prefix) + r"([A-Za-z0-9_.]+)", _repl, value)
+        return value
     if isinstance(value, list):
-        return [_resolve_refs(item, previous) for item in value]
+        return [_resolve_refs(item, previous, store) for item in value]
     if isinstance(value, dict):
-        return {key: _resolve_refs(item, previous) for key, item in value.items()}
+        return {key: _resolve_refs(item, previous, store) for key, item in value.items()}
     return value
 
 
-def _step_params(step, previous):
-    params = _resolve_refs(deepcopy(step.get("params") or {}), previous)
-    target = _resolve_refs(deepcopy(step.get("target") or {}), previous)
+def _step_params(step, previous, store=None):
+    params = _resolve_refs(deepcopy(step.get("params") or {}), previous, store)
+    target = _resolve_refs(deepcopy(step.get("target") or {}), previous, store)
     if isinstance(target, dict):
         for key, value in target.items():
             params.setdefault(key, value)
@@ -229,9 +240,9 @@ def _result_error(result):
     return f"unexpected response type: {type(result).__name__}"
 
 
-def _run_one_step(step, previous, auth_header):
+def _run_one_step(step, previous, auth_header, store=None):
     action = str(step.get("action") or "").strip().lower()
-    params = _step_params(step, previous)
+    params = _step_params(step, previous, store)
     if action == "wait":
         seconds = max(0.0, min(_coerce_float(params.get("seconds", 1), 1.0), 3600.0))
         time.sleep(seconds)
@@ -295,6 +306,7 @@ def _execute_steps(steps, timeout=300, auth_header=None, initial_context=None):
     results = []
     deadline = time.time() + max(1, _coerce_int(timeout, 300))
     previous = dict(initial_context or {})
+    store = {}
     for index, step in enumerate(steps):
         action = str(step.get("action") or "").strip().lower()
         start = time.time()
@@ -308,7 +320,7 @@ def _execute_steps(steps, timeout=300, auth_header=None, initial_context=None):
             })
             break
         try:
-            outcome = _run_one_step(step, previous, auth_header)
+            outcome = _run_one_step(step, previous, auth_header, store=store)
             result = outcome.get("result", {})
             status = outcome.get("status", "error")
             record = {
@@ -327,6 +339,11 @@ def _execute_steps(steps, timeout=300, auth_header=None, initial_context=None):
             if initial_context:
                 # Keep injected context available to later steps as well.
                 previous = {**initial_context, **previous}
+            store_as = step.get("store_as")
+            if store_as:
+                key = str(store_as).strip()
+                if key:
+                    store[key] = result
         except Exception as exc:
             results.append({
                 "step_index": index,
@@ -398,6 +415,11 @@ def _normalize_recipe(data, recipe_id=None):
                 if not isinstance(step.get(optional), dict):
                     raise ValueError(f"step {optional} must be an object")
                 normalized[optional] = step.get(optional)
+        store_as = step.get("store_as")
+        if store_as is not None:
+            key = str(store_as).strip()
+            if key:
+                normalized["store_as"] = key
         normalized_steps.append(normalized)
     created_at = data.get("created_at") or datetime.now().isoformat(timespec="seconds")
     return {
@@ -651,6 +673,7 @@ def _execute_steps_with_verification(steps, auth_header, timeout=300):
     total = len(steps)
     completed = 0
     previous = {}
+    store = {}
     step_records = []
     for index, step in enumerate(steps):
         if time.time() >= deadline:
@@ -673,7 +696,7 @@ def _execute_steps_with_verification(steps, auth_header, timeout=300):
         for attempt in (1, 2):
             started = time.time()
             screenshot_before = _screen_base64(auth_header)
-            outcome = _run_one_step(step, previous, auth_header)
+            outcome = _run_one_step(step, previous, auth_header, store=store)
             latest_result = outcome.get("result", {})
             time.sleep(1.0)
             latest_after = _screen_base64(auth_header)
@@ -701,6 +724,11 @@ def _execute_steps_with_verification(steps, auth_header, timeout=300):
                 verified = True
                 completed += 1
                 previous = _prev_from_result(latest_result)
+                store_as = step.get("store_as")
+                if store_as:
+                    key = str(store_as).strip()
+                    if key:
+                        store[key] = latest_result
                 break
         record = {
             "step_index": index,

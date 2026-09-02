@@ -1,6 +1,7 @@
 """UIA accessibility tree, SOM overlay, and element-find routes."""
 import sys
 import threading
+import time
 from pathlib import Path
 from flask import jsonify, request
 from shared import _json_body, _log, _missing_field, COAGENT_DIR
@@ -333,14 +334,28 @@ def _find_ocr_candidate(text):
     }
 
 
-def _find_hybrid_element(ue, text, type_hint="", fallback_to_ocr=True):
+def _log_find_uia(app, element_type, strategy, success, duration_ms):
+    try:
+        from telemetry import log_find
+        log_find(app, element_type, strategy, success=success, duration_ms=duration_ms)
+    except Exception:
+        pass
+
+
+def _find_hybrid_element(ue, text, type_hint="", fallback_to_ocr=True, app="", element_type=""):
+    t0 = time.time()
     found = _find_uia_candidate(ue, text, type_hint)
     if found:
+        _log_find_uia(app, element_type, "uia", True, int((time.time() - t0) * 1000))
         return found
+    _log_find_uia(app, element_type, "uia", False, int((time.time() - t0) * 1000))
     if fallback_to_ocr:
+        t1 = time.time()
         found = _find_ocr_candidate(text)
         if found:
+            _log_find_uia(app, element_type, "ocr_text", True, int((time.time() - t1) * 1000))
             return found
+        _log_find_uia(app, element_type, "ocr_text", False, int((time.time() - t1) * 1000))
     return {"found": False}
 
 
@@ -468,7 +483,8 @@ def register_routes(app, state, require_auth):
             return _missing_field("text")
         type_hint = (d.get("type") or d.get("control_type") or "").strip()
         fallback_to_ocr = _as_bool(d.get("fallback_to_ocr"), True)
-        result = _find_hybrid_element(ue, text, type_hint, fallback_to_ocr=fallback_to_ocr)
+        result = _find_hybrid_element(ue, text, type_hint, fallback_to_ocr=fallback_to_ocr,
+                                     app=d.get("app") or "", element_type=d.get("element_type") or "")
         result["query"] = text
         if type_hint:
             result["type"] = type_hint
@@ -488,7 +504,8 @@ def register_routes(app, state, require_auth):
             return _missing_field("text")
         type_hint = (d.get("type") or d.get("control_type") or "").strip()
         fallback_to_ocr = _as_bool(d.get("fallback_to_ocr"), True)
-        result = _find_hybrid_element(ue, text, type_hint, fallback_to_ocr=fallback_to_ocr)
+        result = _find_hybrid_element(ue, text, type_hint, fallback_to_ocr=fallback_to_ocr,
+                                     app=d.get("app") or "", element_type=d.get("element_type") or "")
         result["query"] = text
         if type_hint:
             result["type"] = type_hint
@@ -655,7 +672,9 @@ def register_routes(app, state, require_auth):
         if not text:
             return _missing_field("text")
         type_hint = (d.get("type") or d.get("control_type") or "").strip()
-        result = _find_hybrid_element(ue, text, type_hint, fallback_to_ocr=_as_bool(d.get("fallback_to_ocr"), True))
+        result = _find_hybrid_element(ue, text, type_hint,
+                                     fallback_to_ocr=_as_bool(d.get("fallback_to_ocr"), True),
+                                     app=d.get("app") or "", element_type=d.get("element_type") or "")
         result["query"] = text
         if not result.get("found"):
             return jsonify(result)

@@ -173,6 +173,14 @@ def _params_only(params, allowed):
     return {k: params[k] for k in allowed if k in params and params[k] not in (None, "")}
 
 
+def _attach_store(step, params):
+    """Promote ``store_as`` from node params to a step-level field."""
+    store_as = str(params.get("store_as") or "").strip()
+    if store_as:
+        step["store_as"] = store_as
+    return step
+
+
 def _compile_workflow(workflow):
     """Compile a workflow graph into a recipe dict (name, steps, schedule)."""
     nodes = {node["id"]: node for node in workflow.get("nodes", [])}
@@ -230,15 +238,18 @@ def _compile_workflow(workflow):
             if mapping:
                 action, allowed = mapping
                 step = {"action": action, "params": _params_only(params, allowed)}
-                steps.append(step)
+                steps.append(_attach_store(step, params))
             else:
                 custom_action = params.get("action")
                 if custom_action:
-                    steps.append({"action": str(custom_action).strip(), "params": dict(params)})
+                    clean_params = {k: v for k, v in params.items() if k != "store_as"}
+                    step = {"action": str(custom_action).strip(), "params": clean_params}
+                    steps.append(_attach_store(step, params))
         elif ntype == "condition.wait_for":
             text = params.get("text") or ""
             if text:
-                steps.append({"action": "ocr_find", "params": {"text": text}})
+                step = {"action": "ocr_find", "params": {"text": text}}
+                steps.append(_attach_store(step, params))
         elif ntype == "loop.repeat":
             count = max(1, min(_coerce_int(params.get("count"), 1), 50))
             body_ids = successors.get(node_id, [])

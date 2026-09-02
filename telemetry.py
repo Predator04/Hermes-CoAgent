@@ -60,6 +60,14 @@ def init_telem(db_dir=None):
         _LOGGER.error("Failed to open telemetry DB at %s", TELEMETRY_DB_PATH)
         return False
     try:
+        # migrate databases that predate the strategy columns FIRST — the index
+        # creation below references these columns, so it must come after the ALTER
+        # (on a fresh DB the ALTER fails with "no such table" and is skipped).
+        for _column in ("strategy", "app", "element_type"):
+            try:
+                db.execute(f"ALTER TABLE actions ADD COLUMN {_column} TEXT")
+            except sqlite3.OperationalError:
+                pass  # column already present (or table not created yet)
         db.executescript("""
             CREATE TABLE IF NOT EXISTS actions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -73,11 +81,15 @@ def init_telem(db_dir=None):
                 error_message TEXT,
                 screenshot_before TEXT,
                 screenshot_after TEXT,
-                session_id TEXT
+                session_id TEXT,
+                strategy TEXT,
+                app TEXT,
+                element_type TEXT
             );
             CREATE INDEX IF NOT EXISTS idx_actions_ts ON actions(timestamp);
             CREATE INDEX IF NOT EXISTS idx_actions_tool ON actions(tool);
             CREATE INDEX IF NOT EXISTS idx_actions_success ON actions(success);
+            CREATE INDEX IF NOT EXISTS idx_actions_strategy ON actions(app, element_type, strategy);
         """)
         db.commit()
         _LOGGER.info("Telemetry DB initialized at %s", TELEMETRY_DB_PATH)
@@ -94,7 +106,8 @@ def init_telem(db_dir=None):
 
 def log_action(tool, endpoint=None, input_summary=None, success=True,
                status_code=200, duration_ms=0, error_message=None,
-               screenshot_before=None, screenshot_after=None, session_id=None):
+               screenshot_before=None, screenshot_after=None, session_id=None,
+               strategy=None, app=None, element_type=None):
     """Log an action to the telemetry database."""
     db = _get_db()
     if db is None:
@@ -105,17 +118,104 @@ def log_action(tool, endpoint=None, input_summary=None, success=True,
         db.execute(
             """INSERT INTO actions
                (tool, endpoint, input_summary, success, status_code,
-                duration_ms, error_message, screenshot_before, screenshot_after, session_id)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                duration_ms, error_message, screenshot_before, screenshot_after,
+                session_id, strategy, app, element_type)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (tool, endpoint, input_summary, 1 if success else 0,
              status_code, duration_ms, error_message,
-             screenshot_before, screenshot_after, session_id)
+             screenshot_before, screenshot_after, session_id,
+             strategy, app, element_type)
         )
         db.commit()
         return True
     except Exception as e:
         _LOGGER.error("Telemetry log_action failed: %s", e)
         return False
+    finally:
+        db.close()
+
+
+def log_find(app, element_type, strategy, success=True, duration_ms=0, error_message=None):
+    """Log an element-find attempt: which strategy was tried and whether it won."""
+    app = str(app or "").strip()[:120]
+    element_type = str(element_type or "").strip()[:80]
+    strategy = str(strategy or "").strip()[:60]
+    if not strategy:
+        return False
+    return log_action(
+        tool="find",
+        input_summary=f"{app}:{element_type}:{strategy}"[:200],
+        success=success,
+        duration_ms=int(duration_ms or 0),
+        error_message=error_message,
+        strategy=strategy,
+        app=app,
+        element_type=element_type,
+    )
+
+
+def get_best_strategy(app, element_type, min_samples=2):
+    """Return the historically most successful find strategy for app+element_type.
+
+    Ranks by success rate, then lower average duration, preferring strategies
+    with at least ``min_samples`` observations. Empty app/element_type are exact
+    keys (both empty = global best).
+    """
+    db = _get_db()
+    if db is None:
+        return {"strategy": None, "reason": "telemetry unavailable", "samples": 0}
+    try:
+        app = str(app or "").strip()
+        element_type = str(element_type or "").strip()
+        where = ["strategy IS NOT NULL", "strategy != ''"]
+        params = []
+        if app:
+            where.append("app = ?")
+            params.append(app)
+        if element_type:
+            where.append("element_type = ?")
+            params.append(element_type)
+        rows = db.execute(
+            """SELECT strategy, COUNT(*) AS n,
+                      COALESCE(SUM(success), 0) AS ok,
+                      COALESCE(AVG(duration_ms), 0) AS avg_ms
+               FROM actions
+               WHERE """ + " AND ".join(where) + """
+               GROUP BY strategy
+               ORDER BY n DESC""",
+            params,
+        ).fetchall()
+        if not rows:
+            return {"strategy": None, "reason": "no telemetry for app+element_type", "samples": 0}
+        scored = []
+        for row in rows:
+            n = int(row["n"] or 0)
+            ok = int(row["ok"] or 0)
+            scored.append({
+                "strategy": row["strategy"],
+                "samples": n,
+                "success_rate": round(ok / n, 3) if n else 0.0,
+                "avg_duration_ms": round(float(row["avg_ms"] or 0), 1),
+            })
+        try:
+            min_samples = max(1, int(min_samples))
+        except (TypeError, ValueError):
+            min_samples = 2
+        qualified = [s for s in scored if s["samples"] >= min_samples]
+        pool = qualified or scored
+        pool.sort(key=lambda s: (-s["success_rate"], s["avg_duration_ms"], -s["samples"]))
+        best = pool[0]
+        return {
+            "strategy": best["strategy"],
+            "samples": best["samples"],
+            "success_rate": best["success_rate"],
+            "avg_duration_ms": best["avg_duration_ms"],
+            "strategies": scored,
+            "reason": "ok",
+        }
+    except Exception as e:
+        _LOGGER.error("get_best_strategy failed: %s", e)
+        return {"strategy": None, "reason": f"error: {e}", "samples": 0}
     finally:
         db.close()
 
@@ -177,6 +277,9 @@ def get_telemetry():
                 "duration_ms": row["duration_ms"],
                 "error_message": row["error_message"],
                 "session_id": row["session_id"],
+                "strategy": row["strategy"],
+                "app": row["app"],
+                "element_type": row["element_type"],
             })
 
         return jsonify({"actions": actions, "total": total, "limit": limit, "offset": offset})
@@ -215,3 +318,20 @@ def get_telemetry_stats():
         return jsonify({"error": str(e)}), 500
     finally:
         db.close()
+
+
+@telem_bp.route("/telemetry/best-strategy", methods=["GET"])
+def get_best_strategy_endpoint():
+    """Return the historically best find strategy for an app + element type."""
+    app = (request.args.get("app") or "").strip()
+    element_type = (request.args.get("element_type") or request.args.get("type") or "").strip()
+    if not app and not element_type:
+        return jsonify({"error": "app or element_type query parameter is required"}), 400
+    try:
+        min_samples = int(request.args.get("min_samples", 2))
+    except (TypeError, ValueError):
+        min_samples = 2
+    result = get_best_strategy(app, element_type, min_samples=min_samples)
+    result["app"] = app
+    result["element_type"] = element_type
+    return jsonify(result)

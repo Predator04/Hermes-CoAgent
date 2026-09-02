@@ -4,6 +4,7 @@ import base64
 import io
 import json
 import re
+import time
 import urllib.error
 import urllib.request
 from difflib import SequenceMatcher
@@ -266,7 +267,55 @@ def _dedupe(matches):
     return unique
 
 
-def _find_matches(description, screenshot=None):
+def _log_find_finder(app, element_type, strategy, success, duration_ms):
+    try:
+        from telemetry import log_find
+        log_find(app, element_type, strategy, success=success, duration_ms=duration_ms)
+    except Exception:
+        pass
+
+
+def _best_strategy_order(app, element_type):
+    order = ["uia", "ocr_text"]
+    try:
+        from telemetry import get_best_strategy
+        best = get_best_strategy(app, element_type)
+        strat = best.get("strategy")
+        if strat in order:
+            order.remove(strat)
+            order.insert(0, strat)
+    except Exception:
+        pass
+    return order
+
+
+def _candidate_from_uia(resp):
+    if not isinstance(resp, dict) or not resp.get("found"):
+        return None
+    center = resp.get("center") if isinstance(resp.get("center"), dict) else {}
+    width = int(resp.get("width") or resp.get("w") or 0)
+    height = int(resp.get("height") or resp.get("h") or 0)
+    x = resp.get("x")
+    y = resp.get("y")
+    if x is None and center:
+        x = int(center.get("x", 0)) - width // 2
+    if y is None and center:
+        y = int(center.get("y", 0)) - height // 2
+    if x is None or y is None:
+        return None
+    ei = resp.get("element_info") if isinstance(resp.get("element_info"), dict) else {}
+    return {
+        "text": str(resp.get("query") or ei.get("name", "") or ""),
+        "x": int(x),
+        "y": int(y),
+        "w": max(1, width),
+        "h": max(1, height),
+        "confidence": 95.0,
+        "strategy": "uia",
+    }
+
+
+def _find_matches(description, screenshot=None, app="", element_type=""):
     terms, hints = _terms_and_hints(description)
     matches = []
     image = None
@@ -278,30 +327,52 @@ def _find_matches(description, screenshot=None):
         except Exception as exc:
             return [], f"invalid screenshot: {exc}"
 
-    if not screenshot:
-        queries = [str(description)] + [term for term in terms if term.lower() != str(description).lower()]
-        for query in queries[:6]:
-            response = _coagent_post("/ocr/find", {"text": query})
-            for raw_match in response.get("matches", []) if isinstance(response, dict) else []:
-                candidate = _candidate_from_ocr_match(raw_match)
-                if candidate:
-                    matches.append(candidate)
+    for strategy in _best_strategy_order(app, element_type):
+        t0 = time.time()
+        start_count = len(matches)
 
-    if not matches or screenshot:
-        try:
-            image = image or _fresh_screenshot()
-            candidates, image_error = _ocr_candidates_from_image(image)
-            image_size = image.size
-            scored = []
-            for candidate in candidates:
-                score = _score_candidate(candidate, description, terms, hints, image_size)
-                if score >= 20 or any(term in candidate["text"].lower() for term in terms):
-                    item = dict(candidate)
-                    item["confidence"] = round(min(100.0, score), 2)
-                    scored.append(item)
-            matches.extend(scored)
-        except Exception as exc:
-            image_error = str(exc)
+        if strategy == "uia" and not screenshot:
+            resp = _coagent_post("/uia/find-hybrid", {
+                "text": description,
+                "fallback_to_ocr": False,
+                "app": app,
+                "element_type": element_type,
+            })
+            candidate = _candidate_from_uia(resp)
+            if candidate:
+                matches.append(candidate)
+
+        elif strategy == "ocr_text":
+            if not screenshot:
+                queries = [str(description)] + [term for term in terms if term.lower() != str(description).lower()]
+                for query in queries[:6]:
+                    response = _coagent_post("/ocr/find", {"text": query})
+                    for raw_match in response.get("matches", []) if isinstance(response, dict) else []:
+                        candidate = _candidate_from_ocr_match(raw_match)
+                        if candidate:
+                            matches.append(candidate)
+            if not matches or screenshot:
+                try:
+                    image = image or _fresh_screenshot()
+                    candidates, image_error = _ocr_candidates_from_image(image)
+                    image_size = image.size
+                    scored = []
+                    for candidate in candidates:
+                        score = _score_candidate(candidate, description, terms, hints, image_size)
+                        if score >= 20 or any(term in candidate["text"].lower() for term in terms):
+                            item = dict(candidate)
+                            item["confidence"] = round(min(100.0, score), 2)
+                            scored.append(item)
+                    matches.extend(scored)
+                except Exception as exc:
+                    image_error = str(exc)
+
+        added = len(matches) - start_count
+        if strategy == "ocr_text":
+            _log_find_finder(app, element_type, strategy, added > 0, int((time.time() - t0) * 1000))
+        # "uia" is logged by routes_uia._find_hybrid_element via the HTTP call above
+        if added > 0:
+            break
 
     image_size = image.size if image is not None else None
     normalized = []
@@ -326,7 +397,8 @@ def register_routes(app, state, require_auth):
         description = data.get("description", "")
         if not description:
             return jsonify({"error": "Missing required field: description"}), 400
-        matches, error = _find_matches(description, data.get("screenshot"))
+        matches, error = _find_matches(description, data.get("screenshot"),
+                                        app=data.get("app") or "", element_type=data.get("element_type") or "")
         payload = {"matches": matches, "count": len(matches)}
         if error:
             payload["warning"] = error
@@ -339,7 +411,8 @@ def register_routes(app, state, require_auth):
         description = data.get("description", "")
         if not description:
             return jsonify({"error": "Missing required field: description"}), 400
-        matches, error = _find_matches(description, data.get("screenshot"))
+        matches, error = _find_matches(description, data.get("screenshot"),
+                                        app=data.get("app") or "", element_type=data.get("element_type") or "")
         if not matches:
             return jsonify({"found": False, "error": error or "no matching element found", "matches": []}), 404
         match = matches[0]
@@ -370,7 +443,8 @@ def register_routes(app, state, require_auth):
             return jsonify({"error": "Missing required field: text"}), 400
         if len(str(text)) > 4096:
             return jsonify({"error": "text exceeds maximum length (4096 chars)"}), 400
-        matches, error = _find_matches(description, data.get("screenshot"))
+        matches, error = _find_matches(description, data.get("screenshot"),
+                                        app=data.get("app") or "", element_type=data.get("element_type") or "")
         if not matches:
             return jsonify({"found": False, "error": error or "no matching text field found", "matches": []}), 404
         match = matches[0]
