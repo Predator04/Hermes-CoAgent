@@ -15,6 +15,7 @@ from shared import COAGENT_DIR, _json_body
 MEMORY_DB = COAGENT_DIR / "memory.db"
 _DB_LOCK = threading.RLock()
 _DB_READY = False
+_MAX_VALUE_LEN = 1_000_000
 
 
 def _now():
@@ -137,8 +138,12 @@ def _value_text(value):
     if value is None:
         raise ValueError("value is required")
     if isinstance(value, str):
-        return value
-    return json.dumps(value, ensure_ascii=False, sort_keys=True)
+        text = value
+    else:
+        text = json.dumps(value, ensure_ascii=False, sort_keys=True)
+    if len(text) > _MAX_VALUE_LEN:
+        raise ValueError(f"value exceeds maximum size of {_MAX_VALUE_LEN} characters")
+    return text
 
 
 def _fact_payload(row):
@@ -349,7 +354,7 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_memory_fact_get():
         key = request.args.get("key", "")
-        if not key:
+        if not key.strip():
             return jsonify({"error": "key is required"}), 400
         try:
             with _db() as conn:
@@ -422,6 +427,8 @@ def register_routes(app, state, require_auth):
         content = data.get("content")
         if not isinstance(content, str) or not content.strip():
             return jsonify({"error": "content is required"}), 400
+        if len(content) > _MAX_VALUE_LEN:
+            return jsonify({"error": f"content exceeds maximum size of {_MAX_VALUE_LEN} characters"}), 400
         try:
             tags = _tag_text(data.get("tags"))
         except ValueError as exc:
