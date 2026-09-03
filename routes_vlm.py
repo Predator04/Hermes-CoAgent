@@ -97,6 +97,7 @@ def _provider_config(body):
         or os.environ.get("OPENAI_VISION_MODEL") \
         or os.environ.get("VISION_MODEL") \
         or _DEFAULT_MODEL
+    api_key_from_body = bool((body.get("api_key") or "").strip())
     api_key = (body.get("api_key") or "").strip() or os.environ.get("OPENAI_API_KEY", "")
     base_url = (body.get("base_url") or "").strip() \
         or os.environ.get("OPENAI_BASE_URL") \
@@ -107,13 +108,63 @@ def _provider_config(body):
     except (TypeError, ValueError):
         timeout = 45
     timeout = max(1, min(timeout, 300))
-    return {"model": model, "api_key": api_key, "base_url": base_url, "timeout": timeout}
+    return {
+        "model": model,
+        "api_key": api_key,
+        "api_key_from_body": api_key_from_body,
+        "base_url": base_url,
+        "timeout": timeout,
+    }
+
+
+def _host_of(url):
+    from urllib.parse import urlparse
+    try:
+        return (urlparse(url).hostname or "").lower()
+    except Exception:
+        return ""
+
+
+def _guard_endpoint(cfg):
+    """Block SSRF / API-key exfiltration through a caller-supplied base_url.
+
+    The server's OPENAI_API_KEY env var must never be forwarded to a host that
+    was not configured server-side. A caller-supplied api_key may go to any
+    http(s) host (the caller owns that key); the server key is only sent to
+    api.openai.com, the configured OPENAI_BASE_URL / OPENAI_API_BASE host, or
+    loopback (local model servers).
+    """
+    from urllib.parse import urlparse
+    base_url = cfg.get("base_url", "")
+    scheme = (urlparse(base_url).scheme or "").lower()
+    host = (urlparse(base_url).hostname or "").lower()
+    if scheme not in ("http", "https"):
+        raise RuntimeError("invalid base_url scheme")
+    if not host:
+        raise RuntimeError("invalid base_url host")
+    if cfg.get("api_key_from_body"):
+        return  # caller's own key — no server secret at risk
+    is_loopback = (
+        host in ("localhost", "127.0.0.1", "::1")
+        or host.startswith("127.")
+        or host == "0.0.0.0"
+    )
+    allowed = {
+        "api.openai.com",
+        _host_of(os.environ.get("OPENAI_BASE_URL", "")),
+        _host_of(os.environ.get("OPENAI_API_BASE", "")),
+    }
+    allowed.discard("")
+    if host in allowed or is_loopback:
+        return
+    raise RuntimeError("refusing to send server API key to non-approved host")
 
 
 def _call_vision(cfg, system_prompt, user_prompt, image_b64, detail="auto"):
     """POST a chat.completions request with an inline image. Returns model text."""
     if not cfg.get("api_key"):
         raise RuntimeError("OPENAI_API_KEY is not set (or api_key not provided)")
+    _guard_endpoint(cfg)
 
     from routes_agent import _post_json, _content_from_openai_payload
 
@@ -351,7 +402,8 @@ def register_routes(app, state, require_auth):
             return jsonify({"ok": False, "error": f"{type(exc).__name__}: {exc}"}), 502
 
         parsed = _extract_json(raw) or {}
-        found = bool(parsed.get("found", True)) and any(k in parsed for k in ("x", "left", "x1"))
+        _lower_keys = {k.lower() for k in parsed if isinstance(k, str)}
+        found = bool(parsed.get("found", True)) and any(k in _lower_keys for k in ("x", "left", "x1"))
 
         with _LOCK:
             _STATE["total_find"] += 1
