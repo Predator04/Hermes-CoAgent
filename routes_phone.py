@@ -4,6 +4,7 @@ import base64
 import os
 import re
 import subprocess
+import uuid
 
 from flask import Response, jsonify, request
 
@@ -21,6 +22,11 @@ _KEYCODE_PATTERN = re.compile(r"^(?:[A-Z][A-Z0-9_]*|\d{1,4})$")
 # rejects quotes, globs, and shell metacharacters that adb's on-device sh
 # would otherwise re-parse.
 _PACKAGE_PATTERN = re.compile(r"^[a-zA-Z][a-zA-Z0-9_]*(?:\.[a-zA-Z][a-zA-Z0-9_]*)*$")
+
+# SMS content-query argument allowlists. adb shell re-joins args with spaces and
+# re-parses them through the on-device sh, so only a strict charset is safe.
+_PROJECTION_PATTERN = re.compile(r"^[A-Za-z0-9_,]+$")
+_SMS_URI_PATTERN = re.compile(r"^content://[A-Za-z0-9._:/@+%-]+$")
 
 
 def _safe_int(val, default=0):
@@ -119,7 +125,8 @@ def register_routes(app, state, require_auth):
         if not raw or not raw.startswith(b"\x89PNG\r\n\x1a\n"):
             return jsonify({"status": "error", "error": "adb returned empty/invalid PNG data"}), 502
         # Atomic write: never expose a half-written file to concurrent readers.
-        tmp = PHONE_SCREENSHOT.with_suffix(".tmp")
+        # Unique tmp name per request avoids concurrent-writer races on a shared path.
+        tmp = PHONE_SCREENSHOT.with_name(f"{PHONE_SCREENSHOT.stem}.{uuid.uuid4().hex}.tmp")
         tmp.write_bytes(raw)
         os.replace(tmp, PHONE_SCREENSHOT)
         if request.args.get("raw") in {"1", "true", "yes"}:
@@ -208,12 +215,13 @@ def register_routes(app, state, require_auth):
         data = _json_body()
         projection = data.get("projection", "address,date,type,body")
         uri = data.get("uri", "content://sms")
-        # Validate URI starts with content:// and has no shell metacharacters
+        # Validate URI starts with content:// and uses a strict safe charset
+        # (no whitespace, quotes, backslashes, or shell metacharacters).
         uri_str = str(uri)
-        if not uri_str.startswith("content://") or re.search(r'[;&|`$<>(){}\n\r]', uri_str):
+        if not _SMS_URI_PATTERN.match(uri_str):
             return _error("invalid URI")
         proj_str = str(projection)
-        if re.search(r'[;&|`$<>(){}\n\r]', proj_str):
+        if not _PROJECTION_PATTERN.match(proj_str):
             return _error("invalid projection")
         result = _run_adb(data, ["shell", "content", "query", "--uri", uri_str, "--projection", proj_str, "--sort", "date DESC"], timeout=_safe_timeout(data.get("timeout"), 20))
         return _json_result(result)
