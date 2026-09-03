@@ -223,7 +223,9 @@ def _compile_workflow(workflow):
     steps = []
     visited = set()
 
-    def walk(node_id):
+    def walk(node_id, depth=0):
+        if depth > 900:
+            raise ValueError("workflow graph too deep (max 900 nodes)")
         if len(steps) > _MAX_COMPILED_STEPS:
             raise ValueError(f"workflow expands beyond {_MAX_COMPILED_STEPS} steps (nested loops too deep)")
         if node_id in visited or node_id not in nodes:
@@ -256,7 +258,7 @@ def _compile_workflow(workflow):
             body_snapshot_start = len(steps)
             for child_id in body_ids:
                 if child_id not in visited:
-                    walk(child_id)
+                    walk(child_id, depth + 1)
             body = list(steps[body_snapshot_start:])
             del steps[body_snapshot_start:]
             for _ in range(count):
@@ -269,7 +271,7 @@ def _compile_workflow(workflow):
             return
 
         for child_id in successors.get(node_id, []):
-            walk(child_id)
+            walk(child_id, depth + 1)
 
     walk(start_id)
 
@@ -492,7 +494,10 @@ def route_workflows_run(workflow_id):
     status_code = 200
     if isinstance(result, dict):
         code = result.pop("status_code", 200)
-        status_code = int(code) if code else 502
+        try:
+            status_code = int(code) if code else 502
+        except (TypeError, ValueError):
+            status_code = 502
     return jsonify({"id": workflow.get("id"), "recipe": recipe, "run": result}), status_code
 
 
