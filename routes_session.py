@@ -190,7 +190,10 @@ def _get_idle_ms():
             get_tick.restype = ctypes.c_uint64
             get_tick.argtypes = []
             now = get_tick()
-            return max(0, int(now) - int(lii.dwTime))
+            # dwTime is a 32-bit tick count that wraps every ~49.7 days while
+            # now (GetTickCount64) is 64-bit; mask the difference so idle time
+            # stays correct after the wrap instead of inflating to billions of ms.
+            return (int(now) - int(lii.dwTime)) & 0xFFFFFFFF
     except Exception:
         pass
     return None
@@ -218,10 +221,10 @@ def _monitor_power_state():
         monitors = (PHYSICAL_MONITOR * 1)()
         if not dxva2.GetPhysicalMonitorsFromHMONITOR(hmon, 1, monitors):
             return None
-        hpm = monitors[0].hPhysicalMonitor
-        if not hpm:
-            return None
         try:
+            hpm = monitors[0].hPhysicalMonitor
+            if not hpm:
+                return None
             on = wintypes.BOOL()
             if not ctypes.windll.kernel32.GetDevicePowerState(hpm, ctypes.byref(on)):
                 return None
@@ -348,6 +351,12 @@ def _session_monitor_loop():
     user32.DefWindowProcW.argtypes = [
         wintypes.HWND, wintypes.UINT, ctypes.c_ssize_t, ctypes.c_ssize_t,
     ]
+
+    # Bind restype so 64-bit HMODULE/HWND returns aren't truncated to a signed
+    # 32-bit c_int (truncated handles feed garbage to RegisterClassW and
+    # CreateWindowExW on x64).
+    kernel32.GetModuleHandleW.restype = wintypes.HMODULE
+    user32.CreateWindowExW.restype = wintypes.HWND
 
     class_name = "CoAgentSessionMonitorWnd"
     hinst = kernel32.GetModuleHandleW(None)
