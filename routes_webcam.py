@@ -79,13 +79,19 @@ def _capture_ps_media(path, quality=85):
     fname = Path(path).name
     script = rf'''
 Add-Type -AssemblyName System.Runtime.WindowsRuntime
-$asTaskGeneric = ([System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object {{$_.Name -eq "AsTask" -and $_.GetParameters().Count -eq 1 -and $_.GetParameters()[0].ParameterType.Name -eq "IAsyncOperation`1"}})[0]
+$asTaskMethods = [System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object {{ $_.Name -eq 'AsTask' -and $_.GetParameters().Count -eq 1 }}
+$asTaskGeneric = $asTaskMethods | Where-Object {{ $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncOperation`1' }} | Select-Object -First 1
+$asTaskAction = $asTaskMethods | Where-Object {{ $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncAction' }} | Select-Object -First 1
 
 function Await($WinRtTask, $ResultType) {{
-    $asTask = $asTaskGeneric.MakeGenericMethod($ResultType)
-    $netTask = $asTask.Invoke($null, @($WinRtTask))
+    $netTask = $asTaskGeneric.MakeGenericMethod($ResultType).Invoke($null, @($WinRtTask))
     $netTask.Wait(-1) | Out-Null
     $netTask.Result
+}}
+
+function AwaitAction($WinRtTask) {{
+    $netTask = $asTaskAction.Invoke($null, @($WinRtTask))
+    $netTask.Wait(-1) | Out-Null
 }}
 
 [Windows.Media.Capture.MediaCapture, Windows.Media.Capture, ContentType=WindowsRuntime] | Out-Null
@@ -96,7 +102,7 @@ $settings.PhotoCaptureSource = [Windows.Media.Capture.PhotoCaptureSource]::Photo
 
 try {{
     $initOp = $mediaCapture.InitializeAsync($settings)
-    Await $initOp ([Windows.Media.Capture.MediaCaptureInitializationSettings])
+    AwaitAction $initOp
 }} catch {{
     Write-Error "MediaCapture init failed: $_"
     exit 1
@@ -109,7 +115,7 @@ $file = Await $fileOp ([Windows.Storage.StorageFile])
 $captureOp = $mediaCapture.CapturePhotoToStorageFileAsync(
     [Windows.Media.MediaProperties.ImageEncodingProperties]::CreateJpeg(), $file
 )
-Await $captureOp ([void])
+AwaitAction $captureOp
 '''
     try:
         result = subprocess.run(
