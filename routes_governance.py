@@ -625,7 +625,7 @@ def register_routes(app, state, require_auth):
             return None
         path = (request.path or "").rstrip("/") or "/"
         for prefix in _OBSERVE_BLOCKED_PREFIXES:
-            if path.startswith(prefix):
+            if path == prefix or path.startswith(prefix + "/"):
                 _log(f"[governance] observe mode blocked {request.method} {path}")
                 return jsonify({
                     "ok": False,
