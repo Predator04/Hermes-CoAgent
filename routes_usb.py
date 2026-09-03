@@ -185,7 +185,15 @@ def _eject_drive_ps(drive):
         f"$item = $shell.Namespace(17).ParseName('{drive}'); "
         "if ($null -eq $item) { Write-Error 'drive not found'; exit 2 } "
         "$item.InvokeVerb('Eject'); "
-        "Write-Output 'ejected'"
+        "Start-Sleep -Milliseconds 500; "
+        "$gone = $false; "
+        "for ($i = 0; $i -lt 30; $i++) { "
+        f"  $d = Get-CimInstance -ClassName Win32_LogicalDisk -Filter \"DeviceID='{drive}'\" -ErrorAction SilentlyContinue; "
+        "  if ($null -eq $d) { $gone = $true; break } "
+        "  Start-Sleep -Milliseconds 250 "
+        "} "
+        "if ($gone) { Write-Output 'ejected'; exit 0 } "
+        "Write-Error 'eject did not complete (drive still present)'; exit 1"
     )
 
 
@@ -193,15 +201,23 @@ def _drive_removable(drive):
     """Return (removable: bool, error: str|None) for a 'X:' drive letter.
 
     `drive` is already validated to a single 'X:' letter. DriveType 2 ==
-    removable; anything else (fixed disk, network, CD-ROM, the system drive)
-    is rejected so /usb/eject cannot target non-removable volumes.
+    removable; DriveType 3 (fixed) is also accepted when the underlying
+    physical disk sits on a USB or IEEE 1394 bus (external HDD/SSD).
+    Everything else (network, CD-ROM, the system drive) is rejected so
+    /usb/eject cannot target non-removable volumes.
     """
     script = (
         "$ErrorActionPreference = 'SilentlyContinue'; "
         f"$d = Get-CimInstance -ClassName Win32_LogicalDisk -Filter \"DeviceID='{drive}'\" | Select-Object -First 1; "
         "if ($null -eq $d) { Write-Output 'NOT_FOUND'; exit 2 } "
-        "if ($d.DriveType -ne 2) { Write-Output 'NOT_REMOVABLE'; exit 3 } "
-        "Write-Output 'REMOVABLE'"
+        "if ($d.DriveType -eq 2) { Write-Output 'REMOVABLE'; exit 0 } "
+        f"$letter = '{drive[0]}'; "
+        "$part = Get-Partition -DriveLetter $letter -ErrorAction SilentlyContinue | Select-Object -First 1; "
+        "if ($null -ne $part) { "
+        "  $disk = Get-Disk -Number $part.DiskNumber -ErrorAction SilentlyContinue; "
+        "  if ($null -ne $disk -and $disk.BusType -in @('USB','IEEE1394','1394','IEEE 1394')) { Write-Output 'REMOVABLE'; exit 0 } "
+        "} "
+        "Write-Output 'NOT_REMOVABLE'; exit 3"
     )
     out, err, rc = _run_ps(script, timeout=15)
     result = (out or "").strip().upper()
