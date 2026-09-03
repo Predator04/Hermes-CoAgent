@@ -727,20 +727,23 @@ def route_stealth_profile():
                 return _error(str(e), status=500)
 
     if action == "delete":
-        if _ACTIVE_PROFILE == name:
-            return _error(
-                f"Profile '{name}' is currently in use; close the browser first",
-                status=409,
-            )
-        profile_dir = _PROFILES_DIR / name
-        if profile_dir.exists():
-            import shutil
-            try:
-                shutil.rmtree(profile_dir)
-            except OSError as exc:
-                return _error(f"Failed to delete profile '{name}': {exc}", status=500)
-            return jsonify({"action": "deleted", "profile": name})
-        return _error(f"Profile '{name}' not found", status=404)
+        # Hold the lock so the in-use check + delete are atomic against a
+        # concurrent /stealth/open or create on the same profile directory.
+        with _STEALTH_LOCK:
+            if _ACTIVE_PROFILE == name:
+                return _error(
+                    f"Profile '{name}' is currently in use; close the browser first",
+                    status=409,
+                )
+            profile_dir = _PROFILES_DIR / name
+            if profile_dir.exists():
+                import shutil
+                try:
+                    shutil.rmtree(profile_dir)
+                except OSError as exc:
+                    return _error(f"Failed to delete profile '{name}': {exc}", status=500)
+                return jsonify({"action": "deleted", "profile": name})
+            return _error(f"Profile '{name}' not found", status=404)
 
     return _error(f"Unknown action: {action}")
 
