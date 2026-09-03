@@ -227,11 +227,26 @@ def _spawn_ffmpeg(argv):
     drain_thread = threading.Thread(
         target=_drain, name="ffmpeg-stderr-drain", daemon=True,
     )
-    drain_thread.start()
+    try:
+        drain_thread.start()
+    except Exception:
+        # If the drain thread can't start, no one empties ffmpeg's stderr pipe;
+        # the ~64KB buffer fills and deadlocks the recording. Kill the proc
+        # instead of leaking a wedged ffmpeg.
+        try:
+            proc.kill()
+        except Exception:
+            pass
+        try:
+            proc.wait(timeout=2.0)
+        except Exception:
+            pass
+        raise RuntimeError("failed to start ffmpeg stderr drain thread")
     return proc, stderr_buffer, drain_thread, buf_lock
 
 
 def _proc_status(entry):
+    global _ACTIVE_ID
     proc = entry.get("proc")
     if proc is None:
         return entry.get("state", "unknown")
@@ -241,9 +256,14 @@ def _proc_status(entry):
     entry["returncode"] = rc
     if not entry.get("stopped_at"):
         entry["stopped_at"] = time.time()
-    if rc == 0:
-        return "finished"
-    return "error"
+    state = "finished" if rc == 0 else "error"
+    # If the active recording died on its own, clear the stale active pointer
+    # so /video/status and /video/stop don't keep reporting a dead recording.
+    if _ACTIVE_ID is not None:
+        active = _RECORDINGS.get(_ACTIVE_ID)
+        if active is entry:
+            _ACTIVE_ID = None
+    return state
 
 
 def _snapshot_entry(rec_id, entry):
@@ -498,7 +518,7 @@ def register_routes(app, state, require_auth):
 
             try:
                 proc, stderr_buffer, drain_thread, buf_lock = _spawn_ffmpeg(argv)
-            except OSError as exc:
+            except (OSError, RuntimeError) as exc:
                 return jsonify({"error": f"spawn failed: {exc}"}), 500
 
             # ffmpeg exits almost immediately on bad args; give it a moment
