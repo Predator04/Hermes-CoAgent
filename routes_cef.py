@@ -216,6 +216,14 @@ class _CDPSocket:
     # ------------------------------------------------------------------
 
     def _read_loop(self) -> None:
+        # Blocking reads on the dedicated reader thread: a socket.timeout
+        # mid-frame would discard bytes already pulled into recv_exact's local
+        # buffer and desync the WebSocket stream. Localhost CDP delivers
+        # FIN/RST on close, so a blocking recv still returns promptly.
+        try:
+            self._sock.settimeout(None)
+        except Exception:
+            pass
         while self._running:
             try:
                 text = self._recv_frame()
@@ -255,7 +263,8 @@ class _CDPSocket:
             self._cmd_id += 1
             cmd_id = self._cmd_id
             ev = threading.Event()
-            self._pending[cmd_id] = {"event": ev, "result": None}
+            slot = {"event": ev, "result": None, "error": None}
+            self._pending[cmd_id] = slot
 
         payload = json.dumps({"id": cmd_id, "method": method, "params": params or {}}).encode()
         try:
@@ -268,7 +277,7 @@ class _CDPSocket:
         triggered = ev.wait(timeout)
 
         with self._lock:
-            slot = self._pending.pop(cmd_id, {})
+            self._pending.pop(cmd_id, None)
 
         if slot.get("error") is not None:
             raise ConnectionError(
@@ -1009,6 +1018,14 @@ def register_routes(app, state, require_auth):
                     port = apps[0]["debug_port"]
             if port is None:
                 return jsonify({"error": "Could not find a CEF process"}), 404
+
+            # Normalize to int so session lookups/keys match. A str port from
+            # JSON would otherwise miss existing sessions (int keys) and leak a
+            # duplicate session under a str key that later endpoints can't find.
+            try:
+                port = int(port)
+            except (TypeError, ValueError):
+                return jsonify({"error": f"Invalid port: {port!r}"}), 400
 
             # Connect (or reuse)
             with _sessions_lock:
