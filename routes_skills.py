@@ -332,7 +332,7 @@ def _copy_skill_package(src_dir: Path, dest_dir: Path) -> int:
                     continue
                 shutil.copy2(str(src_file), str(target_root / f), follow_symlinks=False)
                 count += 1
-                if count > _MAX_BUNDLE_FILES:
+                if count >= _MAX_BUNDLE_FILES:
                     return count
     return count
 
