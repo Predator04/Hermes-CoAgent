@@ -101,7 +101,7 @@ def _collect_uia_elements(ue, monitor_index=0):
         _log(f"[som] UIA snapshot failed: {exc}")
         return elements
 
-    if not snap.get("success"):
+    if not snap or not snap.get("success"):
         return elements
 
     def walk(node, depth=0):
@@ -381,7 +381,7 @@ def register_routes(app, state, require_auth):
 
         center = elem.get("center", {})
         bbox = elem.get("bbox", [])
-        if center:
+        if center and "x" in center and "y" in center:
             cx = int(center.get("x", 0))
             cy = int(center.get("y", 0))
         elif len(bbox) >= 4:
