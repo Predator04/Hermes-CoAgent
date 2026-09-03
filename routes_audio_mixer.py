@@ -142,8 +142,25 @@ def _session_matches(match_pid, match_name, pid, name):
 # pycaw backend
 # ---------------------------------------------------------------------------
 
+def _ensure_com():
+    """Initialize COM on the current thread before pycaw calls.
+
+    Flask serves requests on worker threads that are not COM-initialized;
+    comtypes raises ``CoInitialize has not been called`` when
+    AudioUtilities.GetAllSessions() runs on such a thread. CoInitialize()
+    is a no-op (S_FALSE) when the thread is already initialized. We do not
+    CoUninitialize() because Flask reuses the thread for later requests.
+    """
+    try:
+        import comtypes  # pycaw dependency
+        comtypes.CoInitialize()
+    except Exception:
+        pass
+
+
 def _pycaw_list():
     from pycaw.pycaw import AudioUtilities  # type: ignore
+    _ensure_com()
     out = []
     for s in AudioUtilities.GetAllSessions():
         proc = s.Process
@@ -182,6 +199,7 @@ def _pycaw_list():
 
 def _pycaw_set(match_pid, match_name, volume, mute):
     from pycaw.pycaw import AudioUtilities  # type: ignore
+    _ensure_com()
     matched = []
     for s in AudioUtilities.GetAllSessions():
         proc = s.Process
@@ -429,7 +447,7 @@ def _ps_resolve_pids(match_name):
     if isinstance(data, int):
         return [data], None
     if isinstance(data, list):
-        return [int(x) for x in data if isinstance(x, int)], None
+        return [int(x) for x in data if isinstance(x, int) and not isinstance(x, bool)], None
     return [], None
 
 
