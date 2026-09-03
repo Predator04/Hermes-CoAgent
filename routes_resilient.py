@@ -143,10 +143,13 @@ def _classify(title, class_name, extra_patterns):
     if cl in _DIALOG_CLASSES:
         return "dialog_class"
     for p in _TITLE_PATTERNS:
-        if p in tl:
+        # Word-boundary match: avoids substring false positives like "message"
+        # matching "3 new messages" or "error" matching "errors" in unrelated
+        # (non-dialog) window titles that guard_run would otherwise WM_CLOSE.
+        if re.search(rf"\b{re.escape(p)}\b", tl):
             return f"title:{p}"
     for p in extra_patterns or ():
-        if p and p.lower() in tl:
+        if p and re.search(rf"\b{re.escape(p.lower())}\b", tl):
             return f"custom:{p.lower()}"
     return None
 
@@ -239,15 +242,10 @@ def _pick_safe_button(buttons, mode):
     """Return the first matching button hwnd for the given mode, or None."""
     labels = _NEGATIVE_LABELS if mode == "negative" else _SAFE_LABELS
     normalized = [(bh, cls, (text or "").strip()) for (bh, cls, text) in buttons]
-    for want in labels:
-        for bh, _cls, text in normalized:
-            t = text.lower().replace("&", "")
-            if t == want or t.startswith(want + " ") or t == want + "...":
-                return bh, text
-    # Strict fallback: only match when the whole label is the target word
-    # (optionally followed by trailing punctuation/ellipsis). A word-boundary
-    # "contains" match would wrongly confirm destructive labels such as
-    # "Yes, delete everything" or "Continue and discard changes".
+    # Strict match only: the whole label must equal the target word, optionally
+    # followed by trailing punctuation/ellipsis. A prefix match would wrongly
+    # confirm destructive labels such as "Yes, delete everything" or
+    # "Continue and discard changes".
     for want in labels:
         for bh, _cls, text in normalized:
             t = text.lower().replace("&", "").strip().rstrip(".\u2026! \t")
