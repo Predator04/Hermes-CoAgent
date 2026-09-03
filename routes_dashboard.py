@@ -63,7 +63,7 @@ def register_routes(app, state, require_auth):
         import json as _json
         import auth
         token = getattr(auth, "AUTH_TOKEN", "") or ""
-        escaped_token = _json.dumps(token)[1:-1].replace("<", "\\u003c")
+        escaped_token = _json.dumps(str(token))[1:-1].replace("<", "\\u003c")
         html = DASHBOARD_HTML.replace(TOKEN_PLACEHOLDER, escaped_token)
         response = Response(html, mimetype="text/html")
         response.headers["Content-Security-Policy"] = CSP
