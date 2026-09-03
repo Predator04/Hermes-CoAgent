@@ -364,7 +364,7 @@ try:
                         _debug_failure("UIA collect descendants", e)
                 for win in desktop.windows():
                     collect(win)
-                if target < len(all_elements):
+                if 0 <= target < len(all_elements):
                     all_elements[target].click_input()
                     return {"success": True, "method": "index", "index": target}
                 return {"success": False, "error": f"Index {target} out of range ({len(all_elements)} total)"}
@@ -1038,6 +1038,7 @@ def send_keys_scancode(text: str, hold_ms: int = 10):
         if not hasattr(ctypes, "windll"):
             return {"success": False, "error": "scancode typing is Windows-only"}
         user32 = ctypes.windll.user32
+        user32.VkKeyScanW.restype = ctypes.c_short
         KEYEVENTF_SCANCODE = 0x0008
         KEYEVENTF_KEYUP = 0x0002
         VK_SHIFT = 0x10
@@ -1401,7 +1402,6 @@ def som_visual_fallback(screenshot_path: str = None) -> dict:
                 elements.sort(key=lambda e: (e["bounds"][1], e["bounds"][0]))
 
                 # Draw numbered overlays
-                draw = ImageDraw.Draw(img.copy(), "RGBA")
                 try:
                     font = ImageFont.truetype("arial.ttf", 16)
                 except Exception:
