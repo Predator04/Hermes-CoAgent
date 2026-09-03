@@ -174,8 +174,8 @@ def _capture_ffmpeg(path, quality=85):
             "-frames:v", "1", "-q:v", "3", str(path), "-y"
         ]
         try:
-            subprocess.run(cmd, capture_output=True, timeout=15)
-            if Path(path).exists() and Path(path).stat().st_size > 1000:
+            res = subprocess.run(cmd, capture_output=True, timeout=15)
+            if res.returncode == 0 and Path(path).exists() and Path(path).stat().st_size > 1000:
                 return True
         except Exception:
             continue
