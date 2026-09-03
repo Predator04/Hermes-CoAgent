@@ -293,7 +293,10 @@ def register_routes(app, state, require_auth):
     # other route when auth is enabled. Wrap BEFORE registering the blueprint so
     # there is never a window where /metrics is reachable unauthenticated.
     if require_auth is not None:
-        metrics_bp.view_functions["route_metrics"] = require_auth(
-            metrics_bp.view_functions["route_metrics"]
-        )
+        for endpoint, view_func in list(metrics_bp.view_functions.items()):
+            if getattr(view_func, "_hermes_auth_wrapped", False):
+                continue
+            wrapped = require_auth(view_func)
+            wrapped._hermes_auth_wrapped = True
+            metrics_bp.view_functions[endpoint] = wrapped
     app.register_blueprint(metrics_bp)
