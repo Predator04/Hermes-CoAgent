@@ -391,6 +391,94 @@ def _execute_action_wrapper(action, state=None):
         return _scroll_action(action.get("clicks", -3), state)
     return jsonify({"error": f"Unknown action type: {typ}"}), 400
 
+def _type_unicode(text, interval=0.0):
+    """Type arbitrary Unicode text via SendInput KEYEVENTF_UNICODE.
+
+    pyautogui.typewrite is ASCII-only and keyboard-layout dependent; this
+    injects each character as a raw UTF-16 code unit so CJK, Cyrillic, Arabic,
+    accented Latin, and emoji (surrogate pairs) land correctly regardless of
+    the active keyboard layout or IME state. Degrades to pyautogui on non-
+    Windows hosts so the Linux syntax-check CI stays green.
+    """
+    text = str(text)
+    if not text:
+        return {"success": True, "sent": 0, "units": 0}
+    if not hasattr(ctypes, "windll"):
+        if pyautogui is not None:
+            pyautogui.typewrite(text, interval=interval or 0.01)
+        return {"success": True, "sent": len(text), "units": len(text), "fallback": "pyautogui"}
+
+    try:
+        wintypes = ctypes.wintypes
+
+        class KEYBDINPUT(ctypes.Structure):
+            _fields_ = [("wVk", wintypes.WORD),
+                        ("wScan", wintypes.WORD),
+                        ("dwFlags", wintypes.DWORD),
+                        ("time", wintypes.DWORD),
+                        ("dwExtraInfo", ctypes.c_void_p)]
+
+        class MOUSEINPUT(ctypes.Structure):
+            _fields_ = [("dx", wintypes.LONG),
+                        ("dy", wintypes.LONG),
+                        ("mouseData", wintypes.DWORD),
+                        ("dwFlags", wintypes.DWORD),
+                        ("time", wintypes.DWORD),
+                        ("dwExtraInfo", ctypes.c_void_p)]
+
+        class HARDWAREINPUT(ctypes.Structure):
+            _fields_ = [("uMsg", wintypes.DWORD),
+                        ("wParamL", wintypes.WORD),
+                        ("wParamH", wintypes.WORD)]
+
+        class _INPUTUNION(ctypes.Union):
+            _fields_ = [("ki", KEYBDINPUT), ("mi", MOUSEINPUT), ("hi", HARDWAREINPUT)]
+
+        class INPUT(ctypes.Structure):
+            _fields_ = [("type", wintypes.DWORD), ("u", _INPUTUNION)]
+
+        INPUT_KEYBOARD = 1
+        KEYEVENTF_UNICODE = 0x0004
+        KEYEVENTF_KEYUP = 0x0002
+
+        # Expand astral code points (emoji etc.) into UTF-16 surrogate pairs so
+        # every value fits the 16-bit wScan field.
+        units = []
+        for ch in text:
+            cp = ord(ch)
+            if cp <= 0xFFFF:
+                units.append(cp)
+            else:
+                cp -= 0x10000
+                units.append(0xD800 + (cp >> 10))
+                units.append(0xDC00 + (cp & 0x3FF))
+
+        def _mk(unit, flags):
+            inp = INPUT(type=INPUT_KEYBOARD)
+            inp.u.ki = KEYBDINPUT(0, unit, flags, 0, 0)
+            return inp
+
+        inputs = []
+        for unit in units:
+            inputs.append(_mk(unit, KEYEVENTF_UNICODE))
+            inputs.append(_mk(unit, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP))
+
+        count = len(inputs)
+        sent = 0
+        if count:
+            ArrayType = INPUT * count
+            arr = ArrayType(*inputs)
+            sent = ctypes.windll.user32.SendInput(count, arr, ctypes.sizeof(INPUT))
+        if interval:
+            time.sleep(interval * count)
+        return {"success": True, "sent": sent, "units": len(units)}
+    except Exception as exc:
+        _log(f"[key] unicode SendInput failed ({exc}); falling back to pyautogui")
+        if pyautogui is not None:
+            pyautogui.typewrite(text, interval=0.01)
+            return {"success": True, "sent": len(text), "units": len(text), "fallback": "pyautogui"}
+        return {"success": False, "error": str(exc)}
+
 def _key_action(action, data, state=None):
     if state and state.emergency_stop:
         return jsonify({
@@ -413,7 +501,9 @@ def _key_action(action, data, state=None):
         try:
             if action == "type":
                 text = str(data)
-                pyautogui.typewrite(text, interval=0.01)
+                res = _type_unicode(text)
+                if not res.get("success"):
+                    raise RuntimeError(res.get("error") or "unicode typing failed")
             elif action == "hotkey":
                 if isinstance(data, list):
                     pyautogui.hotkey(*data)
@@ -811,6 +901,17 @@ def register_routes(app, state, require_auth):
             _log(f"Key type (scancode): {len(text)} chars")
             _record_action("type", {"text": text, "mode": "scancode"}, result)
             return jsonify({"status": "ok", "action": "type", "mode": "scancode", **result})
+        if mode == "ascii":
+            # Legacy layout-dependent typing via pyautogui (ASCII only).
+            try:
+                pyautogui.typewrite(text, interval=0.01)
+            except Exception as exc:
+                return jsonify({"status": "error", "error": f"ascii type failed: {exc}"}), 500
+            _log(f"Key type (ascii): {len(text)} chars")
+            _record_action("type", {"text": text, "mode": "ascii"}, {"success": True})
+            return jsonify({"status": "ok", "action": "type", "mode": "ascii", "chars": len(text)})
+        # Default: unicode (SendInput KEYEVENTF_UNICODE) -- layout-independent,
+        # handles CJK/emoji/accented text without an active IME.
         return _key_action("type", text, state)
 
     @app.route("/key/method", methods=["GET"])
@@ -820,9 +921,10 @@ def register_routes(app, state, require_auth):
         return jsonify({
             "status": "ok",
             "default": "unicode",
-            "supported": ["unicode", "scancode"],
-            "usage": "POST /key/type with {\"mode\": \"scancode\"} for hardware scan-code "
-                     "injection (RDP / games / elevated windows); unicode is the default.",
+            "supported": ["unicode", "ascii", "scancode"],
+            "usage": "POST /key/type modes: unicode (default, SendInput KEYEVENTF_UNICODE, "
+                     "layout-independent -- CJK/emoji/accented OK), ascii (legacy pyautogui "
+                     "typewrite), scancode (hardware scan-code injection for RDP/games/elevated).",
         })
 
     @app.route("/key/press", methods=["POST"])
