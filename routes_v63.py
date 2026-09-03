@@ -97,7 +97,10 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_cursor_style():
         try:
-            return _call_feature("cursor_set_style", _json_body())
+            d = _json_body()
+            if not isinstance(d, dict):
+                return jsonify({"error": "Request body must be a JSON object"}), 400
+            return _call_feature("cursor_set_style", d)
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
@@ -113,7 +116,10 @@ def register_routes(app, state, require_auth):
     @require_auth
     def route_recording_start():
         try:
-            return _call_feature("recording_start", _json_body())
+            d = _json_body()
+            if not isinstance(d, dict):
+                return jsonify({"error": "Request body must be a JSON object"}), 400
+            return _call_feature("recording_start", d)
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
