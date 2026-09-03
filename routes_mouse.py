@@ -890,7 +890,9 @@ def register_routes(app, state, require_auth):
         _ok, _err = _preflight_guard(d)
         if not _ok:
             return _err
-        return _key_action("type", d.get("keys", ""), state)
+        keys = d.get("keys", "")
+        action = "hotkey" if isinstance(keys, list) else "type"
+        return _key_action(action, keys, state)
 
     @app.route("/input/preflight", methods=["GET"])
     @require_auth
