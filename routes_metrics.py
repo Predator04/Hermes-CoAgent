@@ -210,26 +210,29 @@ def _render_metrics():
             "# TYPE coagent_request_duration_seconds histogram",
         ]
     )
-    for key, value in sorted(
-        buckets_snapshot.items(),
-        key=lambda item: (item[0][0], item[0][1], item[0][2], _le_sort_value(item[0][3])),
-    ):
-        method, path, status, le = key
-        labels = (
+    # Prometheus cumulative histograms must emit every configured bucket for
+    # every series that has an observation (missing `le` lines are rejected by
+    # promtool). Emit all buckets in ascending order, defaulting unobserved
+    # buckets to 0.
+    for key in sorted(counts_snapshot.keys()):
+        method, path, status = key
+        base_labels = (
             f'method="{_label(method)}",'
             f'path="{_label(path)}",'
-            f'status="{_label(status)}",'
-            f'le="{_label(le)}"'
+            f'status="{_label(status)}"'
         )
-        lines.append(f"coagent_request_duration_seconds_bucket{{{labels}}} {int(value)}")
-    for key, value in sorted(counts_snapshot.items(), key=lambda item: item[0]):
-        method, path, status = key
-        labels = f'method="{_label(method)}",path="{_label(path)}",status="{_label(status)}"'
-        lines.append(f"coagent_request_duration_seconds_count{{{labels}}} {int(value)}")
-    for key, value in sorted(sums_snapshot.items(), key=lambda item: item[0]):
-        method, path, status = key
-        labels = f'method="{_label(method)}",path="{_label(path)}",status="{_label(status)}"'
-        lines.append(f"coagent_request_duration_seconds_sum{{{labels}}} {value:.9f}")
+        for bucket in LATENCY_HISTOGRAM:
+            le = _bucket_label(bucket)
+            value = int(buckets_snapshot.get(key + (le,), 0))
+            lines.append(
+                f'coagent_request_duration_seconds_bucket{{{base_labels},le="{le}"}} {value}'
+            )
+        lines.append(
+            f'coagent_request_duration_seconds_count{{{base_labels}}} {int(counts_snapshot.get(key, 0))}'
+        )
+        lines.append(
+            f'coagent_request_duration_seconds_sum{{{base_labels}}} {sums_snapshot.get(key, 0.0):.9f}'
+        )
 
     lines.extend(
         [
@@ -252,18 +255,21 @@ def route_metrics():
 def register_routes(app, state, require_auth):
     @app.before_request
     def _metrics_before_request():
-        if request.path == "/metrics":
+        if request.endpoint == "metrics.route_metrics":
             return None
         g._metrics_start_time = time.perf_counter()
         return None
 
     @app.after_request
     def _metrics_after_request(response):
-        if request.path == "/metrics":
+        if request.endpoint == "metrics.route_metrics":
             return response
         try:
             started = getattr(g, "_metrics_start_time", None)
-            duration = max(0.0, time.perf_counter() - started) if started else 0.0
+            # Use an explicit None check: perf_counter() is never None, but a
+            # short-circuited before_request leaves started unset and must not
+            # record a spurious 0.0s latency sample in the smallest bucket.
+            duration = max(0.0, time.perf_counter() - started) if started is not None else None
             method = request.method or "UNKNOWN"
             path = _route_path()
             status = str(response.status_code)
@@ -272,20 +278,22 @@ def register_routes(app, state, require_auth):
                 REQUESTS[request_key] += 1
                 if response.status_code >= 400:
                     ERRORS[request_key] += 1
-                LATENCY_COUNT[request_key] += 1
-                LATENCY_SUM[request_key] += duration
-                for bucket in LATENCY_HISTOGRAM:
-                    if duration <= bucket:
-                        LATENCY_BUCKETS[request_key + (_bucket_label(bucket),)] += 1
-        except (RuntimeError, TypeError, ValueError) as exc:
+                if duration is not None:
+                    LATENCY_COUNT[request_key] += 1
+                    LATENCY_SUM[request_key] += duration
+                    for bucket in LATENCY_HISTOGRAM:
+                        if duration <= bucket:
+                            LATENCY_BUCKETS[request_key + (_bucket_label(bucket),)] += 1
+        except Exception as exc:
             _debug_failure("metrics after_request accounting", exc)
         return response
 
-    app.register_blueprint(metrics_bp)
     # The metrics endpoint exposes internal telemetry (route surface, error
     # rates, memory RSS, live stream counts) and must require auth like every
-    # other route when auth is enabled.
+    # other route when auth is enabled. Wrap BEFORE registering the blueprint so
+    # there is never a window where /metrics is reachable unauthenticated.
     if require_auth is not None:
-        app.view_functions["metrics.route_metrics"] = require_auth(
-            app.view_functions["metrics.route_metrics"]
+        metrics_bp.view_functions["route_metrics"] = require_auth(
+            metrics_bp.view_functions["route_metrics"]
         )
+    app.register_blueprint(metrics_bp)
