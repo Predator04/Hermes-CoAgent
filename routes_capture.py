@@ -42,6 +42,7 @@ _NAME_RE = re.compile(r"^[A-Za-z0-9_\-]{1,64}$")
 _STATE = {
     "recording": False,
     "started_at": 0.0,
+    "stopped_at": 0.0,
     "steps": [],
     "session_id": "",
 }
@@ -208,7 +209,8 @@ def _capture_to_recipe(capture, name=None):
         # Map control_type -> the "type" hint that /uia/click-hybrid uses.
         if "control_type" in recipe_target and "type" not in recipe_target:
             recipe_target["type"] = recipe_target["control_type"]
-        recipe_target["fallback_to_ocr"] = True
+        if recipe_target:
+            recipe_target["fallback_to_ocr"] = True
         typed = entry.get("typed_text")
         if action in {"type", "type_text"} and typed is not None:
             params.setdefault("text", typed)
@@ -481,6 +483,7 @@ def register_routes(app, state, require_auth):
             _STATE["recording"] = True
             _STATE["steps"] = []
             _STATE["started_at"] = time.time()
+            _STATE["stopped_at"] = 0.0
             _STATE["session_id"] = uuid.uuid4().hex[:12]
             _STATE["intent"] = (body.get("intent") or body.get("goal") or "").strip()
         _log(f"[capture] started session={_STATE['session_id']}")
@@ -498,6 +501,7 @@ def register_routes(app, state, require_auth):
             if not _STATE["recording"]:
                 return jsonify({"ok": False, "error": "not recording"}), 409
             _STATE["recording"] = False
+            _STATE["stopped_at"] = time.time()
             steps = list(_STATE["steps"])
             session_id = _STATE["session_id"]
             duration = round(time.time() - _STATE["started_at"], 3)
@@ -600,7 +604,14 @@ def register_routes(app, state, require_auth):
         with _STATE_LOCK:
             steps = list(_STATE["steps"])
             session_id = _STATE["session_id"]
-            duration = round(time.time() - _STATE["started_at"], 3) if _STATE["started_at"] else 0.0
+            duration = 0.0
+            if _STATE.get("started_at"):
+                if _STATE["recording"]:
+                    duration = round(time.time() - _STATE["started_at"], 3)
+                else:
+                    duration = round(
+                        _STATE.get("stopped_at", _STATE["started_at"])
+                        - _STATE["started_at"], 3)
             intent = _STATE.get("intent", "")
         if not steps:
             return jsonify({"ok": False, "error": "no steps to save"}), 400
