@@ -1596,6 +1596,48 @@ TOOLS = {
     "repo": "schollz/croc",
     "stars": 40200,
     "url": "https://github.com/schollz/croc"
+  },
+  "fastfetch": {
+    "added": "2026-09-03",
+    "command": "fastfetch --format json --logo none",
+    "desc": "fastfetch is a maintained, feature-rich system information tool (the actively developed successor to neofetch). Detects OS, kernel, CPU, GPU, memory, disk, battery, display and more, output as ANSI art or machine-readable JSON. Useful for CoAgent to snapshot the hardware and OS of the machine it runs on.",
+    "endpoints": {
+      "/auto/fastfetch/info": "Feature metadata, install status, version",
+      "/auto/fastfetch/ping": "Health check",
+      "/auto/fastfetch/system": "GET - full system/hardware snapshot as parsed JSON",
+      "/auto/fastfetch/raw": "GET - raw fastfetch text output with logo disabled"
+    },
+    "exe": "fastfetch",
+    "install": {
+      "winget": "winget install Fastfetch-cli.Fastfetch",
+      "scoop": "scoop install fastfetch",
+      "choco": "choco install fastfetch"
+    },
+    "repo": "fastfetch-cli/fastfetch",
+    "stars": 24503,
+    "url": "https://github.com/fastfetch-cli/fastfetch"
+  },
+  "scoop": {
+    "added": "2026-09-03",
+    "command": "scoop list  /  scoop search <app>  /  scoop install <app>",
+    "desc": "Scoop is a command-line installer for Windows that installs programs in portable, isolated user-space locations (no admin/UAC, no registry pollution). The standard way to install most of CoAgent's CLI auto-routes (fastfetch, eza, ripgrep, etc.) via shims on PATH. Lets CoAgent install, search and update CLI tools non-interactively.",
+    "endpoints": {
+      "/auto/scoop/info": "Feature metadata, install status, version",
+      "/auto/scoop/ping": "Health check",
+      "/auto/scoop/list": "GET - list locally installed Scoop apps",
+      "/auto/scoop/search": "POST - search Scoop buckets for a package",
+      "/auto/scoop/install": "POST - install an app via Scoop",
+      "/auto/scoop/update": "POST - update Scoop and/or a specific app"
+    },
+    "exe": "scoop",
+    "candidates": ["C:/Users/*/scoop/shims/scoop.cmd"],
+    "install": {
+      "manual": "Set-ExecutionPolicy RemoteSigned -Scope CurrentUser; Invoke-RestMethod https://get.scoop.sh | Invoke-Expression",
+      "winget": "winget install Scoop.Scoop"
+    },
+    "repo": "ScoopInstaller/Scoop",
+    "stars": 24624,
+    "url": "https://github.com/ScoopInstaller/Scoop"
   }
 }
 
@@ -14519,6 +14561,157 @@ def _h_croc_352():
     return jsonify(res)
 
 
+def _h_fastfetch_353():
+    """Full system/hardware snapshot as parsed JSON.
+
+    Runs `fastfetch --format json --logo none` and returns the parsed module
+    list plus a flattened key/value summary for easy consumption.
+    """
+    exe = _find_tool('fastfetch')
+    if not exe:
+        return (jsonify({'ok': False, 'error': 'fastfetch is not installed',
+                         'hint': 'winget install Fastfetch-cli.Fastfetch  OR  scoop install fastfetch'}), 503)
+    try:
+        r = subprocess.run([exe, '--format', 'json', '--logo', 'none'],
+                           capture_output=True, text=True, timeout=30)
+    except subprocess.TimeoutExpired:
+        return (jsonify({'ok': False, 'error': 'fastfetch timed out'}), 504)
+    except OSError as e:
+        _log(f'[fastfetch system] {str(e)}')
+        return (jsonify({'ok': False, 'error': str(e)}), 503)
+    if r.returncode != 0:
+        return (jsonify({'ok': False, 'error': (r.stderr or r.stdout or '').strip()[-2000:]}), 502)
+    try:
+        modules = json_lib.loads(r.stdout)
+    except Exception:
+        return (jsonify({'ok': False, 'error': 'could not parse fastfetch JSON output',
+                         'raw': r.stdout.strip()[-2000:]}), 502)
+    flat = {}
+    for m in (modules if isinstance(modules, list) else []):
+        if isinstance(m, dict):
+            key = m.get('key') or m.get('type') or 'module'
+            flat[key] = m.get('result')
+    return jsonify({'ok': True, 'modules': modules, 'summary': flat})
+
+
+def _h_fastfetch_354():
+    """Raw fastfetch text output (logo disabled), as it would appear in a terminal."""
+    exe = _find_tool('fastfetch')
+    if not exe:
+        return (jsonify({'ok': False, 'error': 'fastfetch is not installed',
+                         'hint': 'winget install Fastfetch-cli.Fastfetch  OR  scoop install fastfetch'}), 503)
+    try:
+        r = subprocess.run([exe, '--logo', 'none'], capture_output=True, text=True, timeout=30)
+    except subprocess.TimeoutExpired:
+        return (jsonify({'ok': False, 'error': 'fastfetch timed out'}), 504)
+    except OSError as e:
+        _log(f'[fastfetch raw] {str(e)}')
+        return (jsonify({'ok': False, 'error': str(e)}), 503)
+    return jsonify({'ok': r.returncode == 0,
+                    'text': (r.stdout or r.stderr or '').strip(),
+                    'error': (r.stderr or '').strip()[-2000:] if r.returncode != 0 else None})
+
+
+def _h_scoop_355():
+    """List locally installed Scoop apps (name + version)."""
+    exe = _find_tool('scoop')
+    if not exe:
+        return (jsonify({'ok': False, 'error': 'scoop is not installed',
+                         'hint': 'Set-ExecutionPolicy RemoteSigned -Scope CurrentUser; Invoke-RestMethod https://get.scoop.sh | Invoke-Expression'}), 503)
+    try:
+        r = subprocess.run([exe, 'list'], capture_output=True, text=True, timeout=60)
+    except subprocess.TimeoutExpired:
+        return (jsonify({'ok': False, 'error': 'scoop list timed out'}), 504)
+    except OSError as e:
+        _log(f'[scoop list] {str(e)}')
+        return (jsonify({'ok': False, 'error': str(e)}), 503)
+    if r.returncode != 0:
+        return (jsonify({'ok': False, 'error': (r.stderr or r.stdout or '').strip()[-2000:]}), 502)
+    apps = []
+    for line in (r.stdout or '').splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        parts = line.split()
+        if len(parts) >= 2:
+            apps.append({'name': parts[0], 'version': parts[1]})
+        elif parts:
+            apps.append({'name': parts[0], 'version': ''})
+    return jsonify({'ok': True, 'count': len(apps), 'apps': apps})
+
+
+def _h_scoop_356():
+    """Search Scoop buckets for a package by name."""
+    body = _json_body()
+    query = str(body.get('query') or '').strip()
+    if not query:
+        return _missing_field('query')
+    exe = _find_tool('scoop')
+    if not exe:
+        return (jsonify({'ok': False, 'error': 'scoop is not installed',
+                         'hint': 'Set-ExecutionPolicy RemoteSigned -Scope CurrentUser; Invoke-RestMethod https://get.scoop.sh | Invoke-Expression'}), 503)
+    try:
+        r = subprocess.run([exe, 'search', query], capture_output=True, text=True, timeout=60)
+    except subprocess.TimeoutExpired:
+        return (jsonify({'ok': False, 'error': 'scoop search timed out'}), 504)
+    except OSError as e:
+        _log(f'[scoop search] {str(e)}')
+        return (jsonify({'ok': False, 'error': str(e)}), 503)
+    return jsonify({'ok': r.returncode == 0, 'query': query,
+                    'results': (r.stdout or '').strip(),
+                    'error': (r.stderr or '').strip()[-2000:] if r.returncode != 0 else None})
+
+
+def _h_scoop_357():
+    """Install an app via Scoop. App name is validated against a safe pattern."""
+    body = _json_body()
+    app = str(body.get('app') or '').strip()
+    if not app:
+        return _missing_field('app')
+    if not re.match(r'^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$', app):
+        return (jsonify({'ok': False, 'error': 'invalid app name (allowed: letters, digits, . _ -)'}), 400)
+    exe = _find_tool('scoop')
+    if not exe:
+        return (jsonify({'ok': False, 'error': 'scoop is not installed',
+                         'hint': 'Set-ExecutionPolicy RemoteSigned -Scope CurrentUser; Invoke-RestMethod https://get.scoop.sh | Invoke-Expression'}), 503)
+    try:
+        r = subprocess.run([exe, 'install', app], capture_output=True, text=True, timeout=600)
+    except subprocess.TimeoutExpired:
+        return (jsonify({'ok': False, 'error': 'scoop install timed out after 600s'}), 504)
+    except OSError as e:
+        _log(f'[scoop install] {str(e)}')
+        return (jsonify({'ok': False, 'error': str(e)}), 503)
+    return jsonify({'ok': r.returncode == 0, 'app': app,
+                    'output': (r.stdout or '').strip()[-4000:],
+                    'error': (r.stderr or '').strip()[-2000:] if r.returncode != 0 else None})
+
+
+def _h_scoop_358():
+    """Update Scoop itself and/or a specific installed app."""
+    body = _json_body()
+    app = str(body.get('app') or '').strip()
+    exe = _find_tool('scoop')
+    if not exe:
+        return (jsonify({'ok': False, 'error': 'scoop is not installed',
+                         'hint': 'Set-ExecutionPolicy RemoteSigned -Scope CurrentUser; Invoke-RestMethod https://get.scoop.sh | Invoke-Expression'}), 503)
+    if app:
+        if not re.match(r'^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$', app):
+            return (jsonify({'ok': False, 'error': 'invalid app name (allowed: letters, digits, . _ -)'}), 400)
+        cmd = [exe, 'update', app]
+    else:
+        cmd = [exe, 'update']
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+    except subprocess.TimeoutExpired:
+        return (jsonify({'ok': False, 'error': 'scoop update timed out after 600s'}), 504)
+    except OSError as e:
+        _log(f'[scoop update] {str(e)}')
+        return (jsonify({'ok': False, 'error': str(e)}), 503)
+    return jsonify({'ok': r.returncode == 0, 'app': app or '(all)',
+                    'output': (r.stdout or '').strip()[-4000:],
+                    'error': (r.stderr or '').strip()[-2000:] if r.returncode != 0 else None})
+
+
 def register_routes(app, state, require_auth):
     global _STATE
     _STATE = state
@@ -14878,6 +15071,12 @@ def register_routes(app, state, require_auth):
         ('/auto/aria2/files', ['POST'], _h_aria2_350),
         ('/auto/croc/send', ['POST'], _h_croc_351),
         ('/auto/croc/receive', ['POST'], _h_croc_352),
+        ('/auto/fastfetch/system', ['GET'], _h_fastfetch_353),
+        ('/auto/fastfetch/raw', ['GET'], _h_fastfetch_354),
+        ('/auto/scoop/list', ['GET'], _h_scoop_355),
+        ('/auto/scoop/search', ['POST'], _h_scoop_356),
+        ('/auto/scoop/install', ['POST'], _h_scoop_357),
+        ('/auto/scoop/update', ['POST'], _h_scoop_358),
     ]
     for _path, _methods, _fn in _ACTIONS:
         app.add_url_rule(_path, endpoint=_fn.__name__, view_func=require_auth(_fn), methods=_methods)
