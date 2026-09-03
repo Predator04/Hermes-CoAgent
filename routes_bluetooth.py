@@ -76,10 +76,12 @@ def _match_clause(mac, name):
     clauses = []
     if mac:
         m = mac.replace("-", ":").strip()
-        if _MAC_RE.search(m):
-            clauses.append(f"(DeviceMacOf $_) -eq '{m.upper()}'")
+        mm = _MAC_RE.fullmatch(m)
+        if mm:
+            clauses.append(f"(DeviceMacOf $_) -eq '{mm.group(0).upper()}'")
     if name:
-        clauses.append(f"(DeviceNameOf $_) -like '*{name}*'")
+        safe_name = name.replace("'", "''")
+        clauses.append(f"(DeviceNameOf $_) -like '*{safe_name}*'")
     if not clauses:
         return None
     return " -or ".join(f"({c})" for c in clauses)
@@ -173,7 +175,7 @@ if ($null -eq $target) {
         if out.startswith("PAIRED:"):
             status = out.split(":", 1)[1]
             success = status in ("Paired", "AlreadyPaired")
-            return jsonify({"status": "ok" if success else "failed", "pairing_status": status})
+            return jsonify({"status": "ok" if success else "failed", "pairing_status": status}), (200 if success else 502)
         if out == "ALREADY_PAIRED":
             return jsonify({"status": "ok", "pairing_status": "AlreadyPaired"})
         if out == "NOT_FOUND":
@@ -206,7 +208,8 @@ if ($null -eq $target) { 'NOT_FOUND' } else {
         out = (res["output"] or "").strip()
         if out.startswith("UNPAIRED:"):
             status = out.split(":", 1)[1]
-            return jsonify({"status": "ok" if status == "Unpaired" else "failed", "unpair_status": status})
+            success = status == "Unpaired"
+            return jsonify({"status": "ok" if success else "failed", "unpair_status": status}), (200 if success else 502)
         if out == "NOT_FOUND":
             return jsonify({"error": "paired device not found"}), 404
         return jsonify({"status": "failed", "detail": out}), 502
@@ -215,10 +218,13 @@ if ($null -eq $target) { 'NOT_FOUND' } else {
         """Build a Where-Object predicate against Get-PnpDevice rows."""
         conds = []
         if name:
-            conds.append(f"$_.FriendlyName -like '*{name}*'")
+            safe_name = name.replace("'", "''")
+            conds.append(f"$_.FriendlyName -like '*{safe_name}*'")
         if mac:
-            m = mac.replace("-", ":").upper()
-            conds.append(f"$_.InstanceId -like '*{m}*'")
+            m = mac.replace("-", ":").strip().upper()
+            if _MAC_RE.fullmatch(m):
+                compact = m.replace(":", "")
+                conds.append(f"($_.InstanceId -like '*{m}*' -or $_.InstanceId -like '*{compact}*')")
         return " -or ".join(conds)
 
     @app.route("/system/bluetooth/connect", methods=["POST"])
@@ -230,6 +236,8 @@ if ($null -eq $target) { 'NOT_FOUND' } else {
         if not mac and not name:
             return _missing_field("mac or name")
         cond = _pnpmatch_clause(mac, name)
+        if not cond:
+            return jsonify({"error": "invalid mac or name"}), 400
         out, err, rc = _ps(
             f"$dev = Get-PnpDevice -Class Bluetooth -ErrorAction SilentlyContinue | "
             f"Where-Object {{ {cond} }} | Select-Object -First 1; "
@@ -254,6 +262,8 @@ if ($null -eq $target) { 'NOT_FOUND' } else {
         if not mac and not name:
             return _missing_field("mac or name")
         cond = _pnpmatch_clause(mac, name)
+        if not cond:
+            return jsonify({"error": "invalid mac or name"}), 400
         out, err, rc = _ps(
             f"$dev = Get-PnpDevice -Class Bluetooth -ErrorAction SilentlyContinue | "
             f"Where-Object {{ {cond} }} | Select-Object -First 1; "
