@@ -1664,7 +1664,7 @@ def route_browser_console():
     """Get recent console messages (log, warn, error) from the active page.
     Query params: limit (default 50, max 200), level (log|warn|error|info).
     """
-    limit = min(int(request.args.get("limit", 50)), 200)
+    limit = min(request.args.get("limit", 50, type=int), 200)
     level = request.args.get("level")
     msgs = list(_CONSOLE_MESSAGES)
     if level:
@@ -1719,7 +1719,7 @@ def route_browser_dialog_dismiss():
 @browser_bp.route("/browser/history", methods=["GET"])
 def route_browser_history():
     """Return navigation history entries (URL + title) tracked during this session."""
-    limit = min(int(request.args.get("limit", 50)), 100)
+    limit = min(request.args.get("limit", 50, type=int), 100)
     entries = list(_NAV_HISTORY)
     return jsonify({"count": len(entries), "entries": entries[-limit:]})
 
@@ -2011,8 +2011,11 @@ def route_browser_viewport():
             if request.method == "GET":
                 return jsonify({"width": vp["width"] if vp else None, "height": vp["height"] if vp else None})
             data = _json_payload()
-            w = int(data.get("width", vp["width"] if vp else 1280))
-            h = int(data.get("height", vp["height"] if vp else 720))
+            try:
+                w = int(data.get("width", vp["width"] if vp else 1280))
+                h = int(data.get("height", vp["height"] if vp else 720))
+            except (TypeError, ValueError):
+                return _error("width and height must be integers", 400)
             page.set_viewport_size({"width": w, "height": h})
             return jsonify({"status": "resized", "width": w, "height": h})
         except Exception as e:
