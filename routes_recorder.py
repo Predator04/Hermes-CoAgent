@@ -531,6 +531,8 @@ def register_routes(app, state, require_auth):
         if not isinstance(recording, list):
             return jsonify({"error": "recording file does not contain a JSON array"}), 400
         with _LOCK:
+            if _RUNNING:
+                return jsonify({"error": "cannot load while a recording is in progress"}), 409
             _RECORDING.clear()
             _RECORDING.extend(recording)
         return jsonify({"status": "loaded", "name": path.stem, "file": str(path), "count": len(recording), "recording": recording})
@@ -655,15 +657,23 @@ def register_routes(app, state, require_auth):
         rec_path = RECORDINGS_DIR / f"{name}.json"
         if not rec_path.exists():
             return jsonify({"error": "Recording not found", "name": name}), 404
-        recording = json.loads(rec_path.read_text(encoding="utf-8"))
+        try:
+            recording = json.loads(rec_path.read_text(encoding="utf-8"))
+        except (ValueError, OSError) as e:
+            return jsonify({"error": f"Invalid recording JSON: {e}"}), 400
         if isinstance(recording, dict):
             recording = recording.get("recording", [])
+        if not isinstance(recording, list):
+            return jsonify({"error": "recording file does not contain a JSON array"}), 400
 
         auth_header = request.headers.get("Authorization", "")
         results = []
         with app.test_client() as client:
             for event in recording:
-                delay_ms = max(0, int(event.get("delay_ms", 0)))
+                if not isinstance(event, dict):
+                    results.append({"status_code": 400, "response": {"error": "event must be an object"}})
+                    continue
+                delay_ms = max(0, int(event.get("delay_ms", 0) or 0))
                 if delay_ms > 0:
                     time.sleep(min(delay_ms / 1000.0, 5.0))
                 result = _replay_event(client, event, auth_header)
