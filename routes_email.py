@@ -157,8 +157,8 @@ def _add_attachment(msg, att):
     if data_b64:
         try:
             payload = base64.b64decode(data_b64)
-        except Exception:
-            payload = data_b64.encode("utf-8")
+        except Exception as exc:
+            raise ValueError(f"attachment '{name}': invalid base64: {exc}")
     elif path:
         with open(path, "rb") as fh:
             payload = fh.read()
@@ -312,14 +312,21 @@ def _receive_via_imap(acct, folder, search, limit, mark_read):
     try:
         mbox.login(username, password)
         folder = folder or "INBOX"
-        mbox.select(folder, readonly=not mark_read)
         criteria = search or "ALL"
+        for val in (folder, criteria):
+            if any(ch in val for ch in ("\r", "\n", "\x00")):
+                return {"error": "invalid control characters in IMAP argument"}
+        mbox.select(folder, readonly=not mark_read)
         typ, data = mbox.search(None, criteria)
         if typ != "OK":
             return {"error": f"IMAP search failed: {data}"}
         ids = data[0].split()
-        # Newest first, capped.
-        ids = ids[-limit:] if limit else ids
+        # Newest first, capped; clamp negative/zero and oversized limits.
+        try:
+            limit = max(1, min(int(limit), 1000))
+        except (TypeError, ValueError):
+            limit = 20
+        ids = ids[-limit:]
         messages = []
         for num in reversed(ids):
             try:
