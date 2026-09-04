@@ -95,10 +95,6 @@ OPENAPI_SPEC = {
             f"{AGENT_NAME} desktop automation API. CoAgent directory: {COAGENT_DIR}"
         ),
     },
-    "servers": [
-        {"url": f"http://127.0.0.1:{SERVER_PORT}", "description": "Localhost"},
-        {"url": f"http://{get_host_ip()}:{SERVER_PORT}", "description": "Detected host IP"},
-    ],
     "security": [{"BearerAuth": []}],
     "components": {
         "securitySchemes": {
@@ -547,7 +543,12 @@ OPENAPI_SPEC = {
 
 
 def _spec():
-    return deepcopy(OPENAPI_SPEC)
+    spec = deepcopy(OPENAPI_SPEC)
+    spec["servers"] = [
+        {"url": f"http://127.0.0.1:{SERVER_PORT}", "description": "Localhost"},
+        {"url": f"http://{get_host_ip()}:{SERVER_PORT}", "description": "Detected host IP"},
+    ]
+    return spec
 
 
 @docs_bp.route("/docs.json", methods=["GET"])
