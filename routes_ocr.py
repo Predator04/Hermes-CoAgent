@@ -483,8 +483,13 @@ def _check_winrt_version():
         _debug_backend_failure("winrt metadata lookup", e)
         return None
 
-def _windows_ocr(pil_image):
-    """Use Windows.Media.Ocr to recognize text. WinRT direct path."""
+def _windows_ocr(pil_image, lang=None):
+    """Use Windows.Media.Ocr to recognize text. WinRT direct path.
+
+    `lang` is an optional BCP-47 tag (e.g. "es-ES", "zh-CN"); when provided it
+    is preferred over the user profile languages so non-English UI text can be
+    read. Falls back through: requested lang -> user profile languages -> en-US.
+    """
     try:
         buf = BytesIO()
         pil_image.save(buf, format="PNG")
@@ -497,11 +502,19 @@ def _windows_ocr(pil_image):
         ras.seek(0)
         decoder = imaging.BitmapDecoder.create_async(ras).get()
         bitmap = decoder.get_software_bitmap_async().get()
-        ocr_engine = ocr.OcrEngine.try_create_from_user_profile_languages()
+        ocr_engine = None
+        if lang:
+            try:
+                import winrt.windows.globalization as globalization
+                ocr_engine = ocr.OcrEngine.try_create_from_language(globalization.Language(lang))
+            except Exception:
+                ocr_engine = None
+        if ocr_engine is None:
+            ocr_engine = ocr.OcrEngine.try_create_from_user_profile_languages()
         if ocr_engine is None:
             import winrt.windows.globalization as globalization
-            lang = globalization.Language("en-US")
-            ocr_engine = ocr.OcrEngine.try_create_from_language(lang)
+            lang_obj = globalization.Language("en-US")
+            ocr_engine = ocr.OcrEngine.try_create_from_language(lang_obj)
         if ocr_engine is None:
             return {"success": False, "error": "No OCR engine"}
         result = ocr_engine.recognize_async(bitmap).get()
@@ -520,14 +533,14 @@ def _windows_ocr(pil_image):
     except (ImportError, AttributeError, TypeError) as e:
         _log(f"WinRT OCR direct path unavailable; falling back to PowerShell: {type(e).__name__}: {e}")
         try:
-            return _windows_ocr_powershell(pil_image)
+            return _windows_ocr_powershell(pil_image, lang=lang)
         except (OSError, subprocess.SubprocessError, ValueError) as e:
             _debug_backend_failure("Windows OCR PowerShell fallback", e)
             return {"success": False, "error": "Windows OCR unavailable", "winrt_runtime": _check_winrt_version()}
     except Exception as e:
         return {"success": False, "error": str(e)}
 
-def _windows_ocr_powershell(pil_image):
+def _windows_ocr_powershell(pil_image, lang=None):
     """Fallback: Windows OCR via PowerShell (temp file approach)."""
     tmp_img_path = None
     tmp_ps1_path = None
@@ -538,6 +551,23 @@ def _windows_ocr_powershell(pil_image):
         tmp_img.close()
         tmp_ps1 = tempfile.NamedTemporaryFile(suffix=".ps1", mode="w", delete=False)
         tmp_ps1_path = tmp_ps1.name
+        if lang:
+            engine_ps = f"""$engine = [Windows.Media.Ocr.OcrEngine]::TryCreateFromLanguage([Windows.Globalization.Language]::new("{lang}"))
+if (-not $engine) {{
+    $engine = [Windows.Media.Ocr.OcrEngine]::TryCreateFromUserProfileLanguages()
+}}
+if (-not $engine) {{
+    $lang = [Windows.Globalization.Language]::new("en-US")
+    $engine = [Windows.Media.Ocr.OcrEngine]::TryCreateFromLanguage($lang)
+}}
+"""
+        else:
+            engine_ps = """$engine = [Windows.Media.Ocr.OcrEngine]::TryCreateFromUserProfileLanguages()
+if (-not $engine) {{
+    $lang = [Windows.Globalization.Language]::new("en-US")
+    $engine = [Windows.Media.Ocr.OcrEngine]::TryCreateFromLanguage($lang)
+}}
+"""
         tmp_ps1.write(f"""$imgPath = "{tmp_img_path}"
 Add-Type -AssemblyName System.Runtime.WindowsRuntime
 $null = [Windows.Media.Ocr.OcrEngine, Windows.Media.Ocr, ContentType=WindowsRuntime]
@@ -549,12 +579,7 @@ $stream.WriteAsync($bytes) | Out-Null
 $stream.Seek(0)
 $decoder = [Windows.Graphics.Imaging.BitmapDecoder]::CreateAsync($stream).GetAwaiter().GetResult()
 $bitmap = $decoder.GetSoftwareBitmapAsync().GetAwaiter().GetResult()
-$engine = [Windows.Media.Ocr.OcrEngine]::TryCreateFromUserProfileLanguages()
-if (-not $engine) {{
-    $lang = [Windows.Globalization.Language]::new("en-US")
-    $engine = [Windows.Media.Ocr.OcrEngine]::TryCreateFromLanguage($lang)
-}}
-$result = $engine.RecognizeAsync($bitmap).GetAwaiter().GetResult()
+{engine_ps}$result = $engine.RecognizeAsync($bitmap).GetAwaiter().GetResult()
 $output = @{{lines=@()}}
 foreach ($line in $result.Lines) {{
     $words = @()
@@ -594,15 +619,22 @@ Remove-Item "$imgPath" -Force -ErrorAction SilentlyContinue
                 except OSError:
                     pass
 
-def ocr_find_text(text, pil_img=None, fresh=False):
-    """Find text on screen, return matches with positions."""
+def ocr_find_text(text, pil_img=None, fresh=False, lang=None):
+    """Find text on screen, return matches with positions.
+
+    `lang` is an optional Tesseract language string (e.g. "eng", "spa",
+    "chi_sim", or "eng+spa") passed straight to pytesseract for non-English UI.
+    """
     if pil_img is None:
         pil_img = _screen_img(force=fresh)
     if pil_img is None:
         return []
     try:
         import pytesseract
-        ocr_data = pytesseract.image_to_data(pil_img, output_type=pytesseract.Output.DICT)
+        ocr_kwargs = {"output_type": pytesseract.Output.DICT}
+        if lang:
+            ocr_kwargs["lang"] = lang
+        ocr_data = pytesseract.image_to_data(pil_img, **ocr_kwargs)
         matches = []
         needle = text.lower()
         for i in range(len(ocr_data["text"])):
@@ -860,8 +892,10 @@ def register_routes(app, state, require_auth):
         if not text:
             return _missing_field("text")
         fresh = bool(d.get("fresh", False))
-        matches = ocr_find_text(text, fresh=fresh)
-        return jsonify({"query": text, "count": len(matches), "matches": matches})
+        lang = d.get("lang") or None
+        matches = ocr_find_text(text, fresh=fresh, lang=lang)
+        return jsonify({"query": text, "count": len(matches), "matches": matches,
+                        "lang": lang})
 
     @app.route("/visual/find", methods=["POST"])
     @require_auth
@@ -871,8 +905,10 @@ def register_routes(app, state, require_auth):
         if not text:
             return _missing_field("text")
         fresh = bool(d.get("fresh", False))
-        matches = ocr_find_text(text, fresh=fresh)
-        return jsonify({"query": text, "count": len(matches), "matches": matches})
+        lang = d.get("lang") or None
+        matches = ocr_find_text(text, fresh=fresh, lang=lang)
+        return jsonify({"query": text, "count": len(matches), "matches": matches,
+                        "lang": lang})
 
     @app.route("/crop", methods=["POST"])
     @require_auth
@@ -914,7 +950,7 @@ def register_routes(app, state, require_auth):
                 "code": "OCR_UNAVAILABLE",
             }), 503
         try:
-            text = pytesseract.image_to_string(img)
+            text = pytesseract.image_to_string(img, lang=d.get("lang") or None)
         except Exception as exc:
             return jsonify({
                 "ok": False,
@@ -1221,24 +1257,47 @@ def register_routes(app, state, require_auth):
     @app.route("/describe", methods=["GET"])
     @require_auth
     def route_describe():
+        lang = request.args.get("lang") or None
         img = _screen_img(force=True)
         if img is None:
             return jsonify({"error": "Cannot capture screen"}), 500
-        win_ocr = _windows_ocr(img)
+        win_ocr = _windows_ocr(img, lang=lang)
         if win_ocr.get("success"):
             lines = [l.strip() for l in win_ocr["text"].split("\n") if l.strip()]
             desc = "\n".join(lines[:100]) if lines else "(blank)"
             full = _redact(win_ocr["text"].strip())
             return jsonify({"status": "ok", "description": _redact(desc),
-                            "lines": len(lines), "full_text": full, "engine": "windows_ocr"})
+                            "lines": len(lines), "full_text": full, "engine": "windows_ocr",
+                            "lang": lang})
         try:
             import pytesseract
-            text = pytesseract.image_to_string(img)
+            text = pytesseract.image_to_string(img, lang=lang)
             lines = [l.strip() for l in text.split("\n") if l.strip()]
             desc = "\n".join(lines[:100]) if lines else "(blank)"
             return jsonify({"status": "ok", "description": _redact(desc),
-                            "lines": len(lines), "full_text": _redact(text.strip())})
+                            "lines": len(lines), "full_text": _redact(text.strip()),
+                            "lang": lang})
         except ImportError:
             return jsonify({"error": "OCR not available", "description": "OCR not available", "lines": 0}), 200
         except Exception as e:
             return jsonify({"error": str(e), "description": f"OCR failed: {e}", "lines": 0}), 200
+
+    @app.route("/ocr/langs", methods=["GET"])
+    @require_auth
+    def route_ocr_langs():
+        """List OCR languages available to the lang= parameter on OCR endpoints."""
+        tesseract_langs = []
+        winrt_langs = []
+        try:
+            import pytesseract
+            tesseract_langs = list(pytesseract.get_languages(config="") or [])
+        except Exception:
+            pass
+        try:
+            import winrt.windows.media.ocr as ocr
+            for lang in ocr.OcrEngine.available_recognizer_languages:
+                winrt_langs.append(lang.language_tag)
+        except Exception:
+            pass
+        return jsonify({"status": "ok", "tesseract": tesseract_langs,
+                        "windows_ocr": winrt_langs})
