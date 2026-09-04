@@ -386,16 +386,31 @@ def _evaluate_assertion(assertion, evidence_dir):
     kind = str(assertion.get("type") or "").lower().strip()
     expect_pass = bool(assertion.get("expect_pass", True))
     t0 = time.time()
+    raw_passed = False
+    reason = ""
+    detail = None
     try:
         if kind == "screenshot":
             raw_passed, reason, detail = _assert_screenshot(assertion, evidence_dir)
         elif kind in _ASSERTION_HANDLERS:
             raw_passed, reason, detail = _ASSERTION_HANDLERS[kind](assertion)
         else:
-            return {"ok": False, "type": kind or "?", "reason": f"unknown assertion type '{kind}'"}
+            return {
+                "ok": False,
+                "type": kind or "?",
+                "reason": f"unknown assertion type '{kind}'",
+                "expect_pass": expect_pass,
+                "raw_passed": False,
+                "detail": None,
+                "elapsed_ms": round((time.time() - t0) * 1000, 1),
+                "label": assertion.get("label"),
+            }
     except Exception as exc:
-        return {"ok": False, "type": kind, "reason": f"exception: {type(exc).__name__}: {exc}",
-                "traceback": traceback.format_exc(limit=4)}
+        # A thrown assertion is a failed check: record raw_passed=False and
+        # fall through so expect_pass=False inverts it uniformly.
+        raw_passed = False
+        reason = f"exception: {type(exc).__name__}: {exc}"
+        detail = {"traceback": traceback.format_exc(limit=4)}
     passed = bool(raw_passed) if expect_pass else (not raw_passed)
     return {
         "ok": passed,
