@@ -115,7 +115,7 @@ def _validate_url(url):
         try:
             normalized = unicodedata.normalize("NFKC", raw_hostname)
             hostname = normalized.encode("idna").decode("ascii").lower()
-        except (UnicodeError, UnicodeDecodeError):
+        except UnicodeError:
             return f"Invalid hostname: {raw_hostname!r}"
     blocked = {
         "localhost", "127.0.0.1", "0.0.0.0",
@@ -211,7 +211,7 @@ def _random_viewport(data):
 
 
 def _stealth_init_script(locale):
-    languages = [part.split(";")[0] for part in locale.split(",") if part.strip()]
+    languages = [part.split(";", 1)[0].strip() for part in locale.split(",") if part.strip()]
     # json.dumps produces a valid JS array and escapes U+2028/U+2029 (which
     # Python's repr does not), preventing string-literal breakout injection.
     langs_js = json.dumps(languages)
@@ -429,7 +429,7 @@ def route_browser_undetectable():
     browser_id = uuid.uuid4().hex
     config = {
         "url": url,
-        "wait_until": data.get("wait_until", "load"),
+        "wait_until": str(data.get("wait_until") or "load"),
         "timeout_ms": timeout_ms,
         "viewport": viewport,
         "locale": locale,
