@@ -13,6 +13,7 @@ Jaeger). Otherwise OTLP is silently skipped.
 """
 
 import functools
+import hashlib
 import json
 import os
 import secrets
@@ -110,7 +111,10 @@ def parse_traceparent(value):
 
 
 def build_traceparent(trace_id, span_id, sampled=True):
-    return f"00-{trace_id}-{span_id}-{'01' if sampled else '00'}"
+    tid = str(trace_id or "")
+    if not re.fullmatch(r"[0-9a-fA-F]{32}", tid):
+        tid = hashlib.sha1(tid.encode("utf-8")).hexdigest()[:32]
+    return f"00-{tid}-{span_id}-{'01' if sampled else '00'}"
 
 
 def _summarize(value, limit):
@@ -310,11 +314,13 @@ class _SpanCtx:
 
 def start_span(name, run_id=None, parent=None, attributes=None):
     """Create a span. Inherits run_id/parent from the current thread if unset."""
-    if run_id is None and parent is None:
+    if run_id is None or parent is None:
         cur = _cur_stack()
         if cur:
-            run_id = cur[-1]["run_id"]
-            parent = cur[-1]["span_id"]
+            if run_id is None:
+                run_id = cur[-1]["run_id"]
+            if parent is None:
+                parent = cur[-1]["span_id"]
     if run_id is None:
         run_id = _new_trace_id()
     return Span(name, run_id=run_id, parent=parent, attributes=attributes)
