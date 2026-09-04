@@ -1638,6 +1638,58 @@ TOOLS = {
     "repo": "ScoopInstaller/Scoop",
     "stars": 24624,
     "url": "https://github.com/ScoopInstaller/Scoop"
+  },
+  "gh": {
+    "added": "2026-09-04",
+    "command": "gh issue list / gh issue create / gh release create / gh run <args>",
+    "desc": "GitHub's official command-line tool. Manage issues, pull requests, releases, repos and the GitHub API directly from CoAgent. Machine-readable output via --json flags; drives the self-improvement pipeline (file/close issues, cut releases) without a browser. Requires `gh auth login` once (or GH_TOKEN env).",
+    "endpoints": {
+      "/auto/gh/info": "Feature metadata, install status, version",
+      "/auto/gh/ping": "Health check",
+      "/auto/gh/run": "POST - run an arbitrary gh command and return its JSON output",
+      "/auto/gh/issues": "POST - list issues for a repo (--json)",
+      "/auto/gh/issue/create": "POST - create a GitHub issue",
+      "/auto/gh/release/create": "POST - create a GitHub release"
+    },
+    "exe": "gh",
+    "candidates": [
+      "C:/Program Files/GitHub CLI/gh.exe",
+      "C:/Program Files (x86)/GitHub CLI/gh.exe",
+      "C:/Users/*/AppData/Local/Programs/GitHub CLI/gh.exe"
+    ],
+    "install": {
+      "winget": "winget install --id GitHub.cli",
+      "scoop": "scoop install gh"
+    },
+    "repo": "cli/cli",
+    "stars": 46148,
+    "url": "https://github.com/cli/cli"
+  },
+  "7z": {
+    "added": "2026-09-04",
+    "command": "7z a archive files / 7z x archive -o<dir> / 7z l archive / 7z t archive",
+    "desc": "7-Zip file archiver with a high compression ratio. Create, list, extract and test 7z/zip/rar/tar/gz and dozens of other formats. Fills the archive-handling gap in CoAgent's file operations; fully non-interactive via CLI flags.",
+    "endpoints": {
+      "/auto/7z/info": "Feature metadata, install status, version",
+      "/auto/7z/ping": "Health check",
+      "/auto/7z/list": "POST - list archive contents (7z l -slt)",
+      "/auto/7z/extract": "POST - extract an archive to a directory (7z x)",
+      "/auto/7z/create": "POST - create an archive from files/dirs (7z a)",
+      "/auto/7z/test": "POST - test archive integrity (7z t)"
+    },
+    "exe": "7z",
+    "candidates": [
+      "C:/Program Files/7-Zip/7z.exe",
+      "C:/Program Files (x86)/7-Zip/7z.exe",
+      "C:/Users/*/scoop/apps/7zip/current/7z.exe"
+    ],
+    "install": {
+      "winget": "winget install --id 7zip.7zip",
+      "scoop": "scoop install 7zip"
+    },
+    "repo": "ip7z/7zip",
+    "stars": 3838,
+    "url": "https://github.com/ip7z/7zip"
   }
 }
 
@@ -14712,6 +14764,330 @@ def _h_scoop_358():
                     'error': (r.stderr or '').strip()[-2000:] if r.returncode != 0 else None})
 
 
+def _h_gh_359():
+    """Run an arbitrary `gh` subcommand and return its JSON output.
+
+        Body (JSON):
+            args (list[str], required): the gh subcommand + flags as a list of
+                tokens, e.g. ["issue","list","--repo","owner/repo","--json",
+                "number,title,state"]. Tokens are passed verbatim (no shell
+                splitting), so quoting is preserved.
+            env (dict, optional): extra environment variables (e.g. GH_TOKEN).
+            timeout (int, optional): max seconds. Default 120, max 600.
+    """
+    exe = _find_tool('gh')
+    if not exe:
+        return (jsonify({'error': 'gh is not installed', 'hint': 'winget install --id GitHub.cli  (or: scoop install gh)'}), 503)
+    body = _json_body()
+    args = body.get('args')
+    if not args or not isinstance(args, list) or not args:
+        return (jsonify({'error': "Missing or invalid 'args' (list of command tokens)"}), 400)
+    args = [str(a) for a in args]
+    timeout = body.get('timeout', 120)
+    try:
+        timeout = max(10, min(int(timeout), 600))
+    except (ValueError, TypeError):
+        timeout = 120
+    env = dict(os.environ)
+    extra = body.get('env')
+    if isinstance(extra, dict):
+        env.update({str(k): str(v) for k, v in extra.items()})
+    try:
+        r = subprocess.run([exe] + args, capture_output=True, text=True, errors='replace', timeout=timeout, env=env)
+        out = (r.stdout or '').strip()
+        if r.returncode != 0:
+            _log(f'[gh run] rc={r.returncode}: {(r.stderr or out)[:300]}')
+            return (jsonify({'ok': False, 'error': (r.stderr or out or 'gh command failed').strip()[:2000]}), 500)
+        try:
+            parsed = json_lib.loads(out)
+        except Exception:
+            parsed = out
+        return jsonify({'ok': True, 'output': parsed})
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': f'gh command timed out after {timeout}s'}), 504)
+    except Exception as e:
+        _log(f'[gh run] {str(e)}')
+        return (jsonify({'error': str(e)}), 500)
+
+
+def _h_gh_360():
+    """List issues for a repository via `gh issue list --json`.
+
+        Body (JSON):
+            repo (str, required): owner/repo.
+            state (str, optional): open|closed|all (default open).
+            limit (int, optional): default 30, max 1000.
+    """
+    exe = _find_tool('gh')
+    if not exe:
+        return (jsonify({'error': 'gh is not installed', 'hint': 'winget install --id GitHub.cli'}), 503)
+    body = _json_body()
+    repo = str(body.get('repo') or '').strip()
+    if not repo or '/' not in repo:
+        return (jsonify({'error': "Missing or invalid 'repo' (owner/repo)"}), 400)
+    state = str(body.get('state') or 'open').strip()
+    if state not in ('open', 'closed', 'all'):
+        return (jsonify({'error': "state must be open|closed|all"}), 400)
+    limit = body.get('limit', 30)
+    try:
+        limit = max(1, min(int(limit), 1000))
+    except (ValueError, TypeError):
+        limit = 30
+    cmd = [exe, 'issue', 'list', '--repo', repo, '--state', state, '--limit', str(limit),
+           '--json', 'number,title,state,author,labels,updatedAt,url']
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, errors='replace', timeout=120)
+        if r.returncode != 0:
+            _log(f'[gh issues] rc={r.returncode}: {(r.stderr or r.stdout)[:300]}')
+            return (jsonify({'error': (r.stderr or r.stdout or 'gh issue list failed').strip()[:2000]}), 500)
+        try:
+            return jsonify({'ok': True, 'repo': repo, 'state': state, 'issues': json_lib.loads(r.stdout)})
+        except Exception:
+            return jsonify({'ok': True, 'repo': repo, 'state': state, 'raw': r.stdout})
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': 'gh issue list timed out'}), 504)
+    except Exception as e:
+        _log(f'[gh issues] {str(e)}')
+        return (jsonify({'error': str(e)}), 500)
+
+
+def _h_gh_361():
+    """Create a GitHub issue via `gh issue create`.
+
+        Body (JSON):
+            repo (str, required): owner/repo.
+            title (str, required): issue title.
+            body (str, optional): issue body (markdown).
+            labels (list[str], optional): labels to apply.
+    """
+    exe = _find_tool('gh')
+    if not exe:
+        return (jsonify({'error': 'gh is not installed', 'hint': 'winget install --id GitHub.cli'}), 503)
+    data = _json_body()
+    repo = str(data.get('repo') or '').strip()
+    title = str(data.get('title') or '').strip()
+    if not repo or '/' not in repo:
+        return (jsonify({'error': "Missing or invalid 'repo' (owner/repo)"}), 400)
+    if not title:
+        return (jsonify({'error': "Missing 'title'"}), 400)
+    iss_body = str(data.get('body') or '').strip()
+    labels = data.get('labels')
+    cmd = [exe, 'issue', 'create', '--repo', repo, '--title', title]
+    if iss_body:
+        cmd += ['--body', iss_body]
+    if isinstance(labels, list):
+        for lb in labels:
+            cmd += ['--label', str(lb)]
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, errors='replace', timeout=120)
+        if r.returncode != 0:
+            _log(f'[gh issue create] rc={r.returncode}: {(r.stderr or r.stdout)[:300]}')
+            return (jsonify({'ok': False, 'error': (r.stderr or r.stdout or 'gh issue create failed').strip()[:2000]}), 500)
+        return jsonify({'ok': True, 'url': (r.stdout or '').strip()})
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': 'gh issue create timed out'}), 504)
+    except Exception as e:
+        _log(f'[gh issue create] {str(e)}')
+        return (jsonify({'error': str(e)}), 500)
+
+
+def _h_gh_362():
+    """Create a GitHub release via `gh release create`.
+
+        Body (JSON):
+            repo (str, required): owner/repo.
+            tag (str, required): tag name (e.g. v1.2.3).
+            title (str, optional): release title (defaults to tag).
+            notes (str, optional): release notes.
+            latest (bool, optional): mark as latest release. Default true.
+            prerelease (bool, optional): mark as pre-release. Default false.
+    """
+    exe = _find_tool('gh')
+    if not exe:
+        return (jsonify({'error': 'gh is not installed', 'hint': 'winget install --id GitHub.cli'}), 503)
+    data = _json_body()
+    repo = str(data.get('repo') or '').strip()
+    tag = str(data.get('tag') or '').strip()
+    if not repo or '/' not in repo:
+        return (jsonify({'error': "Missing or invalid 'repo' (owner/repo)"}), 400)
+    if not tag:
+        return (jsonify({'error': "Missing 'tag'"}), 400)
+    title = str(data.get('title') or '').strip() or tag
+    notes = str(data.get('notes') or '').strip()
+    latest = bool(data.get('latest', True))
+    prerelease = bool(data.get('prerelease', False))
+    cmd = [exe, 'release', 'create', tag, '--repo', repo, '--title', title]
+    if notes:
+        cmd += ['--notes', notes]
+    if latest:
+        cmd.append('--latest')
+    if prerelease:
+        cmd.append('--prerelease')
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, errors='replace', timeout=180)
+        if r.returncode != 0:
+            _log(f'[gh release create] rc={r.returncode}: {(r.stderr or r.stdout)[:300]}')
+            return (jsonify({'ok': False, 'error': (r.stderr or r.stdout or 'gh release create failed').strip()[:2000]}), 500)
+        return jsonify({'ok': True, 'url': (r.stdout or '').strip()})
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': 'gh release create timed out'}), 504)
+    except Exception as e:
+        _log(f'[gh release create] {str(e)}')
+        return (jsonify({'error': str(e)}), 500)
+
+
+def _h_7z_363():
+    """List the contents of an archive via `7z l -slt`.
+
+        Body (JSON):
+            path (str, required): path to the archive file.
+            tech (bool, optional): include technical info (-slt). Default true.
+    """
+    exe = _find_tool('7z')
+    if not exe:
+        return (jsonify({'error': '7z is not installed', 'hint': 'winget install --id 7zip.7zip  (or: scoop install 7zip)'}), 503)
+    body = _json_body()
+    path = str(body.get('path') or '').strip()
+    if not path:
+        return _missing_field(body, 'path')
+    if not os.path.isfile(path):
+        return (jsonify({'error': f'archive not found: {path}'}), 400)
+    cmd = [exe, 'l']
+    if bool(body.get('tech', True)):
+        cmd.append('-slt')
+    cmd.append(path)
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, errors='replace', timeout=120)
+        if r.returncode != 0:
+            _log(f'[7z list] rc={r.returncode}: {(r.stderr or r.stdout)[:300]}')
+            return (jsonify({'ok': False, 'error': (r.stderr or r.stdout or '7z list failed').strip()[:2000]}), 500)
+        return jsonify({'ok': True, 'path': path, 'output': r.stdout})
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': '7z list timed out'}), 504)
+    except Exception as e:
+        _log(f'[7z list] {str(e)}')
+        return (jsonify({'error': str(e)}), 500)
+
+
+def _h_7z_364():
+    """Extract an archive to a directory via `7z x`.
+
+        Body (JSON):
+            path (str, required): archive file to extract.
+            dest (str, required): destination directory (created if missing).
+            password (str, optional): password for encrypted archives.
+            overwrite (bool, optional): auto-overwrite without prompt (-y). Default true.
+    """
+    exe = _find_tool('7z')
+    if not exe:
+        return (jsonify({'error': '7z is not installed', 'hint': 'winget install --id 7zip.7zip'}), 503)
+    body = _json_body()
+    path = str(body.get('path') or '').strip()
+    dest = str(body.get('dest') or '').strip()
+    if not path:
+        return _missing_field(body, 'path')
+    if not dest:
+        return _missing_field(body, 'dest')
+    if not os.path.isfile(path):
+        return (jsonify({'error': f'archive not found: {path}'}), 400)
+    try:
+        os.makedirs(dest, exist_ok=True)
+    except OSError as e:
+        return (jsonify({'error': f'cannot create dest dir: {e}'}), 400)
+    cmd = [exe, 'x', path, f'-o{dest}']
+    if bool(body.get('overwrite', True)):
+        cmd.append('-y')
+    pw = str(body.get('password') or '').strip()
+    if pw:
+        cmd.append(f'-p{pw}')
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, errors='replace', timeout=600)
+        if r.returncode != 0:
+            _log(f'[7z extract] rc={r.returncode}: {(r.stderr or r.stdout)[:300]}')
+            return (jsonify({'ok': False, 'error': (r.stderr or r.stdout or '7z extract failed').strip()[:2000]}), 500)
+        return jsonify({'ok': True, 'path': path, 'dest': dest, 'output': (r.stdout or '')[-4000:]})
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': '7z extract timed out'}), 504)
+    except Exception as e:
+        _log(f'[7z extract] {str(e)}')
+        return (jsonify({'error': str(e)}), 500)
+
+
+def _h_7z_365():
+    """Create an archive from files/directories via `7z a`.
+
+        Body (JSON):
+            archive (str, required): output archive path (e.g. C:/out/backup.7z).
+            files (list[str], required): files/dirs to add.
+            format (str, optional): 7z|zip|gzip|bzip2|tar|wim|xz (default 7z).
+            level (int, optional): compression 0-9 (default 5).
+            password (str, optional): encrypt with password (-p).
+    """
+    exe = _find_tool('7z')
+    if not exe:
+        return (jsonify({'error': '7z is not installed', 'hint': 'winget install --id 7zip.7zip'}), 503)
+    body = _json_body()
+    archive = str(body.get('archive') or '').strip()
+    files = body.get('files')
+    if not archive:
+        return _missing_field(body, 'archive')
+    if not files or not isinstance(files, list) or not files:
+        return (jsonify({'error': "Missing or invalid 'files' (list of paths)"}), 400)
+    fmt = str(body.get('format') or '7z').strip()
+    if not re.fullmatch(r'[a-zA-Z0-9]+', fmt):
+        return (jsonify({'error': f'invalid format: {fmt}'}), 400)
+    level = body.get('level', 5)
+    try:
+        level = max(0, min(int(level), 9))
+    except (ValueError, TypeError):
+        level = 5
+    cmd = [exe, 'a', f'-t{fmt}', f'-mx={level}', archive, '-y']
+    pw = str(body.get('password') or '').strip()
+    if pw:
+        cmd.append(f'-p{pw}')
+    cmd += [str(f) for f in files]
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, errors='replace', timeout=900)
+        if r.returncode != 0:
+            _log(f'[7z create] rc={r.returncode}: {(r.stderr or r.stdout)[:300]}')
+            return (jsonify({'ok': False, 'error': (r.stderr or r.stdout or '7z create failed').strip()[:2000]}), 500)
+        return jsonify({'ok': True, 'archive': archive, 'output': (r.stdout or '')[-4000:]})
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': '7z create timed out'}), 504)
+    except Exception as e:
+        _log(f'[7z create] {str(e)}')
+        return (jsonify({'error': str(e)}), 500)
+
+
+def _h_7z_366():
+    """Test archive integrity via `7z t`.
+
+        Body (JSON):
+            path (str, required): archive to test.
+    """
+    exe = _find_tool('7z')
+    if not exe:
+        return (jsonify({'error': '7z is not installed', 'hint': 'winget install --id 7zip.7zip'}), 503)
+    body = _json_body()
+    path = str(body.get('path') or '').strip()
+    if not path:
+        return _missing_field(body, 'path')
+    if not os.path.isfile(path):
+        return (jsonify({'error': f'archive not found: {path}'}), 400)
+    cmd = [exe, 't', path]
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, errors='replace', timeout=600)
+        if r.returncode != 0:
+            _log(f'[7z test] rc={r.returncode}: {(r.stderr or r.stdout)[:300]}')
+            return (jsonify({'ok': False, 'error': (r.stderr or r.stdout or '7z test failed').strip()[:2000]}), 500)
+        return jsonify({'ok': True, 'path': path, 'output': (r.stdout or '')[-2000:]})
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': '7z test timed out'}), 504)
+    except Exception as e:
+        _log(f'[7z test] {str(e)}')
+        return (jsonify({'error': str(e)}), 500)
+
+
 def register_routes(app, state, require_auth):
     global _STATE
     _STATE = state
@@ -15077,6 +15453,14 @@ def register_routes(app, state, require_auth):
         ('/auto/scoop/search', ['POST'], _h_scoop_356),
         ('/auto/scoop/install', ['POST'], _h_scoop_357),
         ('/auto/scoop/update', ['POST'], _h_scoop_358),
+        ('/auto/gh/run', ['POST'], _h_gh_359),
+        ('/auto/gh/issues', ['POST'], _h_gh_360),
+        ('/auto/gh/issue/create', ['POST'], _h_gh_361),
+        ('/auto/gh/release/create', ['POST'], _h_gh_362),
+        ('/auto/7z/list', ['POST'], _h_7z_363),
+        ('/auto/7z/extract', ['POST'], _h_7z_364),
+        ('/auto/7z/create', ['POST'], _h_7z_365),
+        ('/auto/7z/test', ['POST'], _h_7z_366),
     ]
     for _path, _methods, _fn in _ACTIONS:
         app.add_url_rule(_path, endpoint=_fn.__name__, view_func=require_auth(_fn), methods=_methods)
