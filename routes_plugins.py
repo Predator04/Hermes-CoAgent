@@ -92,13 +92,15 @@ def _scan_plugins():
 
 def _remove_endpoints(app, endpoints):
     endpoint_set = set(endpoints)
-    for endpoint in endpoint_set:
-        app.view_functions.pop(endpoint, None)
     try:
+        # Rebuild the URL map first, then drop the view functions, so a
+        # failure mid-way leaves view_functions consistent with _rules.
         app.url_map._rules = [rule for rule in app.url_map._rules if rule.endpoint not in endpoint_set]
         for endpoint in endpoint_set:
             app.url_map._rules_by_endpoint.pop(endpoint, None)
         app.url_map._remap = True
+        for endpoint in endpoint_set:
+            app.view_functions.pop(endpoint, None)
     except Exception:
         pass
 
