@@ -122,7 +122,10 @@ def _resolve_image(body):
 
     Raises ValueError on failure. image_size is (w, h) or None if unknown.
     """
-    b64 = (body.get("image") or "").strip()
+    b64 = body.get("image")
+    if not isinstance(b64, str):
+        b64 = ""
+    b64 = b64.strip()
     if b64:
         try:
             raw = base64.b64decode(b64)
@@ -236,6 +239,34 @@ class ProviderError(RuntimeError):
     """Raised when a grounding provider cannot service the request."""
 
 
+def _items_from_payload(parsed, source="provider"):
+    """Normalize a provider JSON payload into a list of element dicts.
+
+    Accepts a top-level list, or a dict carrying ``elements``/``result``/
+    ``boxes`` (a list, or a single dict). Presence — not truthiness — is
+    respected so an explicit empty list means "no matches". Returns [] for
+    anything malformed instead of crashing with a 500.
+    """
+    if isinstance(parsed, list):
+        items = parsed
+    elif isinstance(parsed, dict):
+        items = None
+        for key in ("elements", "result", "boxes"):
+            if key in parsed:
+                items = parsed[key]
+                break
+        if items is None:
+            items = []
+    else:
+        raise ProviderError(
+            f"{source} returned unexpected JSON type: {type(parsed).__name__}")
+    if isinstance(items, dict):
+        items = [items]
+    elif not isinstance(items, list):
+        items = []
+    return items
+
+
 def _provider_aria(prompt, png_bytes, image_size, cfg):
     """Call the Aria-UI grounding endpoint.
 
@@ -280,18 +311,7 @@ def _provider_aria(prompt, png_bytes, image_size, cfg):
     except (ValueError, UnicodeDecodeError) as exc:
         raise ProviderError(f"Aria-UI returned non-JSON: {exc}") from exc
 
-    if isinstance(parsed, list):
-        items = parsed
-    elif isinstance(parsed, dict):
-        items = (parsed.get("elements")
-                 or parsed.get("result")
-                 or parsed.get("boxes")
-                 or [])
-    else:
-        raise ProviderError(
-            f"Aria-UI returned unexpected JSON type: {type(parsed).__name__}")
-    if isinstance(items, dict):
-        items = [items]
+    items = _items_from_payload(parsed, "Aria-UI")
 
     out = []
     for entry in items:
@@ -351,13 +371,7 @@ def _provider_local_http(prompt, png_bytes, image_size, cfg, provider_name):
     except (ValueError, UnicodeDecodeError) as exc:
         raise ProviderError(f"{provider_name} returned non-JSON: {exc}") from exc
 
-    if isinstance(parsed, list):
-        items = parsed
-    elif isinstance(parsed, dict):
-        items = parsed.get("elements") or parsed.get("result") or []
-    else:
-        raise ProviderError(
-            f"{provider_name} returned unexpected JSON type: {type(parsed).__name__}")
+    items = _items_from_payload(parsed, provider_name)
     out = []
     for entry in items:
         if not isinstance(entry, dict):
