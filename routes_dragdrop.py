@@ -250,6 +250,11 @@ def register_routes(app, state, require_auth):
 
         steps = body.get("steps", 30)
         duration_ms = body.get("duration_ms", 600)
+        try:
+            steps = int(steps)
+            duration_ms = int(duration_ms)
+        except (TypeError, ValueError):
+            return jsonify({"error": "steps and duration_ms must be integers"}), 400
 
         files = body.get("files") or []
         if files and not isinstance(files, list):
@@ -289,6 +294,7 @@ def register_routes(app, state, require_auth):
                 time.sleep(0.08)
                 # Click to focus the drop zone / upload target.
                 user32.mouse_event(_MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
+                time.sleep(0.02)
                 user32.mouse_event(_MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
                 time.sleep(0.12)
                 _send_paste()
