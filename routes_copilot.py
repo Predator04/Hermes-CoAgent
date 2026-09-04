@@ -374,7 +374,10 @@ def _run_clause(clause, state):
     m = re.match(r"^scroll(?:\s+(up|down))?(?:\s+(-?\d+))?$", clause, flags=re.I)
     if m:
         direction = (m.group(1) or "down").lower()
-        clicks = int(m.group(2) or (3 if direction == "up" else -3))
+        # An explicit count must not ignore the direction: "scroll down 5"
+        # previously produced +5 (scroll *up*). Apply the sign from direction.
+        n = int(m.group(2) or 3)
+        clicks = abs(n) * (1 if direction == "up" else -1)
         from routes_mouse import _execute_action_wrapper
         _execute_action_wrapper({"type": "scroll", "clicks": clicks}, state)
         return True, {"action": "scroll", "clicks": clicks, "status": "ok"}
