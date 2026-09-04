@@ -32,6 +32,7 @@ syntax-check CI stays green and hosts without pypdf get a clean 501.
 """
 
 import base64
+import io
 import os
 import re
 import tempfile
@@ -73,7 +74,10 @@ def _resolve_pdf_source(body):
     filename = (body.get("filename") or "").strip()
 
     if path:
-        path = str(path)
+        try:
+            path = _sanitize_path(str(path))
+        except ValueError as exc:
+            return None, None, None, (jsonify({"error": str(exc)}), 400)
         if not os.path.isfile(path):
             return None, None, None, (jsonify({"error": f"file not found: {path}"}), 404)
         return path, None, filename or os.path.basename(path), None
@@ -413,7 +417,8 @@ def register_routes(app, state, require_auth):
         if err:
             return None, None, None, err
         try:
-            reader = PdfReader(source_path)
+            with open(source_path, "rb") as fh:
+                reader = PdfReader(io.BytesIO(fh.read()))
         except Exception as exc:
             if tmp_path:
                 try:
@@ -478,9 +483,10 @@ def register_routes(app, state, require_auth):
                                 "unmatched": unmatched}), 400
             writer, skipped = _apply_fill(reader, fill_map, flatten=False)
             payload, status = _write_output(writer, body.get("output"), filename)
-            payload["filled"] = matched
-            payload["unmatched"] = unmatched
-            payload["skipped"] = skipped
+            if payload.get("ok"):
+                payload["filled"] = matched
+                payload["unmatched"] = unmatched
+                payload["skipped"] = skipped
             return jsonify(payload), status
         finally:
             if tmp_path:
@@ -517,10 +523,11 @@ def register_routes(app, state, require_auth):
             writer, skipped = _apply_fill(reader, fill_map, flatten=True)
             _strip_form(writer)
             payload, status = _write_output(writer, body.get("output"), filename)
-            payload["filled"] = matched
-            payload["unmatched"] = unmatched
-            payload["skipped"] = skipped
-            payload["flattened"] = True
+            if payload.get("ok"):
+                payload["filled"] = matched
+                payload["unmatched"] = unmatched
+                payload["skipped"] = skipped
+                payload["flattened"] = True
             return jsonify(payload), status
         finally:
             if tmp_path:
