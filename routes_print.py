@@ -57,6 +57,7 @@ def _run_ps(script, timeout=20):
             [ps, "-NoProfile", "-NonInteractive", "-Command", script],
             capture_output=True,
             text=True,
+            errors="replace",
             timeout=timeout,
             creationflags=_CREATE_NO_WINDOW,
         )
