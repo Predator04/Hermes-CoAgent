@@ -186,7 +186,7 @@ def _parse_page_range(spec, total):
     """
     if spec is None or not str(spec).strip():
         return list(range(1, min(total, _MAX_PAGES) + 1))
-    if isinstance(spec, int):
+    if isinstance(spec, int) and not isinstance(spec, bool):
         return [spec] if 1 <= spec <= min(total, _MAX_PAGES) else []
     if not isinstance(spec, str):
         return None
@@ -585,7 +585,7 @@ def register_routes(app, state, require_auth):
                     "error": err,
                     "filename": filename,
                     "type": kind,
-                }), 400 if kind == "unknown" else 500
+                }), 400 if kind in ("unknown", "doc") else 500
 
             result["ok"] = True
             result["filename"] = filename
