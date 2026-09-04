@@ -892,8 +892,8 @@ def register_routes(app, state, require_auth):
             for win in snap.get("tree", {}).get("children", []):
                 for child in win.get("children", []):
                     match = False
-                    if mode == "name" and needle in child.get("name", "").lower(): match = True
-                    elif mode == "control_type" and needle == child.get("control_type", "").lower(): match = True
+                    if mode == "name" and needle in str(child.get("name", "")).lower(): match = True
+                    elif mode == "control_type" and needle == str(child.get("control_type", "")).lower(): match = True
                     if match:
                         results.append(child)
         return jsonify({"query": query, "mode": mode, "count": len(results), "results": results})
