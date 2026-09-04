@@ -568,7 +568,10 @@ def _first_json_array(text):
         raise ValueError("empty agent response")
     fenced = re.search(r"```(?:json)?\s*(\[.*?\])\s*```", text, re.DOTALL | re.IGNORECASE)
     if fenced:
-        return json.loads(fenced.group(1))
+        try:
+            return json.loads(fenced.group(1))
+        except json.JSONDecodeError:
+            pass
     decoder = json.JSONDecoder()
     for index, char in enumerate(text):
         if char != "[":
@@ -588,7 +591,10 @@ def _first_json_value(text):
         raise ValueError("empty agent response")
     fenced = re.search(r"```(?:json)?\s*([\[{].*?[\]}])\s*```", text, re.DOTALL | re.IGNORECASE)
     if fenced:
-        return json.loads(fenced.group(1))
+        try:
+            return json.loads(fenced.group(1))
+        except json.JSONDecodeError:
+            pass
     decoder = json.JSONDecoder()
     for index, char in enumerate(text):
         if char not in "[{":
@@ -820,7 +826,7 @@ def _local_planner(goal, max_steps):
         steps.append({"action": "screenshot", "params": {}})
 
     # Detect search patterns
-    search_match = re.search(r'(?:search|find|look\s+for)\s+(.+?)(?:\s+and\s+|$)', goal_lower)
+    search_match = re.search(r'(?:search|find|look)\s+(?:for\s+)?(.+?)(?:\s+and\s+|$)', goal_lower)
     search_target = search_match.group(1).strip() if search_match else None
     
     # Detect "say X" or "send X" or "type X"
