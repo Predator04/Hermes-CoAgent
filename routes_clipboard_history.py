@@ -366,7 +366,7 @@ def register_routes(app, state, require_auth):
                 query = q.strip()
             pinned_only = bool(body.get("pinned_only") or body.get("pinned"))
             raw_limit = body.get("limit")
-            if isinstance(raw_limit, int) and raw_limit > 0:
+            if isinstance(raw_limit, int) and not isinstance(raw_limit, bool) and raw_limit > 0:
                 limit = min(raw_limit, _MAX_HISTORY)
 
         entries = _snapshot_history(query=query, pinned_only=pinned_only, limit=limit)
