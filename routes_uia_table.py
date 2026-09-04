@@ -259,11 +259,14 @@ def _extract_via_descendants(element, max_rows, max_cols):
         if ct in _HEADER_CONTROL_TYPES:
             if ct == "headeritem":
                 # headeritem is a leaf: its label lives on the element itself,
-                # not on child elements.
+                # not on child elements. Keep collecting sibling headeritems —
+                # the common grid case is a row of individual headeritem cells.
                 text = _element_text(elem)
                 if text:
                     headers.append(text)
             else:
+                # A header container (Header/HeaderControl) wraps all header
+                # cells; once collected, we have the full header set.
                 try:
                     for child in elem.children():
                         text = _element_text(child)
@@ -271,8 +274,8 @@ def _extract_via_descendants(element, max_rows, max_cols):
                             headers.append(text)
                 except Exception:
                     pass
-            if headers:
-                break
+                if headers:
+                    break
 
     rows = []
     seen_row_ids = set()
