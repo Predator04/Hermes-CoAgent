@@ -1105,6 +1105,11 @@ except ImportError:
     reg_vault = None
     features["credential_vault"] = False
 try:
+    from routes_totp import register_routes as reg_totp
+except ImportError:
+    reg_totp = None
+    features["totp_vault"] = False
+try:
     from routes_supervisor import register_routes as reg_supervisor
 except ImportError:
     reg_supervisor = None
@@ -1438,6 +1443,9 @@ if reg_qr:
 if reg_vault:
     reg_vault(app, state, require_auth)
     features["credential_vault"] = True
+if reg_totp:
+    reg_totp(app, state, require_auth)
+    features["totp_vault"] = True
 if reg_supervisor:
     reg_supervisor(app, state, require_auth)
     features["task_supervisor"] = True
@@ -1663,7 +1671,7 @@ def route_version():
                                  "safety_checkpoint", "perception_snapshot",
                                  "session_state", "file_organizer",
                                  "office_authoring", "task_persistence",
-                                 "qr_decode", "credential_vault", "task_supervisor",
+                                 "qr_decode", "credential_vault", "totp_vault", "task_supervisor",
                                  "humanized_typing", "rich_clipboard", "hyperv_vm",
                                  "pdf_form_fill",
                                  "recordings", "workflow_variables", "telemetry_best_strategy",
@@ -1682,7 +1690,7 @@ def route_version():
                                 "browser_v2", "mobile", "memory", "batching", "speculative_batching",
                                 "reminders", "hud", "perception", "session",
                                 "organize", "office", "scheduler_tasks",
-                                "qr", "vault", "supervisor", "vm", "pdf", "recordings", "phone_memory",
+                                "qr", "vault", "totp", "supervisor", "vm", "pdf", "recordings", "phone_memory",
                                 "email", "bluetooth"],
                     "memory": memory_stats(),
                     "security": ["auth_token", "rate_limit", "input_sanitization",
