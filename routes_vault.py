@@ -178,12 +178,16 @@ def _set_credential(advapi32, CREDENTIAL, target, username, secret, ctype):
     blob = (secret or "").encode("utf-16-le")
     blob_buf = ctypes.create_string_buffer(blob, len(blob))
     user_buf = ctypes.create_unicode_buffer(username or "")
+    # LPWSTR fields (POINTER(WCHAR)) reject plain str assignment on Python 3.11+,
+    # so build unicode buffers and cast them — exactly like UserName below.
+    target_buf = ctypes.create_unicode_buffer(target or "")
+    comment_buf = ctypes.create_unicode_buffer("Managed by CoAgent vault")
 
     cred = CREDENTIAL()
     cred.Flags = 0
     cred.Type = ctype
-    cred.TargetName = target
-    cred.Comment = "Managed by CoAgent vault"
+    cred.TargetName = ctypes.cast(target_buf, wintypes.LPWSTR)
+    cred.Comment = ctypes.cast(comment_buf, wintypes.LPWSTR)
     cred.CredentialBlobSize = len(blob)
     cred.CredentialBlob = ctypes.cast(blob_buf, wintypes.LPBYTE)
     cred.Persist = 2  # CRED_PERSIST_LOCAL_MACHINE
@@ -192,7 +196,9 @@ def _set_credential(advapi32, CREDENTIAL, target, username, secret, ctype):
 
     ok = advapi32.CredWriteW(ctypes.byref(cred), 0)
     if not ok:
-        err = ctypes.get_last_error() if hasattr(ctypes, "get_last_error") else ctypes.windll.kernel32.GetLastError()
+        # advapi32 was loaded without use_last_error=True, so ctypes.get_last_error()
+        # returns a stale value. Query Win32's thread-local last error directly.
+        err = ctypes.windll.kernel32.GetLastError()
         raise OSError(f"CredWriteW failed (error {err})")
     return True
 
