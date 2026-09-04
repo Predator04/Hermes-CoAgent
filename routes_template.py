@@ -259,12 +259,18 @@ def _click(x: int, y: int) -> None:
         pass
     try:
         import ctypes
-        sw = ctypes.windll.user32.GetSystemMetrics(0)
-        sh = ctypes.windll.user32.GetSystemMetrics(1)
-        nx = int(x * 65535 / sw)
-        ny = int(y * 65535 / sh)
-        F = ctypes.windll.user32.mouse_event
-        F(0x8001, nx, ny, 0, 0)   # MOVE + ABSOLUTE
+        u32 = ctypes.windll.user32
+        # Virtual-screen metrics so clicks on secondary monitors land correctly.
+        vx = u32.GetSystemMetrics(76)   # SM_XVIRTUALSCREEN
+        vy = u32.GetSystemMetrics(77)   # SM_YVIRTUALSCREEN
+        vw = u32.GetSystemMetrics(78)   # SM_CXVIRTUALSCREEN
+        vh = u32.GetSystemMetrics(79)   # SM_CYVIRTUALSCREEN
+        if vw <= 0 or vh <= 0:
+            raise RuntimeError("virtual screen size unavailable")
+        nx = int((x - vx) * 65535 / vw)
+        ny = int((y - vy) * 65535 / vh)
+        F = u32.mouse_event
+        F(0x8001 | 0x4000, nx, ny, 0, 0)   # MOVE + ABSOLUTE + VIRTUALDESK
         F(0x0002, 0, 0, 0, 0)     # LEFTDOWN
         F(0x0004, 0, 0, 0, 0)     # LEFTUP
     except Exception as exc:
@@ -426,7 +432,7 @@ def register_routes(app, state, require_auth):
         if not path.exists():
             return jsonify({"error": f"Template '{name}' not found"}), 404
 
-        path.unlink()
+        path.unlink(missing_ok=True)
         _log(f"[TEMPLATE] deleted '{name}'")
         return jsonify({"deleted": True, "name": name})
 
@@ -478,8 +484,10 @@ def register_routes(app, state, require_auth):
         b64 = base64.b64encode(buf.getvalue()).decode()
 
         name = (body.get("name") or "").strip()
+        if name and not re.match(r'^[\w\-]+$', name):
+            return jsonify({"error": "name must be alphanumeric with - or _ only"}), 400
         saved = False
-        if name and re.match(r'^[\w\-]+$', name):
+        if name:
             path = _TEMPLATES_DIR / f"{name}.png"
             img.save(str(path), "PNG")
             saved = True
