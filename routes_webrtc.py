@@ -49,6 +49,12 @@ def _mjpeg_generator(interval=0.1, quality=70):
         try:
             frame = _capture_frame(quality=quality)
         except Exception:
+            frame = None
+        if not frame:
+            # _capture_jpeg returns empty bytes (never raises) on failure,
+            # so an empty frame must increment the counter here or the
+            # MAX_CAPTURE_FAILURES guard never trips and the stream spins
+            # silently forever.
             failures += 1
             if failures >= _MAX_CAPTURE_FAILURES:
                 return
