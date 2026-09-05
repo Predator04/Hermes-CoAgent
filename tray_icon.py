@@ -585,7 +585,7 @@ def _tooltip(state: TrayState) -> str:
     elif healthy is None:
         base = f"{APP_NAME} v{VERSION} {TOOLTIP_DASH} Checking {_format_duration(tray_uptime)}"
     elif last_error:
-        base = f"{APP_NAME} v{VERSION} {TOOLTIP_DASH} Down"
+        base = f"{APP_NAME} v{VERSION} {TOOLTIP_DASH} Down: {last_error}"
     else:
         base = f"{APP_NAME} v{VERSION} {TOOLTIP_DASH} Down"
     # Append background task status (quick check, don't block on failures)
@@ -755,9 +755,9 @@ def _restart_server(state: TrayState, icon=None, automatic: bool = False) -> Non
     state.log(f"{label} requested")
     try:
         if automatic:
-            running, reason = _server_already_running(state)
-            if running:
-                state.log(f"{label} skipped: {reason}")
+            healthy, _, _ = _ping(state)
+            if healthy:
+                state.log(f"{label} skipped: server already healthy")
                 return
         _kill_server_processes(state)
         time.sleep(1.5)
@@ -829,9 +829,9 @@ def _check_background_status(icon, item, state: TrayState) -> None:
         return
     if data.get("active"):
         _notify(icon,
-            f"🫥 Running: {data['task']}\n"
-            f"Actions: {data['actions']} | Elapsed: {data['elapsed_seconds']}s\n"
-            f"Last: {data['last_action']}"
+            f"🫥 Running: {data.get('task', '?')}\n"
+            f"Actions: {data.get('actions', '?')} | Elapsed: {data.get('elapsed_seconds', 0)}s\n"
+            f"Last: {data.get('last_action', '?')}"
         )
     else:
         _notify(icon, "🫥 No background task running — co-pilot idle")
@@ -850,7 +850,7 @@ def _bg_tooltip_line(state: TrayState) -> str:
     """Get a tooltip line showing background task status."""
     data = _bg_api(state, "/background/status")
     if data and data.get("active"):
-        return f"\n🫥 {data['task']} ({data['actions']} actions)"
+        return f"\n🫥 {data.get('task', '?')} ({data.get('actions', '?')} actions)"
     return ""
 
 
