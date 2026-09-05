@@ -60,14 +60,18 @@ def _win32_capture():
     import win32gui
     import win32ui
 
-    hwnd = win32gui.GetDesktopWindow()
+    hwnd = 0
     hwnd_dc = src_dc = mem_dc = bitmap = old_bitmap = None
     try:
         left = win32api_get_metric(76)
         top = win32api_get_metric(77)
         width = win32api_get_metric(78) or win32api_get_metric(0) or 1920
         height = win32api_get_metric(79) or win32api_get_metric(1) or 1080
-        hwnd_dc = win32gui.GetWindowDC(hwnd)
+        # GetDC(0) yields the screen DC whose origin is the virtual-screen
+        # top-left, so the (possibly negative) SM_XVIRTUALSCREEN/SM_YVIRTUALSCREEN
+        # source coords BitBlt correctly on multi-monitor setups. A desktop-window
+        # DC is primary-display-relative and blanks secondary monitors.
+        hwnd_dc = win32gui.GetDC(hwnd)
         src_dc = win32ui.CreateDCFromHandle(hwnd_dc)
         mem_dc = src_dc.CreateCompatibleDC()
         bitmap = win32ui.CreateBitmap()
