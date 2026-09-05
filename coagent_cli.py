@@ -240,10 +240,10 @@ def main(argv=None):
                     _eprint("error: server did not become ready")
                     return 1
                 _eprint(f"server ready: {ping.get('agent', 'coagent')}")
+                # A freshly spawned --secure server writes a random token to .token.
+                token = _find_token(None) or token
             else:
                 _eprint(f"attached to running server: {existing.get('agent', 'coagent')}")
-            # A freshly spawned --secure server writes a random token to .token.
-            token = _find_token(None) or token
 
         payload = {"goal": goal, "max_steps": args.max_steps}
         if args.approve:
@@ -282,6 +282,9 @@ def main(argv=None):
             consecutive_failures = 0
             if status == 404:
                 _eprint("error: goal disappeared from the server")
+                return 1
+            if status >= 400:
+                _eprint(f"error: server returned HTTP {status}: {json.dumps(snap, default=str)}")
                 return 1
             if not isinstance(snap, dict):
                 continue
