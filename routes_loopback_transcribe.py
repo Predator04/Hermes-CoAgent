@@ -65,12 +65,12 @@ def _capture_loopback(ffmpeg, device, seconds):
         proc = subprocess.run(argv, capture_output=True,
                               timeout=seconds + 15, creationflags=flags)
     except subprocess.TimeoutExpired:
-        return None, "capture timed out"
+        return path, "capture timed out"
     except FileNotFoundError:
-        return None, "ffmpeg not found"
+        return path, "ffmpeg not found"
     if proc.returncode != 0:
         err = (proc.stderr or proc.stdout or b"").decode("utf-8", "replace").strip()
-        return None, f"ffmpeg exited {proc.returncode}: {err[:400]}"
+        return path, f"ffmpeg exited {proc.returncode}: {err[:400]}"
     return path, None
 
 
