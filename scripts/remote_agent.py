@@ -99,7 +99,12 @@ def _run_capped(args, timeout=30, cap=100_000):
         chunks = []
         total = 0
         while True:
-            chunk = stream.read(8192)
+            try:
+                chunk = stream.read(8192)
+            except (ValueError, OSError):
+                # The main thread may close this stream on timeout to unblock
+                # us when a grandchild inherited the pipe; treat that as EOF.
+                chunk = b""
             if not chunk:
                 break
             total += len(chunk)
@@ -108,7 +113,10 @@ def _run_capped(args, timeout=30, cap=100_000):
             elif total - len(chunk) < cap:
                 chunks.append(chunk[: cap - (total - len(chunk))])
         result[key] = b"".join(chunks)
-        stream.close()
+        try:
+            stream.close()
+        except (ValueError, OSError):
+            pass
 
     t_out = threading.Thread(target=_read, args=(proc.stdout, "out"), daemon=True)
     t_err = threading.Thread(target=_read, args=(proc.stderr, "err"), daemon=True)
@@ -290,4 +298,6 @@ class ThreadingHTTPServer(http.server.ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = True
 
-ThreadingHTTPServer((BIND_HOST, PORT), Handler).serve_forever()
+
+if __name__ == "__main__":
+    ThreadingHTTPServer((BIND_HOST, PORT), Handler).serve_forever()
