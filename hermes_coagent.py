@@ -1003,6 +1003,22 @@ except ImportError:
     features["perception"] = False
 
 try:
+    from routes_screen_changes import register_routes as reg_screen_changes
+except ImportError:
+    reg_screen_changes = None
+    features["screen_changes"] = False
+try:
+    from routes_wireframe import register_routes as reg_wireframe
+except ImportError:
+    reg_wireframe = None
+    features["wireframe"] = False
+try:
+    from routes_loopback_transcribe import register_routes as reg_loopback_transcribe
+except ImportError:
+    reg_loopback_transcribe = None
+    features["loopback_transcribe"] = False
+
+try:
     from routes_video import register_routes as reg_video
 except ImportError:
     reg_video = None
@@ -1383,6 +1399,16 @@ if reg_perception:
     reg_perception(app, state, require_auth)
     features["perception"] = True
 
+if reg_screen_changes:
+    reg_screen_changes(app, state, require_auth)
+    features["screen_changes"] = True
+if reg_wireframe:
+    reg_wireframe(app, state, require_auth)
+    features["wireframe"] = True
+if reg_loopback_transcribe:
+    reg_loopback_transcribe(app, state, require_auth)
+    features["loopback_transcribe"] = True
+
 if reg_video:
     reg_video(app, state, require_auth)
     features["video_recording"] = True
@@ -1679,7 +1705,8 @@ def route_version():
                                  "pdf_form_fill",
                                  "recordings", "workflow_variables", "telemetry_best_strategy",
                                  "phone_sequence_memory", "uia_text_caret_selection",
-                                 "smtp_imap_email", "bluetooth_device_management"],
+                                 "smtp_imap_email", "bluetooth_device_management",
+                                 "screen_changes", "wireframe", "loopback_transcribe"],
                     "modules": ["mouse", "ocr", "uia", "file", "media", "v63",
                                 "stream", "process", "voice", "cua", "copilot",
                                 "bypass", "toast", "deps", "config", "browser",
@@ -1694,7 +1721,8 @@ def route_version():
                                 "reminders", "hud", "perception", "session",
                                 "organize", "office", "scheduler_tasks",
                                 "qr", "vault", "totp", "supervisor", "vm", "pdf", "recordings", "phone_memory",
-                                "email", "bluetooth"],
+                                "email", "bluetooth", "screen_changes", "wireframe",
+                                "loopback"],
                     "memory": memory_stats(),
                     "security": ["auth_token", "rate_limit", "input_sanitization",
                                  "cors_restricted", "security_headers"]})
