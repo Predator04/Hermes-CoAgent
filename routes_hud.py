@@ -39,6 +39,7 @@ _HUD_STATE = {
 _HUD_STOP_EVENT = None
 _HUD_THREAD = None
 _HUD_TOKEN = 0
+_WNDPROC_REF = None  # keep the native WndProc trampoline alive for the process lifetime
 
 
 def _now_text():
@@ -293,6 +294,8 @@ def _run_native_hud(config, stop_event, token, ready_event):
         return user32.DefWindowProcW(hwnd, msg, wparam, lparam)
 
     wnd_proc_ref = WNDPROC(wnd_proc)
+    global _WNDPROC_REF
+    _WNDPROC_REF = wnd_proc_ref
     class_name = "HermesCoAgentHudOverlay"
     hinstance = kernel32.GetModuleHandleW(None)
     wc = WNDCLASS()
@@ -337,7 +340,6 @@ def _run_native_hud(config, stop_event, token, ready_event):
     bitmap = None
     old_bitmap = None
     try:
-        image = _render_hud_bitmap(config["text"], config["color"])
         bits = ctypes.c_void_p()
         bmi = BITMAPINFO()
         bmi.bmiHeader.biSize = ctypes.sizeof(BITMAPINFOHEADER)
@@ -349,27 +351,51 @@ def _run_native_hud(config, stop_event, token, ready_event):
         bitmap = gdi32.CreateDIBSection(screen_dc, ctypes.byref(bmi), DIB_RGB_COLORS, ctypes.byref(bits), None, 0)
         if not bitmap or not bits:
             raise OSError("CreateDIBSection failed")
-        data = _premultiplied_bgra(image)
-        ctypes.memmove(bits, data, len(data))
         old_bitmap = gdi32.SelectObject(mem_dc, bitmap)
         dst = POINT(x, y)
         size = SIZE(HUD_WIDTH, HUD_HEIGHT)
         src = POINT(0, 0)
         blend = BLENDFUNCTION(AC_SRC_OVER, 0, 255, AC_SRC_ALPHA)
-        ok = user32.UpdateLayeredWindow(hwnd, screen_dc, ctypes.byref(dst), ctypes.byref(size), mem_dc, ctypes.byref(src), 0, ctypes.byref(blend), ULW_ALPHA)
-        if not ok:
-            raise OSError("UpdateLayeredWindow failed")
+
+        def _repaint(text, color):
+            image = _render_hud_bitmap(text, color)
+            data = _premultiplied_bgra(image)
+            ctypes.memmove(bits, data, len(data))
+            ok = user32.UpdateLayeredWindow(
+                hwnd, screen_dc, ctypes.byref(dst), ctypes.byref(size),
+                mem_dc, ctypes.byref(src), 0, ctypes.byref(blend), ULW_ALPHA,
+            )
+            if not ok:
+                raise OSError("UpdateLayeredWindow failed")
+
+        _repaint(config["text"], config["color"])
         user32.ShowWindow(hwnd, 8)
         _write_status(visible=True, mode="native", error=None, **config)
         ready_event.set()
-        deadline = time.time() + float(config["timeout"]) if float(config["timeout"]) > 0 else None
+        timeout_s = float(config["timeout"])
+        deadline = time.monotonic() + timeout_s if timeout_s > 0 else None
+        rendered_text = config["text"]
+        rendered_color = config["color"]
         msg = MSG()
         while not stop_event.is_set():
             while user32.PeekMessageW(ctypes.byref(msg), hwnd, 0, 0, PM_REMOVE):
                 user32.TranslateMessage(ctypes.byref(msg))
                 user32.DispatchMessageW(ctypes.byref(msg))
-            if deadline and time.time() >= deadline:
+            if deadline and time.monotonic() >= deadline:
                 break
+            # Re-render when /hud/text (or /hud/show) updates the status, so the
+            # on-screen overlay reflects the new text/color. Previously the loop
+            # painted exactly once and /hud/text only touched the JSON file.
+            with _HUD_LOCK:
+                cur_text = _HUD_STATE.get("text")
+                cur_color = _HUD_STATE.get("color") or "cyan"
+            if cur_text != rendered_text or cur_color != rendered_color:
+                try:
+                    _repaint(cur_text or rendered_text, cur_color)
+                except OSError:
+                    pass
+                rendered_text = cur_text
+                rendered_color = cur_color
             time.sleep(0.05)
     finally:
         if old_bitmap:
