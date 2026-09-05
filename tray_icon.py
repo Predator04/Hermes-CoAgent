@@ -34,7 +34,7 @@ def _load_version() -> str:
     """Read version from VERSION file (single source of truth)."""
     vf = Path(__file__).resolve().parent / "VERSION"
     if vf.is_file():
-        return vf.read_text().strip()
+        return vf.read_text(encoding="utf-8").strip()
     return "0.0.0"
 
 VERSION = _load_version()
@@ -801,10 +801,7 @@ def _start_or_open_server_menu(icon, item, state: TrayState) -> None:
 def _exit(icon, item, state: TrayState) -> None:
     with state.lock:
         state.shutting_down = True
-    try:
-        icon.stop()
-    finally:
-        return
+    icon.stop()
 
 
 # ── Background task tray integration ───────────────────────────────────
@@ -895,9 +892,9 @@ def _start_tunnel(state: TrayState, icon=None) -> None:
     try:
         headers = {"Authorization": f"Bearer {token}"} if token else {}
         req = urllib.request.Request(f"http://127.0.0.1:{port}/ping", headers=headers)
-        resp = urllib.request.urlopen(req, timeout=3)
-        if resp.status == 200:
-            server_ok = True
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            if resp.status == 200:
+                server_ok = True
     except Exception:
         pass
 
@@ -927,10 +924,10 @@ def _start_tunnel(state: TrayState, icon=None) -> None:
             time.sleep(1)
             try:
                 req = urllib.request.Request(f"http://127.0.0.1:{port}/ping", headers={"Authorization": f"Bearer {token}"} if token else {})
-                resp = urllib.request.urlopen(req, timeout=1)
-                if resp.status == 200:
-                    server_ok = True
-                    break
+                with urllib.request.urlopen(req, timeout=1) as resp:
+                    if resp.status == 200:
+                        server_ok = True
+                        break
             except Exception:
                 pass
 
@@ -951,8 +948,8 @@ def _start_tunnel(state: TrayState, icon=None) -> None:
             data=json.dumps({"method": "ngrok", "port": port}).encode(),
             headers={**headers, "Content-Type": "application/json"},
         )
-        resp = urllib.request.urlopen(req, timeout=10)
-        result = json.loads(resp.read())
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            result = json.loads(resp.read())
         if icon:
             url = result.get("url", "")
             if url:
@@ -994,8 +991,8 @@ def _copy_tunnel_url(icon, item, state: TrayState) -> None:
         token = state.current_token()
         headers = {"Authorization": f"Bearer {token}"} if token else {}
         req = urllib.request.Request(f"http://127.0.0.1:{port}/tunnel/status", headers=headers)
-        resp = urllib.request.urlopen(req, timeout=5)
-        status = json.loads(resp.read())
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            status = json.loads(resp.read())
         url = status.get("url", "")
         if url:
             pyperclip.copy(url)
