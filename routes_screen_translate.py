@@ -151,6 +151,9 @@ def _pick_monitor(monitors, monitor_id, x, y):
         for m in monitors:
             if m["id"] == monitor_id:
                 return m
+        # An explicitly requested monitor_id that doesn't exist must not
+        # silently fall through to position-based lookup — surface it as 404.
+        return None
     for m in monitors:
         if m["left"] <= x < m["right"] and m["top"] <= y < m["bottom"]:
             return m
@@ -223,6 +226,11 @@ def register_routes(app, state, require_auth):
         if from_space not in ("physical", "logical") or to_space not in ("physical", "logical"):
             return jsonify({"error": "from/to must be 'physical' or 'logical'"}), 400
         monitor_id = data.get("monitor_id")
+        if monitor_id is not None:
+            try:
+                monitor_id = int(monitor_id)
+            except (TypeError, ValueError):
+                return jsonify({"error": "monitor_id must be an integer"}), 400
         absolute = _parse_bool(data.get("absolute", False))
         try:
             monitors = _monitor_enum()
