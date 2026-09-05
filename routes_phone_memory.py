@@ -21,6 +21,7 @@ Endpoints:
 """
 
 import json
+import os
 import re
 import threading
 import time
@@ -66,8 +67,19 @@ def _load_config():
         return {}
 
 
+def _atomic_write_text(path, text):
+    tmp = path.with_name(path.name + ".tmp")
+    # flush+fsync before os.replace so a crash/power loss can't leave the
+    # file truncated (os.replace alone can persist a zero-length temp).
+    with open(tmp, "w", encoding="utf-8") as handle:
+        handle.write(text)
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(tmp, path)
+
+
 def _save_config(cfg):
-    CONFIG_FILE.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
+    _atomic_write_text(CONFIG_FILE, json.dumps(cfg, indent=2))
 
 
 def _seq_path(name):
@@ -130,8 +142,8 @@ def _relay_request(action, timeout=60):
         timeout = int(timeout)
     except (TypeError, ValueError):
         timeout = 60
-    deadline = time.time() + max(1, timeout)
-    while time.time() < deadline:
+    deadline = time.monotonic() + max(1, timeout)
+    while time.monotonic() < deadline:
         res = _http_json("GET",
                          f"{relay_url}/result?command_id={urllib.parse.quote(str(cid))}",
                          timeout=10,
@@ -179,9 +191,12 @@ def register_routes(app, state, require_auth):
         steps = data.get("steps")
         if not isinstance(steps, list) or not steps:
             return jsonify({"error": "steps must be a non-empty list"}), 400
+        if len(steps) > 200:
+            return jsonify({"error": "too many steps (max 200)"}), 400
         for step in steps:
-            if not isinstance(step, dict) or not step.get("action"):
-                return jsonify({"error": "each step must be an object with an 'action'"}), 400
+            if not isinstance(step, dict) or not isinstance(step.get("action"), str) \
+                    or not step["action"]:
+                return jsonify({"error": "each step must be an object with a non-empty string 'action'"}), 400
         existing = _load_sequence(name)
         seq = {
             "name": name,
@@ -194,7 +209,7 @@ def register_routes(app, state, require_auth):
         }
         with _LOCK:
             SEQUENCES_DIR.mkdir(parents=True, exist_ok=True)
-            _seq_path(name).write_text(json.dumps(seq, indent=2), encoding="utf-8")
+            _atomic_write_text(_seq_path(name), json.dumps(seq, indent=2))
         return jsonify({"ok": True, "name": name, "step_count": len(steps)})
 
     @phone_memory_bp.route("/phone/sequence/play", methods=["POST"])
@@ -218,10 +233,16 @@ def register_routes(app, state, require_auth):
             if not record["ok"]:
                 failed = True
                 break
-        seq["last_play"] = _now_iso()
-        seq["last_success"] = not failed
         with _LOCK:
-            _seq_path(name).write_text(json.dumps(seq, indent=2), encoding="utf-8")
+            # Reload under the lock so a concurrent /phone/sequence/save during
+            # the (potentially long) play loop isn't clobbered by our stale copy
+            # of `steps`. Only the play metadata is updated here.
+            current = _load_sequence(name)
+            if current is None:
+                current = seq
+            current["last_play"] = _now_iso()
+            current["last_success"] = not failed
+            _atomic_write_text(_seq_path(name), json.dumps(current, indent=2))
         return jsonify({"name": name, "completed": not failed,
                         "steps_total": len(seq.get("steps", [])),
                         "steps_run": len(results), "results": results})
