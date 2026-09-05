@@ -1602,6 +1602,8 @@ def route_agent_provider_configure():
     data = _json_payload()
     try:
         provider = _validate_provider_name(data.get("provider"))
+        if provider is None:
+            return _error("provider is required", 400)
         config = _load_provider_config()
         providers = config.setdefault("providers", {})
         entry = _provider_entry(provider, config=config)
