@@ -59,13 +59,14 @@ def _normalize_secret(secret):
 def _generate_code(secret, period=_DEFAULT_PERIOD, digits=_DEFAULT_DIGITS):
     """Return (code, seconds_remaining) for the given base32 secret."""
     key = base64.b32decode(_normalize_secret(secret))
-    counter = int(time.time() // period)
+    now = int(time.time())
+    counter = now // period
     msg = struct.pack(">Q", counter)
     digest = hmac.new(key, msg, hashlib.sha1).digest()
     offset = digest[-1] & 0x0F
     binary = struct.unpack(">I", digest[offset:offset + 4])[0] & 0x7FFFFFFF
     code = str(binary % (10 ** digits)).zfill(digits)
-    remaining = period - (int(time.time()) % period)
+    remaining = period - (now % period)
     return code, remaining
 
 
@@ -110,6 +111,8 @@ def register_routes(app, state, require_auth):
         issuer = str(d.get("issuer") or d.get("account") or "")
         target = _TOTP_TARGET_PREFIX + label
         try:
+            if not d.get("overwrite") and _get_credential(advapi32, CREDENTIAL, target) is not None:
+                return jsonify({"error": f"totp '{label}' already exists (set overwrite:true to replace)"}), 409
             _set_credential(advapi32, CREDENTIAL, target, issuer, normalized, CRED_TYPE_GENERIC)
         except Exception as exc:
             return jsonify({"error": str(exc)}), 500
