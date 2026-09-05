@@ -114,6 +114,12 @@ def _uia_actionable():
             top = rect.get("top", rect.get("y"))
             width = rect.get("width")
             height = rect.get("height")
+            # Support {left, top, right, bottom} encodings (pywinauto/UIA
+            # bounding_rectangle) in addition to {left, top, width, height}.
+            if width is None and left is not None and rect.get("right") is not None:
+                width = rect["right"] - left
+            if height is None and top is not None and rect.get("bottom") is not None:
+                height = rect["bottom"] - top
             if left is None or top is None or width is None or height is None:
                 return None
             try:
