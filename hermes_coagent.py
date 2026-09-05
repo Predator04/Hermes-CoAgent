@@ -239,7 +239,10 @@ def _auth_gate():
             failures.append(now)
             should_throttle = len(failures) > _AUTH_FAIL_MAX
         if should_throttle:
-            time.sleep(0.5)  # throttle brute-force (NOT inside lock)
+            resp = jsonify({"error": "too many failed auth attempts; slow down"})
+            resp.status_code = 429
+            resp.headers["Retry-After"] = str(_AUTH_FAIL_WINDOW)
+            return resp
         return result
     return None
 
