@@ -149,7 +149,7 @@ def register_routes(app, state, require_auth):
 
         global _BASELINE, _LAST_FRAME
         with _LOCK:
-            base = _BASELINE if _BASELINE is not None else _LAST_FRAME
+            base = _LAST_FRAME if _LAST_FRAME is not None else _BASELINE
             if base is None:
                 base = img
             _LAST_FRAME = img
