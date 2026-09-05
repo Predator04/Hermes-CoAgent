@@ -282,15 +282,24 @@ def register_routes(app, state, require_auth):
                   "text_contains": "...", "control_type": "Button",
                   "min_confidence": 0.4, "limit": 25}"""
         body = _json_body() or {}
+        snapshot_id = body.get("snapshot_id")
+        if snapshot_id is not None and not isinstance(snapshot_id, str):
+            return jsonify({"ok": False, "error": "snapshot_id must be a string"}), 400
         with _LOCK:
-            if body.get("snapshot_id"):
-                snap = _SNAPSHOTS.get(body["snapshot_id"])
+            if snapshot_id:
+                snap = _SNAPSHOTS.get(snapshot_id)
             else:
                 snap = max(_SNAPSHOTS.values(), key=lambda s: s["ts"], default=None)
         if not snap:
             return jsonify({"ok": False, "error": "snapshot not found"}), 404
-        text_q = (body.get("text_contains") or "").lower()
-        type_q = (body.get("control_type") or "").lower()
+        text_q = body.get("text_contains")
+        type_q = body.get("control_type")
+        if text_q is not None and not isinstance(text_q, str):
+            return jsonify({"ok": False, "error": "text_contains must be a string"}), 400
+        if type_q is not None and not isinstance(type_q, str):
+            return jsonify({"ok": False, "error": "control_type must be a string"}), 400
+        text_q = (text_q or "").lower()
+        type_q = (type_q or "").lower()
         try:
             min_conf = float(body.get("min_confidence", 0.0))
             limit = max(1, min(500, int(body.get("limit", 100))))
