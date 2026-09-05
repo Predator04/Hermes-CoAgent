@@ -3,6 +3,7 @@
 import os
 import re
 import time
+import logging
 from collections import Counter
 
 from flask import Blueprint, jsonify
@@ -81,7 +82,12 @@ def _redact(text):
         from routes_governance import get_governor
         return get_governor().redact(text)
     except Exception:
-        return text
+        logging.getLogger("coagent.logs").warning(
+            "governance redactor unavailable; falling back to conservative scrub"
+        )
+        # Conservative fallback: mask long token-like strings so a redactor
+        # outage can never silently leak secrets into the /logs/analyze response.
+        return re.sub(r"\b[A-Za-z0-9_\-]{24,}\b", "[REDACTED]", text)
 
 
 def _is_error(line):
