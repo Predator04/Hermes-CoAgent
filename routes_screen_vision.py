@@ -57,13 +57,14 @@ def _describe_via_ocr(screenshot_bytes):
             ocr_result = _windows_ocr(img)
         if ocr_result.get("success"):
             text = ocr_result.get("text", "")
-            lines = [l.strip() for l in text.split() if l.strip()]
+            lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+            words = text.split()
             # Extract key UI elements from text
-            ui_elements = _parse_ui_from_text(lines)
+            ui_elements = _parse_ui_from_text(words)
             return {
                 "success": True,
                 "method": "windows_ocr",
-                "text_snippet": " ".join(lines[:50]),
+                "text_snippet": "\n".join(lines[:50]),
                 "total_words": ocr_result.get("word_count", 0),
                 "total_lines": ocr_result.get("line_count", 0),
                 "ui_elements": ui_elements,
@@ -272,13 +273,15 @@ def _vision_quick_scan():
         with Image.open(io.BytesIO(data)) as img:
             w, h = img.size
             ocr = _windows_ocr(img)
-        lines = ocr.get("text", "").split()[:30] if ocr.get("success") else []
+        text = ocr.get("text", "") if ocr.get("success") else ""
+        lines = [ln.strip() for ln in text.splitlines() if ln.strip()][:30]
+        words = text.split()
 
         return jsonify({
             "ok": True,
             "resolution": f"{w}x{h}",
-            "visible_text": " ".join(lines),
-            "app_suggestions": _parse_ui_from_text(lines),
+            "visible_text": "\n".join(lines),
+            "app_suggestions": _parse_ui_from_text(words),
         })
     except Exception as exc:
         _debug_failure("quick_scan", exc)
