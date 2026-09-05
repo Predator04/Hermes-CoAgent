@@ -180,8 +180,11 @@ def _vision_describe():
     region = _screen_region_brief(screenshot)
 
     from PIL import Image
-    with Image.open(io.BytesIO(screenshot)) as img:
-        w, h = img.size
+    try:
+        with Image.open(io.BytesIO(screenshot)) as img:
+            w, h = img.size
+    except Exception:
+        w, h = 0, 0
 
     result = {
         "ok": ocr.get("success", False),
@@ -236,7 +239,7 @@ def _vision_find():
         _VISION_STATE["total_find"] += 1
 
     return jsonify({
-        "ok": len(matches) > 0,
+        "ok": True,
         "query": query,
         "matches": matches,
         "count": len(matches),
