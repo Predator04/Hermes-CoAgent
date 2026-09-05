@@ -177,7 +177,8 @@ def _transcribe_with_segments(audio_path, language):
 def _ocr_image(path):
     try:
         from PIL import Image
-        img = Image.open(str(path)).convert("RGB")
+        with Image.open(str(path)) as src:
+            img = src.convert("RGB")
     except Exception as exc:
         return "", f"image open failed: {type(exc).__name__}: {exc}"
     try:
