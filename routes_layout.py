@@ -34,8 +34,13 @@ def _load_layouts():
 
 def _save_layouts(layouts):
     tmp = LAYOUTS_FILE.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(layouts, indent=2, ensure_ascii=False),
-                   encoding="utf-8")
+    data = json.dumps(layouts, indent=2, ensure_ascii=False)
+    # flush+fsync before os.replace so a crash/power loss can't leave the
+    # layouts file truncated (os.replace alone can persist a zero-length temp).
+    with open(tmp, "w", encoding="utf-8") as handle:
+        handle.write(data)
+        handle.flush()
+        os.fsync(handle.fileno())
     os.replace(tmp, LAYOUTS_FILE)
 
 
