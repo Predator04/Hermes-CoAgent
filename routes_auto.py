@@ -1690,6 +1690,47 @@ TOOLS = {
     "repo": "ip7z/7zip",
     "stars": 3838,
     "url": "https://github.com/ip7z/7zip"
+  },
+  "monolith": {
+    "added": "2026-09-05",
+    "command": "monolith <url> -o page.html  /  monolith <url> -I -j -i -c",
+    "desc": "monolith bundles any web page into a single self-contained HTML file, embedding CSS, images, fonts and JS as data URLs so the page renders exactly as it did online even with no network. Ideal for CoAgent to snapshot/archive a page after browser navigation, replacing manual 'save page as' with a reproducible one-file capture.",
+    "endpoints": {
+      "/auto/monolith/info": "Feature metadata, install status, version",
+      "/auto/monolith/ping": "Health check",
+      "/auto/monolith/save": "POST - archive a URL into a single self-contained HTML file",
+      "/auto/monolith/raw": "POST - archive a URL and return the HTML inline"
+    },
+    "exe": "monolith",
+    "install": {
+      "winget": "winget install --id=Y2Z.Monolith -e",
+      "scoop": "scoop install main/monolith",
+      "choco": "choco install monolith"
+    },
+    "repo": "Y2Z/monolith",
+    "stars": 15465,
+    "url": "https://github.com/Y2Z/monolith",
+    "version_flag": "-V"
+  },
+  "nuclei": {
+    "added": "2026-09-05",
+    "command": "nuclei -u <target> -severity high,critical -jsonl",
+    "desc": "nuclei is a fast, template-driven vulnerability scanner (DAST) that probes HTTP/DNS/TCP/SSL/websocket targets against a community library of thousands of CVE, misconfiguration and exposure templates, emitting machine-readable JSONL findings. Ideal for CoAgent to run on-demand security scans of a URL/host and return parsed results.",
+    "endpoints": {
+      "/auto/nuclei/info": "Feature metadata, install status, version",
+      "/auto/nuclei/ping": "Health check",
+      "/auto/nuclei/scan": "POST - scan a target (URL/host/IP) and return parsed JSON findings",
+      "/auto/nuclei/update_templates": "POST - update the nuclei template library to latest"
+    },
+    "exe": "nuclei",
+    "install": {
+      "go": "go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest",
+      "binary": "download from https://github.com/projectdiscovery/nuclei/releases"
+    },
+    "repo": "projectdiscovery/nuclei",
+    "stars": 31027,
+    "url": "https://github.com/projectdiscovery/nuclei",
+    "version_flag": "-version"
   }
 }
 
@@ -1721,7 +1762,7 @@ def _register_generic(app, require_auth, tool):
         if exe:
             info["path"] = exe
             try:
-                r = subprocess.run([exe, "--version"], capture_output=True, text=True, timeout=5)
+                r = subprocess.run([exe, meta.get("version_flag", "--version")], capture_output=True, text=True, timeout=5)
                 info["version"] = (r.stdout.strip() or r.stderr.strip()).split("\n")[0]
             except Exception:
                 info["version"] = "unknown"
@@ -15088,6 +15129,189 @@ def _h_7z_366():
         return (jsonify({'error': str(e)}), 500)
 
 
+def _h_monolith_367():
+    """Archive a URL into a single self-contained HTML file via `monolith`.
+
+        Body (JSON):
+            url (str, required): the page URL to archive (http/https).
+            output (str, optional): output .html path. Defaults to
+                                    <COAGENT_DIR>/monolith_<timestamp>.html.
+            no_js (bool, optional): exclude JavaScript (-j). Default False.
+            no_images (bool, optional): remove images (-i). Default False.
+            no_css (bool, optional): exclude CSS (-c). Default False.
+            no_fonts (bool, optional): exclude web fonts (-F). Default False.
+            no_video (bool, optional): exclude videos (-v). Default False.
+            timeout (int, optional): seconds. Default 120, max 600.
+    """
+    exe = _find_tool('monolith')
+    if not exe:
+        return (jsonify({'error': 'monolith is not installed', 'hint': 'winget install --id=Y2Z.Monolith -e  (or: scoop install main/monolith)'}), 503)
+    body = _json_body()
+    url = str(body.get('url') or '').strip()
+    if not url:
+        return _missing_field(body, 'url')
+    if not (url.startswith('http://') or url.startswith('https://')):
+        return (jsonify({'error': 'url must start with http:// or https://'}), 400)
+    output = str(body.get('output') or '').strip()
+    if not output:
+        output = os.path.join(COAGENT_DIR, 'monolith_%s.html' % datetime.now().strftime('%Y%m%d_%H%M%S'))
+    timeout = min(int(body.get('timeout', 120)), 600)
+    cmd = [exe, url, '-o', output, '-q']
+    if bool(body.get('no_js')):
+        cmd.append('-j')
+    if bool(body.get('no_images')):
+        cmd.append('-i')
+    if bool(body.get('no_css')):
+        cmd.append('-c')
+    if bool(body.get('no_fonts')):
+        cmd.append('-F')
+    if bool(body.get('no_video')):
+        cmd.append('-v')
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, errors='replace', timeout=timeout)
+        if r.returncode != 0:
+            _log(f'[monolith save] rc={r.returncode}: {(r.stderr or r.stdout)[:300]}')
+            return (jsonify({'ok': False, 'error': (r.stderr or r.stdout or 'monolith failed').strip()[:2000]}), 500)
+        size = os.path.getsize(output) if os.path.isfile(output) else 0
+        return jsonify({'ok': True, 'url': url, 'path': output, 'bytes': size})
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': 'monolith timed out'}), 504)
+    except Exception as e:
+        _log(f'[monolith save] {str(e)}')
+        return (jsonify({'error': str(e)}), 500)
+
+
+def _h_monolith_368():
+    """Archive a URL and return the single-file HTML inline via `monolith -o -`.
+
+        Body (JSON):
+            url (str, required): the page URL to archive (http/https).
+            no_js (bool, optional): exclude JavaScript (-j). Default False.
+            no_images (bool, optional): remove images (-i). Default False.
+            no_css (bool, optional): exclude CSS (-c). Default False.
+            timeout (int, optional): seconds. Default 120, max 600.
+            max_bytes (int, optional): cap returned HTML bytes. Default 2000000.
+
+        The response is capped to max_bytes to protect the server; when capped,
+        `truncated` is true and `total_bytes` reports the full size.
+    """
+    exe = _find_tool('monolith')
+    if not exe:
+        return (jsonify({'error': 'monolith is not installed', 'hint': 'winget install --id=Y2Z.Monolith -e'}), 503)
+    body = _json_body()
+    url = str(body.get('url') or '').strip()
+    if not url:
+        return _missing_field(body, 'url')
+    if not (url.startswith('http://') or url.startswith('https://')):
+        return (jsonify({'error': 'url must start with http:// or https://'}), 400)
+    timeout = min(int(body.get('timeout', 120)), 600)
+    max_bytes = min(int(body.get('max_bytes', 2000000)), 20000000)
+    cmd = [exe, url, '-o', '-', '-q']
+    if bool(body.get('no_js')):
+        cmd.append('-j')
+    if bool(body.get('no_images')):
+        cmd.append('-i')
+    if bool(body.get('no_css')):
+        cmd.append('-c')
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, errors='replace', timeout=timeout)
+        if r.returncode != 0:
+            _log(f'[monolith raw] rc={r.returncode}: {(r.stderr or r.stdout)[:300]}')
+            return (jsonify({'ok': False, 'error': (r.stderr or r.stdout or 'monolith failed').strip()[:2000]}), 500)
+        html = r.stdout or ''
+        total = len(html)
+        truncated = total > max_bytes
+        return jsonify({'ok': True, 'url': url, 'total_bytes': total, 'truncated': truncated, 'html': html[:max_bytes]})
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': 'monolith timed out'}), 504)
+    except Exception as e:
+        _log(f'[monolith raw] {str(e)}')
+        return (jsonify({'error': str(e)}), 500)
+
+
+def _h_nuclei_369():
+    """Scan a target for vulnerabilities with nuclei and return parsed JSON findings.
+
+        Body (JSON):
+            target (str, required): URL, host, IP, or CIDR to scan.
+            severity (str, optional): comma-separated severities.
+                                       Default 'low,medium,high,critical'.
+            tags (str, optional): comma-separated template tags (e.g. 'cve,rce').
+            templates (str, optional): extra template path/URL/file (-t).
+            timeout (int, optional): seconds. Default 300, max 1800.
+            max_findings (int, optional): cap returned findings. Default 200.
+
+        Note: the first run auto-downloads the community template library,
+        which can take a while. Findings are returned as parsed JSON objects.
+    """
+    exe = _find_tool('nuclei')
+    if not exe:
+        return (jsonify({'error': 'nuclei is not installed', 'hint': 'go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest  (or download a binary from github.com/projectdiscovery/nuclei/releases)'}), 503)
+    body = _json_body()
+    target = str(body.get('target') or '').strip()
+    if not target:
+        return _missing_field(body, 'target')
+    sev = str(body.get('severity') or 'low,medium,high,critical').strip()
+    tags = str(body.get('tags') or '').strip()
+    templates = str(body.get('templates') or '').strip()
+    timeout = min(int(body.get('timeout', 300)), 1800)
+    max_findings = min(int(body.get('max_findings', 200)), 1000)
+    cmd = [exe, '-u', target, '-severity', sev, '-jsonl', '-silent', '-nc']
+    if tags:
+        cmd += ['-tags', tags]
+    if templates:
+        cmd += ['-t', templates]
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, errors='replace', timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': 'nuclei scan timed out'}), 504)
+    except Exception as e:
+        _log(f'[nuclei scan] {str(e)}')
+        return (jsonify({'error': str(e)}), 500)
+    findings = []
+    for line in (r.stdout or '').splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json_lib.loads(line)
+        except ValueError:
+            continue
+        if isinstance(obj, dict):
+            findings.append(obj)
+        if len(findings) >= max_findings:
+            break
+    if r.returncode != 0 and not findings:
+        _log(f'[nuclei scan] rc={r.returncode}: {(r.stderr or r.stdout)[:300]}')
+        return (jsonify({'ok': False, 'error': (r.stderr or r.stdout or 'nuclei scan failed').strip()[:2000]}), 500)
+    return jsonify({'ok': True, 'target': target, 'count': len(findings), 'findings': findings})
+
+
+def _h_nuclei_370():
+    """Update nuclei's template library to the latest community templates.
+
+        Body (JSON):
+            timeout (int, optional): seconds. Default 600, max 1800.
+    """
+    exe = _find_tool('nuclei')
+    if not exe:
+        return (jsonify({'error': 'nuclei is not installed', 'hint': 'go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest'}), 503)
+    body = _json_body()
+    timeout = min(int(body.get('timeout', 600)), 1800)
+    cmd = [exe, '-update-templates', '-silent', '-nc']
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, errors='replace', timeout=timeout)
+        if r.returncode != 0:
+            _log(f'[nuclei update_templates] rc={r.returncode}: {(r.stderr or r.stdout)[:300]}')
+            return (jsonify({'ok': False, 'error': (r.stderr or r.stdout or 'nuclei update failed').strip()[:2000]}), 500)
+        return jsonify({'ok': True, 'output': (r.stdout or r.stderr or 'templates updated').strip()[-4000:]})
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': 'nuclei template update timed out'}), 504)
+    except Exception as e:
+        _log(f'[nuclei update_templates] {str(e)}')
+        return (jsonify({'error': str(e)}), 500)
+
+
 def register_routes(app, state, require_auth):
     global _STATE
     _STATE = state
@@ -15461,6 +15685,10 @@ def register_routes(app, state, require_auth):
         ('/auto/7z/extract', ['POST'], _h_7z_364),
         ('/auto/7z/create', ['POST'], _h_7z_365),
         ('/auto/7z/test', ['POST'], _h_7z_366),
+        ('/auto/monolith/save', ['POST'], _h_monolith_367),
+        ('/auto/monolith/raw', ['POST'], _h_monolith_368),
+        ('/auto/nuclei/scan', ['POST'], _h_nuclei_369),
+        ('/auto/nuclei/update_templates', ['POST'], _h_nuclei_370),
     ]
     for _path, _methods, _fn in _ACTIONS:
         app.add_url_rule(_path, endpoint=_fn.__name__, view_func=require_auth(_fn), methods=_methods)
