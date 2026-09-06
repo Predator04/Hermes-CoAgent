@@ -229,10 +229,7 @@ class StdioServer:
         if isinstance(self.command, list):
             argv = list(self.command) + list(self.args)
         elif isinstance(self.command, str):
-            if self.args:
-                argv = [self.command] + list(self.args)
-            else:
-                argv = shlex.split(self.command, posix=(os.name != "nt"))
+            argv = shlex.split(self.command, posix=(os.name != "nt")) + list(self.args)
         else:
             raise MCPError("command must be string or list", status=400)
         if not argv:
