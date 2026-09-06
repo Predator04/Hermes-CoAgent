@@ -11,6 +11,8 @@ from shared import COAGENT_DIR, _console, _json_body
 
 RECORDINGS_DIR = COAGENT_DIR / "recordings"
 MAX_RECORDINGS = 5
+MAX_FRAMES = 3000
+MAX_REGION_DIM = 16384
 
 _LOCK = threading.RLock()
 _STOP_EVENT = threading.Event()
@@ -46,6 +48,8 @@ def _normalize_region(region):
         raise ValueError("region x, y, w, h must be integers") from exc
     if w <= 0 or h <= 0:
         raise ValueError("region w and h must be positive")
+    if w > MAX_REGION_DIM or h > MAX_REGION_DIM:
+        raise ValueError(f"region w and h must not exceed {MAX_REGION_DIM}")
     if x < 0 or y < 0:
         raise ValueError("region x and y must be non-negative")
     return (x, y, x + w, y + h)
@@ -94,6 +98,9 @@ def _capture_loop(recording_id, fps, max_seconds, bbox):
                         break
                     _FRAMES.append(image.copy())
                     _ACTIVE["frames_captured"] = len(_FRAMES)
+                    if len(_FRAMES) >= MAX_FRAMES:
+                        _console(f"[recorder_gif] hit MAX_FRAMES={MAX_FRAMES}; stopping early")
+                        break
             except Exception as exc:
                 _console(f"[recorder_gif] frame capture failed: {type(exc).__name__}: {exc}")
             next_capture += frame_interval
