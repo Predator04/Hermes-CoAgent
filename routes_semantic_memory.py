@@ -137,7 +137,7 @@ def _memory_observe():
 
     event = {
         "timestamp": datetime.now().isoformat(),
-        "type": _as_str(body.get("type", "app_open")),
+        "type": _as_str(body.get("type") or "app_open"),
         "app": _as_str(body.get("app", "")),
         "title": _as_str(body.get("title", "")),
         "window_class": _as_str(body.get("window_class", "")),
@@ -197,7 +197,7 @@ def _memory_clear():
 def register_routes(app, state, require_auth):
     try:
         from shared import COAGENT_DIR, _wrap_registered_blueprint_routes
-        _set_coagent_dir(str(COAGENT_DIR))
+        _set_coagent_dir(COAGENT_DIR)
     except (ImportError, AttributeError):
         pass
     app.register_blueprint(memory_bp)
