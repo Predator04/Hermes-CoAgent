@@ -1731,6 +1731,49 @@ TOOLS = {
     "stars": 31027,
     "url": "https://github.com/projectdiscovery/nuclei",
     "version_flag": "-version"
+  },
+  "tesseract": {
+    "added": "2026-09-06",
+    "command": "tesseract <image> stdout -l eng --psm 3",
+    "desc": "Tesseract is the de-facto open-source OCR engine. It extracts text from images (PNG/JPEG/TIFF/etc.) into stdout or a file, supports 100+ languages and page-segmentation modes. Ideal for CoAgent to turn screenshots, scanned documents, or camera captures into searchable text for downstream processing.",
+    "endpoints": {
+      "/auto/tesseract/info": "Feature metadata, install status, version",
+      "/auto/tesseract/ping": "Health check",
+      "/auto/tesseract/ocr": "POST - OCR an image file (path or base64) and return extracted text",
+      "/auto/tesseract/langs": "GET - list installed language packs"
+    },
+    "exe": "tesseract.exe",
+    "candidates": [
+      "C:/Program Files/Tesseract-OCR/tesseract.exe",
+      "C:/Program Files (x86)/Tesseract-OCR/tesseract.exe",
+      "C:/Users/*/scoop/apps/tesseract/current/tesseract.exe"
+    ],
+    "install": {
+      "winget": "winget install --id=UB-Mannheim.TesseractOCR -e",
+      "scoop": "scoop install tesseract"
+    },
+    "repo": "tesseract-ocr/tesseract",
+    "stars": 76358,
+    "url": "https://github.com/tesseract-ocr/tesseract"
+  },
+  "cloudflared": {
+    "added": "2026-09-06",
+    "command": "cloudflared tunnel --url http://localhost:<port>",
+    "desc": "cloudflared is the Cloudflare Tunnel client. It exposes local services to the internet over an outbound-only connection (no firewall or port-forwarding), including zero-config TryCloudflare quick tunnels that hand you a public HTTPS URL instantly. Ideal for CoAgent to publish a local web service, camera feed, or dashboard to a shareable URL without an ngrok account.",
+    "endpoints": {
+      "/auto/cloudflared/info": "Feature metadata, install status, version",
+      "/auto/cloudflared/ping": "Health check",
+      "/auto/cloudflared/tunnels": "GET - list named tunnels configured on this machine",
+      "/auto/cloudflared/quick": "POST - start a TryCloudflare quick tunnel and return its public URL"
+    },
+    "exe": "cloudflared.exe",
+    "install": {
+      "winget": "winget install --id=Cloudflare.cloudflared -e",
+      "scoop": "scoop install cloudflared"
+    },
+    "repo": "cloudflare/cloudflared",
+    "stars": 15527,
+    "url": "https://github.com/cloudflare/cloudflared"
   }
 }
 
@@ -15312,6 +15355,160 @@ def _h_nuclei_370():
         return (jsonify({'error': str(e)}), 500)
 
 
+def _h_tesseract_371():
+    """OCR an image and return extracted text via `tesseract`.
+
+        Body (JSON):
+            path (str, optional): filesystem path to the image.
+            image (str, optional): base64-encoded image bytes (used if path absent).
+            lang (str, optional): language code (e.g. 'eng', 'spa'). Default 'eng'.
+            psm (int, optional): page segmentation mode 0-13. Default 3.
+            timeout (int, optional): seconds. Default 120, max 600.
+
+        Exactly one of `path` or `image` is required. When `image` is supplied it
+        is decoded to a temp file, OCR'd, and cleaned up afterwards.
+    """
+    import base64
+    exe = _find_tool('tesseract')
+    if not exe:
+        return (jsonify({'error': 'tesseract is not installed', 'hint': 'winget install --id=UB-Mannheim.TesseractOCR -e'}), 503)
+    body = _json_body()
+    path = str(body.get('path') or '').strip()
+    image_b64 = str(body.get('image') or '').strip()
+    if not path and not image_b64:
+        return _missing_field(body, 'path (or image)')
+    if path and not os.path.isfile(path):
+        return (jsonify({'error': 'file not found', 'path': path}), 404)
+    lang = str(body.get('lang') or 'eng').strip() or 'eng'
+    psm = int(body.get('psm', 3))
+    timeout = min(int(body.get('timeout', 120)), 600)
+    tmp = None
+    if image_b64:
+        try:
+            raw = base64.b64decode(image_b64)
+            fd, tmp = tempfile.mkstemp(suffix='.png', prefix='coagent_ocr_')
+            with os.fdopen(fd, 'wb') as f:
+                f.write(raw)
+            path = tmp
+        except Exception as e:
+            return (jsonify({'error': 'invalid base64 image: %s' % str(e)}), 400)
+    cmd = [exe, path, 'stdout', '-l', lang, '--psm', str(psm)]
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, errors='replace', timeout=timeout)
+        if r.returncode != 0:
+            _log(f'[tesseract ocr] rc={r.returncode}: {(r.stderr or r.stdout)[:300]}')
+            return (jsonify({'ok': False, 'error': (r.stderr or r.stdout or 'tesseract failed').strip()[:2000]}), 500)
+        return jsonify({'ok': True, 'lang': lang, 'psm': psm, 'text': (r.stdout or '').strip()})
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': 'tesseract OCR timed out'}), 504)
+    except Exception as e:
+        _log(f'[tesseract ocr] {str(e)}')
+        return (jsonify({'error': str(e)}), 500)
+    finally:
+        if tmp and os.path.isfile(tmp):
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+
+
+def _h_tesseract_372():
+    """List installed tesseract language packs (`tesseract --list-langs`)."""
+    exe = _find_tool('tesseract')
+    if not exe:
+        return (jsonify({'error': 'tesseract is not installed', 'hint': 'winget install --id=UB-Mannheim.TesseractOCR -e'}), 503)
+    try:
+        r = subprocess.run([exe, '--list-langs'], capture_output=True, text=True, errors='replace', timeout=15)
+        if r.returncode != 0:
+            _log(f'[tesseract langs] rc={r.returncode}: {(r.stderr or r.stdout)[:200]}')
+            return (jsonify({'ok': False, 'error': (r.stderr or r.stdout or 'tesseract failed').strip()[:1000]}), 500)
+        langs = [ln.strip() for ln in (r.stdout or '').splitlines() if ln.strip()]
+        if langs and langs[0].lower().startswith('list of available'):
+            langs = langs[1:]
+        return jsonify({'ok': True, 'count': len(langs), 'languages': langs})
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': 'tesseract --list-langs timed out'}), 504)
+    except Exception as e:
+        _log(f'[tesseract langs] {str(e)}')
+        return (jsonify({'error': str(e)}), 500)
+
+
+def _h_cloudflared_373():
+    """List named Cloudflare Tunnels configured on this machine.
+
+        Requires `cloudflared` to be logged in (`cloudflared tunnel login`).
+    """
+    exe = _find_tool('cloudflared')
+    if not exe:
+        return (jsonify({'error': 'cloudflared is not installed', 'hint': 'winget install --id=Cloudflare.cloudflared -e'}), 503)
+    try:
+        r = subprocess.run([exe, 'tunnel', 'list', '--output', 'json'], capture_output=True, text=True, errors='replace', timeout=30)
+        if r.returncode != 0:
+            msg = (r.stderr or r.stdout or 'cloudflared tunnel list failed').strip()
+            if 'not logged' in msg.lower() or 'no cert' in msg.lower() or 'cert.pem' in msg.lower():
+                return (jsonify({'ok': False, 'error': msg[:1000], 'hint': 'run: cloudflared tunnel login'}), 401)
+            _log(f'[cloudflared tunnels] rc={r.returncode}: {msg[:300]}')
+            return (jsonify({'ok': False, 'error': msg[:2000]}), 500)
+        try:
+            tunnels = json_lib.loads(r.stdout or '[]')
+        except Exception:
+            tunnels = [ln.strip() for ln in (r.stdout or '').splitlines() if ln.strip()]
+        return jsonify({'ok': True, 'count': len(tunnels) if isinstance(tunnels, list) else 1, 'tunnels': tunnels})
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': 'cloudflared tunnel list timed out'}), 504)
+    except Exception as e:
+        _log(f'[cloudflared tunnels] {str(e)}')
+        return (jsonify({'error': str(e)}), 500)
+
+
+def _h_cloudflared_374():
+    """Start a zero-config TryCloudflare quick tunnel and return its public URL.
+
+        Body (JSON):
+            port (int, required): local port to expose (e.g. 9123).
+            timeout (int, optional): seconds to wait for the URL. Default 30, max 120.
+
+        The cloudflared process is detached and keeps running after the response
+        returns, so the tunnel stays up until CoAgent restarts or the process is
+        killed. Returns the public https://...trycloudflare.com URL.
+    """
+    exe = _find_tool('cloudflared')
+    if not exe:
+        return (jsonify({'error': 'cloudflared is not installed', 'hint': 'winget install --id=Cloudflare.cloudflared -e'}), 503)
+    body = _json_body()
+    port = int(body.get('port') or 0)
+    if port < 1 or port > 65535:
+        return _missing_field(body, 'port')
+    timeout = min(int(body.get('timeout', 30)), 120)
+    cmd = [exe, 'tunnel', '--url', 'http://localhost:%d' % port, '--no-autoupdate']
+    try:
+        proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, errors='replace')
+    except Exception as e:
+        return (jsonify({'error': 'failed to start cloudflared: %s' % str(e)}), 500)
+    url = None
+    deadline = time.time() + timeout
+    lines = []
+    while time.time() < deadline:
+        line = proc.stderr.readline()
+        if not line:
+            if proc.poll() is not None:
+                break
+            time.sleep(0.2)
+            continue
+        lines.append(line.rstrip())
+        m = re.search(r'https://[a-z0-9-]+\.trycloudflare\.com', line)
+        if m:
+            url = m.group(0)
+            break
+    if not url:
+        if proc.poll() is not None:
+            tail = '\n'.join(lines)[-1500:]
+            _log(f'[cloudflared quick] exited rc={proc.returncode}: {tail[:300]}')
+            return (jsonify({'ok': False, 'error': (tail or 'cloudflared exited before publishing a URL').strip()[:2000]}), 500)
+        return (jsonify({'ok': False, 'error': 'timed out waiting for public URL (tunnel may still be starting)'}), 504)
+    return jsonify({'ok': True, 'port': port, 'url': url, 'pid': proc.pid})
+
+
 def register_routes(app, state, require_auth):
     global _STATE
     _STATE = state
@@ -15689,6 +15886,10 @@ def register_routes(app, state, require_auth):
         ('/auto/monolith/raw', ['POST'], _h_monolith_368),
         ('/auto/nuclei/scan', ['POST'], _h_nuclei_369),
         ('/auto/nuclei/update_templates', ['POST'], _h_nuclei_370),
+        ('/auto/tesseract/ocr', ['POST'], _h_tesseract_371),
+        ('/auto/tesseract/langs', ['GET'], _h_tesseract_372),
+        ('/auto/cloudflared/tunnels', ['GET'], _h_cloudflared_373),
+        ('/auto/cloudflared/quick', ['POST'], _h_cloudflared_374),
     ]
     for _path, _methods, _fn in _ACTIONS:
         app.add_url_rule(_path, endpoint=_fn.__name__, view_func=require_auth(_fn), methods=_methods)
