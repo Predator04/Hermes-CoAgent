@@ -209,6 +209,11 @@ def _valid_webhook_url(url):
             ip = ipaddress.ip_address(info[4][0])
         except ValueError:
             return False
+        # Unwrap IPv4-mapped IPv6 (::ffff:127.0.0.1) before checks — ipaddress
+        # reports these as non-loopback IPv6, which would bypass the SSRF guard.
+        mapped = getattr(ip, "ipv4_mapped", None)
+        if mapped is not None:
+            ip = mapped
         if (ip.is_loopback or ip.is_private or ip.is_link_local
                 or ip.is_multicast or ip.is_reserved or ip.is_unspecified):
             return False
