@@ -39,19 +39,21 @@ def _windows_only(detail=None):
     return jsonify(payload), 501
 
 
-def _run(args, timeout=60):
-    """Run a subprocess list. Returns (rc, stdout, stderr)."""
+def _run(args, timeout=60, encoding=None):
+    """Run a subprocess list. Returns (rc, stdout, stderr).
+
+    ``encoding`` overrides output decoding: wsl.exe list output is UTF-16,
+    while commands run inside a distro emit UTF-8 (the default here).
+    """
     try:
         r = subprocess.run(
             args,
             capture_output=True,
-            text=True,
-            errors="replace",
             timeout=timeout,
             creationflags=_CREATE_NO_WINDOW,
         )
-        out = (r.stdout or "")[:_MAX_OUTPUT]
-        err = (r.stderr or "")[:_MAX_OUTPUT]
+        out = _decode(r.stdout, encoding)
+        err = _decode(r.stderr, encoding)
         return r.returncode, out, err
     except subprocess.TimeoutExpired:
         return -1, "", f"timed out after {timeout}s"
@@ -59,6 +61,18 @@ def _run(args, timeout=60):
         return -1, "", "wsl.exe not found"
     except Exception as exc:  # noqa: BLE001
         return -1, "", str(exc)
+
+
+def _decode(data, encoding=None):
+    """Decode subprocess output bytes, preferring ``encoding`` then UTF-8."""
+    if not data:
+        return ""
+    if encoding:
+        try:
+            return data.decode(encoding, errors="replace")[:_MAX_OUTPUT]
+        except (LookupError, UnicodeDecodeError):
+            pass
+    return data.decode("utf-8", errors="replace")[:_MAX_OUTPUT]
 
 
 def _wsl_available():
@@ -114,16 +128,18 @@ def _resolve_distro(payload):
 
 def register_routes(app, state=None, require_auth=None):
     @app.route("/wsl/distros", methods=["GET"])
+    @require_auth
     def wsl_distros():
         ok, detail = _wsl_available()
         if not ok:
             return _windows_only(detail)
-        rc, out, err = _run(["wsl.exe", "--list", "--verbose"], timeout=30)
+        rc, out, err = _run(["wsl.exe", "--list", "--verbose"], timeout=30, encoding="utf-16")
         if rc != 0:
             return jsonify({"error": "Failed to list WSL distros", "detail": (err or out).strip()}), 500
         return jsonify({"distros": _parse_distro_list(out)})
 
     @app.route("/wsl/run", methods=["POST"])
+    @require_auth
     def wsl_run():
         ok, detail = _wsl_available()
         if not ok:
@@ -136,7 +152,7 @@ def register_routes(app, state=None, require_auth=None):
         if isinstance(distro, tuple):
             return distro
         timeout = payload.get("timeout")
-        if not isinstance(timeout, int) or not (1 <= timeout <= 600):
+        if isinstance(timeout, bool) or not isinstance(timeout, int) or not (1 <= timeout <= 600):
             timeout = 120
 
         args = ["wsl.exe"]
@@ -152,6 +168,7 @@ def register_routes(app, state=None, require_auth=None):
         })
 
     @app.route("/wsl/start", methods=["POST"])
+    @require_auth
     def wsl_start():
         ok, detail = _wsl_available()
         if not ok:
@@ -168,6 +185,7 @@ def register_routes(app, state=None, require_auth=None):
         return jsonify({"ok": rc == 0, "exit_code": rc, "detail": (err or out).strip()})
 
     @app.route("/wsl/shutdown", methods=["POST"])
+    @require_auth
     def wsl_shutdown():
         ok, detail = _wsl_available()
         if not ok:
@@ -183,6 +201,7 @@ def register_routes(app, state=None, require_auth=None):
         return jsonify({"ok": rc == 0, "exit_code": rc, "detail": (err or out).strip()})
 
     @app.route("/wsl/ports", methods=["GET"])
+    @require_auth
     def wsl_ports():
         ok, detail = _wsl_available()
         if not ok:
@@ -208,23 +227,21 @@ def _parse_ports(out):
         line = raw.strip()
         if not line:
             continue
-        # ss -tlnH: "LISTEN  0  128  127.0.0.1:6379  0.0.0.0:*"
+        # ss -tlnH:  LISTEN 0 128 127.0.0.1:6379 0.0.0.0:*
+        # netstat:   tcp    0 0   0.0.0.0:8080  0.0.0.0:* LISTEN
+        # Both put the Local Address:Port in the 4th column (index 3).
         m = re.search(r":(\d{1,5})\s+\S+:\*", line)
-        if m:
-            port = int(m.group(1))
-            proto = "tcp"
-            # ss lines may start with a state word; detect udp via first token
-            tokens = line.split()
-            if tokens and tokens[0].lower() == "udp":
-                proto = "udp"
-            ports.append({"proto": proto, "port": port, "local": line.split()[0] if " " in line else ""})
+        if not m:
             continue
-        # netstat fallback: "tcp  0  0  0.0.0.0:8080  0.0.0.0:*  LISTEN"
-        m = re.match(r"^(tcp|udp)\d*\s+.*?:(\d{1,5})\s+\S+:\*", line)
-        if m:
-            proto = m.group(1)
-            port = int(m.group(2))
-            ports.append({"proto": proto, "port": port, "local": line.split()[-1] if line.split() else ""})
+        tokens = line.split()
+        if len(tokens) < 4:
+            continue
+        proto = "udp" if tokens[0].lower().startswith("udp") else "tcp"
+        ports.append({
+            "proto": proto,
+            "port": int(m.group(1)),
+            "local": tokens[3],
+        })
     # Dedupe on (proto, port) while preserving order.
     seen = set()
     unique = []
