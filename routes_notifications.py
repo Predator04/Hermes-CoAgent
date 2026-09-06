@@ -105,7 +105,7 @@ def _await(async_op, timeout=5.0):
 def _request_access():
     """Request UserNotificationListener access. Returns access-status string."""
     global _ACCESS_STATUS
-    if _ACCESS_STATUS in ("allowed", "unavailable"):
+    if _ACCESS_STATUS in ("allowed", "unavailable", "unrestricted"):
         return _ACCESS_STATUS
     if not _winrt_available():
         _ACCESS_STATUS = "unavailable"
@@ -174,8 +174,12 @@ def _normalize_notification(user_notification):
     try:
         # Timestamp is a Windows DateTime -> convert to unix seconds via UTC.
         dt = user_notification.creation_time
-        # winsdk exposes .utc_date_time on datetime.datetime already, but be defensive.
+        # winsdk may project creation_time as a naive datetime (local wall-clock);
+        # interpret naive values as UTC so .timestamp() isn't off by the tz offset.
         if hasattr(dt, "timestamp"):
+            if getattr(dt, "tzinfo", None) is None:
+                from datetime import timezone as _tz
+                dt = dt.replace(tzinfo=_tz.utc)
             entry["creation_time"] = dt.timestamp()
         else:
             entry["creation_time"] = time.time()
@@ -431,7 +435,12 @@ def register_routes(app, state, require_auth):
             total = len(_SUBSCRIBERS)
 
         _ensure_poller()
-        _log(f"notify/subscribe id={sub_id} url={url}")
+        try:
+            _parsed = urlsplit(url)
+            _safe_url = f"{_parsed.scheme}://{_parsed.hostname}" if _parsed.scheme else "<redacted>"
+        except Exception:
+            _safe_url = "<redacted>"
+        _log(f"notify/subscribe id={sub_id} url={_safe_url}")
         return jsonify({
             "status": "ok",
             "subscription_id": sub_id,
