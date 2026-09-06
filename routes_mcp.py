@@ -566,6 +566,8 @@ def _resource_templates_list():
 
 def _read_resource_template(uri):
     """Resolve a resource-template URI (file / clipboard) to text contents."""
+    if not isinstance(uri, str):
+        return None
     if uri == "coagent://clipboard":
         try:
             import subprocess
@@ -840,7 +842,10 @@ def register_routes(app, state, require_auth):
                     lan_ip = s.getsockname()[0]
             except Exception:
                 lan_ip = "127.0.0.1"
-        port = (app.config.get("SERVER_NAME", "") or "").split(":")[-1] or "9123"
+        server_name = app.config.get("SERVER_NAME", "") or ""
+        port = server_name.rsplit(":", 1)[-1] if ":" in server_name else ""
+        if not port:
+            port = "9123"
 
         return jsonify({
             "server": AGENT_NAME,
