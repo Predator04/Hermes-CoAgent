@@ -755,6 +755,8 @@ from routes_memory import register_routes as reg_memory, memory_stats
 from routes_reminders import register_routes as reg_reminders
 from routes_hud import register_routes as reg_hud
 from routes_idle import register_routes as reg_idle
+from routes_wsl import register_routes as reg_wsl
+from routes_gamepad import register_routes as reg_gamepad
 
 try:
     from routes_pixel import register_routes as reg_pixel
@@ -769,6 +771,13 @@ try:
 except ImportError:
     DISPLAY_AVAILABLE = False
     _console("[WARN] routes_display.py not found")
+
+try:
+    from routes_desktop_icons import register_routes as reg_desktop_icons
+    DESKTOP_ICONS_AVAILABLE = True
+except ImportError:
+    DESKTOP_ICONS_AVAILABLE = False
+    _console("[WARN] routes_desktop_icons.py not found")
 
 try:
     from routes_recorder_gif import register_routes as reg_recorder_gif
@@ -1534,6 +1543,11 @@ if reg_bluetooth:
     features["bluetooth_device_management"] = True
 reg_diagnostics(app, state, require_auth); features["diagnostics"] = True
 reg_layout(app, state, require_auth); features["layout_profiles"] = True
+reg_wsl(app, state, require_auth); features["wsl_management"] = True
+reg_gamepad(app, state, require_auth); features["virtual_gamepad"] = True
+if DESKTOP_ICONS_AVAILABLE:
+    reg_desktop_icons(app, state, require_auth)
+    features["desktop_icon_layout"] = True
 if CEF_AVAILABLE:
     reg_cef(app, state, require_auth)
     features["cef_support"] = True
@@ -1706,7 +1720,8 @@ def route_version():
                                  "recordings", "workflow_variables", "telemetry_best_strategy",
                                  "phone_sequence_memory", "uia_text_caret_selection",
                                  "smtp_imap_email", "bluetooth_device_management",
-                                 "screen_changes", "wireframe", "loopback_transcribe"],
+                                 "screen_changes", "wireframe", "loopback_transcribe",
+                                 "desktop_icon_layout", "wsl_management", "virtual_gamepad"],
                     "modules": ["mouse", "ocr", "uia", "file", "media", "v63",
                                 "stream", "process", "voice", "cua", "copilot",
                                 "bypass", "toast", "deps", "config", "browser",
@@ -1722,7 +1737,7 @@ def route_version():
                                 "organize", "office", "scheduler_tasks",
                                 "qr", "vault", "totp", "supervisor", "vm", "pdf", "recordings", "phone_memory",
                                 "email", "bluetooth", "screen_changes", "wireframe",
-                                "loopback"],
+                                "loopback", "desktop_icons", "wsl", "gamepad"],
                     "memory": memory_stats(),
                     "security": ["auth_token", "rate_limit", "input_sanitization",
                                  "cors_restricted", "security_headers"]})
