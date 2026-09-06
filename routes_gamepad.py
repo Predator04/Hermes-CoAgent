@@ -120,8 +120,19 @@ def _clamp(value, low, high):
     return max(low, min(high, value))
 
 
+def _set_trigger(pad, state, axis, value):
+    """Set an analog trigger axis ('lt'/'rt') and track its state."""
+    if axis == "lt":
+        pad.left_trigger_float(value_float=value)
+        state["left_trigger"] = value
+    else:
+        pad.right_trigger_float(value_float=value)
+        state["right_trigger"] = value
+
+
 def register_routes(app, state=None, require_auth=None):
     @app.route("/gamepad/connect", methods=["POST"])
+    @require_auth
     def gamepad_connect():
         if not VG_AVAILABLE:
             return _unavailable()
@@ -143,6 +154,7 @@ def register_routes(app, state=None, require_auth=None):
         return jsonify({"ok": True, "pad_id": pad_id, "connected": len(_pads)})
 
     @app.route("/gamepad/button", methods=["POST"])
+    @require_auth
     def gamepad_button():
         if not VG_AVAILABLE:
             return _unavailable()
@@ -205,6 +217,7 @@ def register_routes(app, state=None, require_auth=None):
         return jsonify({"ok": True, "pad_id": pad_id, "button": name, "action": action})
 
     @app.route("/gamepad/stick", methods=["POST"])
+    @require_auth
     def gamepad_stick():
         if not VG_AVAILABLE:
             return _unavailable()
@@ -256,6 +269,7 @@ def register_routes(app, state=None, require_auth=None):
                         "left_trigger": lt_val, "right_trigger": rt_val})
 
     @app.route("/gamepad/reset", methods=["POST"])
+    @require_auth
     def gamepad_reset():
         if not VG_AVAILABLE:
             return _unavailable()
@@ -276,6 +290,7 @@ def register_routes(app, state=None, require_auth=None):
         return jsonify({"ok": True, "pad_id": pad_id})
 
     @app.route("/gamepad/disconnect", methods=["POST"])
+    @require_auth
     def gamepad_disconnect():
         payload = _json_body()
         pad_id = _resolve_pad(payload)
@@ -293,6 +308,7 @@ def register_routes(app, state=None, require_auth=None):
         return jsonify({"ok": True, "disconnected": pad_id, "remaining": list(_pads.keys())})
 
     @app.route("/gamepad/status", methods=["GET"])
+    @require_auth
     def gamepad_status():
         with _LOCK:
             pads = [dict(_pad_state[i]) for i in sorted(_pads)]
