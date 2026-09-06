@@ -52,9 +52,19 @@ def find_feature_info(tree):
                         return {}
     return {}
 
+
+def _walk_scope(node):
+    """Yield descendants of node without descending into nested function/class scopes."""
+    for child in ast.iter_child_nodes(node):
+        if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            continue
+        yield child
+        yield from _walk_scope(child)
+
+
 def find_exe_candidates(tree):
     exe, candidates = None, []
-    for node in ast.walk(tree):
+    for node in _walk_scope(tree):
         if isinstance(node, ast.Call):
             f = node.func
             is_which = (isinstance(f, ast.Attribute) and f.attr == "which") or \
@@ -133,16 +143,42 @@ class Renamer(ast.NodeTransformer):
     def __init__(self, tool, rename_map):
         self.tool = tool
         self.rename_map = rename_map
+        self.scope_locals = []  # stack of local-name sets per enclosing function scope
+
+    def _scope_local_names(self, fn):
+        """Names bound as locals in fn's own scope, excluding global/nonlocal decls."""
+        names = set()
+        for a in fn.args.args + fn.args.kwonlyargs + getattr(fn.args, "posonlyargs", []):
+            names.add(a.arg)
+        if fn.args.vararg:
+            names.add(fn.args.vararg.arg)
+        if fn.args.kwarg:
+            names.add(fn.args.kwarg.arg)
+        declared = set()
+        for node in ast.walk(fn):
+            if isinstance(node, (ast.Global, ast.Nonlocal)):
+                declared.update(node.names)
+        for node in _walk_scope(fn):
+            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+                names.add(node.id)
+        return names - declared
+
     def visit_FunctionDef(self, node):
+        self.scope_locals.append(self._scope_local_names(node))
         if node.name in self.rename_map:
             node.name = self.rename_map[node.name]
         self.generic_visit(node)
+        self.scope_locals.pop()
         return node
+
     def visit_AsyncFunctionDef(self, node):
+        self.scope_locals.append(self._scope_local_names(node))
         if node.name in self.rename_map:
             node.name = self.rename_map[node.name]
         self.generic_visit(node)
+        self.scope_locals.pop()
         return node
+
     def visit_Global(self, node):
         node.names = [self.rename_map.get(n, n) for n in node.names]
         return node
@@ -156,6 +192,10 @@ class Renamer(ast.NodeTransformer):
                 slice=ast.Constant(value=self.tool), ctx=ast.Load())
             return sub
         if node.id in self.rename_map:
+            # Skip renaming when the name is shadowed by a local in any enclosing scope.
+            for localset in self.scope_locals:
+                if node.id in localset:
+                    return node
             return ast.Name(id=self.rename_map[node.id], ctx=node.ctx)
         return node
     def visit_Call(self, node):
@@ -284,11 +324,9 @@ def _local_names(fn):
         names.add(fn.args.vararg.arg)
     if fn.args.kwarg:
         names.add(fn.args.kwarg.arg)
-    for node in ast.walk(fn):
+    for node in _walk_scope(fn):
         if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
             names.add(node.id)
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            names.add(node.name)
     return names
 
 
