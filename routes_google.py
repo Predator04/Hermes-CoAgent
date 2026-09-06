@@ -4,6 +4,7 @@ import base64
 import os
 import threading
 from datetime import datetime, timezone
+from email.header import Header
 from email.mime.text import MIMEText
 
 from flask import Blueprint, jsonify
@@ -233,9 +234,9 @@ def route_google_gmail_send():
     if "\r" in subject or "\n" in subject:
         return _error("subject must not contain newlines")
     try:
-        message = MIMEText(body)
+        message = MIMEText(body, "plain", "utf-8")
         message["to"] = to_addr
-        message["subject"] = subject
+        message["subject"] = Header(subject, "utf-8")
         raw = base64.urlsafe_b64encode(message.as_bytes()).decode("ascii")
         sent = service.users().messages().send(userId="me", body={"raw": raw}).execute()
         return jsonify({"status": "sent", "id": sent.get("id"), "thread_id": sent.get("threadId")})
