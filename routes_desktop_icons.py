@@ -144,8 +144,9 @@ def _load_profiles():
         data = json.loads(_DESKTOP_ICONS_FILE.read_text(encoding="utf-8"))
     except FileNotFoundError:
         return {}
-    except Exception:
-        raise
+    except json.JSONDecodeError as exc:
+        _log(f"desktop_icons: corrupt profiles store, ignoring: {exc}")
+        return {}
     return data if isinstance(data, dict) else {}
 
 
@@ -187,7 +188,8 @@ def _get_item_position(listview, hproc, index):
     if not addr:
         raise RuntimeError("VirtualAllocEx failed for position buffer")
     try:
-        user32.SendMessageW(listview, LVM_GETITEMPOSITION, index, addr)
+        if not user32.SendMessageW(listview, LVM_GETITEMPOSITION, index, addr):
+            raise RuntimeError("LVM_GETITEMPOSITION failed")
         pt = wintypes.POINT()
         read = ctypes.c_size_t()
         if not kernel32.ReadProcessMemory(hproc, addr, ctypes.byref(pt), 8, ctypes.byref(read)):
@@ -219,14 +221,16 @@ def _get_item_text(listview, hproc, index):
     try:
         item.pszText = text_addr
         written = ctypes.c_size_t()
-        kernel32.WriteProcessMemory(
+        if not kernel32.WriteProcessMemory(
             hproc, item_addr, ctypes.byref(item), ctypes.sizeof(item), ctypes.byref(written)
-        )
+        ):
+            raise RuntimeError("WriteProcessMemory failed for LVITEMW")
         user32.SendMessageW(listview, LVM_GETITEMTEXTW, index, item_addr)
         buf = ctypes.create_unicode_buffer(_MAX_TEXT_LEN)
-        kernel32.ReadProcessMemory(
+        if not kernel32.ReadProcessMemory(
             hproc, text_addr, buf, _MAX_TEXT_LEN * 2, ctypes.byref(written)
-        )
+        ):
+            raise RuntimeError("ReadProcessMemory failed for item text")
         return buf.value
     finally:
         kernel32.VirtualFreeEx(hproc, text_addr, 0, MEM_RELEASE)
@@ -373,6 +377,7 @@ def register_routes(app, state=None, require_auth=None):
         return (payload.get("name") or "").strip() if isinstance(payload, dict) else ""
 
     @app.route("/desktop/icons/save", methods=["POST"])
+    @require_auth
     def desktop_icons_save():
         if os.name != "nt":
             return _windows_only("not Windows")
@@ -406,6 +411,7 @@ def register_routes(app, state=None, require_auth=None):
         })
 
     @app.route("/desktop/icons/restore", methods=["POST"])
+    @require_auth
     def desktop_icons_restore():
         if os.name != "nt":
             return _windows_only("not Windows")
@@ -430,6 +436,7 @@ def register_routes(app, state=None, require_auth=None):
         return jsonify({"ok": True, "name": name, "restored": restored})
 
     @app.route("/desktop/icons/list", methods=["GET"])
+    @require_auth
     def desktop_icons_list():
         with _LOCK:
             profiles = _load_profiles()
@@ -444,6 +451,7 @@ def register_routes(app, state=None, require_auth=None):
         return jsonify({"profiles": items})
 
     @app.route("/desktop/icons/delete", methods=["POST"])
+    @require_auth
     def desktop_icons_delete():
         payload = _json_body()
         name = _name_from(payload)
