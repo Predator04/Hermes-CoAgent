@@ -3,6 +3,7 @@ import urllib.parse
 import json
 import os
 import tempfile
+import threading
 
 class OAuthHandler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
@@ -24,35 +25,55 @@ class OAuthHandler(http.server.BaseHTTPRequestHandler):
         print(f"\n=== OAUTH CALLBACK ===", flush=True)
         print(f"Path: {parsed.path}", flush=True)
         print(f"Params: {json.dumps({k: ('<redacted>' if k in ('code', 'state', 'error_description') else (v[0][:80] if isinstance(v, list) and v else str(v)[:80])) for k, v in params.items()}, indent=2)}", flush=True)
-        
+
         # Save the code if present
         code_received = False
         if 'code' in params and params['code']:
             code = params['code'][0]
-            target = 'oauth_code.txt'
-            fd, tmp_path = tempfile.mkstemp(prefix='.oauth_code_', suffix='.tmp',
-                                            dir=os.path.dirname(os.path.abspath(target)) or '.')
-            try:
-                with os.fdopen(fd, 'w') as f:
-                    f.write(code)
-                os.replace(tmp_path, target)
-            except Exception:
+            if len(code) > 4096:
+                print("[OAuth] Rejecting oversized code value", flush=True)
+                code = None
+            if code is not None:
+                target = 'oauth_code.txt'
+                tmp_path = None
+                fd = None
                 try:
-                    os.unlink(tmp_path)
-                except OSError:
-                    pass
-                raise
-            code_received = True
-            print("Code received and saved.", flush=True)
-        
+                    fd, tmp_path = tempfile.mkstemp(prefix='.oauth_code_', suffix='.tmp',
+                                                    dir=os.path.dirname(os.path.abspath(target)) or '.')
+                    with os.fdopen(fd, 'w') as f:
+                        fd = None  # fd now owned by the file object
+                        f.write(code)
+                    os.replace(tmp_path, target)
+                except Exception:
+                    if fd is not None:
+                        try:
+                            os.close(fd)
+                        except OSError:
+                            pass
+                    if tmp_path:
+                        try:
+                            os.unlink(tmp_path)
+                        except OSError:
+                            pass
+                    raise
+                code_received = True
+                print("Code received and saved.", flush=True)
+
         self.send_response(200)
         self.send_header('Content-Type', 'text/html')
         self.end_headers()
         if code_received:
             self.wfile.write(b"<html><body><h1>Auth complete!</h1><p>You can close this window.</p><script>window.close()</script></body></html>")
+            # Single-use: stop accepting further callbacks so the code can't be clobbered.
+            threading.Thread(target=self.server.shutdown, daemon=True).start()
         else:
             self.wfile.write(b"<html><body><h1>No code received</h1><p>Check the callback URL.</p></body></html>")
-    
+
+    def log_request(self, code='-', size='-'):
+        # No-op: default log_request prints self.requestline, which contains the raw
+        # ?code=... query string and would leak the auth code despite the redaction above.
+        pass
+
     def log_message(self, format, *args):
         print(f"[OAuth] {format % args}", flush=True)
 
