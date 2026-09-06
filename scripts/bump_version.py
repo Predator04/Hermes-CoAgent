@@ -84,7 +84,7 @@ def main():
         fpath = ROOT / fname
         if fpath.exists():
             content = fpath.read_text(encoding="utf-8", errors="replace")
-            if current in content:
+            if re.search(r"(?<!\d)" + re.escape(current) + r"(?![\dA-Za-z_.])", content):
                 print(f"  {fname} — contains '{current}'")
     
     print("\nDone. Commit the VERSION file change.")
