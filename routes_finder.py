@@ -353,7 +353,7 @@ def _find_matches(description, screenshot=None, app="", element_type=""):
                             matches.append(candidate)
             if not matches or screenshot:
                 try:
-                    image = image or _fresh_screenshot()
+                    image = image if image is not None else _fresh_screenshot()
                     candidates, image_error = _ocr_candidates_from_image(image)
                     image_size = image.size
                     scored = []
@@ -417,8 +417,19 @@ def register_routes(app, state, require_auth):
             return jsonify({"found": False, "error": error or "no matching element found", "matches": []}), 404
         match = matches[0]
         offset = data.get("click_offset") if isinstance(data.get("click_offset"), dict) else {}
-        x = int(match["x"] + match["w"] / 2 + int(offset.get("x", 0)))
-        y = int(match["y"] + match["h"] / 2 + int(offset.get("y", 0)))
+        try:
+            off_x = int(offset.get("x", 0))
+            off_y = int(offset.get("y", 0))
+        except (TypeError, ValueError):
+            off_x = off_y = 0
+        # Clamp offset to ±one element dimension so a caller cannot click
+        # arbitrary screen coordinates far away from the matched element.
+        el_w = max(1, int(match.get("w") or 0))
+        el_h = max(1, int(match.get("h") or 0))
+        off_x = max(-el_w, min(el_w, off_x))
+        off_y = max(-el_h, min(el_h, off_y))
+        x = int(match["x"] + match["w"] / 2 + off_x)
+        y = int(match["y"] + match["h"] / 2 + off_y)
         click_result = _coagent_post("/mouse/click", {
             "x": x,
             "y": y,
