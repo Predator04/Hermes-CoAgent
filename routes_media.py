@@ -463,10 +463,51 @@ def _clipboard_set_html(html):
         raise OSError((err or out or f"SetText failed (exit {rc})").strip()[:300])
 
 
+def _clipboard_set_rtf(rtf):
+    """Put an RTF payload on the clipboard as CF_RTF."""
+    if not isinstance(rtf, str) or not rtf:
+        raise ValueError("rtf must be a non-empty string")
+    b64 = base64.b64encode(rtf.encode("utf-8")).decode("ascii")
+    script = (
+        "Add-Type -AssemblyName System.Windows.Forms;"
+        "$r=[System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('" + b64 + "'));"
+        "[System.Windows.Forms.Clipboard]::SetText($r,[System.Windows.Forms.TextDataFormat]::Rtf)"
+    )
+    rc, out, err = _run_powershell(script, sta=True)
+    if rc != 0:
+        raise OSError((err or out or f"SetText(Rtf) failed (exit {rc})").strip()[:300])
+
+
+def _clipboard_get_formats():
+    """Enumerate the formats currently present on the clipboard.
+
+    Returns a list of human-readable .NET format names (e.g. 'Text',
+    'HTML Format', 'Rich Text Format', 'FileDrop', 'Bitmap') so the caller
+    can prefer a richer format over plain text.
+    """
+    script = (
+        "Add-Type -AssemblyName System.Windows.Forms;"
+        "$d=[System.Windows.Forms.Clipboard]::GetDataObject();"
+        "if($d -eq $null){@()}"
+        "else{@($d.GetFormats($false))} | ConvertTo-Json -Compress"
+    )
+    rc, out, err = _run_powershell(script, sta=True)
+    if rc != 0:
+        raise OSError((err or out or f"clipboard formats read failed (exit {rc})").strip()[:300])
+    try:
+        data = json.loads(out)
+    except Exception:  # noqa: BLE001
+        data = []
+    if isinstance(data, str):
+        data = [data]
+    return data if isinstance(data, list) else []
+
+
 def _clipboard_get_rich():
     """Return the richest available clipboard content as a dict.
 
-    Keys may include text (always present), html, files, image (base64 PNG).
+    Keys may include text (always present), html, rtf, files, image (base64 PNG),
+    plus a 'formats' list naming every format currently on the clipboard.
     """
     script = (
         "Add-Type -AssemblyName System.Windows.Forms;"
@@ -474,6 +515,7 @@ def _clipboard_get_rich():
         "$o=[ordered]@{};"
         "if([System.Windows.Forms.Clipboard]::ContainsText()){$o.text=[System.Windows.Forms.Clipboard]::GetText()};"
         "if([System.Windows.Forms.Clipboard]::ContainsText([System.Windows.Forms.TextDataFormat]::Html)){$o.html=[System.Windows.Forms.Clipboard]::GetText([System.Windows.Forms.TextDataFormat]::Html)};"
+        "if([System.Windows.Forms.Clipboard]::ContainsText([System.Windows.Forms.TextDataFormat]::Rtf)){$o.rtf=[System.Windows.Forms.Clipboard]::GetText([System.Windows.Forms.TextDataFormat]::Rtf)};"
         "if([System.Windows.Forms.Clipboard]::ContainsFileDropList()){$o.files=@([System.Windows.Forms.Clipboard]::GetFileDropList())};"
         "if([System.Windows.Forms.Clipboard]::ContainsImage()){$i=[System.Windows.Forms.Clipboard]::GetImage();$ms=New-Object System.IO.MemoryStream;$i.Save($ms,[System.Drawing.Imaging.ImageFormat]::Png);$o.image=[Convert]::ToBase64String($ms.ToArray());$ms.Dispose();$i.Dispose()};"
         "$o | ConvertTo-Json -Compress"
@@ -488,6 +530,14 @@ def _clipboard_get_rich():
     if not isinstance(data, dict):
         data = {"text": out}
     data.setdefault("text", "")
+    # Derive the available-format list from the richest read; the caller can
+    # pick the richest format without a second round-trip.
+    formats = []
+    for key, label in (("text", "Text"), ("html", "HTML Format"), ("rtf", "Rich Text Format"),
+                       ("files", "FileDrop"), ("image", "Bitmap")):
+        if data.get(key):
+            formats.append(label)
+    data["formats"] = formats
     return data
 
 
@@ -894,6 +944,12 @@ def register_routes(app, state, require_auth):
     @app.route("/clipboard/get", methods=["GET"])
     @require_auth
     def route_clipboard_get():
+        if request.args.get("formats") in ("1", "true"):
+            try:
+                return jsonify({"formats": _clipboard_get_formats()})
+            except Exception as exc:  # noqa: BLE001
+                _log(f"clipboard formats read failed ({exc})")
+                return jsonify({"formats": []})
         try:
             return jsonify(_clipboard_get_rich())
         except Exception as exc:  # noqa: BLE001
@@ -903,6 +959,18 @@ def register_routes(app, state, require_auth):
                 return jsonify({"text": pyperclip.paste()})
             except Exception:  # noqa: BLE001
                 return jsonify({"text": ""})
+
+    @app.route("/clipboard/image", methods=["GET"])
+    @require_auth
+    def route_clipboard_image():
+        try:
+            data = _clipboard_get_rich()
+        except Exception as exc:  # noqa: BLE001
+            return jsonify({"error": f"clipboard read failed: {exc}"}), 500
+        img = data.get("image")
+        if not img:
+            return jsonify({"image": None, "present": False})
+        return jsonify({"image": img, "present": True})
 
     @app.route("/clipboard/set", methods=["POST"])
     @require_auth
@@ -937,6 +1005,16 @@ def register_routes(app, state, require_auth):
             try:
                 _clipboard_set_html(html)
                 return jsonify({"status": "ok", "type": "html"})
+            except Exception as e:  # noqa: BLE001
+                return jsonify({"error": str(e)}), 400
+
+        if ctype == "rtf":
+            rtf = d.get("rtf") if "rtf" in d else d.get("data")
+            if rtf is None:
+                return _missing_field("rtf")
+            try:
+                _clipboard_set_rtf(rtf)
+                return jsonify({"status": "ok", "type": "rtf"})
             except Exception as e:  # noqa: BLE001
                 return jsonify({"error": str(e)}), 400
 
