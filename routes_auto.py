@@ -1774,6 +1774,46 @@ TOOLS = {
     "repo": "cloudflare/cloudflared",
     "stars": 15527,
     "url": "https://github.com/cloudflare/cloudflared"
+  },
+  "dufs": {
+    "added": "2026-09-07",
+    "command": "dufs <dir> -b 127.0.0.1 -p <port> [-A]",
+    "desc": "dufs is a single-binary file server: it serves a directory over HTTP with static serving, upload, delete, search, WebDAV and optional basic auth. Ideal for CoAgent to turn any folder into a shareable or writable URL in one command.",
+    "endpoints": {
+      "/auto/dufs/info": "Feature metadata, install status, version",
+      "/auto/dufs/ping": "Health check",
+      "/auto/dufs/serve": "POST - serve a directory over HTTP and return its URL"
+    },
+    "exe": "dufs.exe",
+    "install": {
+      "winget": "winget install --id=sigoden.Dufs -e",
+      "scoop": "scoop install dufs"
+    },
+    "repo": "sigoden/dufs",
+    "stars": 10704,
+    "url": "https://github.com/sigoden/dufs"
+  },
+  "pdfcpu": {
+    "added": "2026-09-07",
+    "command": "pdfcpu info <file> | pdfcpu merge <out> <in...> | pdfcpu optimize <in> [out]",
+    "desc": "pdfcpu is a Go command-line PDF processor: validate, split, merge, extract pages, optimize (shrink), encrypt, watermark and inspect PDFs. Ideal for CoAgent to manipulate PDF documents headlessly without a GUI.",
+    "endpoints": {
+      "/auto/pdfcpu/info": "Feature metadata, install status, version",
+      "/auto/pdfcpu/ping": "Health check",
+      "/auto/pdfcpu/validate": "POST - validate and inspect a PDF (metadata as JSON)",
+      "/auto/pdfcpu/merge": "POST - merge multiple PDFs into one",
+      "/auto/pdfcpu/optimize": "POST - optimize a PDF to shrink its file size"
+    },
+    "exe": "pdfcpu.exe",
+    "candidates": ["C:/Program Files/pdfcpu/pdfcpu.exe"],
+    "install": {
+      "winget": "winget install --id=pdfcpu.pdfcpu -e",
+      "scoop": "scoop install pdfcpu"
+    },
+    "repo": "pdfcpu/pdfcpu",
+    "stars": 8826,
+    "url": "https://github.com/pdfcpu/pdfcpu",
+    "version_flag": "version"
   }
 }
 
@@ -15535,6 +15575,165 @@ def _h_cloudflared_374():
     return jsonify({'ok': True, 'port': port, 'url': url, 'pid': proc.pid})
 
 
+def _h_dufs_375():
+    """Start a dufs file server for a directory and return its URL.
+
+        Body (JSON):
+            dir (str, required): directory path to serve.
+            port (int, optional): port to bind. Default 8080.
+            allow (bool, optional): allow upload/delete/search (--allow-all).
+                                    Default false (read-only).
+            auth (str, optional): "user:pass" basic-auth credential.
+
+        The dufs process is detached and keeps running after the response
+        returns, so the server stays up until CoAgent restarts or the
+        process is killed. Returns the http://127.0.0.1:<port>/ URL.
+    """
+    exe = _find_tool('dufs')
+    if not exe:
+        return (jsonify({'error': 'dufs is not installed', 'hint': 'winget install --id=sigoden.Dufs -e'}), 503)
+    body = _json_body() or {}
+    dir_ = body.get('dir') or body.get('path')
+    if not dir_:
+        return (jsonify({'error': "'dir' (directory path) is required"}), 400)
+    if not os.path.isdir(dir_):
+        return (jsonify({'error': 'directory does not exist: %s' % dir_}), 404)
+    try:
+        port = int(body.get('port') or 8080)
+    except (TypeError, ValueError):
+        return (jsonify({'error': "'port' must be an integer"}), 400)
+    if port < 1 or port > 65535:
+        return (jsonify({'error': "'port' must be between 1 and 65535"}), 400)
+    allow = bool(body.get('allow', False))
+    auth = (body.get('auth') or '').strip()
+    cmd = [exe, '-b', '127.0.0.1', '-p', str(port)]
+    if allow:
+        cmd.append('-A')
+    if auth:
+        cmd += ['--auth', auth]
+    cmd.append(dir_)
+    try:
+        proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, errors='replace')
+    except Exception as e:
+        return (jsonify({'error': 'failed to start dufs: %s' % str(e)}), 500)
+    time.sleep(1.0)
+    if proc.poll() is not None:
+        out = ''
+        try:
+            out = proc.stderr.read() or ''
+        except Exception:
+            pass
+        _log('[dufs serve] exited rc=%s: %s' % (proc.returncode, (out or '').strip()[:300]))
+        return (jsonify({'ok': False, 'error': (out or 'dufs exited before serving').strip()[:2000]}), 500)
+    return jsonify({'ok': True, 'dir': dir_, 'port': port, 'url': 'http://127.0.0.1:%d/' % port, 'pid': proc.pid, 'allow': allow})
+
+
+def _h_pdfcpu_376():
+    """Validate and inspect a PDF, returning its metadata as JSON.
+
+        Body (JSON):
+            path (str, required): path to the PDF file.
+
+        Returns {'valid': bool, 'info': {...}} where info carries page count,
+        page dimensions, file size, PDF version and document properties.
+    """
+    exe = _find_tool('pdfcpu')
+    if not exe:
+        return (jsonify({'error': 'pdfcpu is not installed', 'hint': 'winget install --id=pdfcpu.pdfcpu -e'}), 503)
+    body = _json_body() or {}
+    path_ = body.get('path')
+    if not path_:
+        return (jsonify({'error': "'path' is required"}), 400)
+    if not os.path.isfile(path_):
+        return (jsonify({'error': 'file does not exist: %s' % path_}), 404)
+    try:
+        r = subprocess.run([exe, 'info', '-json', path_], capture_output=True, text=True, errors='replace', timeout=60)
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': 'pdfcpu info timed out'}), 504)
+    except Exception as e:
+        _log('[pdfcpu validate] %s' % str(e))
+        return (jsonify({'error': str(e)}), 500)
+    if r.returncode != 0:
+        msg = (r.stderr or r.stdout or 'pdfcpu info failed').strip()
+        return (jsonify({'ok': False, 'valid': False, 'error': msg[:2000]}), 400)
+    info = {}
+    try:
+        info = json_lib.loads(r.stdout or '{}')
+    except Exception:
+        info = {'raw': (r.stdout or '').strip()[:2000]}
+    return jsonify({'ok': True, 'valid': True, 'info': info})
+
+
+def _h_pdfcpu_377():
+    """Merge multiple PDF files into one.
+
+        Body (JSON):
+            files (list[str], required): at least 2 input PDF paths.
+            output (str, required): output PDF path.
+    """
+    exe = _find_tool('pdfcpu')
+    if not exe:
+        return (jsonify({'error': 'pdfcpu is not installed', 'hint': 'winget install --id=pdfcpu.pdfcpu -e'}), 503)
+    body = _json_body() or {}
+    files = body.get('files')
+    output = body.get('output')
+    if not isinstance(files, list) or len(files) < 2:
+        return (jsonify({'error': "'files' must be a list of at least 2 PDF paths"}), 400)
+    if not output:
+        return (jsonify({'error': "'output' path is required"}), 400)
+    missing = [f for f in files if not os.path.isfile(f)]
+    if missing:
+        return (jsonify({'error': 'file(s) do not exist: %s' % ', '.join(missing)}), 404)
+    try:
+        r = subprocess.run([exe, 'merge', output] + list(files), capture_output=True, text=True, errors='replace', timeout=300)
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': 'pdfcpu merge timed out'}), 504)
+    except Exception as e:
+        _log('[pdfcpu merge] %s' % str(e))
+        return (jsonify({'error': str(e)}), 500)
+    if r.returncode != 0:
+        msg = (r.stderr or r.stdout or 'pdfcpu merge failed').strip()
+        _log('[pdfcpu merge] rc=%s: %s' % (r.returncode, msg[:300]))
+        return (jsonify({'ok': False, 'error': msg[:2000]}), 500)
+    return jsonify({'ok': True, 'output': output, 'count': len(files), 'size': os.path.getsize(output) if os.path.isfile(output) else None})
+
+
+def _h_pdfcpu_378():
+    """Optimize a PDF to shrink its file size (dedupe fonts/images, max compression).
+
+        Body (JSON):
+            path (str, required): input PDF path.
+            output (str, optional): output path. Default <stem>_opt.pdf.
+    """
+    exe = _find_tool('pdfcpu')
+    if not exe:
+        return (jsonify({'error': 'pdfcpu is not installed', 'hint': 'winget install --id=pdfcpu.pdfcpu -e'}), 503)
+    body = _json_body() or {}
+    path_ = body.get('path')
+    if not path_:
+        return (jsonify({'error': "'path' is required"}), 400)
+    if not os.path.isfile(path_):
+        return (jsonify({'error': 'file does not exist: %s' % path_}), 404)
+    output = body.get('output')
+    if not output:
+        p = Path(path_)
+        output = str(p.with_name(p.stem + '_opt' + p.suffix))
+    src_size = os.path.getsize(path_)
+    try:
+        r = subprocess.run([exe, 'optimize', path_, output], capture_output=True, text=True, errors='replace', timeout=600)
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': 'pdfcpu optimize timed out'}), 504)
+    except Exception as e:
+        _log('[pdfcpu optimize] %s' % str(e))
+        return (jsonify({'error': str(e)}), 500)
+    if r.returncode != 0:
+        msg = (r.stderr or r.stdout or 'pdfcpu optimize failed').strip()
+        _log('[pdfcpu optimize] rc=%s: %s' % (r.returncode, msg[:300]))
+        return (jsonify({'ok': False, 'error': msg[:2000]}), 500)
+    out_size = os.path.getsize(output) if os.path.isfile(output) else None
+    return jsonify({'ok': True, 'input': path_, 'output': output, 'src_size': src_size, 'out_size': out_size, 'saved': (src_size - out_size) if out_size is not None else None})
+
+
 def register_routes(app, state, require_auth):
     global _STATE
     _STATE = state
@@ -15916,6 +16115,10 @@ def register_routes(app, state, require_auth):
         ('/auto/tesseract/langs', ['GET'], _h_tesseract_372),
         ('/auto/cloudflared/tunnels', ['GET'], _h_cloudflared_373),
         ('/auto/cloudflared/quick', ['POST'], _h_cloudflared_374),
+        ('/auto/dufs/serve', ['POST'], _h_dufs_375),
+        ('/auto/pdfcpu/validate', ['POST'], _h_pdfcpu_376),
+        ('/auto/pdfcpu/merge', ['POST'], _h_pdfcpu_377),
+        ('/auto/pdfcpu/optimize', ['POST'], _h_pdfcpu_378),
     ]
     for _path, _methods, _fn in _ACTIONS:
         app.add_url_rule(_path, endpoint=_fn.__name__, view_func=require_auth(_fn), methods=_methods)
