@@ -28,6 +28,10 @@ coagent_token.txt
 governance.json
 governance_audit.jsonl
 
+# Runtime signal files (written by the update/restart flow)
+.restart_requested
+.pytest_cache/
+
 # Build artifacts
 CoAgent.spec
 *.exe
