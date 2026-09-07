@@ -97,6 +97,8 @@ input{min-height:44px;border:1px solid var(--line);border-radius:8px;background:
   async function api(path, body){if(needAuth()) throw new Error("token required"); const r=await fetch(path,{method:"POST",headers:headers(true),body:JSON.stringify(body||{})}); const data=await r.json().catch(()=>({})); if(!r.ok) throw new Error(data.error||("HTTP "+r.status)); return data}
   async function refresh(){
     if(!token){status("token required","bad"); return}
+    if(state.refreshing) return;
+    state.refreshing=true;
     status("refreshing","");
     try{
       const r=await fetch("/mobile/view?ts="+Date.now(),{headers:headers(false)});
@@ -107,7 +109,9 @@ input{min-height:44px;border:1px solid var(--line);border-radius:8px;background:
       screen.src=url;
       if(old&&old.startsWith("blob:")) URL.revokeObjectURL(old);
     }catch(e){status("view error","bad")}
+    finally{state.refreshing=false}
   }
+  function scheduleRefresh(){clearTimeout(state.timer); state.timer=setTimeout(()=>{refresh(); scheduleRefresh()},500)}
   screen.onload=()=>status("connected","ok");
   screen.onerror=()=>status("view error","bad");
   function displayedRect(){
@@ -126,8 +130,10 @@ input{min-height:44px;border:1px solid var(--line);border-radius:8px;background:
       y:Math.max(0,Math.min(100,((y-r.top)/r.height)*100))
     };
   }
+  let wasTouch=false;
   function distance(a,b){const dx=a.clientX-b.clientX,dy=a.clientY-b.clientY; return Math.sqrt(dx*dx+dy*dy)}
   viewer.addEventListener("touchstart",(ev)=>{
+    wasTouch=true;
     if(ev.touches.length===2){state.pinch=true; state.pinchDistance=distance(ev.touches[0],ev.touches[1]); return}
     const t=ev.touches[0]; state.start={x:t.clientX,y:t.clientY,time:Date.now()};
   },{passive:false});
@@ -148,7 +154,7 @@ input{min-height:44px;border:1px solid var(--line);border-radius:8px;background:
     state.start=null;
   },{passive:false});
   viewer.addEventListener("click",async(ev)=>{
-    if(ev.pointerType==="touch") return;
+    if(wasTouch){wasTouch=false; return}
     try{const p=pctFromPoint(ev.clientX,ev.clientY); await api("/mobile/tap",p); toast("clicked")}catch(e){toast(e.message)}
   });
   $("sendText").onclick=async()=>{const text=$("textInput").value; if(!text)return; try{await api("/mobile/type",{text}); $("textInput").value=""; toast("typed")}catch(e){toast(e.message)}};
@@ -157,7 +163,7 @@ input{min-height:44px;border:1px solid var(--line);border-radius:8px;background:
   $("refreshBtn").onclick=refresh;
   $("tokenSave").onclick=()=>{token=$("tokenInput").value.trim().replace(/^Bearer\s+/i,""); if(token){sessionStorage.setItem("hermes_token",token); $("auth").classList.remove("show"); toast("token saved")}};
   if(!token) $("auth").classList.add("show");
-  refresh(); state.timer=setInterval(refresh,500);
+  refresh(); scheduleRefresh();
 })();
 </script>
 </body>
@@ -190,10 +196,10 @@ def _coagent_post(path, data):
     )
     try:
         with urllib.request.urlopen(req, timeout=20) as response:
-            raw = response.read().decode("utf-8", errors="replace")
+            raw = response.read(10 * 1024 * 1024).decode("utf-8", errors="replace")
             return json.loads(raw or "{}")
     except urllib.error.HTTPError as exc:
-        raw = exc.read().decode("utf-8", errors="replace")
+        raw = exc.read(10 * 1024 * 1024).decode("utf-8", errors="replace")
         try:
             payload = json.loads(raw or "{}")
         except json.JSONDecodeError:
@@ -304,7 +310,10 @@ def route_mobile_swipe():
 @mobile_bp.route("/mobile/type", methods=["POST"])
 def route_mobile_type():
     data = _json_body()
-    result = _coagent_post("/key/type", {"text": str(data.get("text", ""))})
+    text = str(data.get("text", ""))
+    if len(text) > 4096:
+        return jsonify({"error": "text exceeds 4096 character limit"}), 400
+    result = _coagent_post("/key/type", {"text": text})
     return _result_or_error(result, {"status": "typed"})
 
 

@@ -24,7 +24,7 @@ _PROTECTED_DELETE_DIRS = {
 _DANGEROUS_OPEN_EXTENSIONS = {
     ".hta", ".js", ".jse", ".vbs", ".vbe", ".wsf", ".wsh",
     ".ps1", ".psm1", ".bat", ".cmd", ".com", ".pif", ".scr",
-    ".cpl", ".msi", ".msp", ".reg", ".inf", ".scf", ".url",
+    ".cpl", ".msi", ".msp", ".reg", ".inf", ".scf", ".url", ".lnk",
 }
 
 
@@ -129,7 +129,14 @@ def register_routes(app, state, require_auth):
             # or disk-full mid-write cannot truncate the original file.
             fd, tmp_path = tempfile.mkstemp(dir=parent or ".", prefix=".coagent_write_", suffix=".tmp")
             try:
-                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                # newline="" keeps the write byte-faithful (no LF->CRLF
+                # translation on Windows, which would corrupt scripts/YAML).
+                try:
+                    f = os.fdopen(fd, "w", encoding="utf-8", newline="")
+                except BaseException:
+                    os.close(fd)
+                    raise
+                with f:
                     f.write(content)
                 if os.path.exists(path):
                     import shutil as _shutil
@@ -186,12 +193,13 @@ def register_routes(app, state, require_auth):
             elif ("/" not in app_path and "\\" not in app_path and ":" not in app_path
                   and app_path.lower().endswith(".exe")):
                 subprocess.Popen([app_path], shell=False)
-            elif app_path.endswith(".lnk"):
-                os.startfile(_sanitize_path(app_path))
             elif app_path.endswith(".exe"):
                 safe_path = _sanitize_path(app_path)
                 subprocess.Popen([safe_path], shell=False)
             else:
+                # No special-casing of .lnk: a shortcut can point at any
+                # executable and would bypass the dangerous-extension deny-list.
+                # Route .lnk launches through /launch/app instead.
                 safe_path = _sanitize_path(app_path)
                 if os.path.splitext(safe_path)[1].lower() in _DANGEROUS_OPEN_EXTENSIONS:
                     return jsonify({"error": "Refusing to open script/executable file via shell handler",

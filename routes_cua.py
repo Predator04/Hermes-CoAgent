@@ -33,11 +33,17 @@ def _route_call(tool, data, success_status="ok"):
     try:
         result = cua_call(tool, data)
         if not isinstance(result, dict) or not result.get("ok"):
-            err = result.get("error") if isinstance(result, dict) else None
+            err = result.get("error") if isinstance(result, dict) else "invalid response"
             _log(f"[CUA] {tool} failed: {err!r}")
-            return jsonify(result), 502
+            return jsonify({
+                "ok": False,
+                "tool": tool,
+                "error": err if isinstance(result, dict) else "invalid response",
+                "raw": result if not isinstance(result, dict) else None,
+            }), 502
         _log(f"[CUA] {tool} ok")
-        return jsonify({**result, "status": success_status})
+        result.setdefault("status", success_status)
+        return jsonify(result)
     except FileNotFoundError as exc:
         _log(f"[CUA] {tool} unavailable: {exc}")
         return jsonify({"ok": False, "tool": tool, "error": str(exc)}), 503
@@ -84,7 +90,7 @@ def register_routes(app, state, require_auth):
         data, err = _safe_json_body()
         if err:
             return err
-        if not data.get("text"):
+        if data.get("text") is None:
             return _missing_field("text")
         return _route_call("type_text", data, "typed")
 
