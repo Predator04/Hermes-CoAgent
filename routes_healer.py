@@ -273,7 +273,7 @@ def _restart_count_today():
         return sum(
             1
             for entry in _HEALER_LOG
-            if entry.get("action") in {"restart_requested", "restart_spawned"}
+            if entry.get("action") == "restart_requested"
             and str(entry.get("time", "")).startswith(today)
         )
 
