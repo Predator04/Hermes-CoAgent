@@ -48,6 +48,14 @@ SEVERITY_WEIGHT = {"low": 1, "medium": 2, "high": 3, "critical": 5}
 _MAX_INPUT = 65536
 _MAX_MATCHES = 500
 
+# Zero-width / invisible / control-format codepoints that can be interleaved
+# into a prompt to slip past regex matching (bi-di overrides, line/paragraph
+# separators, tag characters, word joiners, fillers). Stripped before scanning.
+_INVISIBLE_RE = re.compile(
+    "[\u00ad\u180e\u200b-\u200f\u2028\u2029\u202a-\u202e"
+    "\u2060-\u206f\u3164\ufeff\uffa0\U000e0000-\U000e007f]"
+)
+
 
 def _scan(text):
     """Return (matches, score, risk)."""
@@ -57,9 +65,12 @@ def _scan(text):
         return [], 0, "none"
     truncated = len(text) > _MAX_INPUT
     if truncated:
-        text = text[:_MAX_INPUT]
+        # Scan both head and tail so a payload buried mid-stream is not
+        # silently dropped by head-only truncation.
+        half = _MAX_INPUT // 2
+        text = text[:half] + "\n" + text[-half:]
     normalized = unicodedata.normalize("NFKC", text)
-    normalized = re.sub(r"[\u200b-\u200d\u2060\ufeff\u00ad]", "", normalized)
+    normalized = _INVISIBLE_RE.sub("", normalized)
     matches = []
     for name, severity, regex in RULES:
         for m in regex.finditer(normalized):
@@ -73,6 +84,17 @@ def _scan(text):
             })
         if len(matches) >= _MAX_MATCHES:
             break
+    if truncated:
+        # Content beyond _MAX_INPUT was only partially scanned. Always flag so
+        # sanitize() wraps the full input, regardless of what the scanned
+        # window produced — otherwise a single low-severity match in the head
+        # would let a critical tail payload keep a deceptively low risk.
+        matches.append({
+            "rule": "truncation",
+            "severity": "medium",
+            "match": "input exceeds %d chars" % _MAX_INPUT,
+            "start": _MAX_INPUT,
+        })
     score = sum(SEVERITY_WEIGHT.get(m["severity"], 1) for m in matches)
     if score >= 5:
         risk = "critical"
@@ -84,18 +106,6 @@ def _scan(text):
         risk = "low"
     else:
         risk = "none"
-    if truncated and risk == "none":
-        # Content beyond _MAX_INPUT was never scanned. Returning "none" here
-        # would let flagged payloads past the guard un-neutralized, so force
-        # a flag so sanitize() wraps the full input.
-        risk = "medium"
-        matches.append({
-            "rule": "truncation",
-            "severity": "medium",
-            "match": "input exceeds %d chars" % _MAX_INPUT,
-            "start": _MAX_INPUT,
-        })
-        score += SEVERITY_WEIGHT["medium"]
     return matches, score, risk
 
 
@@ -106,6 +116,8 @@ def sanitize(text):
     modules can call this directly when piping untrusted content back into the
     agent loop.
     """
+    if isinstance(text, bytes):
+        text = text.decode("utf-8", errors="replace")
     matches, score, risk = _scan(text)
     if risk == "none":
         return {"risk": "none", "score": 0, "flagged": False, "text": text, "matches": []}
