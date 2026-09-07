@@ -3689,7 +3689,7 @@ def _h_diskpart_64():
         return (jsonify({'ok': False, 'volume': volume_num, 'error': str(e)}), 503)
 
 def _dism__run_dism(args, timeout=60):
-    """Run dism.exe with given args, return parsed output or raise."""
+    """Run dism.exe with given args, return (stdout, stderr, returncode) or raise on infra errors."""
     exe = _find_tool('dism')
     if not exe:
         raise RuntimeError('Dism.exe not found on system')
@@ -3699,40 +3699,41 @@ def _dism__run_dism(args, timeout=60):
         raise RuntimeError('Dism operation timed out')
     except OSError as e:
         raise RuntimeError(f'Dism execution failed: {e}')
-    if result.returncode != 0:
-        stderr = (result.stderr or '').strip()
-        raise RuntimeError(stderr or 'Dism returned non-zero exit code')
-    return result.stdout
+    return (result.stdout, result.stderr, result.returncode)
 
 def _h_dism_65():
     """Run DISM /ScanHealth — check component store corruption."""
     try:
-        output = _dism__run_dism(['/online', '/Cleanup-Image', '/ScanHealth'], timeout=120)
-        return jsonify({'ok': True, 'output': output})
+        stdout, stderr, rc = _dism__run_dism(['/online', '/Cleanup-Image', '/ScanHealth'], timeout=120)
+        return jsonify({'ok': True, 'corrupted': rc != 0, 'exit_code': rc, 'output': (stdout or stderr).strip()})
     except RuntimeError as e:
         return (jsonify({'ok': False, 'error': str(e)}), 503)
 
 def _h_dism_66():
     """Run DISM /CheckHealth — quick health check (reads existing logs only)."""
     try:
-        output = _dism__run_dism(['/online', '/Cleanup-Image', '/CheckHealth'], timeout=30)
-        return jsonify({'ok': True, 'output': output})
+        stdout, stderr, rc = _dism__run_dism(['/online', '/Cleanup-Image', '/CheckHealth'], timeout=30)
+        return jsonify({'ok': True, 'corrupted': rc != 0, 'exit_code': rc, 'output': (stdout or stderr).strip()})
     except RuntimeError as e:
         return (jsonify({'ok': False, 'error': str(e)}), 503)
 
 def _h_dism_67():
     """Run DISM /RestoreHealth — repair component store corruption."""
     try:
-        output = _dism__run_dism(['/online', '/Cleanup-Image', '/RestoreHealth'], timeout=300)
-        return jsonify({'ok': True, 'output': output})
+        stdout, stderr, rc = _dism__run_dism(['/online', '/Cleanup-Image', '/RestoreHealth'], timeout=300)
+        if rc != 0:
+            return (jsonify({'ok': False, 'error': (stderr or stdout).strip() or 'RestoreHealth failed'}), 502)
+        return jsonify({'ok': True, 'output': stdout})
     except RuntimeError as e:
         return (jsonify({'ok': False, 'error': str(e)}), 503)
 
 def _h_dism_68():
     """List all Windows features and their state."""
     try:
-        output = _dism__run_dism(['/online', '/Get-Features', '/Format:Table'], timeout=30)
-        return jsonify({'ok': True, 'output': output})
+        stdout, stderr, rc = _dism__run_dism(['/online', '/Get-Features', '/Format:Table'], timeout=30)
+        if rc != 0:
+            return (jsonify({'ok': False, 'error': (stderr or stdout).strip() or 'Get-Features failed'}), 502)
+        return jsonify({'ok': True, 'output': stdout})
     except RuntimeError as e:
         return (jsonify({'ok': False, 'error': str(e)}), 503)
 
@@ -4812,13 +4813,13 @@ def _imagemagick__safe_path(path):
     return path
 
 def _imagemagick__find_magick():
-    """Locate ImageMagick binaries — magick, convert, identify."""
-    candidates = ['magick', 'magick.exe', 'convert', 'convert.exe', 'identify', 'identify.exe']
+    """Locate ImageMagick unified `magick` binary (IM7)."""
+    candidates = ['magick', 'magick.exe']
     for name in candidates:
         exe = shutil.which(name)
         if exe:
             return exe
-    for p in ['C:\\Program Files\\ImageMagick-7.1.11-Q16-HDRI\\magick.exe', 'C:\\Program Files\\ImageMagick-7.1.10-Q16-HDRI\\magick.exe', 'C:\\Program Files\\ImageMagick-7.1.9-Q16-HDRI\\magick.exe', 'C:\\Program Files\\ImageMagick-7.0.10-Q16\\magick.exe', 'C:\\Program Files\\ImageMagick-7.0.11-Q16\\magick.exe', 'C:\\Program Files\\ImageMagick-7.0.12-Q16\\magick.exe', 'C:\\Program Files\\ImageMagick-7.0.13-Q16\\magick.exe', 'C:\\Program Files\\ImageMagick-7.0.14-Q16\\magick.exe', 'C:\\Program Files\\ImageMagick-6.9.12-Q16\\convert.exe', 'C:\\Program Files\\ImageMagick-6.9.11-Q16\\convert.exe']:
+    for p in ['C:\\Program Files\\ImageMagick-7.1.11-Q16-HDRI\\magick.exe', 'C:\\Program Files\\ImageMagick-7.1.10-Q16-HDRI\\magick.exe', 'C:\\Program Files\\ImageMagick-7.1.9-Q16-HDRI\\magick.exe', 'C:\\Program Files\\ImageMagick-7.0.10-Q16\\magick.exe', 'C:\\Program Files\\ImageMagick-7.0.11-Q16\\magick.exe', 'C:\\Program Files\\ImageMagick-7.0.12-Q16\\magick.exe', 'C:\\Program Files\\ImageMagick-7.0.13-Q16\\magick.exe', 'C:\\Program Files\\ImageMagick-7.0.14-Q16\\magick.exe']:
         if os.path.isfile(p):
             return p
     return None
@@ -5094,6 +5095,8 @@ def _ipconfig__clean_adapter_name(name):
         raise ValueError('adapter name too long (max 256 chars)')
     if '\x00' in n:
         raise ValueError('adapter name cannot contain null bytes')
+    if n.startswith(('-', '/', '\\')):
+        raise ValueError('adapter name must not start with -, / or \\')
     return n
 
 def _ipconfig__run_ipconfig(args, timeout=15):
@@ -5677,11 +5680,24 @@ def _h_kopia_120():
     except OSError as e:
         return (jsonify({'ok': False, 'error': str(e)}), 503)
 
+def _as_bool(value, default=False):
+    """Coerce a JSON body value to bool — the string 'false' must be falsy."""
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        return value.strip().lower() in ('1', 'true', 'yes', 'on')
+    return default
+
+
 def _h_kopia_121():
     """Run kopia maintenance tasks (blob cleanup, data migration, etc.)."""
     body = _json_body()
-    full = body.get('full', False)
-    safe = body.get('safe', True)
+    full = _as_bool(body.get('full', False))
+    safe = _as_bool(body.get('safe', True))
     args = ['maintenance', 'run']
     if full:
         args.append('--full')
@@ -5702,10 +5718,10 @@ def _h_kopia_121():
 def _h_kopia_122():
     """Disconnect from the current kopia repository (requires confirmation)."""
     body = _json_body()
-    confirm = body.get('confirm', False)
+    confirm = _as_bool(body.get('confirm', False))
     if not confirm:
         return (jsonify({'ok': False, 'error': "Confirmation required — set 'confirm: true' to proceed. Disconnects from current repository. Data remains in the repository."}), 400)
-    delete_config = body.get('delete_config', False)
+    delete_config = _as_bool(body.get('delete_config', False))
     args = ['repository', 'disconnect']
     if delete_config:
         args.append('--delete-config')
@@ -5956,8 +5972,8 @@ def _h_mkcert_130():
         key_file = _mkcert__validate_output_name(body.get('key_file') or 'key.pem', 'key_file')
     except ValueError as e:
         return (jsonify({'ok': False, 'error': str(e)}), 400)
-    p12 = body.get('p12', False)
-    ec = body.get('ec', False)
+    p12 = _as_bool(body.get('p12', False))
+    ec = _as_bool(body.get('ec', False))
     args = []
     if ec:
         args.append('-ecdsa')
@@ -13753,6 +13769,7 @@ def _h_lsd_334():
         cmd.append('--all')
     if git:
         cmd.append('--git')
+    cmd.append('--')
     cmd.append(path)
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
@@ -13796,6 +13813,7 @@ def _h_lsd_335():
     cmd = [exe, '--tree', '--depth', str(depth), '--color', color, '--icon', icon]
     if all_:
         cmd.append('--all')
+    cmd.append('--')
     cmd.append(path)
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
@@ -13858,6 +13876,7 @@ def _h_gum_336():
     ):
         if body.get(key):
             cmd.append(flag)
+    cmd.append('--')
     cmd += text
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
@@ -13930,7 +13949,7 @@ def _h_gitleaks_338():
     mode = str(body.get('mode') or 'dir').strip().lower()
     if mode not in ('dir', 'git'):
         return (jsonify({'error': "mode must be 'dir' or 'git'"}), 400)
-    cmd = [exe, mode, path, '--report-format', 'json', '--no-banner', '--no-color', '--exit-code', '0']
+    cmd = [exe, mode, path, '--report-format', 'json', '--report-path', '-', '--no-banner', '--no-color', '--exit-code', '0']
     redact = body.get('redact')
     if redact is not None:
         try:
@@ -15475,11 +15494,18 @@ def _h_cloudflared_374():
     exe = _find_tool('cloudflared')
     if not exe:
         return (jsonify({'error': 'cloudflared is not installed', 'hint': 'winget install --id=Cloudflare.cloudflared -e'}), 503)
-    body = _json_body()
-    port = int(body.get('port') or 0)
+    body = _json_body() or {}
+    try:
+        port = int(body.get('port') or 0)
+    except (TypeError, ValueError):
+        return (jsonify({'error': "'port' must be an integer"}), 400)
     if port < 1 or port > 65535:
-        return _missing_field(body, 'port')
-    timeout = min(int(body.get('timeout', 30)), 120)
+        return (jsonify({'error': "'port' must be between 1 and 65535"}), 400)
+    try:
+        timeout = int(body.get('timeout', 30))
+    except (TypeError, ValueError):
+        return (jsonify({'error': "'timeout' must be an integer"}), 400)
+    timeout = max(1, min(timeout, 120))
     cmd = [exe, 'tunnel', '--url', 'http://localhost:%d' % port, '--no-autoupdate']
     try:
         proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, errors='replace')
