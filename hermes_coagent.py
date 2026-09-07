@@ -1108,6 +1108,16 @@ except ImportError:
     reg_clipboard_history = None
     features["clipboard_history"] = False
 try:
+    from routes_filedialog import register_routes as reg_filedialog
+except ImportError:
+    reg_filedialog = None
+    features["filedialog"] = False
+try:
+    from routes_compound import register_routes as reg_compound
+except ImportError:
+    reg_compound = None
+    features["compound_actions"] = False
+try:
     from routes_virtual_desktop import register_routes as reg_virtual_desktop
 except ImportError:
     reg_virtual_desktop = None
@@ -1466,6 +1476,12 @@ if reg_notifications:
 if reg_clipboard_history:
     reg_clipboard_history(app, state, require_auth)
     features["clipboard_history"] = True
+if reg_filedialog:
+    reg_filedialog(app, state, require_auth)
+    features["filedialog"] = True
+if reg_compound:
+    reg_compound(app, state, require_auth)
+    features["compound_actions"] = True
 if reg_virtual_desktop:
     reg_virtual_desktop(app, state, require_auth)
     features["virtual_desktop"] = True
