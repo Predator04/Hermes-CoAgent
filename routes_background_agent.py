@@ -167,7 +167,7 @@ def _run_step(step, context):
         return {**entry, "success": bool(ok), "hwnd": hwnd}
 
     if action == "click":
-        find_by = step.get("find_by", "name")
+        find_by = step.get("find_by") or "name"
         value = step.get("value", "")
         x = step.get("x")
         y = step.get("y")
@@ -245,6 +245,11 @@ def _worker_loop(run_id, task, steps, loop, loop_delay, step_delay):
         while not _STOP_EVENT.is_set():
             iteration += 1
             context = {"hwnd": 0, "window": ""}
+            with _STATE_LOCK:
+                # steps_done tracks progress within the current iteration so a
+                # progress UI (done/total) does not overrun steps_total in loop
+                # mode.
+                _STATE["steps_done"] = 0
             for step in steps:
                 if _STOP_EVENT.is_set():
                     break
@@ -357,10 +362,13 @@ def register_routes(app, state, require_auth):
         with _STATE_LOCK:
             active = _STATE["active"]
             run_id = _STATE["run_id"]
+            if active:
+                # Mark "stopping" only while still active; otherwise a worker
+                # that just finished could have its terminal state overwritten.
+                _STATE["status"] = "stopping"
         if not active:
             return jsonify({"status": "idle", "run_id": run_id, "stopped": False})
         _STOP_EVENT.set()
-        _set_status("stopping")
         worker = _WORKER.get("thread")
         if worker and worker.is_alive():
             worker.join(timeout=2.0)
