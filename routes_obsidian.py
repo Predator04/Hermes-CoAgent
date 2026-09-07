@@ -20,6 +20,9 @@ DEFAULT_VAULT = os.path.join(
 REST_URL = os.environ.get("OBSIDIAN_REST_URL", "http://127.0.0.1:27123").rstrip("/")
 REST_TOKEN = os.environ.get("OBSIDIAN_REST_API_KEY", "")
 
+MAX_NOTE_BYTES = 10 * 1024 * 1024   # 10 MB read cap
+MAX_WRITE_BYTES = 10 * 1024 * 1024  # 10 MB write cap
+
 
 def _vault():
     return Path(os.environ.get("OBSIDIAN_VAULT", DEFAULT_VAULT)).expanduser().resolve()
@@ -44,6 +47,8 @@ def _normalize_note_name(name):
     if not isinstance(name, str) or not name.strip():
         raise ValueError("note is required")
     name = name.strip().replace("\\", "/").lstrip("/")
+    if "\x00" in name:
+        raise ValueError("note name may not contain null bytes")
     if not name.lower().endswith(".md"):
         name += ".md"
     if ".." in Path(name).parts:
@@ -191,7 +196,16 @@ def register_routes(app, state, require_auth):
             return _error("note not found", 404, note=str(e))
         except ValueError as e:
             return _error(str(e))
-        content = path.read_text(encoding="utf-8", errors="replace")
+        try:
+            size = path.stat().st_size
+        except OSError as e:
+            return _error(f"cannot stat note: {e}", 500)
+        if size > MAX_NOTE_BYTES:
+            return _error("note exceeds size limit", 413, bytes=size, limit=MAX_NOTE_BYTES)
+        try:
+            content = path.read_text(encoding="utf-8", errors="replace")
+        except OSError as e:
+            return _error(f"cannot read note: {e}", 500)
         return jsonify({"note": path.stem, "path": str(path), "relative": str(path.relative_to(_vault())).replace("\\", "/"), "content": content})
 
     @app.route("/obsidian/write", methods=["POST"])
@@ -201,14 +215,17 @@ def register_routes(app, state, require_auth):
         content = data.get("content")
         if not isinstance(content, str):
             return _error("content must be a string")
+        content_bytes = len(content.encode("utf-8"))
+        if content_bytes > MAX_WRITE_BYTES:
+            return _error("content exceeds size limit", 413, bytes=content_bytes, limit=MAX_WRITE_BYTES)
+        mode = str(data.get("mode", "overwrite") or "overwrite").strip().lower()
+        if mode not in ("append", "overwrite"):
+            return _error("mode must be 'append' or 'overwrite'")
         try:
             path = _resolve_note(data.get("note") or data.get("name") or data.get("path"), must_exist=False)
         except ValueError as e:
             return _error(str(e))
         path.parent.mkdir(parents=True, exist_ok=True)
-        mode = str(data.get("mode", "overwrite") or "overwrite").strip().lower()
-        if mode not in ("append", "overwrite"):
-            return _error("mode must be 'append' or 'overwrite'")
         if mode == "append" and path.exists():
             with path.open("a", encoding="utf-8") as f:
                 f.write(content)
