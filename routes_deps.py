@@ -4,6 +4,7 @@ import importlib
 import re
 import subprocess
 import sys
+import threading
 from collections import deque
 from importlib import metadata
 
@@ -77,7 +78,7 @@ def _auth_blueprint(bp, require_auth):
 
 
 def _valid_package(package):
-    return isinstance(package, str) and 1 <= len(package) <= 160 and PACKAGE_RE.fullmatch(package)
+    return bool(isinstance(package, str) and 1 <= len(package) <= 160 and PACKAGE_RE.fullmatch(package))
 
 
 def _package_name(package):
@@ -152,8 +153,14 @@ def _check_module(module_name, package=None):
             except metadata.PackageNotFoundError:
                 continue
             except Exception:
-                break
+                # A corrupt .dist-info (bad METADATA, ValueError, etc.) should
+                # not abort the candidate loop — later candidates may still
+                # resolve to a valid version.
+                continue
     return {"module": module_name, "package": package or module_name, "installed": installed, "version": version}
+
+
+_PIP_LOCK = threading.Lock()
 
 
 def _pip_install(package):
@@ -161,12 +168,20 @@ def _pip_install(package):
         raise ValueError("Invalid package spec")
     if not _allowed_package(package):
         raise ValueError("Package is not in the allowed install list")
-    return subprocess.run(
-        [sys.executable, "-m", "pip", "install", package],
-        capture_output=True,
-        text=True,
-        timeout=600,
-    )
+    # Serialize pip runs: concurrent installs against the same site-packages
+    # can corrupt .dist-info metadata and leave half-written files.
+    with _PIP_LOCK:
+        result = subprocess.run(
+            [sys.executable, "-m", "pip", "install", package],
+            capture_output=True,
+            text=True,
+            timeout=600,
+        )
+    if result.returncode == 0:
+        # Refresh the import finder so _check_module sees the newly installed
+        # distribution in this process instead of reporting installed=False.
+        importlib.invalidate_caches()
+    return result
 
 
 @deps_bp.route("/deps", methods=["GET"])
