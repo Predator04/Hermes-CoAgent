@@ -198,7 +198,14 @@ def _run_job(job):
             job["retry_count"] = attempt
             _log(f"supervise {job['id']}: {('hang' if hang_hit else 'error-pattern')} "
                  f"attempt {attempt}, retrying in {backoff}s")
-            time.sleep(backoff)
+            deadline = time.time() + backoff
+            while time.time() < deadline and not job["_stop"].is_set():
+                time.sleep(min(0.5, max(0.0, deadline - time.time())))
+            if job["_stop"].is_set():
+                job["state"] = "stopped"
+                job["stop_reason"] = "user"
+                job["finished_at"] = time.time()
+                return
             backoff = min(backoff * 2, _MAX_BACKOFF_SEC)
             continue
 
@@ -313,6 +320,9 @@ def register_routes(app, state, require_auth):
             backoff = float(backoff)
         except (TypeError, ValueError):
             backoff = 5.0
+        if not (backoff >= 0):  # reject negative and NaN before any time.sleep()
+            backoff = 0.0
+        backoff = min(backoff, _MAX_BACKOFF_SEC)
 
         raw_cmd = d.get("command")
         if isinstance(raw_cmd, list):
