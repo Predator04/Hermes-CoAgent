@@ -169,11 +169,16 @@ def _search(query, top_k=10):
     for doc in documents:
         for chunk in doc.get("chunks", []):
             chunk_tokens = _tokenize(chunk["text"])
+            if not chunk_tokens:
+                continue
+            # Counter gives O(1) term-frequency lookups instead of O(n)
+            # list.count() per query token per chunk.
+            counts = Counter(chunk_tokens)
             # Compute TF-IDF score
             score = 0
             for qt in query_tokens:
                 if qt in vocab:
-                    tf = chunk_tokens.count(qt) / max(1, len(chunk_tokens))
+                    tf = counts[qt] / len(chunk_tokens)
                     score += tf * vocab[qt]
             if score > 0:
                 scores[chunk["id"]] = {
