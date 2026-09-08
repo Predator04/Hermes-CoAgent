@@ -2,6 +2,7 @@
 import base64
 import json
 import logging
+import re
 import os
 import tempfile
 import subprocess
@@ -22,6 +23,19 @@ def _redact(text):
         return get_governor().redact(text)
     except Exception:
         return text
+
+
+# BCP-47 language tag, e.g. "en", "en-US", "es-ES", "zh-Hans-CN".
+# Strictly validated because `lang` is interpolated into a PowerShell script in
+# the Windows OCR fallback path and must never contain script metacharacters.
+_BCP47_RE = re.compile(r"^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$")
+
+
+def _sanitize_lang(lang):
+    """Return `lang` if it is a valid BCP-47 tag, otherwise None."""
+    if isinstance(lang, str) and _BCP47_RE.match(lang):
+        return lang
+    return None
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -490,6 +504,7 @@ def _windows_ocr(pil_image, lang=None):
     is preferred over the user profile languages so non-English UI text can be
     read. Falls back through: requested lang -> user profile languages -> en-US.
     """
+    lang = _sanitize_lang(lang)
     try:
         buf = BytesIO()
         pil_image.save(buf, format="PNG")
@@ -542,6 +557,7 @@ def _windows_ocr(pil_image, lang=None):
 
 def _windows_ocr_powershell(pil_image, lang=None):
     """Fallback: Windows OCR via PowerShell (temp file approach)."""
+    lang = _sanitize_lang(lang)
     tmp_img_path = None
     tmp_ps1_path = None
     try:
