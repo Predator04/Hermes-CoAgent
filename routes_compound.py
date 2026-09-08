@@ -165,7 +165,7 @@ def _press_keys(keys):
     if not key:
         raise ValueError("no key after modifiers")
     vk = _VK_MAP.get(key)
-    if vk is None and len(key) == 1:
+    if vk is None and len(key) == 1 and key.isascii() and key.isalpha():
         vk = ord(key.upper())
     if vk is None:
         raise ValueError(f"unknown key: {key}")
@@ -306,6 +306,8 @@ def register_routes(app, state, require_auth):
 
         start = time.monotonic()
         for idx, act in enumerate(actions[:max_steps]):
+            if not isinstance(act, dict):
+                act = {}
             if getattr(state, "emergency_stop", False):
                 results.append({"index": idx, "type": act.get("type"), "ok": False,
                                 "detail": "emergency stop", "elapsed_ms": 0})
