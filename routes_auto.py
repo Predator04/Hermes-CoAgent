@@ -1814,6 +1814,46 @@ TOOLS = {
     "stars": 8826,
     "url": "https://github.com/pdfcpu/pdfcpu",
     "version_flag": "version"
+  },
+  "act": {
+    "added": "2026-09-08",
+    "command": "act -l | act -W <workflow> -j <job> | act --dryrun",
+    "desc": "act runs GitHub Actions workflows locally. List jobs in a workflow, dry-run what would execute, or run jobs against a local Docker/Podman backend — without spending CI minutes or pushing to GitHub. Ideal for testing CoAgent's CI before pushing.",
+    "endpoints": {
+      "/auto/act/info": "Feature metadata, install status, version",
+      "/auto/act/ping": "Health check",
+      "/auto/act/list": "GET/POST - list workflows and jobs (act -l)",
+      "/auto/act/run": "POST - run a workflow/job locally (or --dryrun)"
+    },
+    "exe": "act.exe",
+    "install": {
+      "winget": "winget install --id=nektos.act -e",
+      "scoop": "scoop install act",
+      "choco": "choco install act-cli"
+    },
+    "repo": "nektos/act",
+    "stars": 71848,
+    "url": "https://github.com/nektos/act"
+  },
+  "bun": {
+    "added": "2026-09-08",
+    "command": "bun -e <expr> | bun run <file> | bun install",
+    "desc": "bun is a fast JavaScript/TypeScript runtime, bundler, test runner and package manager in one. Evaluate inline JS/TS, run script files, install dependencies and bundle code headlessly from a single statically-linked binary — no Node.js install required.",
+    "endpoints": {
+      "/auto/bun/info": "Feature metadata, install status, version",
+      "/auto/bun/ping": "Health check",
+      "/auto/bun/eval": "POST - evaluate an inline JS/TS expression (bun -e)",
+      "/auto/bun/run": "POST - run a JS/TS script file with args"
+    },
+    "exe": "bun.exe",
+    "install": {
+      "winget": "winget install --id=Oven-sh.Bun -e",
+      "scoop": "scoop install bun",
+      "npm": "npm install -g bun"
+    },
+    "repo": "oven-sh/bun",
+    "stars": 95917,
+    "url": "https://github.com/oven-sh/bun"
   }
 }
 
@@ -15734,6 +15774,143 @@ def _h_pdfcpu_378():
     return jsonify({'ok': True, 'input': path_, 'output': output, 'src_size': src_size, 'out_size': out_size, 'saved': (src_size - out_size) if out_size is not None else None})
 
 
+def _h_act_379():
+    """List workflows and jobs in the current repo (or a given workflow file).
+
+        Body (JSON, optional):
+            workflow (str, optional): path to a workflow YAML. Default: discover
+                                      .github/workflows/*.yml.
+
+        Runs `act -l`, which does NOT require Docker. Returns the workflow/job
+        list as text.
+    """
+    exe = _find_tool('act')
+    if not exe:
+        return (jsonify({'error': 'act is not installed', 'hint': 'winget install --id=nektos.act -e'}), 503)
+    body = _json_body() or {}
+    workflow = (body.get('workflow') or '').strip()
+    cmd = [exe, '-l']
+    if workflow:
+        cmd += ['-W', workflow]
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, errors='replace', timeout=120)
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': 'act list timed out'}), 504)
+    except Exception as e:
+        _log('[act list] %s' % str(e))
+        return (jsonify({'error': str(e)}), 500)
+    out = (r.stdout or '').strip()
+    if r.returncode != 0:
+        msg = (r.stderr or out or 'act list failed').strip()
+        _log('[act list] rc=%s: %s' % (r.returncode, msg[:300]))
+        return (jsonify({'ok': False, 'error': msg[:2000]}), 500)
+    return jsonify({'ok': True, 'workflow': workflow or None, 'jobs': out})
+
+
+def _h_act_380():
+    """Run (or dry-run) a GitHub Actions workflow/job locally.
+
+        Body (JSON):
+            workflow (str, required): path to the workflow YAML (or '-' for
+                                      auto-discovery).
+            job (str, optional): specific job id to run.
+            dryrun (bool, optional): print what would run without executing
+                                     (default true; no Docker needed).
+
+        NOTE: a real (non-dryrun) run requires Docker or Podman to be running.
+    """
+    exe = _find_tool('act')
+    if not exe:
+        return (jsonify({'error': 'act is not installed', 'hint': 'winget install --id=nektos.act -e'}), 503)
+    body = _json_body() or {}
+    workflow = (body.get('workflow') or '').strip()
+    if not workflow:
+        return (jsonify({'error': "'workflow' (path to workflow YAML) is required"}), 400)
+    job = (body.get('job') or '').strip()
+    dryrun = bool(body.get('dryrun', True))
+    cmd = [exe, '-W', workflow]
+    if dryrun:
+        cmd.append('--dryrun')
+    if job:
+        cmd += ['-j', job]
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, errors='replace', timeout=300)
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': 'act run timed out'}), 504)
+    except Exception as e:
+        _log('[act run] %s' % str(e))
+        return (jsonify({'error': str(e)}), 500)
+    out = (r.stdout or '').strip()
+    err = (r.stderr or '').strip()
+    if r.returncode != 0:
+        msg = (err or out or 'act run failed').strip()
+        _log('[act run] rc=%s: %s' % (r.returncode, msg[:300]))
+        return (jsonify({'ok': False, 'dryrun': dryrun, 'stdout': out[:2000], 'error': msg[:2000]}), 500)
+    return jsonify({'ok': True, 'dryrun': dryrun, 'workflow': workflow, 'job': job or None, 'stdout': out, 'stderr': err})
+
+
+def _h_bun_381():
+    """Evaluate an inline JavaScript/TypeScript expression with `bun -e`.
+
+        Body (JSON):
+            code (str, required): JS/TS source to evaluate.
+
+        Returns stdout/stderr and the exit code.
+    """
+    exe = _find_tool('bun')
+    if not exe:
+        return (jsonify({'error': 'bun is not installed', 'hint': 'winget install --id=Oven-sh.Bun -e'}), 503)
+    body = _json_body() or {}
+    code = body.get('code')
+    if not code or not isinstance(code, str):
+        return (jsonify({'error': "'code' (string) is required"}), 400)
+    try:
+        r = subprocess.run([exe, '-e', code], capture_output=True, text=True, errors='replace', timeout=60)
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': 'bun eval timed out'}), 504)
+    except Exception as e:
+        _log('[bun eval] %s' % str(e))
+        return (jsonify({'error': str(e)}), 500)
+    out = (r.stdout or '').strip()
+    err = (r.stderr or '').strip()
+    return jsonify({'ok': r.returncode == 0, 'exit_code': r.returncode, 'stdout': out, 'stderr': err})
+
+
+def _h_bun_382():
+    """Run a JS/TS script file with `bun <file> [args]`.
+
+        Body (JSON):
+            file (str, required): path to the script file.
+            args (list[str], optional): command-line args to pass through.
+            cwd (str, optional): working directory.
+
+        Returns stdout/stderr and the exit code.
+    """
+    exe = _find_tool('bun')
+    if not exe:
+        return (jsonify({'error': 'bun is not installed', 'hint': 'winget install --id=Oven-sh.Bun -e'}), 503)
+    body = _json_body() or {}
+    file_ = body.get('file')
+    if not file_:
+        return (jsonify({'error': "'file' (script path) is required"}), 400)
+    if not os.path.isfile(file_):
+        return (jsonify({'error': 'file does not exist: %s' % file_}), 404)
+    args = body.get('args') or []
+    if not isinstance(args, list) or not all(isinstance(a, str) for a in args):
+        return (jsonify({'error': "'args' must be a list of strings"}), 400)
+    cmd = [exe, file_] + args
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, errors='replace', timeout=120)
+    except subprocess.TimeoutExpired:
+        return (jsonify({'error': 'bun run timed out'}), 504)
+    except Exception as e:
+        _log('[bun run] %s' % str(e))
+        return (jsonify({'error': str(e)}), 500)
+    out = (r.stdout or '').strip()
+    err = (r.stderr or '').strip()
+    return jsonify({'ok': r.returncode == 0, 'exit_code': r.returncode, 'stdout': out, 'stderr': err})
+
+
 def register_routes(app, state, require_auth):
     global _STATE
     _STATE = state
@@ -16119,6 +16296,10 @@ def register_routes(app, state, require_auth):
         ('/auto/pdfcpu/validate', ['POST'], _h_pdfcpu_376),
         ('/auto/pdfcpu/merge', ['POST'], _h_pdfcpu_377),
         ('/auto/pdfcpu/optimize', ['POST'], _h_pdfcpu_378),
+        ('/auto/act/list', ['GET', 'POST'], _h_act_379),
+        ('/auto/act/run', ['POST'], _h_act_380),
+        ('/auto/bun/eval', ['POST'], _h_bun_381),
+        ('/auto/bun/run', ['POST'], _h_bun_382),
     ]
     for _path, _methods, _fn in _ACTIONS:
         app.add_url_rule(_path, endpoint=_fn.__name__, view_func=require_auth(_fn), methods=_methods)
