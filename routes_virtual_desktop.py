@@ -55,6 +55,7 @@ if os.name == "nt":
 
 
 _DEFAULT_TIMEOUT = 15
+_CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 
 def _windows_only(detail=None):
@@ -115,6 +116,7 @@ def _run_powershell(script, timeout=_DEFAULT_TIMEOUT):
             text=True,
             timeout=timeout,
             check=False,
+            creationflags=_CREATE_NO_WINDOW,
         )
     except subprocess.TimeoutExpired:
         return "", "timeout", 124
