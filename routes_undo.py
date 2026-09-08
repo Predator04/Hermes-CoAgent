@@ -232,9 +232,14 @@ def register_routes(app, state, require_auth):
         # would interleave clipboard restores and Ctrl+A/Ctrl+V sequences).
         with _UNDO_EXEC_LOCK:
             payload, status = _undo_action(app, entry)
-            if status >= 400:
+            # Re-insert only on transient (5xx) failures so a later retry can
+            # succeed. Permanent 4xx failures (e.g. "cannot undo this action
+            # type" or oversized text) must be dropped, otherwise a single
+            # un-undoable entry would be popped and re-inserted forever and
+            # block undo of every earlier valid action in the stack.
+            if status >= 500:
                 with _LOCK:
-                    _HISTORY.append(entry)  # re-insert on failure
+                    _HISTORY.append(entry)  # re-insert on transient failure
         return jsonify(payload), status
 
     @bp.route("/undo/history", methods=["GET"])
