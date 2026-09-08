@@ -157,8 +157,15 @@ def _find_dialog():
     wins = _enum_dialog_windows()
     if not wins:
         return None, None
-    # Most recent dialog-looking window.
-    return wins[-1][0], wins[-1][1]
+    # Prefer the foreground window if it is a dialog-looking window; otherwise
+    # fall back to the topmost match (EnumWindows enumerates top-level windows
+    # front-to-back in Z-order, so wins[0] is the most-recently-active dialog).
+    user32 = ctypes.windll.user32
+    fg = user32.GetForegroundWindow()
+    for hwnd, title in wins:
+        if hwnd == fg:
+            return hwnd, title
+    return wins[0][0], wins[0][1]
 
 
 def _focus_window(hwnd):
