@@ -853,8 +853,14 @@ def register_routes(app, state, require_auth):
         Body: {"title": "...", "monitor_index": 1, "maximize": false}
         Monitor index 0 = primary; 1 = second monitor, etc."""
         d = _json_body()
-        title = d.get("title", "").strip()
-        monitor_index = int(d.get("monitor_index", 0))
+        title = d.get("title", "")
+        if not isinstance(title, str):
+            return jsonify({"error": "title must be a string"}), 400
+        title = title.strip()
+        try:
+            monitor_index = max(0, int(d.get("monitor_index", 0)))
+        except (TypeError, ValueError):
+            return jsonify({"error": "monitor_index must be an integer"}), 400
         maximize = bool(d.get("maximize", False))
 
         if not title:
