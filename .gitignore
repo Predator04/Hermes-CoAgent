@@ -23,6 +23,7 @@ telegram_config.json
 recipes.json
 *.db
 coagent_token.txt
+.camofox_token
 
 # Governance runtime state (never commit policy/audit)
 governance.json

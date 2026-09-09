@@ -888,6 +888,13 @@ except ImportError:
     _console("[WARN] routes_browser_final.py not found")
 
 try:
+    from routes_camofox import register_routes as reg_camofox
+    CAMOFOX_AVAILABLE = True
+except ImportError:
+    CAMOFOX_AVAILABLE = False
+    _console("[WARN] routes_camofox.py not found")
+
+try:
     from routes_mobile import register_routes as reg_mobile
     MOBILE_AVAILABLE = True
 except ImportError:
@@ -1379,6 +1386,9 @@ if HEALER_AVAILABLE:
 if BROWSER_FINAL_AVAILABLE:
     reg_browser_final(app, state, require_auth)
     features["browser_automation_v2"] = True
+if CAMOFOX_AVAILABLE:
+    reg_camofox(app, state, require_auth)
+    features["camofox_browser"] = True
 if MOBILE_AVAILABLE:
     reg_mobile(app, state, require_auth)
     features["mobile_remote_control"] = True
@@ -1719,6 +1729,7 @@ def route_version():
                                  "goal_runner_timeline_sse",
                                  "scheduled_recipes", "self_healing_mode",
                                  "browser_automation_v2", "browser_undetectable",
+                                 "camofox_browser",
                                   "mobile_remote_control",
                                  "memory", "cross_session_memory", "sqlite_bm25_memory",
                                  "mcp_mode", "dom_mode", "patchright", "multi_provider_ai",
