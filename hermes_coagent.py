@@ -895,6 +895,13 @@ except ImportError:
     _console("[WARN] routes_camofox.py not found")
 
 try:
+    from routes_foreground import register_routes as reg_foreground
+    FOREGROUND_AVAILABLE = True
+except ImportError:
+    FOREGROUND_AVAILABLE = False
+    _console("[WARN] routes_foreground.py not found")
+
+try:
     from routes_mobile import register_routes as reg_mobile
     MOBILE_AVAILABLE = True
 except ImportError:
@@ -1389,6 +1396,9 @@ if BROWSER_FINAL_AVAILABLE:
 if CAMOFOX_AVAILABLE:
     reg_camofox(app, state, require_auth)
     features["camofox_browser"] = True
+if FOREGROUND_AVAILABLE:
+    reg_foreground(app, state, require_auth)
+    features["foreground_window"] = True
 if MOBILE_AVAILABLE:
     reg_mobile(app, state, require_auth)
     features["mobile_remote_control"] = True
@@ -1730,6 +1740,7 @@ def route_version():
                                  "scheduled_recipes", "self_healing_mode",
                                  "browser_automation_v2", "browser_undetectable",
                                  "camofox_browser",
+                                 "foreground_window",
                                   "mobile_remote_control",
                                  "memory", "cross_session_memory", "sqlite_bm25_memory",
                                  "mcp_mode", "dom_mode", "patchright", "multi_provider_ai",
