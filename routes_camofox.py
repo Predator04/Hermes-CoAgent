@@ -252,8 +252,12 @@ def route_camofox_scroll():
     if direction not in {"up", "down", "left", "right"}:
         return _error("direction must be up/down/left/right")
     payload = {"userId": user_id, "direction": direction}
-    if data.get("amount") is not None:
-        payload["amount"] = int(data.get("amount"))
+    amount = data.get("amount")
+    if amount is not None:
+        try:
+            payload["amount"] = int(amount)
+        except (TypeError, ValueError):
+            return _error("amount must be an integer")
     result, _ctype = _call("POST", "/tabs/%s/scroll" % urllib.parse.quote(str(tab_id)), payload)
     if isinstance(result, dict) and "error" in result:
         return jsonify(result), 502
@@ -269,7 +273,11 @@ def route_camofox_links():
     path = "/tabs/%s/links?userId=%s" % (urllib.parse.quote(tab_id), urllib.parse.quote(user_id))
     limit = request.args.get("limit")
     if limit:
-        path += "&limit=%s" % int(limit)
+        try:
+            int(limit)
+        except ValueError:
+            return _error("limit must be an integer")
+        path += "&limit=%s" % limit
     result, _ctype = _call("GET", path)
     if isinstance(result, dict) and "error" in result:
         return jsonify(result), 502
