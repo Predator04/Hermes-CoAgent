@@ -186,3 +186,12 @@ Optional: `dxcam` (GPU screenshots), `playwright`/`patchright` (browser control)
 - Tests in `tests/` using Flask test client
 - All responses are JSON (except dashboard HTML)
 - Version: read from `VERSION` file — never hardcode version strings
+
+## Known Pitfalls (verify these before shipping)
+
+1. **Double route registration** — `hermes_coagent.py` has TWO registration patterns (`if X_AVAILABLE:` and `if reg_X:`). The cron auto-fix pipeline sometimes adds a module to BOTH → "blueprint already registered" startup crash. After adding routes, grep `reg_X(app` and confirm none registers twice.
+2. **`test_compile.py` is SYNTAX-ONLY** — runtime crashes (double registration, bad imports) pass it. The real check is booting on a spare port: `python hermes_coagent.py --port 9125`.
+3. **Flask dict-based lambda routes** need unique `endpoint=` names or they crash with AssertionError; and do NOT re-register routes already added via `@app.route` at module level (e.g. `/uia/tree`).
+4. **`/version` has its OWN hardcoded features list** separate from the `features` dict. Setting `features["x"]=True` in `hermes_coagent.py` does NOT surface the flag in `GET /version` — add the name to BOTH the dict and the hardcoded list in `route_version()`.
+5. **Wrap ALL route-module imports in try/except** — the cron pipeline creates route modules on GitHub that don't exist locally; a bare import crashes startup.
+6. **`import traceback` at top level** in any module that registers a global error handler.

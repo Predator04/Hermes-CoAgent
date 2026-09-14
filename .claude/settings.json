@@ -1,0 +1,18 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit(*.py)",
+        "hooks": [
+          { "type": "command", "command": "for f in $CLAUDE_FILE_PATHS; do case \"$f\" in *.py) python3 -m py_compile \"$f\" || exit 1;; esac; done" }
+        ]
+      },
+      {
+        "matcher": "Write(*.py)",
+        "hooks": [
+          { "type": "command", "command": "for f in $CLAUDE_FILE_PATHS; do case \"$f\" in *.py) python3 -m py_compile \"$f\" || exit 1;; esac; done" }
+        ]
+      }
+    ]
+  }
+}
