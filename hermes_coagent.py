@@ -902,6 +902,13 @@ except ImportError:
     _console("[WARN] routes_foreground.py not found")
 
 try:
+    from routes_disk import register_routes as reg_disk
+    DISK_AVAILABLE = True
+except ImportError:
+    DISK_AVAILABLE = False
+    _console("[WARN] routes_disk.py not found")
+
+try:
     from routes_mobile import register_routes as reg_mobile
     MOBILE_AVAILABLE = True
 except ImportError:
@@ -1399,6 +1406,9 @@ if CAMOFOX_AVAILABLE:
 if FOREGROUND_AVAILABLE:
     reg_foreground(app, state, require_auth)
     features["foreground_window"] = True
+if DISK_AVAILABLE:
+    reg_disk(app, state, require_auth)
+    features["disk_space"] = True
 if MOBILE_AVAILABLE:
     reg_mobile(app, state, require_auth)
     features["mobile_remote_control"] = True
@@ -1741,6 +1751,7 @@ def route_version():
                                  "browser_automation_v2", "browser_undetectable",
                                  "camofox_browser",
                                  "foreground_window",
+                                 "disk_space",
                                   "mobile_remote_control",
                                  "memory", "cross_session_memory", "sqlite_bm25_memory",
                                  "mcp_mode", "dom_mode", "patchright", "multi_provider_ai",
