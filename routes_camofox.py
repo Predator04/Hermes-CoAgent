@@ -71,7 +71,13 @@ def _call(method, path, body=None, timeout=90):
                 return raw, ctype
             import json
 
-            return json.loads(raw.decode("utf-8")), ctype
+            try:
+                return json.loads(raw.decode("utf-8")), ctype
+            except (ValueError, UnicodeDecodeError):
+                return {
+                    "error": "camofox returned non-JSON response",
+                    "detail": raw[:300].decode("utf-8", "replace"),
+                }, ctype
     except urllib.error.HTTPError as exc:
         try:
             detail = exc.read().decode("utf-8", "replace")[:500]
@@ -102,13 +108,14 @@ def _tab_id(data):
 
 
 def _url_guard(url):
+    """Return (error_message, status_code) or None if the URL is safe to pass."""
     if not isinstance(url, str) or not url.strip():
-        return "url is required"
+        return "url is required", 400
     parsed = urllib.parse.urlparse(url.strip())
     if parsed.scheme not in {"http", "https"}:
-        return "url must be http or https"
+        return "url must be http or https", 400
     if _is_private_url(url.strip()):
-        return "url resolves to a blocked private or internal address"
+        return "url resolves to a blocked private or internal address", 403
     return None
 
 
@@ -135,7 +142,7 @@ def route_camofox_open():
     url = data.get("url")
     guard = _url_guard(url)
     if guard:
-        return _error(guard, 403)
+        return _error(guard[0], guard[1])
     user_id = _uid(data)
     session_key = data.get("session_key") or "coagent"
     result, _ctype = _call(
@@ -143,6 +150,8 @@ def route_camofox_open():
     )
     if isinstance(result, dict) and "error" in result:
         return jsonify(result), 502
+    if not isinstance(result, dict):
+        return jsonify({"error": "unexpected camofox response", "detail": str(result)[:200]}), 502
     return jsonify({"tab_id": result.get("tabId"), "url": result.get("url"), "title": result.get("title")})
 
 
@@ -161,7 +170,7 @@ def route_camofox_navigate():
         url = data.get("url")
         guard = _url_guard(url)
         if guard:
-            return _error(guard, 403)
+            return _error(guard[0], guard[1])
         payload["url"] = url.strip()
     result, _ctype = _call("POST", "/tabs/%s/navigate" % urllib.parse.quote(str(tab_id)), payload)
     if isinstance(result, dict) and "error" in result:
@@ -181,6 +190,8 @@ def route_camofox_snapshot():
     result, _ctype = _call("GET", path)
     if isinstance(result, dict) and "error" in result:
         return jsonify(result), 502
+    if not isinstance(result, dict):
+        return jsonify({"error": "unexpected camofox response", "detail": str(result)[:200]}), 502
     return jsonify({"tab_id": tab_id, "url": result.get("url"), "text": result.get("snapshot"),
                     "refs": result.get("refsCount"), "truncated": result.get("truncated")})
 
@@ -195,6 +206,8 @@ def route_camofox_screenshot():
     raw, ctype = _call("GET", path)
     if isinstance(raw, dict) and "error" in raw:
         return jsonify(raw), 502
+    if not isinstance(raw, bytes):
+        return jsonify({"error": "non-image response from camofox", "detail": str(raw)[:200]}), 502
     return Response(raw, mimetype=ctype or "image/png")
 
 
