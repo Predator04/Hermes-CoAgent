@@ -38,8 +38,8 @@ def _label_and_fs(letter):
         import subprocess
         ps = (
             "powershell.exe -NoProfile -NonInteractive -Command "
-            "\"(Get-Volume -DriveLetter {0} | Select-Object -ExpandProperty "
-            "FileSystemLabel,FileSystem) -join '|'\""
+            "\"(Get-Volume -DriveLetter {0} | ForEach-Object {{ "
+            "$_.FileSystemLabel + '|' + $_.FileSystem }})\""
         ).format(letter)
         out = subprocess.run(
             ps, capture_output=True, text=True, timeout=10, shell=True
