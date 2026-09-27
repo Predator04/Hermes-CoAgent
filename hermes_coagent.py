@@ -909,6 +909,13 @@ except ImportError:
     _console("[WARN] routes_disk.py not found")
 
 try:
+    from routes_uia_patterns import register_routes as reg_uia_patterns
+    UIA_PATTERNS_AVAILABLE = True
+except ImportError:
+    UIA_PATTERNS_AVAILABLE = False
+    _console("[WARN] routes_uia_patterns.py not found")
+
+try:
     from routes_mobile import register_routes as reg_mobile
     MOBILE_AVAILABLE = True
 except ImportError:
@@ -1409,6 +1416,9 @@ if FOREGROUND_AVAILABLE:
 if DISK_AVAILABLE:
     reg_disk(app, state, require_auth)
     features["disk_space"] = True
+if UIA_PATTERNS_AVAILABLE:
+    reg_uia_patterns(app, state, require_auth)
+    features["uia_control_patterns"] = True
 if MOBILE_AVAILABLE:
     reg_mobile(app, state, require_auth)
     features["mobile_remote_control"] = True
@@ -1752,6 +1762,7 @@ def route_version():
                                  "camofox_browser",
                                  "foreground_window",
                                  "disk_space",
+                                 "uia_control_patterns",
                                   "mobile_remote_control",
                                  "memory", "cross_session_memory", "sqlite_bm25_memory",
                                  "mcp_mode", "dom_mode", "patchright", "multi_provider_ai",
