@@ -58,8 +58,11 @@ def route_help():
                 "process_start": {"method": "POST", "path": "/process/start", "body": {"path": "notepad.exe", "args": ""}, "desc": "Start a process"},
                 "process_kill": {"method": "POST", "path": "/process/kill", "body": {"name": "notepad.exe"}, "desc": "Kill a process by name"},
                 "window_list": {"method": "GET", "path": "/window/list", "desc": "List all visible windows"},
-                "window_activate": {"method": "POST", "path": "/window/activate", "body": {"title": "Notepad"}, "desc": "Activate/focus a window"},
-                "window_close": {"method": "POST", "path": "/window/close", "body": {"title": "Untitled - Notepad"}, "desc": "Close a window"},
+                "window_focus": {"method": "POST", "path": "/window/focus", "body": {"title": "Notepad"}, "desc": "Focus/activate a window (pid, title, or name)"},
+                "window_close": {"method": "POST", "path": "/window/close", "body": {"title": "Untitled - Notepad"}, "desc": "Close a window gracefully (WM_CLOSE)"},
+                "window_minimize": {"method": "POST", "path": "/window/minimize", "body": {"title": "Notepad"}, "desc": "Minimize a window"},
+                "window_maximize": {"method": "POST", "path": "/window/maximize", "body": {"title": "Notepad"}, "desc": "Maximize a window"},
+                "window_restore": {"method": "POST", "path": "/window/restore", "body": {"title": "Notepad"}, "desc": "Restore a minimized/maximized window"},
             },
             "AI Copilot": {
                 "copilot_goal": {"method": "POST", "path": "/copilot/goal", "body": {"goal": "open notepad and type hello", "max_steps": 10}, "desc": "Execute multi-step automation goal via AI"},

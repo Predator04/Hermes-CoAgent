@@ -902,6 +902,13 @@ except ImportError:
     _console("[WARN] routes_foreground.py not found")
 
 try:
+    from routes_window import register_routes as reg_window
+    WINDOW_AVAILABLE = True
+except ImportError:
+    WINDOW_AVAILABLE = False
+    _console("[WARN] routes_window.py not found")
+
+try:
     from routes_disk import register_routes as reg_disk
     DISK_AVAILABLE = True
 except ImportError:
@@ -1413,6 +1420,9 @@ if CAMOFOX_AVAILABLE:
 if FOREGROUND_AVAILABLE:
     reg_foreground(app, state, require_auth)
     features["foreground_window"] = True
+if WINDOW_AVAILABLE:
+    reg_window(app, state, require_auth)
+    features["window_control"] = True
 if DISK_AVAILABLE:
     reg_disk(app, state, require_auth)
     features["disk_space"] = True
