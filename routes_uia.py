@@ -1040,3 +1040,86 @@ def register_routes(app, state, require_auth):
         button = d.get("button", "left")
         result = ue.click_icon_by_template(icon_path, threshold, button)
         return jsonify(result)
+
+    @app.route("/uia/wait", methods=["POST"])
+    @require_auth
+    def route_uia_wait():
+        """Block until a UI element appears or disappears.
+
+        Eliminates blind sleep + /uia/find poll loops for the driving agent:
+        poll the UIA tree at interval_ms until a node whose name / automation_id
+        / value contains the needle appears (or, until=disappear, is gone).
+        """
+        d = _json_body()
+        needle = str(d.get("text") or d.get("name") or d.get("automation_id") or "").strip()
+        if not needle:
+            return _missing_field("text")
+        until = str(d.get("until") or "appear").strip().lower()
+        if until not in ("appear", "disappear"):
+            until = "appear"
+        timeout_ms = _safe_int(d.get("timeout_ms", 5000))
+        if timeout_ms is None:
+            timeout_ms = 5000
+        timeout_ms = max(100, min(30000, timeout_ms))
+        interval_ms = _safe_int(d.get("interval_ms", 250))
+        if interval_ms is None:
+            interval_ms = 250
+        interval_ms = max(100, min(2000, interval_ms))
+
+        needle_l = needle.lower()
+        start = time.monotonic()
+        deadline = start + timeout_ms / 1000.0
+        matched = False
+        matched_node = None
+
+        while time.monotonic() < deadline:
+            try:
+                snap = ue.uia_snapshot(timeout=5)
+            except Exception:
+                snap = {"success": False}
+            found = None
+            if snap.get("success"):
+                for node in _walk_uia_nodes(snap.get("tree", {})):
+                    haystacks = (
+                        str(node.get("name") or "").lower(),
+                        str(node.get("automation_id") or "").lower(),
+                        str(node.get("value") or "").lower(),
+                    )
+                    if any(needle_l in h for h in haystacks if h):
+                        found = node
+                        break
+            if until == "appear":
+                if found is not None:
+                    matched, matched_node = True, found
+                    break
+            else:  # disappear: a failed snapshot is NOT treated as "gone"
+                if found is None:
+                    matched = True
+                    break
+            time.sleep(interval_ms / 1000.0)
+
+        elapsed_ms = int((time.monotonic() - start) * 1000)
+        resp = {
+            "ok": True,
+            "matched": matched,
+            "timed_out": not matched,
+            "elapsed_ms": elapsed_ms,
+            "until": until,
+            "query": needle,
+        }
+        if matched and until == "appear" and matched_node is not None:
+            element = {
+                "name": matched_node.get("name", ""),
+                "automation_id": matched_node.get("automation_id", ""),
+                "control_type": matched_node.get("control_type", ""),
+                "class_name": matched_node.get("class_name", ""),
+            }
+            rect = _rect_payload(matched_node.get("rect"))
+            if rect:
+                element.update(rect)
+                element["center"] = {
+                    "x": rect["x"] + rect["width"] // 2,
+                    "y": rect["y"] + rect["height"] // 2,
+                }
+            resp["element"] = element
+        return jsonify(resp)
