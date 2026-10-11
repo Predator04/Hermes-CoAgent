@@ -1822,7 +1822,7 @@ def route_dashboard2():
         import auth
         safe_token = _json.dumps(auth.AUTH_TOKEN or "")
         html = html.replace(
-            'let token = (queryToken || sessionStorage.getItem("hermes_token") || sessionStorage.getItem("coagent_token") || "").replace(/^Bearer\s+/i, "");',
+            r'let token = (queryToken || sessionStorage.getItem("hermes_token") || sessionStorage.getItem("coagent_token") || "").replace(/^Bearer\s+/i, "");',
             f'let token = {safe_token} || queryToken || sessionStorage.getItem("hermes_token") || sessionStorage.getItem("coagent_token") || "";'
         )
         return Response(html, mimetype="text/html")
