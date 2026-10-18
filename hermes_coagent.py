@@ -754,6 +754,7 @@ from routes_telegram import register_routes as reg_telegram
 from routes_memory import register_routes as reg_memory, memory_stats
 from routes_reminders import register_routes as reg_reminders
 from routes_hud import register_routes as reg_hud
+from glow_border import register_routes as reg_glow
 from routes_idle import register_routes as reg_idle
 from routes_wsl import register_routes as reg_wsl
 from routes_gamepad import register_routes as reg_gamepad
@@ -1354,6 +1355,8 @@ reg_reminders(app, state, require_auth)
 features["reminders"] = True
 reg_hud(app, state, require_auth)
 features["hud_overlay"] = True
+reg_glow(app, state, require_auth)
+features["glow_border"] = True
 if TELEMETRY_AVAILABLE:
     app.register_blueprint(telem_bp)
     features["telemetry"] = True
