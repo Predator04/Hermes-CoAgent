@@ -917,6 +917,13 @@ except ImportError:
     _console("[WARN] routes_disk.py not found")
 
 try:
+    from routes_network import register_routes as reg_network
+    NETWORK_AVAILABLE = True
+except ImportError:
+    NETWORK_AVAILABLE = False
+    _console("[WARN] routes_network.py not found")
+
+try:
     from routes_uia_patterns import register_routes as reg_uia_patterns
     UIA_PATTERNS_AVAILABLE = True
 except ImportError:
@@ -1429,6 +1436,9 @@ if WINDOW_AVAILABLE:
 if DISK_AVAILABLE:
     reg_disk(app, state, require_auth)
     features["disk_space"] = True
+if NETWORK_AVAILABLE:
+    reg_network(app, state, require_auth)
+    features["network_status"] = True
 if UIA_PATTERNS_AVAILABLE:
     reg_uia_patterns(app, state, require_auth)
     features["uia_control_patterns"] = True
