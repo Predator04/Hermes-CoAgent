@@ -1722,6 +1722,8 @@ def route_agent_exec():
             _console(f"[agent] exec stream failed: {exc}")
             return _error(str(exc), 500, type=type(exc).__name__)
 
+    from glow_border import auto_start, auto_done
+    auto_start()
     try:
         if provider != "codex":
             result = _execute_provider(data, provider, purpose="exec")
@@ -1740,6 +1742,8 @@ def route_agent_exec():
     except Exception as exc:
         _console(f"[agent] exec failed: {exc}")
         return _error(str(exc), 500, type=type(exc).__name__)
+    finally:
+        auto_done()
 
 
 @agent_bp.route("/agent/exec-stream", methods=["POST"])

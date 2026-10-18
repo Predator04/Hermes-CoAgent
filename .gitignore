@@ -39,3 +39,4 @@ CoAgent.spec
 traces/
 skills/
 recordings/
+glow_config.json

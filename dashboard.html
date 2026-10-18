@@ -884,6 +884,34 @@ tr:hover td { background: rgba(45, 212, 191, .04); }
             <div id="tunnelUrl" class="output" style="display:none"></div>
           </div>
         </section>
+        <section class="panel">
+          <div class="panel-head"><h2>Glow Border</h2></div>
+          <div class="panel-body stack">
+            <div class="form-grid">
+              <select id="glowColor">
+                <option value="rainbow">Rainbow</option>
+                <option value="red">Red</option>
+                <option value="blue">Blue</option>
+                <option value="green">Green</option>
+                <option value="cyan">Cyan</option>
+                <option value="purple">Purple</option>
+                <option value="amber">Amber</option>
+                <option value="white">White</option>
+              </select>
+              <select id="glowSpeed">
+                <option value="slow">Slow</option>
+                <option value="normal">Normal</option>
+                <option value="fast">Fast</option>
+              </select>
+            </div>
+            <label class="row"><input id="glowAuto" type="checkbox" checked> Auto show while working</label>
+            <div class="row">
+              <button id="glowSave" class="primary">Save</button>
+              <button id="glowPreview">Preview</button>
+              <button id="glowStop" class="danger">Stop</button>
+            </div>
+          </div>
+        </section>
       </div>
     </section>
   </main>
@@ -2231,6 +2259,31 @@ tr:hover td { background: rgba(45, 212, 191, .04); }
     $("tunnelStart").addEventListener("click", () => startTunnel().catch(err => toast("Start failed: " + err.message)));
     $("tunnelStop").addEventListener("click", () => stopTunnel().catch(err => toast("Stop failed: " + err.message)));
     $("tunnelCopy").addEventListener("click", copyTunnelUrl);
+    async function loadGlow() {
+      try {
+        const c = await api("/glow/config");
+        if (c.color) $("glowColor").value = c.color;
+        if (c.speed) $("glowSpeed").value = c.speed;
+        $("glowAuto").checked = !!c.auto;
+      } catch (err) { toast("Glow load failed: " + err.message); }
+    }
+    $("glowSave").addEventListener("click", async () => {
+      try {
+        await api("/glow/config", { method: "POST", body: { color: $("glowColor").value, speed: $("glowSpeed").value, auto: $("glowAuto").checked } });
+        toast("Glow settings saved");
+      } catch (err) { toast("Glow save failed: " + err.message); }
+    });
+    $("glowPreview").addEventListener("click", async () => {
+      try {
+        await api("/glow/start", { method: "POST", body: { color: $("glowColor").value, speed: $("glowSpeed").value } });
+        toast("Glow previewing");
+      } catch (err) { toast("Glow preview failed: " + err.message); }
+    });
+    $("glowStop").addEventListener("click", async () => {
+      try { await api("/glow/stop", { method: "POST" }); toast("Glow stopped"); }
+      catch (err) { toast("Stop failed: " + err.message); }
+    });
+    loadGlow();
     $("wfNew").addEventListener("click", wfNew);
     $("wfSave").addEventListener("click", () => wfSave().catch(err => toast("Save failed: " + err.message)));
     $("wfCompile").addEventListener("click", () => wfCompile().catch(err => toast("Compile failed: " + err.message)));

@@ -13,15 +13,18 @@ Routes:
 
 import ctypes
 import math
+import os
 import threading
 import time
 from ctypes import wintypes
 
 from flask import Blueprint, jsonify
 
-from shared import _console, _json_body, _wrap_registered_blueprint_routes
+from shared import COAGENT_DIR, _console, _json_body, _wrap_registered_blueprint_routes
 
 glow_bp = Blueprint("glow", __name__)
+
+GLOW_CONFIG_FILE = COAGENT_DIR / "glow_config.json" if COAGENT_DIR else None
 
 GLOW_COLORS = {
     "rainbow": None,
@@ -392,6 +395,7 @@ def _banner_for_monitor(stop_event, mx, my, mw, mh):
     root = tk.Tk()
     root.overrideredirect(True)
     root.attributes("-topmost", True)
+    root.attributes("-alpha", 0.88)
     root.geometry(f"{mw}x{H}+{mx}+{my}")
     root.configure(bg="#0d141e")
     frame = tk.Frame(root, bg="#0d141e")
@@ -477,6 +481,53 @@ def _stop_glow():
         return dict(_STATE)
 
 
+def _load_config():
+    cfg = {"color": "rainbow", "speed": "slow", "auto": True}
+    try:
+        import json as _json
+        if GLOW_CONFIG_FILE and os.path.exists(GLOW_CONFIG_FILE):
+            data = _json.loads(open(GLOW_CONFIG_FILE, encoding="utf-8").read())
+            if isinstance(data, dict):
+                cfg.update(data)
+    except Exception:
+        pass
+    return cfg
+
+
+def _save_config(cfg):
+    try:
+        import json as _json
+        if GLOW_CONFIG_FILE:
+            GLOW_CONFIG_FILE.write_text(_json.dumps(cfg, indent=2), encoding="utf-8")
+            os.chmod(GLOW_CONFIG_FILE, 0o600)
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def auto_start():
+    """Start the glow for an agent task (respects config; no-op if already active or auto off)."""
+    cfg = _load_config()
+    if not cfg.get("auto", True):
+        return {"active": False, "auto": False}
+    with _LOCK:
+        if _STATE.get("active"):
+            return dict(_STATE)
+    color = cfg.get("color", "rainbow")
+    speed = cfg.get("speed", "slow")
+    if color not in GLOW_COLORS:
+        color = "rainbow"
+    if speed not in GLOW_SPEED_MS:
+        speed = "slow"
+    return _start_glow({"color": color, "speed": speed})
+
+
+def auto_done():
+    """Stop the glow when a task completes."""
+    return _stop_glow()
+
+
 @glow_bp.route("/glow/start", methods=["POST"])
 def route_glow_start():
     data = _json_body()
@@ -503,6 +554,28 @@ def route_glow_done():
 def route_glow_status():
     with _LOCK:
         return jsonify(dict(_STATE))
+
+
+@glow_bp.route("/glow/config", methods=["GET"])
+def route_glow_config_get():
+    cfg = _load_config()
+    with _LOCK:
+        cfg["active"] = _STATE.get("active", False)
+    return jsonify(cfg)
+
+
+@glow_bp.route("/glow/config", methods=["POST"])
+def route_glow_config_set():
+    data = _json_body()
+    cfg = _load_config()
+    if "color" in data and data["color"] in GLOW_COLORS:
+        cfg["color"] = data["color"]
+    if "speed" in data and data["speed"] in GLOW_SPEED_MS:
+        cfg["speed"] = data["speed"]
+    if "auto" in data:
+        cfg["auto"] = bool(data["auto"])
+    _save_config(cfg)
+    return jsonify(cfg)
 
 
 def register_routes(app, state, require_auth):
