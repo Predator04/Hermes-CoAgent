@@ -70,6 +70,7 @@ PROVIDER_DEFAULTS = {
     "anthropic": {"model": "claude-sonnet-4", "base_url": "https://api.anthropic.com/v1"},
     "deepseek": {"model": "deepseek-chat", "base_url": "https://api.deepseek.com/v1"},
     "ollama": {"model": "qwen3.6:27b", "base_url": "http://127.0.0.1:11434"},
+    "ui_tars": {"model": "qwen2.5vl:7b", "base_url": "http://127.0.0.1:11434/v1"},
     "generic": {"model": None, "base_url": None},
 }
 PROVIDER_ENV_KEYS = {
