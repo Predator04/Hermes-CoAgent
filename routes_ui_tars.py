@@ -96,8 +96,22 @@ def _parse_coordinate(raw):
     return int(m.group(1)), int(m.group(2))
 
 
+def _detect_mime(image_b64):
+    """Return 'image/png' or 'image/jpeg' from the decoded magic bytes."""
+    try:
+        raw = base64.b64decode(image_b64)
+    except Exception:
+        return "image/png"
+    if raw[:8] == b"\x89PNG\r\n\x1a\n":
+        return "image/png"
+    if raw[:2] == b"\xff\xd8":
+        return "image/jpeg"
+    return "image/png"
+
+
 def _call_ui_tars(cfg, image_b64, target):
     """POST an OpenAI-compatible chat.completions request. Returns model text."""
+    mime = _detect_mime(image_b64)
     messages = [
         {
             "role": "system",
@@ -109,7 +123,7 @@ def _call_ui_tars(cfg, image_b64, target):
                 {"type": "text", "text": f"Target element: {target}"},
                 {
                     "type": "image_url",
-                    "image_url": {"url": f"data:image/png;base64,{image_b64}"},
+                    "image_url": {"url": f"data:{mime};base64,{image_b64}"},
                 },
             ],
         },
