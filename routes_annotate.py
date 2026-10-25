@@ -213,4 +213,6 @@ def route_screen_annotate():
 
 def register_routes(app, state, require_auth):
     """Register the blueprint with the CoAgent Flask app (repo convention)."""
+    from shared import _wrap_registered_blueprint_routes
     app.register_blueprint(bp)
+    _wrap_registered_blueprint_routes(app, bp.name, require_auth)
