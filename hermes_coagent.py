@@ -762,6 +762,7 @@ from routes_ui_tars import register_routes as reg_ui_tars
 from routes_omniparser import register_routes as reg_omniparser
 from routes_annotate import register_routes as reg_annotate
 from routes_browser_ax import register_routes as reg_browser_ax
+from routes_auth_audit import register_routes as reg_auth_audit
 
 try:
     from routes_pixel import register_routes as reg_pixel
@@ -1358,6 +1359,7 @@ reg_ui_tars(app, state, require_auth)
 reg_omniparser(app, state, require_auth)
 reg_annotate(app, state, require_auth)
 reg_browser_ax(app, state, require_auth)
+reg_auth_audit(app, state, require_auth)
 if PIXEL_AVAILABLE:
     reg_pixel(app, state, require_auth)
     features["screen_pixel"] = True
