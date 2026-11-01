@@ -21,14 +21,19 @@ bp = Blueprint("auth_audit", __name__)
 
 
 def _route_table(app):
-    """Build {endpoint: {rule, methods}} from Flask's url_map."""
+    """Build {endpoint: [{rule, methods}, ...]} from Flask's url_map.
+
+    A single view function can be mounted at multiple rules; keep every rule
+    so the audit reports each exposed path rather than silently dropping all
+    but the last.
+    """
     table = {}
     for rule in app.url_map.iter_rules():
         endpoint = rule.endpoint
         if endpoint == "static":
             continue
         methods = sorted({m for m in (rule.methods or set()) if m not in ("HEAD", "OPTIONS")})
-        table[endpoint] = {"rule": rule.rule, "methods": methods}
+        table.setdefault(endpoint, []).append({"rule": rule.rule, "methods": methods})
     return table
 
 
@@ -38,25 +43,21 @@ def _unauth_summary(app):
     unauth = []
     total = 0
     authenticated = 0
-    seen = set()
     for endpoint, view_func in app.view_functions.items():
         if endpoint == "static" or endpoint.startswith("static"):
             continue
         if endpoint not in table:
             continue
-        if endpoint in seen:
-            continue
-        seen.add(endpoint)
         total += 1
         if getattr(view_func, "_hermes_auth_wrapped", False):
             authenticated += 1
         else:
-            info = table[endpoint]
-            unauth.append({
-                "rule": info["rule"],
-                "methods": info["methods"],
-                "endpoint": endpoint,
-            })
+            for info in table[endpoint]:
+                unauth.append({
+                    "rule": info["rule"],
+                    "methods": info["methods"],
+                    "endpoint": endpoint,
+                })
     unauth.sort(key=lambda e: e["rule"])
     return total, authenticated, unauth
 
