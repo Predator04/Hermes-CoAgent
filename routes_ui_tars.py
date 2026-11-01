@@ -41,14 +41,24 @@ GUI_AGENT_PROMPT = (
     "Do not output anything else — no explanation, no markdown."
 )
 
-# Accepts: click(start_box='(x,y)') | click(start_box="(x,y)") | bare (x,y)
+# Accepts: click(start_box='(x,y)') | click(start_box="(x,y)") | bare (x,y).
+# Parens around the pair are REQUIRED so prose like "1,500 pixels" is not
+# mistaken for a coordinate.
 _COORD_RE = re.compile(
-    r"(?:start_box\s*=\s*['\"]?\(?|\()?\s*(\d+)\s*,\s*(\d+)\s*\)?",
+    r"(?:start_box\s*=\s*['\"]?)?\((\d+)\s*,\s*(\d+)\)",
 )
 
 
 def _model_config(body):
-    """Resolve base_url/model/api_key from request body then model config."""
+    """Resolve base_url/model/api_key from request body then model config.
+
+    Security: `base_url` and `api_key` are callable-overridable for local
+    experiments (e.g. pointing at a different Ollama host), but when the
+    caller supplies its OWN base_url we must NOT forward the server-side
+    provider `api_key` — otherwise any authenticated caller could aim the
+    request at an attacker host and exfiltrate the credential (SSRF). A
+    caller-supplied key is only sent when the caller also supplied the URL.
+    """
     body = body or {}
     base_url = DEFAULT_BASE_URL
     model = DEFAULT_MODEL
@@ -62,10 +72,22 @@ def _model_config(body):
             api_key = overrides.get("api_key") or ""
     except Exception as exc:  # config unavailable → keep defaults
         _log(f"[ui_tars] reading model config failed: {exc}")
+
     # Request body wins last (per-call override)
-    base_url = (body.get("base_url") or "").strip() or base_url
+    body_base_url = (body.get("base_url") or "").strip()
+    body_api_key = (body.get("api_key") or "").strip()
+    if body_base_url:
+        base_url = body_base_url
+        if not body_api_key:
+            api_key = ""  # drop provider key on caller-supplied URL (SSRF guard)
     model = (body.get("model") or "").strip() or model
-    api_key = (body.get("api_key") or "").strip() or api_key
+    if body_api_key:
+        api_key = body_api_key
+
+    # Only allow http(s) targets — block file://, ftp://, gopher:// etc.
+    if not base_url.lower().startswith(("http://", "https://")):
+        raise ValueError(f"base_url must be http(s): {base_url!r}")
+
     try:
         timeout = int(body.get("timeout") or DEFAULT_TIMEOUT)
     except (TypeError, ValueError):
@@ -84,6 +106,43 @@ def _png_dimensions(data):
         return None
     width, height = struct.unpack(">II", data[16:24])
     return int(width), int(height)
+
+
+def _jpeg_dimensions(data):
+    """Return (width, height) from a JPEG SOF marker, or None if undeterminable."""
+    if not data or data[:2] != b"\xff\xd8":
+        return None
+    i, n = 2, len(data)
+    while i + 9 < n:
+        if data[i] != 0xFF:
+            i += 1
+            continue
+        marker = data[i + 1]
+        # Standalone markers (no length segment)
+        if marker in (0xD8, 0xD9) or 0xD0 <= marker <= 0xD7:
+            i += 2
+            continue
+        seg_len = struct.unpack(">H", data[i + 2:i + 4])[0]
+        if seg_len < 2:
+            break
+        # SOF0..SOF15 carry dimensions (skip DHT 0xC4, JPG 0xC8, DAC 0xCC)
+        if 0xC0 <= marker <= 0xCF and marker not in (0xC4, 0xC8, 0xCC):
+            height = struct.unpack(">H", data[i + 5:i + 7])[0]
+            width = struct.unpack(">H", data[i + 7:i + 9])[0]
+            return int(width), int(height)
+        i += 2 + seg_len
+    return None
+
+
+def _image_dimensions(data):
+    """Return (width, height) for PNG or JPEG bytes, or None if unknown."""
+    if not data:
+        return None
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return _png_dimensions(data)
+    if data[:2] == b"\xff\xd8":
+        return _jpeg_dimensions(data)
+    return None
 
 
 def _parse_coordinate(raw):
@@ -177,6 +236,17 @@ def route_ui_tars_locate():
             "detail": "Provide image_base64 (PNG screenshot), target, width, height",
             "code": "MISSING_FIELDS",
         }), 400
+
+    # Reject absurd payloads before materialising the decoded bytes.
+    _MAX_IMAGE_B64 = 40 * 1024 * 1024  # ~30MB raw — far above any real screenshot
+    if len(image_b64) > _MAX_IMAGE_B64:
+        return jsonify({
+            "ok": False,
+            "error": "image_base64 too large",
+            "detail": f"Refusing payload of {len(image_b64)} base64 chars (cap {_MAX_IMAGE_B64})",
+            "code": "PAYLOAD_TOO_LARGE",
+        }), 413
+
     try:
         width, height = int(width), int(height)
         if width <= 0 or height <= 0:
@@ -189,13 +259,21 @@ def route_ui_tars_locate():
             "code": "INVALID_DIMENSIONS",
         }), 400
 
-    cfg = _model_config(d)
+    try:
+        cfg = _model_config(d)
+    except ValueError as exc:
+        return jsonify({
+            "ok": False,
+            "error": "Invalid model config",
+            "detail": str(exc),
+            "code": "BAD_BASE_URL",
+        }), 400
 
-    # Determine the sent image's own size so coordinates can be rescaled.
+    # Decode once; determine the sent image's own size so coordinates rescale.
     img_w, img_h = width, height
     try:
-        png_data = base64.b64decode(image_b64, validate=False)
-        dims = _png_dimensions(png_data)
+        raw_bytes = base64.b64decode(image_b64, validate=False)
+        dims = _image_dimensions(raw_bytes)
         if dims:
             img_w, img_h = dims
     except Exception:
