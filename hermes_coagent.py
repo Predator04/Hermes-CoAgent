@@ -764,6 +764,7 @@ from routes_annotate import register_routes as reg_annotate
 from routes_browser_ax import register_routes as reg_browser_ax
 from routes_auth_audit import register_routes as reg_auth_audit
 from routes_network_ports import register_routes as reg_network_ports
+from routes_windows import register_routes as reg_windows
 
 try:
     from routes_pixel import register_routes as reg_pixel
@@ -1362,6 +1363,7 @@ reg_annotate(app, state, require_auth)
 reg_browser_ax(app, state, require_auth)
 reg_auth_audit(app, state, require_auth)
 reg_network_ports(app, state, require_auth)
+reg_windows(app, state, require_auth)
 if PIXEL_AVAILABLE:
     reg_pixel(app, state, require_auth)
     features["screen_pixel"] = True
