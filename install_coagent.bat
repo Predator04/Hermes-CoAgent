@@ -201,8 +201,11 @@ set PYTHON=
 for %%p in (
     "%LOCALAPPDATA%\Programs\Python\Python313\python.exe"
     "%LOCALAPPDATA%\Programs\Python\Python312\python.exe"
+    "%LOCALAPPDATA%\Programs\Python\Python311\python.exe"
     "C:\Python313\python.exe"
+    "C:\Python312\python.exe"
     "C:\Program Files\Python313\python.exe"
+    "C:\Program Files\Python312\python.exe"
 ) do (
     if exist %%p if "!PYTHON!"=="" set "PYTHON=%%p"
 )
@@ -210,9 +213,36 @@ for %%p in (
 if "%PYTHON%"=="" where python >nul 2>nul && for /f "tokens=*" %%i in ('where python') do set "PYTHON=%%i"
 
 if "%PYTHON%"=="" (
-    echo   Python not found.
-    start https://www.python.org/downloads/
-    echo   Install Python, then run this installer again.
+    echo   Python not found. Installing Python 3.12 automatically...
+    set "PYINST=%TEMP%\python-3.12.10-amd64.exe"
+    echo   Downloading Python 3.12...
+    powershell -NoProfile -Command "Invoke-WebRequest -Uri 'https://www.python.org/ftp/python/3.12.10/python-3.12.10-amd64.exe' -OutFile '%PYINST%'" 2>nul
+    if exist "%PYINST%" (
+        echo   Running Python installer (silent)...
+        "%PYINST%" /quiet InstallAllUsers=1 TargetDir=C:\Python312 PrependPath=1 Include_test=0
+        del "%PYINST%" 2>nul
+        :: Re-detect after install
+        for %%p in (
+            "C:\Python312\python.exe"
+            "%LOCALAPPDATA%\Programs\Python\Python312\python.exe"
+        ) do (
+            if exist %%p if "!PYTHON!"=="" set "PYTHON=%%p"
+        )
+    ) else (
+        echo   Download failed. Installing via winget...
+        winget install -e --id Python.Python.3.12 --silent --accept-package-agreements --accept-source-agreements 2>nul
+        for %%p in (
+            "C:\Python312\python.exe"
+            "%LOCALAPPDATA%\Programs\Python\Python312\python.exe"
+        ) do (
+            if exist %%p if "!PYTHON!"=="" set "PYTHON=%%p"
+        )
+    )
+)
+
+if "%PYTHON%"=="" (
+    echo   ERROR: Could not install Python automatically.
+    echo   Install manually from https://www.python.org/downloads/ (tick "Add Python to PATH"), then re-run.
     pause
     exit /b 1
 )
