@@ -1,22 +1,45 @@
 @echo off
+echo.
+echo ==========================================
+echo  Hermes CoAgent - One-Click Installer
+echo ==========================================
+echo  Starting... (this window will stay open)
+echo.
+
 REM Hermes CoAgent - One-Command Installer
 REM Download and double-click. Tries git, gh, then direct ZIP download.
 REM Handles fresh installs, updates in place, and wipe-and-restart.
 
 setlocal enabledelayedexpansion
 
-:: Self-elevate to administrator (needed to register the auto-start task)
-fltmc >nul 2>&1
+:: ---------------------------------------------------------------
+:: Self-elevate to administrator (needed to register the auto-start task).
+:: Uses "net session" (works on every Windows SKU) and ALWAYS pauses on
+:: exit so the original window never flashes closed with no output.
+:: ---------------------------------------------------------------
+net session >nul 2>&1
 if %errorlevel% neq 0 (
-    echo Requesting administrator privileges...
-    powershell -NoProfile -Command "Start-Process -FilePath '%~f0' -Verb RunAs"
-    exit /b
+    echo  Administrator rights are required.
+    echo  Requesting elevation - please accept the UAC prompt...
+    echo.
+    powershell -NoProfile -Command "Start-Process -FilePath '%~f0' -Verb RunAs" >nul 2>&1
+    if errorlevel 1 (
+        echo.
+        echo  ERROR: Could not launch elevated installer.
+        echo  You may have declined the UAC prompt, or PowerShell is unavailable.
+        echo.
+        echo  Press any key to close this window...
+        pause >nul
+        exit /b 1
+    )
+    echo.
+    echo  Elevated installer is running in a new window.
+    echo  Press any key to close this window...
+    pause >nul
+    exit /b 0
 )
 
-echo.
-echo ==========================================
-echo  Hermes CoAgent - One-Click Installer
-echo ==========================================
+echo  Running with administrator rights.
 echo.
 
 set "COAGENT_DIR=%LOCALAPPDATA%\Hermes CoAgent"
@@ -37,6 +60,8 @@ if exist "%COAGENT_DIR%\hermes_coagent.py" (
     set /p CHOICE="  Choice (U/W/C): "
     if /i "!CHOICE!"=="C" (
         echo  Cancelled.
+        echo.
+        pause
         exit /b 0
     )
     if /i "!CHOICE!"=="W" (
@@ -270,15 +295,21 @@ echo  Done! Dashboard: http://127.0.0.1:9123
 echo  Tray icon: Purple 'C' in system tray
 echo  Auto-starts on every reboot.
 echo ==========================================
+echo.
 timeout /t 3 >nul
 start http://127.0.0.1:9123
+echo  Press any key to close this window...
+pause >nul
 exit /b 0
 
 :: ---------------------------------------------------------------
-:: Fail-safe: if anything above exits early or errors, pause so the
-:: window never silently closes and the user can read the message.
+:: Fail-safe: if control ever falls through to the bottom of the
+:: file (unknown error, parser bail, missing label, etc.) make sure
+:: the window never silently closes.
 :: ---------------------------------------------------------------
 :err
 echo.
 echo  Something went wrong. Copy the text above and report it.
+echo.
 pause
+exit /b 1
