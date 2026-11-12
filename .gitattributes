@@ -1,0 +1,5 @@
+# Force Windows batch files to keep CRLF line endings on every checkout.
+# cmd.exe misparses LF-only batch files (flash-and-close).
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf

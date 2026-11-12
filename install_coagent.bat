@@ -272,3 +272,13 @@ echo  Auto-starts on every reboot.
 echo ==========================================
 timeout /t 3 >nul
 start http://127.0.0.1:9123
+exit /b 0
+
+:: ---------------------------------------------------------------
+:: Fail-safe: if anything above exits early or errors, pause so the
+:: window never silently closes and the user can read the message.
+:: ---------------------------------------------------------------
+:err
+echo.
+echo  Something went wrong. Copy the text above and report it.
+pause
