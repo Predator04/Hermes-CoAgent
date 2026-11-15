@@ -145,6 +145,7 @@ def route_list_windows():
 
 
 @bp.route("/window/activate", methods=["POST"])
+@bp.route("/windows/activate", methods=["POST"])  # legacy plural alias
 def route_window_activate():
     """Bring a window to the foreground by hwnd (int) or title (substring)."""
     try:
@@ -176,6 +177,18 @@ def route_window_activate():
             hwnd = match["hwnd"]
             title = match["title"]
             process_name = match["process_name"]
+
+        # Governance check (preserved from the legacy media route): allowlist /
+        # denylist the target app by process name before foregrounding it.
+        try:
+            from routes_governance import get_governor
+            gov = get_governor()
+            allowed, reason = gov.check_app(process_name or title)
+            if not allowed:
+                gov.record_block("window_activate", process_name or title, reason)
+                return jsonify({"ok": False, "error": reason, "code": "BLOCKED"}), 403
+        except Exception:
+            pass  # governance unavailable -> fail open, preserve activation
 
         _activate_hwnd(hwnd)
         return jsonify({"ok": True, "hwnd": hwnd, "title": title, "process_name": process_name})

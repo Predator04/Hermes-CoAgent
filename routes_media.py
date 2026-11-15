@@ -542,77 +542,9 @@ def _clipboard_get_rich():
 
 
 def register_routes(app, state, require_auth):
-    # ── Windows ─────────────────────────────────────────
-    @app.route("/windows", methods=["GET"])
-    @require_auth
-    def route_windows():
-        try:
-            import ctypes.wintypes as _wt
-            wins = []
-            def _enum_cb(hwnd, _lparam):
-                length = ctypes.windll.user32.GetWindowTextLengthW(hwnd)
-                if length > 0:
-                    buff = ctypes.create_unicode_buffer(length + 1)
-                    ctypes.windll.user32.GetWindowTextW(hwnd, buff, length + 1)
-                    title = buff.value
-                    if title.strip():
-                        pid = ctypes.c_ulong()
-                        ctypes.windll.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
-                        rect = _wt.RECT()
-                        ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(rect))
-                        visible = ctypes.windll.user32.IsWindowVisible(hwnd)
-                        wins.append({
-                            "hwnd": hwnd,
-                            "pid": pid.value,
-                            "title": title[:200],
-                            "visible": bool(visible),
-                            "rect": {"left": rect.left, "top": rect.top, "right": rect.right, "bottom": rect.bottom},
-                        })
-                return True
-            WNDENUMPROC = ctypes.WINFUNCTYPE(_wt.BOOL, _wt.HWND, _wt.LPARAM)
-            cb = WNDENUMPROC(_enum_cb)
-            ctypes.windll.user32.EnumWindows(cb, 0)
-            return jsonify({"windows": wins, "count": len(wins)})
-        except Exception as e:
-            return jsonify({"error": str(e)}), 500
-
-    @app.route("/windows/activate", methods=["POST"])
-    @require_auth
-    def route_win_activate():
-        d = _json_body()
-        title = d.get("title", "") or ""
-        if not isinstance(title, str):
-            return jsonify({"error": "title must be a string"}), 400
-        needle = title.lower()
-        gov = get_governor()
-        allowed, reason = gov.check_app(title)
-        if not allowed:
-            gov.record_block("window_activate", title, reason)
-            return jsonify({"error": reason}), 403
-        found = []
-        try:
-            import pygetwindow as gw
-            for w in gw.getAllWindows():
-                if needle in (w.title or "").lower():
-                    w.activate()
-                    found.append(w.title)
-                    return jsonify({"status": "activated", "title": w.title})
-        except Exception:
-            pass
-        if not found:
-            def enum_cb(hwnd, _):
-                buf = ctypes.create_unicode_buffer(512)
-                ctypes.windll.user32.GetWindowTextW(hwnd, buf, 512)
-                if needle in buf.value.lower():
-                    ctypes.windll.user32.ShowWindow(hwnd, 9)  # SW_RESTORE
-                    ctypes.windll.user32.SetForegroundWindow(hwnd)
-                    found.append(True)
-                    return False  # stop
-                return True
-            ctypes.windll.user32.EnumWindows(ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)(enum_cb), 0)
-        if not found:
-            return jsonify({"error": f"No window matched '{title}'"}), 404
-        return jsonify({"status": "activated", "title": title})
+    # NOTE: /windows and /window/activate now live in routes_windows.py (richer
+    # enumeration + hwnd/title activation with AttachThreadInput). The old
+    # routes here were removed to avoid duplicate endpoint registration.
 
     # ── Wallpaper ──────────────────────────────────────
     @app.route("/wallpaper/set", methods=["POST"])
