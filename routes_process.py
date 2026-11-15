@@ -271,6 +271,91 @@ def _kill_fallback(data):
     return [{"pid": None, "name": name}]
 
 
+def _kill_tree_with_psutil(data):
+    roots = []
+    current_pid = os.getpid()
+    if data.get("pid") is not None:
+        pid = int(data["pid"])
+        if pid <= 4:
+            raise ValueError("Refusing to kill a system-critical PID (<= 4)")
+        if pid == current_pid:
+            raise ValueError("Refusing to kill the CoAgent server process")
+        roots.append(psutil.Process(pid))
+    elif data.get("name"):
+        wanted = str(data["name"]).lower()
+        wanted_base = wanted[:-4] if wanted.endswith(".exe") else wanted
+        if _is_python_interpreter(wanted_base):
+            raise ValueError("Use pid when killing Python processes")
+        for proc in psutil.process_iter(["pid", "name"]):
+            try:
+                pname = (proc.info.get("name") or "").lower()
+                pname_base = pname[:-4] if pname.endswith(".exe") else pname
+                if pname == wanted or pname_base == wanted_base:
+                    roots.append(proc)
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
+    else:
+        raise ValueError("Missing pid or name")
+
+    # Children-before-parents to avoid orphan re-parenting during the sweep.
+    ordered = []
+    seen = set()
+    for root in roots:
+        try:
+            descendants = root.children(recursive=True)
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            descendants = []
+        for proc in list(descendants) + [root]:
+            if proc.pid in seen:
+                continue
+            if proc.pid <= 4 or proc.pid == current_pid:
+                continue
+            seen.add(proc.pid)
+            ordered.append(proc)
+
+    killed = []
+    for proc in ordered:
+        try:
+            name = proc.name()
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            name = ""
+        try:
+            proc.kill()
+            killed.append({"pid": proc.pid, "name": name})
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+    return killed
+
+
+def _kill_tree_fallback(data):
+    if data.get("pid") is not None:
+        pid = int(data["pid"])
+        if pid <= 4:
+            raise ValueError("Refusing to kill a system-critical PID (<= 4)")
+        if pid == os.getpid():
+            return []
+        r = subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"],
+                           capture_output=True, text=True, timeout=10)
+        if r.returncode != 0:
+            raise RuntimeError((r.stderr or r.stdout).strip() or "taskkill failed")
+        return [{"pid": pid, "name": ""}]
+    name = str(data.get("name") or "").strip()
+    if not name:
+        raise ValueError("Missing pid or name")
+    base_name = name.lower()
+    if base_name.endswith(".exe"):
+        base_name = base_name[:-4]
+    if _is_python_interpreter(base_name):
+        raise ValueError("Use pid when killing Python processes")
+    if any(c in name for c in ("*", "?", "/", "\\")):
+        raise ValueError("Process name contains invalid characters")
+    r = subprocess.run(["taskkill", "/IM", name, "/T", "/F"],
+                       capture_output=True, text=True, timeout=10)
+    if r.returncode != 0:
+        raise RuntimeError((r.stderr or r.stdout).strip() or "taskkill failed")
+    return [{"pid": None, "name": name}]
+
+
 def _set_priority_psutil(pid, priority):
     priority_key = str(priority).lower().replace(" ", "_").replace("-", "_")
     mapping = {
@@ -401,6 +486,18 @@ def register_routes(app, state, require_auth):
             return jsonify({"error": "confirm field required"}), 400
         try:
             killed = _kill_with_psutil(data) if HAS_PSUTIL else _kill_fallback(data)
+            return jsonify({"status": "ok", "killed": killed, "count": len(killed)})
+        except Exception as e:
+            return jsonify({"error": str(e)}), 400
+
+    @app.route("/process/kill-tree", methods=["POST"])
+    @require_auth
+    def route_process_kill_tree():
+        data = _json_body()
+        if "confirm" not in data or not _confirm_present(data):
+            return jsonify({"error": "confirm field required"}), 400
+        try:
+            killed = _kill_tree_with_psutil(data) if HAS_PSUTIL else _kill_tree_fallback(data)
             return jsonify({"status": "ok", "killed": killed, "count": len(killed)})
         except Exception as e:
             return jsonify({"error": str(e)}), 400
