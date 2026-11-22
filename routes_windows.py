@@ -124,10 +124,12 @@ def _activate_hwnd(hwnd):
     if target_tid and target_tid != current_tid:
         attached = bool(user32.AttachThreadInput(current_tid, target_tid, True))
 
-    user32.SetForegroundWindow(hwnd)
+    foreground = bool(user32.SetForegroundWindow(hwnd))
 
     if attached:
         user32.AttachThreadInput(current_tid, target_tid, False)
+
+    return foreground
 
 
 @bp.route("/windows", methods=["GET"])
@@ -190,8 +192,8 @@ def route_window_activate():
         except Exception:
             pass  # governance unavailable -> fail open, preserve activation
 
-        _activate_hwnd(hwnd)
-        return jsonify({"ok": True, "hwnd": hwnd, "title": title, "process_name": process_name})
+        foreground = _activate_hwnd(hwnd)
+        return jsonify({"ok": True, "hwnd": hwnd, "title": title, "process_name": process_name, "foreground": foreground})
 
     except Exception as exc:
         print("[WINDOWS/ACTIVATE] error: {0}: {1}".format(type(exc).__name__, exc))
