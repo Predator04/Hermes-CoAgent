@@ -1,5 +1,5 @@
 """Process listing, control, and resource routes."""
-import csv, io, json, os, re, shlex, subprocess, time
+import csv, io, json, os, re, shlex, subprocess, threading, time
 from flask import jsonify
 from shared import _json_body, _sanitize_path
 from routes_governance import get_governor
@@ -35,6 +35,7 @@ def _is_python_interpreter(name):
 
 _WINDOW_TITLES_CACHE = {"ts": 0.0, "value": {}}
 _WINDOW_TITLES_TTL = 2.0
+_WINDOW_TITLES_LOCK = threading.Lock()
 
 
 def _window_titles_by_pid():
@@ -42,8 +43,9 @@ def _window_titles_by_pid():
     # Honor the TTL based on the timestamp (not the truthiness of the cached
     # value) so an empty result is cached too and EnumWindows doesn't re-run
     # on every request when no windows are visible.
-    if (now - _WINDOW_TITLES_CACHE["ts"]) < _WINDOW_TITLES_TTL:
-        return _WINDOW_TITLES_CACHE.get("value") or {}
+    with _WINDOW_TITLES_LOCK:
+        if (now - _WINDOW_TITLES_CACHE["ts"]) < _WINDOW_TITLES_TTL:
+            return _WINDOW_TITLES_CACHE.get("value") or {}
     titles = {}
     try:
         import ctypes
@@ -73,8 +75,9 @@ def _window_titles_by_pid():
         user32.EnumWindows(enum_proc_type(callback), 0)
     except Exception:
         pass
-    _WINDOW_TITLES_CACHE["value"] = titles
-    _WINDOW_TITLES_CACHE["ts"] = now
+    with _WINDOW_TITLES_LOCK:
+        _WINDOW_TITLES_CACHE["value"] = titles
+        _WINDOW_TITLES_CACHE["ts"] = now
     return titles
 
 
@@ -453,16 +456,26 @@ def _resources_fallback():
         "memory": {
             "total_mb": round(total_mem / (1024 * 1024), 2),
             "available_mb": round(free_mem / (1024 * 1024), 2),
-            "used_percent": round((1 - free_mem / total_mem) * 100, 2) if total_mem else 0,
+            "used_percent": round(max(0.0, min(100.0, (1 - free_mem / total_mem) * 100)), 2) if total_mem else 0,
         },
         "disk": {
             "total_mb": round(disk_size / (1024 * 1024), 2),
             "free_mb": round(disk_free / (1024 * 1024), 2),
-            "used_percent": round((1 - disk_free / disk_size) * 100, 2) if disk_size else 0,
+            "used_percent": round(max(0.0, min(100.0, (1 - disk_free / disk_size) * 100)), 2) if disk_size else 0,
         },
         "process_count": int(data.get("ProcessCount") or 0),
         "timestamp": int(time.time()),
     }
+
+
+def _kill_error_response(e):
+    if HAS_PSUTIL and isinstance(e, psutil.NoSuchProcess):
+        return jsonify({"error": str(e)}), 404
+    if HAS_PSUTIL and isinstance(e, psutil.AccessDenied):
+        return jsonify({"error": str(e)}), 403
+    if isinstance(e, RuntimeError):
+        return jsonify({"error": str(e)}), 500
+    return jsonify({"error": str(e)}), 400
 
 
 def register_routes(app, state, require_auth):
@@ -488,7 +501,7 @@ def register_routes(app, state, require_auth):
             killed = _kill_with_psutil(data) if HAS_PSUTIL else _kill_fallback(data)
             return jsonify({"status": "ok", "killed": killed, "count": len(killed)})
         except Exception as e:
-            return jsonify({"error": str(e)}), 400
+            return _kill_error_response(e)
 
     @app.route("/process/kill-tree", methods=["POST"])
     @require_auth
@@ -498,9 +511,9 @@ def register_routes(app, state, require_auth):
             return jsonify({"error": "confirm field required"}), 400
         try:
             killed = _kill_tree_with_psutil(data) if HAS_PSUTIL else _kill_tree_fallback(data)
-            return jsonify({"status": "ok", "killed": killed, "count": len(killed)})
+            return jsonify({"status": "ok", "killed": killed, "count": len(killed), "best_effort": True})
         except Exception as e:
-            return jsonify({"error": str(e)}), 400
+            return _kill_error_response(e)
 
     @app.route("/process/start", methods=["POST"])
     @require_auth
